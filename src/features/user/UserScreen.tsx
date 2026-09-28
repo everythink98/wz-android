@@ -265,14 +265,13 @@ export const UserScreen = memo(function UserScreen({
   useEffect(() => {
     autoLoadArmedRef.current = false;
     pendingScrollTopRef.current = true;
-    const frame = requestAnimationFrame(scrollListToTop);
-    const timer = setTimeout(scrollListToTop, 80);
+    const frame = requestAnimationFrame(completePendingScrollReset);
     return () => {
       cancelAnimationFrame(frame);
-      clearTimeout(timer);
     };
-  }, [scrollListToTop, user?.id, user?.source, user?.username, userTab]);
+  }, [completePendingScrollReset, user?.id, user?.source, user?.username, userTab]);
   const armAutoLoad = useCallback(() => {
+    pendingScrollTopRef.current = false;
     autoLoadArmedRef.current = true;
   }, []);
   const changeUserTab = useCallback(

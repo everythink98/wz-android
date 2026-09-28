@@ -512,6 +512,7 @@ function ProductionContentList({
       readingPaused={readingPaused}
       actions={{
         actionBusy: false,
+        replyImageUploading: false,
         decisionFor: () => ({ allowed: false, reason: 'login-required' }),
         bookmarkOnDiscourseSite: unexpected,
         collectOnNodeSeekSite: unexpected,

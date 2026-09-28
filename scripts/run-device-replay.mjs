@@ -33,10 +33,6 @@ export function parseAndroidPackageInfo(output) {
   return { versionCode, versionName };
 }
 
-export function replayDeviceSelectionArgs(device) {
-  return deviceSelectionArgs(device.name);
-}
-
 function sha256(filePath) {
   return createHash('sha256').update(readFileSync(filePath)).digest('hex');
 }
@@ -159,7 +155,7 @@ function recoverOwnedReplayRecording(device, replaySession) {
   }
   for (const sessionName of new Set(recoverySessions)) {
     runAgentDevice(
-      ['record', 'stop', '--session', sessionName, '--platform', 'android', ...replayDeviceSelectionArgs(device)],
+      ['record', 'stop', '--session', sessionName, '--platform', 'android', ...deviceSelectionArgs(device.name)],
       { cwd: rootDir }
     );
   }
@@ -336,7 +332,7 @@ export async function runDeviceReplay({
           replayFile,
           '--session',
           replaySession,
-          ...replayDeviceSelectionArgs(device),
+          ...deviceSelectionArgs(device.name),
           '--retries',
           '0',
           '--fail-fast',

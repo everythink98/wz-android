@@ -3,10 +3,12 @@ import {
   Node as TiptapNode,
   findParentNodeClosestToPos,
   mergeAttributes,
+  type JSONContent,
   type Editor as TiptapEditor
 } from '@tiptap/core';
 import { Markdown } from '@tiptap/markdown';
-import { NodeSelection, Plugin, Selection, TextSelection } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@tiptap/pm/state';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { createParagraphNear } from '@tiptap/pm/commands';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { selectedRect } from '@tiptap/pm/tables';
@@ -17,8 +19,10 @@ import { Table, TableKit, renderTableToMarkdown } from '@tiptap/extension-table'
 import { TaskItem } from '@tiptap/extension-task-item';
 import { TaskList } from '@tiptap/extension-task-list';
 import { Image } from '@tiptap/extension-image';
-import { EditorState, Transaction as CodeMirrorTransaction } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
+import { Link } from '@tiptap/extension-link';
+import { Paragraph } from '@tiptap/extension-paragraph';
+import { EditorState, StateEffect, StateField, Transaction as CodeMirrorTransaction } from '@codemirror/state';
+import { Decoration as SourceDecoration, EditorView, WidgetType, keymap } from '@codemirror/view';
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from '@codemirror/commands';
 import DOMPurify from 'dompurify';
@@ -54,7 +58,9 @@ import {
   composerHostMessageSchema,
   linuxDoPollCapabilitiesSchema,
   MAX_COMPOSER_MARKDOWN_LENGTH,
-  type ComposerHostMessage
+  type ComposerHostMessage,
+  type ComposerToolbarAction,
+  type ComposerToolbarState as HostToolbarState
 } from './structuredComposerBridge';
 import {
   EditorButton,
@@ -67,7 +73,7 @@ import {
   EditorDropdownRadioGroup,
   EditorDropdownRadioItem,
   EditorInput,
-  EditorLinkPopover,
+  EditorLinkForm,
   EditorSeparator,
   EditorToolbar
 } from './tiptapUi';
@@ -81,8 +87,7 @@ declare global {
 type RuntimeConfig = Extract<ComposerHostMessage, { type: 'INIT' }>['payload'];
 type RuntimeTheme = RuntimeConfig['theme'];
 type TemplateSummary = { id: string; title: string; content: string };
-type ComposerBuilder =
-  'nodeseek-poll' | 'stardust' | 'linuxdo-poll' | 'private' | 'templates' | 'stickers' | 'emoji' | null;
+type ComposerBuilder = HostToolbarState['builder'];
 
 type ExpressionStorage = {
   config: RuntimeConfig | null;
@@ -231,6 +236,8 @@ function runtimeError(code: string, message: string, revision: number) {
 function requestHostAction(
   action:
     | 'upload-image'
+    | 'preview-topic'
+    | 'prepare-panel'
     | 'load-linuxdo-templates'
     | 'use-linuxdo-template'
     | 'load-linuxdo-poll-capabilities'
@@ -857,6 +864,47 @@ const ComposerImage = Image.extend({
   addStorage() {
     return { site: undefined as RuntimeConfig['site'] | undefined };
   },
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          handleDOMEvents: {
+            beforeinput(view, event) {
+              const { selection } = view.state;
+              if (
+                !view.editable ||
+                !event.cancelable ||
+                !['deleteContentBackward', 'deleteContentForward'].includes(event.inputType)
+              )
+                return false;
+              let { from, to } = selection;
+              if (selection instanceof NodeSelection) {
+                if (selection.node.type.name !== 'image') return false;
+              } else {
+                const cursor = selection instanceof TextSelection ? selection.$cursor : null;
+                const backward = event.inputType === 'deleteContentBackward';
+                if (!cursor || cursor.parentOffset !== (backward ? 0 : cursor.parent.content.size)) return false;
+                const edge = backward ? cursor.before() : cursor.after();
+                const boundary = view.state.doc.resolve(edge);
+                const image = backward ? boundary.nodeBefore : boundary.nodeAfter;
+                if (image?.type.name !== 'image') return false;
+                from = backward ? edge - image.nodeSize : edge;
+                to = from + image.nodeSize;
+              }
+              // Finish the IME event before removing its DOM node, or Android closes the input connection.
+              event.preventDefault();
+              const transaction = view.state.tr.delete(from, to).scrollIntoView();
+              requestAnimationFrame(() => {
+                if (!view.isDestroyed && view.editable && view.state.doc === transaction.before)
+                  view.dispatch(transaction);
+              });
+              return true;
+            }
+          }
+        }
+      })
+    ];
+  },
   addNodeView() {
     return ({ HTMLAttributes }) => {
       const dom = document.createElement('div');
@@ -939,29 +987,189 @@ const ComposerImage = Image.extend({
   }
 });
 
-export const composerEditorExtensions = [
-  StarterKit.configure({
-    link: { openOnClick: false, autolink: true },
-    heading: { levels: [1, 2, 3, 4, 5, 6] },
-    hardBreak: { keepMarks: true }
-  }),
-  Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
-  TableKit.configure({ table: false }),
-  StrictGfmTable.configure({ resizable: false }),
-  StrictGfmTableHeaders,
-  ComposerTextCaret,
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  ComposerImage.configure({ allowBase64: false, resize: false }),
-  ForumExpressionNode,
-  PendingNodeSeekPollNode,
-  NodeSeekRemotePollNode,
-  NodeSeekStardustNode,
-  ForumPrivateBlockNode,
-  LinuxDoDateNode,
-  LinuxDoFootnoteDefinitionNode,
-  LinuxDoFootnoteReferenceNode
-];
+type UploadRange = { id: string; from: number; to: number; visible: boolean };
+
+function uploadPlaceholder() {
+  const element = document.createElement('span');
+  element.className = 'composer-image-upload composer-image-feedback';
+  element.contentEditable = 'false';
+  element.setAttribute('role', 'status');
+  element.textContent = '上传中…';
+  return element;
+}
+
+// Decorations are deliberately outside the document: a pending upload must never
+// become Markdown in a saved draft or a real post.
+const imageUploadKey = new PluginKey<UploadRange | null>('imageUpload');
+const ComposerImageUpload = Extension.create({
+  name: 'composerImageUpload',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<UploadRange | null>({
+        key: imageUploadKey,
+        state: {
+          init: () => null,
+          apply(transaction, current) {
+            const next = transaction.getMeta(imageUploadKey) as UploadRange | null | undefined;
+            if (next !== undefined) return next;
+            if (!current) return null;
+            return {
+              ...current,
+              from: transaction.mapping.map(current.from, current.from === current.to ? 1 : -1),
+              to: transaction.mapping.map(current.to, 1)
+            };
+          }
+        },
+        props: {
+          decorations(state) {
+            const pending = imageUploadKey.getState(state);
+            return pending?.visible
+              ? DecorationSet.create(state.doc, [
+                  Decoration.widget(pending.from, uploadPlaceholder, { key: pending.id, side: 1 })
+                ])
+              : null;
+          }
+        }
+      })
+    ];
+  }
+});
+
+class SourceUploadWidget extends WidgetType {
+  toDOM() {
+    return uploadPlaceholder();
+  }
+}
+const sourceUploadEffect = StateEffect.define<UploadRange | null>();
+const sourceKeyboardPolicyEffect = StateEffect.define<string | null>();
+const sourceKeyboardPolicyField = StateField.define<string | null>({
+  create: () => null,
+  update(current, transaction) {
+    for (const effect of transaction.effects) if (effect.is(sourceKeyboardPolicyEffect)) return effect.value;
+    return current;
+  },
+  provide: (field) =>
+    EditorView.contentAttributes.from(field, (policy): Record<string, string> =>
+      policy === null ? {} : { virtualkeyboardpolicy: policy }
+    )
+});
+const sourceUploadField = StateField.define<UploadRange | null>({
+  create: () => null,
+  update(current, transaction) {
+    for (const effect of transaction.effects) if (effect.is(sourceUploadEffect)) return effect.value;
+    return current
+      ? {
+          ...current,
+          from: transaction.changes.mapPos(current.from, current.from === current.to ? 1 : -1),
+          to: transaction.changes.mapPos(current.to, 1)
+        }
+      : null;
+  },
+  provide: (field) =>
+    EditorView.decorations.from(field, (pending) =>
+      pending?.visible
+        ? SourceDecoration.set([
+            SourceDecoration.widget({ widget: new SourceUploadWidget(), side: 1 }).range(pending.from)
+          ])
+        : SourceDecoration.none
+    )
+});
+
+export function composerEditorExtensions(getSite: () => RuntimeConfig['site'] | undefined = () => undefined) {
+  const paragraph = Paragraph.extend({
+    parseMarkdown(token, helpers) {
+      const parsed = Paragraph.config.parseMarkdown!(token, helpers);
+      if (
+        !parsed ||
+        Array.isArray(parsed) ||
+        !('type' in parsed) ||
+        parsed.type !== 'paragraph' ||
+        !parsed.content?.some((node) => node.type === 'image')
+      )
+        return parsed;
+      // Tiptap only unwraps a lone Markdown image; mixed image paragraphs otherwise violate inline*.
+      const blocks: JSONContent[] = [];
+      let content: JSONContent[] = [];
+      const flush = () => {
+        if (content.length) blocks.push(helpers.createNode('paragraph', parsed.attrs, content));
+        content = [];
+      };
+      for (const node of parsed.content) {
+        if (node.type === 'image') {
+          flush();
+          blocks.push(node);
+        } else content.push(node);
+      }
+      flush();
+      return blocks;
+    }
+  });
+  const attachmentLink = Link.extend({
+    addAttributes() {
+      return {
+        ...this.parent?.(),
+        attachment: {
+          default: false,
+          parseHTML: (element) => getSite() === 'linuxdo' && element.classList.contains('composer-attachment'),
+          renderHTML: (attributes) => (attributes.attachment ? { class: 'composer-attachment' } : {})
+        }
+      };
+    },
+    parseMarkdown(token, helpers) {
+      // Discourse renders the label while keeping its attachment suffix in the link mark.
+      const tokens = token.tokens || [];
+      const last = tokens.at(-1);
+      const attachment = getSite() === 'linuxdo' && last?.type === 'text' && last.text?.endsWith('|attachment');
+      const parsed = Link.config.parseMarkdown!(
+        attachment
+          ? { ...token, tokens: [...tokens.slice(0, -1), { ...last, text: last.text!.slice(0, -11) }] }
+          : token,
+        helpers
+      );
+      return attachment && parsed && 'mark' in parsed
+        ? { ...parsed, attrs: { ...parsed.attrs, attachment: true } }
+        : parsed;
+    },
+    renderMarkdown(node, helpers, context) {
+      return Link.config.renderMarkdown!(
+        node,
+        {
+          ...helpers,
+          renderChildren: (children, separator) =>
+            helpers.renderChildren(children, separator) + (node.attrs?.attachment ? '|attachment' : '')
+        },
+        context
+      );
+    }
+  }).configure({ openOnClick: false, autolink: true });
+  return [
+    StarterKit.configure({
+      link: false,
+      paragraph: false,
+      heading: { levels: [1, 2, 3, 4, 5, 6] },
+      hardBreak: { keepMarks: true }
+    }),
+    Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
+    paragraph,
+    attachmentLink,
+    TableKit.configure({ table: false }),
+    StrictGfmTable.configure({ resizable: false }),
+    StrictGfmTableHeaders,
+    ComposerTextCaret,
+    ComposerImageUpload,
+    TaskList,
+    TaskItem.configure({ nested: true }),
+    ComposerImage.configure({ allowBase64: false, resize: false }),
+    ForumExpressionNode,
+    PendingNodeSeekPollNode,
+    NodeSeekRemotePollNode,
+    NodeSeekStardustNode,
+    ForumPrivateBlockNode,
+    LinuxDoDateNode,
+    LinuxDoFootnoteDefinitionNode,
+    LinuxDoFootnoteReferenceNode
+  ];
+}
 
 function currentAtom(editor: TiptapEditor | null, type: string) {
   const selection = editor?.state.selection as { node?: { type: { name: string }; attrs: Record<string, unknown> } };
@@ -1002,31 +1210,6 @@ function insertBlockContent(editor: TiptapEditor, type: string, attrs: Record<st
   else if (selected?.isAtom) chain.insertContentAt(selection.to, { type, attrs }, { updateSelection: true }).run();
   else chain.insertContent({ type, attrs }).run();
   ensureTextSelectionAfterBlock(editor);
-}
-
-async function uploadImageAtSelection(editor: TiptapEditor, isCurrentDocument: () => boolean) {
-  let from = editor.state.selection.from;
-  let to = editor.state.selection.to;
-  const trackSelection = ({
-    transaction
-  }: {
-    transaction: { mapping: { map: (position: number, assoc?: number) => number } };
-  }) => {
-    from = transaction.mapping.map(from, -1);
-    to = transaction.mapping.map(to, 1);
-  };
-  editor.on('transaction', trackSelection);
-  try {
-    const result = await requestHostAction('upload-image');
-    const markdown = typeof result === 'string' ? result : (result as { markdown?: string })?.markdown;
-    if (markdown && isCurrentDocument() && !editor.isDestroyed) {
-      editor.chain().insertContentAt({ from, to }, markdown, { contentType: 'markdown' }).run();
-      ensureTextSelectionAfterBlock(editor);
-      editor.commands.scrollIntoView();
-    }
-  } finally {
-    editor.off('transaction', trackSelection);
-  }
 }
 
 function htmlHasMergedTableCells(html: string) {
@@ -1195,24 +1378,9 @@ function pollsForSource(markdown: string) {
     .filter((poll): poll is PendingNodeSeekPoll => Boolean(poll));
 }
 
-// Lucide v1.16 icon nodes (ISC; see ./lucide.LICENSE). The native package is already a
+// Lucide icon nodes (ISC; see ./lucide.LICENSE). The native package is already a
 // project dependency; the local editor renders the same icon language without bundling it twice.
 const EDITOR_ICON_NODES = {
-  smile: [
-    ['path', { d: 'M22 11v1a10 10 0 1 1-9-10', key: 'face' }],
-    ['path', { d: 'M8 14s1.5 2 4 2 4-2 4-2', key: 'smile' }],
-    ['line', { x1: '9', x2: '9.01', y1: '9', y2: '9', key: 'eye-left' }],
-    ['line', { x1: '15', x2: '15.01', y1: '9', y2: '9', key: 'eye-right' }],
-    ['path', { d: 'M16 5h6', key: 'plus-horizontal' }],
-    ['path', { d: 'M19 2v6', key: 'plus-vertical' }]
-  ],
-  image: [
-    ['path', { d: 'M16 5h6', key: 'plus-horizontal' }],
-    ['path', { d: 'M19 2v6', key: 'plus-vertical' }],
-    ['path', { d: 'M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5', key: 'frame' }],
-    ['path', { d: 'm21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21', key: 'landscape' }],
-    ['circle', { cx: '9', cy: '9', r: '2', key: 'sun' }]
-  ],
   bold: [['path', { d: 'M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8', key: 'bold' }]],
   italic: [
     ['line', { x1: '19', x2: '10', y1: '4', y2: '4', key: 'top' }],
@@ -1313,6 +1481,33 @@ const EDITOR_ICON_NODES = {
     ['path', { d: 'm21 21-4.3-4.3', key: 'handle' }]
   ],
   chevronDown: [['path', { d: 'm6 9 6 6 6-6', key: 'chevron' }]],
+  type: [
+    ['path', { d: 'M12 4v16', key: 'stem' }],
+    ['path', { d: 'M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2', key: 'top' }],
+    ['path', { d: 'M9 20h6', key: 'base' }]
+  ],
+  paragraph: [
+    ['path', { d: 'M13 4v16M17 4v16', key: 'stems' }],
+    ['path', { d: 'M19 4H9.5a4.5 4.5 0 0 0 0 9H13', key: 'bowl' }]
+  ],
+  eye: [
+    [
+      'path',
+      {
+        d: 'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0',
+        key: 'outline'
+      }
+    ],
+    ['circle', { cx: '12', cy: '12', r: '3', key: 'pupil' }]
+  ],
+  undo: [
+    ['path', { d: 'M9 14 4 9l5-5', key: 'arrow' }],
+    ['path', { d: 'M4 9h10.5a5.5 5.5 0 0 1 0 11H11', key: 'curve' }]
+  ],
+  redo: [
+    ['path', { d: 'm15 14 5-5-5-5', key: 'arrow' }],
+    ['path', { d: 'M20 9H9.5a5.5 5.5 0 0 0 0 11H13', key: 'curve' }]
+  ],
   close: [
     ['path', { d: 'M18 6 6 18', key: 'down' }],
     ['path', { d: 'm6 6 12 12', key: 'up' }]
@@ -1345,27 +1540,31 @@ function applyTheme(theme: RuntimeTheme) {
 }
 
 type TableAlignment = 'left' | 'center' | 'right';
-type ToolbarState = {
-  blockquote: boolean;
-  bold: boolean;
-  bulletList: boolean;
-  code: boolean;
-  codeBlock: boolean;
-  heading: number;
-  italic: boolean;
-  orderedList: boolean;
-  strike: boolean;
-  table: boolean;
-  taskList: boolean;
-  underline: boolean;
+type ToolbarState = Omit<HostToolbarState, 'imageBusy' | 'builder' | 'mode'>;
+const EMPTY_TOOLBAR_STATE: ToolbarState = {
+  blockquote: false,
+  bold: false,
+  bulletList: false,
+  code: false,
+  codeBlock: false,
+  heading: 0,
+  italic: false,
+  orderedList: false,
+  strike: false,
+  table: false,
+  taskList: false,
+  underline: false,
+  link: false
 };
 
 function ComposerToolbarState({
   children,
-  editor
+  editor,
+  onChange
 }: {
-  children: (state: ToolbarState) => React.ReactNode;
+  children?: (state: ToolbarState) => React.ReactNode;
   editor: TiptapEditor;
+  onChange?: (state: ToolbarState) => void;
 }) {
   const state = useEditorState({
     editor,
@@ -1381,15 +1580,14 @@ function ComposerToolbarState({
       strike: Boolean(currentEditor?.isActive('strike')),
       table: Boolean(currentEditor?.isActive('table')),
       taskList: Boolean(currentEditor?.isActive('taskList')),
-      underline: Boolean(currentEditor?.isActive('underline'))
+      underline: Boolean(currentEditor?.isActive('underline')),
+      link: Boolean(currentEditor?.isActive('link'))
     })
   });
-  return state ? children(state) : null;
-}
-
-export function tableMenuViewportPadding() {
-  const toolbarBottom = document.querySelector<HTMLElement>('.toolbar-stack')?.getBoundingClientRect().bottom || 0;
-  return { top: Math.ceil(toolbarBottom) + 8, right: 8, bottom: 8, left: 8 };
+  useEffect(() => {
+    if (state) onChange?.(state);
+  }, [onChange, state]);
+  return state ? children?.(state) : null;
 }
 
 /*
@@ -1441,8 +1639,8 @@ function TableContextMenu({ editor }: { editor: TiptapEditor }) {
         strategy: 'fixed',
         placement: 'top-start',
         offset: 6,
-        flip: () => ({ fallbackPlacements: ['bottom-start'], padding: tableMenuViewportPadding() }),
-        shift: () => ({ padding: tableMenuViewportPadding() })
+        flip: { fallbackPlacements: ['bottom-start'], padding: 8 },
+        shift: { padding: 8 }
       }}
       pluginKey="composerTableMenu"
       resizeDelay={60}
@@ -1484,7 +1682,7 @@ function TableContextMenu({ editor }: { editor: TiptapEditor }) {
           删除当前行
         </EditorDropdownItem>
       </EditorDropdown>
-      <EditorSeparator decorative />
+      <EditorSeparator />
       <EditorDropdown
         label="列操作"
         onCloseAutoFocus={focusEditor}
@@ -1519,7 +1717,7 @@ function TableContextMenu({ editor }: { editor: TiptapEditor }) {
           删除当前列
         </EditorDropdownItem>
       </EditorDropdown>
-      <EditorSeparator decorative />
+      <EditorSeparator />
       <EditorDropdown
         label="列对齐"
         onCloseAutoFocus={focusEditor}
@@ -1550,7 +1748,7 @@ function TableContextMenu({ editor }: { editor: TiptapEditor }) {
           ))}
         </EditorDropdownRadioGroup>
       </EditorDropdown>
-      <EditorSeparator decorative />
+      <EditorSeparator />
       <EditorButton
         aria-label="删除整个表格"
         className="table-delete"
@@ -1579,6 +1777,7 @@ function ExpressionButton({
   onInsert: () => void;
   children?: React.ReactNode;
 }) {
+  const [requested, setRequested] = useState(visible);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
   const current = useRef({ attempt: 0, failed: false });
@@ -1588,6 +1787,7 @@ function ExpressionButton({
     setStatus('loading');
   }, []);
   useEffect(() => {
+    if (visible) setRequested(true);
     if (visible && current.current.failed) retry();
   }, [retry, visible]);
   const settle = (next: 'loaded' | 'failed') => {
@@ -1610,7 +1810,7 @@ function ExpressionButton({
         alt=""
         decoding="async"
         loading="lazy"
-        src={src}
+        src={requested ? src : undefined}
         onLoad={() => settle('loaded')}
         onError={() => settle('failed')}
       />
@@ -1619,16 +1819,22 @@ function ExpressionButton({
   );
 }
 
-function BuilderPanel({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
+function BuilderPanel({
+  actions,
+  children,
+  expanded = false,
+  onClose,
+  title
+}: {
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  expanded?: boolean;
+  onClose: () => void;
+  title: string;
+}) {
   return (
-    <div className="builder-backdrop" role="presentation" onMouseDown={onClose}>
-      <EditorCard
-        aria-label={title}
-        aria-modal="true"
-        className="builder-panel"
-        role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+    <div className="builder-backdrop" data-expanded={expanded || undefined} role="presentation">
+      <EditorCard aria-label={title} aria-modal={expanded || undefined} className="builder-panel" role="dialog">
         <EditorCardHeader className="builder-header">
           <strong>{title}</strong>
           <EditorButton aria-label="关闭" iconOnly type="button" onClick={onClose}>
@@ -1636,12 +1842,21 @@ function BuilderPanel({ children, onClose, title }: { children: React.ReactNode;
           </EditorButton>
         </EditorCardHeader>
         <EditorCardBody className="builder-body">{children}</EditorCardBody>
+        {actions ? <div className="builder-actions">{actions}</div> : null}
       </EditorCard>
     </div>
   );
 }
 
-function PollOptionFields({ options, onChange }: { options: string[]; onChange: (options: string[]) => void }) {
+function PollOptionFields({
+  options,
+  maxOptions,
+  onChange
+}: {
+  options: string[];
+  maxOptions?: number;
+  onChange: (options: string[]) => void;
+}) {
   return (
     <fieldset className="poll-options">
       <legend>选项</legend>
@@ -1674,6 +1889,7 @@ function PollOptionFields({ options, onChange }: { options: string[]; onChange: 
       </div>
       <EditorButton
         aria-label="添加投票选项"
+        disabled={maxOptions !== undefined && options.length >= maxOptions}
         className="poll-option-add"
         type="button"
         onClick={() => onChange([...options, ''])}
@@ -1817,22 +2033,60 @@ export function ComposerEditorRuntime() {
   const configRef = useRef<RuntimeConfig | null>(null);
   const maskedMarkdownRef = useRef<{ markdown: string; masked: string } | null>(null);
   const [mode, setMode] = useState<ComposerMode>('rich');
+  const topicEditor = config?.intentKind === 'create-topic' || config?.intentKind === 'edit-topic';
   const modeRef = useRef<ComposerMode>('rich');
   const revisionRef = useRef(0);
   const initializedRef = useRef(false);
   const documentGenerationRef = useRef(0);
+  const panelRequestRef = useRef<object | null>(null);
   const suppressChangesRef = useRef(false);
   const sourceProgrammaticRef = useRef(false);
   const sourceHostRef = useRef<HTMLDivElement | null>(null);
   const sourceViewRef = useRef<EditorView | null>(null);
-  const sourceUploadRangeRef = useRef<{ from: number; to: number } | null>(null);
   const imageBusyRef = useRef(false);
+  const imageKeyboardPolicyRef = useRef<{ id: string; element: HTMLElement; policy: string | null } | null>(null);
+  const uploadSequenceRef = useRef(0);
   const autosaveTimerRef = useRef<number | null>(null);
   const stateTimerRef = useRef<number | null>(null);
   const scheduleSignalsRef = useRef<() => void>(() => undefined);
+  const toolbarActionRef = useRef<(action: ComposerToolbarAction) => void>(() => undefined);
   const [builder, setBuilder] = useState<ComposerBuilder>(null);
+  const [panelPending, setPanelPending] = useState(false);
+  const closeBuilder = useCallback(() => {
+    panelRequestRef.current = null;
+    setPanelPending(false);
+    setBuilder(null);
+  }, []);
+  const expandedPanel =
+    builder === 'link' || builder === 'nodeseek-poll' || builder === 'linuxdo-poll' || builder === 'stardust';
+  const [expressionsOpened, setExpressionsOpened] = useState(false);
+  useEffect(() => {
+    postMessage('PANEL_CHANGED', {
+      documentEpoch: config?.documentEpoch ?? 0,
+      open: builder !== null || panelPending,
+      ...(expandedPanel ? { expanded: true } : {})
+    });
+  }, [builder, config?.documentEpoch, expandedPanel, panelPending]);
+  useEffect(() => {
+    if (!topicEditor) return;
+    const closePanel = (event: FocusEvent) => {
+      if ((event.target as HTMLElement)?.closest('.ProseMirror, .cm-content')) closeBuilder();
+    };
+    document.addEventListener('focusin', closePanel);
+    return () => document.removeEventListener('focusin', closePanel);
+  }, [closeBuilder, topicEditor]);
   const [builderError, setBuilderError] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
+  const publishToolbarState = useCallback(
+    (state: ToolbarState) => {
+      if (!initializedRef.current || !config) return;
+      postMessage('TOOLBAR_STATE', {
+        documentEpoch: config.documentEpoch ?? 0,
+        state: { ...(mode === 'rich' ? state : EMPTY_TOOLBAR_STATE), imageBusy, builder, mode }
+      });
+    },
+    [builder, config, imageBusy, mode]
+  );
   const [pollTitle, setPollTitle] = useState('');
   const [pollOptions, setPollOptions] = useState(['选项一', '选项二']);
   const [pollMultiple, setPollMultiple] = useState(false);
@@ -1860,8 +2114,9 @@ export function ComposerEditorRuntime() {
   const visibleEmoji = filteredEmoji.slice(0, emojiLimit);
   const loadMoreEmoji = () => setEmojiLimit((limit) => Math.min(limit + 120, filteredEmoji.length));
 
+  const extensions = useMemo(() => composerEditorExtensions(() => configRef.current?.site), []);
   const editor = useEditor({
-    extensions: composerEditorExtensions,
+    extensions,
     content: '',
     contentType: 'markdown',
     injectNonce: 'wz-composer-runtime',
@@ -1881,12 +2136,18 @@ export function ComposerEditorRuntime() {
         }
         return false;
       },
-      attributes: {
+      attributes: () => ({
         class: 'ProseMirror composer-document',
-        'aria-label': '回复正文富文本编辑器',
-        'data-placeholder': '输入回复内容…',
+        'aria-label':
+          configRef.current?.intentKind === 'create-topic' || configRef.current?.intentKind === 'edit-topic'
+            ? '主题正文富文本编辑器'
+            : '回复正文富文本编辑器',
+        'data-placeholder':
+          configRef.current?.intentKind === 'create-topic' || configRef.current?.intentKind === 'edit-topic'
+            ? '输入正文内容…'
+            : '输入回复内容…',
         spellcheck: 'true'
-      }
+      })
     },
     onCreate: ({ editor: currentEditor }) => syncEditorEmptyState(currentEditor),
     onUpdate: ({ editor: currentEditor }) => {
@@ -1967,8 +2228,116 @@ export function ComposerEditorRuntime() {
     sourceProgrammaticRef.current = false;
   }, []);
 
+  const restoreImageKeyboardPolicy = useCallback((id?: string) => {
+    const owner = imageKeyboardPolicyRef.current;
+    if (!owner || (id !== undefined && owner.id !== id)) return;
+    imageKeyboardPolicyRef.current = null;
+    const source = sourceViewRef.current;
+    if (source?.contentDOM === owner.element) source.dispatch({ effects: sourceKeyboardPolicyEffect.of(owner.policy) });
+    else if (owner.policy === null) owner.element.removeAttribute('virtualkeyboardpolicy');
+    else owner.element.setAttribute('virtualkeyboardpolicy', owner.policy);
+  }, []);
+
+  const beginImageUpload = useCallback(
+    (id: string, visible = true) => {
+      if (configRef.current?.readOnly) return false;
+      const editor = editorRef.current;
+      const source = sourceViewRef.current;
+      const pending =
+        modeRef.current === 'rich' && editor
+          ? imageUploadKey.getState(editor.state)
+          : source?.state.field(sourceUploadField);
+      if (imageBusyRef.current && (!visible || pending?.id !== id || pending.visible)) return false;
+      const input = modeRef.current === 'rich' ? editor?.view.dom : source?.contentDOM;
+      if (!input) return false;
+      if (!visible) {
+        // Chromium's gesture tail may show IME for an input that stayed focused
+        // after Back. Hold its current keyboard state until native handoff ends.
+        imageKeyboardPolicyRef.current = { id, element: input, policy: input.getAttribute('virtualkeyboardpolicy') };
+        if (modeRef.current === 'rich') input.setAttribute('virtualkeyboardpolicy', 'manual');
+      }
+      try {
+        if (visible) {
+          input.blur();
+          restoreImageKeyboardPolicy(id);
+        }
+        // The hidden anchor maps through IME edits without content/selection writes.
+        // Only the host's acknowledged activation may blur and render its widget.
+        if (modeRef.current === 'rich' && editor) {
+          const { from, to } = pending?.id === id ? pending : editor.state.selection;
+          editor.view.dispatch(editor.state.tr.setMeta(imageUploadKey, { id, from, to, visible }));
+        } else if (source) {
+          const { from, to } = pending?.id === id ? pending : source.state.selection.main;
+          source.dispatch({
+            effects: [
+              sourceUploadEffect.of({ id, from, to, visible }),
+              ...(!visible ? [sourceKeyboardPolicyEffect.of('manual')] : [])
+            ]
+          });
+        }
+      } catch (error) {
+        restoreImageKeyboardPolicy(id);
+        throw error;
+      }
+      imageBusyRef.current = true;
+      setImageBusy(true);
+      return true;
+    },
+    [editorRef, restoreImageKeyboardPolicy]
+  );
+
+  const finishImageUpload = useCallback(
+    (id: string, markdown?: string) => {
+      if (markdown && configRef.current?.readOnly) return false;
+      const editor = editorRef.current;
+      const source = sourceViewRef.current;
+      const pending =
+        modeRef.current === 'rich' && editor
+          ? imageUploadKey.getState(editor.state)
+          : source?.state.field(sourceUploadField);
+      if (pending?.id !== id) return false;
+      restoreImageKeyboardPolicy(id);
+      // Release the UI even if parsing or inserting a confirmed upload throws.
+      imageBusyRef.current = false;
+      setImageBusy(false);
+      if (modeRef.current === 'rich' && editor) {
+        if (markdown) {
+          try {
+            editor
+              .chain()
+              .insertContentAt({ from: pending.from, to: pending.to }, markdown, { contentType: 'markdown' })
+              .command(({ tr }) => {
+                tr.setMeta(imageUploadKey, null);
+                return true;
+              })
+              .run();
+          } catch (error) {
+            editor.view.dispatch(editor.state.tr.setMeta(imageUploadKey, null));
+            throw error;
+          }
+          ensureTextSelectionAfterBlock(editor);
+        } else editor.view.dispatch(editor.state.tr.setMeta(imageUploadKey, null));
+      } else if (source) {
+        source.dispatch({
+          effects: sourceUploadEffect.of(null),
+          ...(markdown
+            ? {
+                changes: { from: pending.from, to: pending.to, insert: markdown },
+                selection: { anchor: pending.from + markdown.length }
+              }
+            : {})
+        });
+      } else return false;
+      return true;
+    },
+    [editorRef, restoreImageKeyboardPolicy]
+  );
+
   const changeMode = useCallback(
     (nextMode: ComposerMode) => {
+      panelRequestRef.current = null;
+      setPanelPending(false);
+      if (configRef.current?.readOnly) return;
       if (nextMode === modeRef.current) {
         postSnapshot(undefined, nextMode);
         return;
@@ -2024,12 +2393,17 @@ export function ComposerEditorRuntime() {
 
   const cancelHostActions = useCallback(() => {
     documentGenerationRef.current += 1;
-    sourceUploadRangeRef.current = null;
+    panelRequestRef.current = null;
+    setPanelPending(false);
+    restoreImageKeyboardPolicy();
+    const editor = editorRef.current;
+    if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(imageUploadKey, null));
+    sourceViewRef.current?.dispatch({ effects: sourceUploadEffect.of(null) });
     imageBusyRef.current = false;
     linuxPollCapabilitiesRequestRef.current = null;
     hostActionResolvers.forEach((resolver) => resolver.reject(new Error('编辑文档已关闭')));
     hostActionResolvers.clear();
-  }, []);
+  }, [editorRef, restoreImageKeyboardPolicy]);
 
   const applyInit = useCallback(
     (next: RuntimeConfig) => {
@@ -2037,7 +2411,8 @@ export function ComposerEditorRuntime() {
       maskedMarkdownRef.current = null;
       configRef.current = next;
       setConfig(next);
-      setBuilder(null);
+      closeBuilder();
+      setExpressionsOpened(false);
       setBuilderError('');
       setImageBusy(false);
       setTemplates([]);
@@ -2046,7 +2421,6 @@ export function ComposerEditorRuntime() {
       setLinuxPollCapabilities(null);
       setLinuxPollCapabilitiesBusy(false);
       setLinuxPollCapabilitiesError('');
-      linuxPollCapabilitiesRequestRef.current = null;
       applyTheme(next.theme);
       pendingPolls.clear();
       next.pendingNodeSeekPolls.forEach((poll) => pendingPolls.set(poll.localId, poll));
@@ -2055,6 +2429,7 @@ export function ComposerEditorRuntime() {
       // Identical content can reuse NodeViews with requests from the previous document.
       if (initializedRef.current) replaceRichMarkdownDocument(editorRef.current, '');
       replaceRichMarkdownDocument(editorRef.current, next.markdown);
+      editorRef.current?.setEditable(!next.readOnly);
       setSource(next.markdown);
       suppressChangesRef.current = false;
       revisionRef.current = 0;
@@ -2064,7 +2439,7 @@ export function ComposerEditorRuntime() {
       postMessage('READY', { documentEpoch: next.documentEpoch ?? 0, revision: 0 });
       postState();
     },
-    [cancelHostActions, editorRef, postState, setSource]
+    [cancelHostActions, closeBuilder, editorRef, postState, setSource]
   );
 
   const handleHostMessage = useCallback(
@@ -2082,6 +2457,32 @@ export function ComposerEditorRuntime() {
         changeMode(message.payload.mode);
         return;
       }
+      if (message.type === 'SET_READ_ONLY') {
+        const current = configRef.current;
+        if (!current) return;
+        const readOnly = message.payload.readOnly;
+        if (readOnly && !current.readOnly && modeRef.current === 'source') {
+          // Preview the source without changing its mode or replacing its undo history.
+          suppressChangesRef.current = true;
+          try {
+            replaceRichMarkdownDocument(editorRef.current, sourceViewRef.current?.state.doc.toString() || '');
+          } catch {
+            runtimeError('markdown-parse-failed', '预览无法解析，已保留源码', revisionRef.current);
+          } finally {
+            suppressChangesRef.current = false;
+          }
+        }
+        const next = { ...current, readOnly };
+        configRef.current = next;
+        setConfig(next);
+        editorRef.current?.setEditable(!readOnly, false);
+        if (readOnly) {
+          closeBuilder();
+          editorRef.current?.commands.blur();
+          sourceViewRef.current?.contentDOM.blur();
+        }
+        return;
+      }
       if (message.type === 'REQUEST_SNAPSHOT') {
         postSnapshot(message.payload.requestId);
         return;
@@ -2096,6 +2497,13 @@ export function ComposerEditorRuntime() {
         return;
       }
       const command = message.payload;
+      if (command.name === 'toolbar-action') {
+        const current = configRef.current;
+        if (!current || current.readOnly || command.documentEpoch !== (current.documentEpoch ?? 0)) return;
+        toolbarActionRef.current(command.action);
+        return;
+      }
+      if (configRef.current?.readOnly && ['insert-markdown', 'undo', 'redo', 'focus'].includes(command.name)) return;
       if (command.name === 'set-discourse-emoji') {
         const currentConfig = configRef.current;
         if (!currentConfig || currentConfig.site !== 'linuxdo') return;
@@ -2109,10 +2517,23 @@ export function ComposerEditorRuntime() {
           const view = sourceViewRef.current;
           if (view) view.dispatch(view.state.replaceSelection(command.markdown));
         }
+      } else if (command.name === 'begin-image-upload' || command.name === 'finish-image-upload') {
+        const accepted =
+          command.documentEpoch === (configRef.current?.documentEpoch ?? 0) &&
+          (command.name === 'begin-image-upload'
+            ? beginImageUpload(command.uploadId)
+            : finishImageUpload(command.uploadId, command.markdown));
+        postMessage('UPLOAD_COMMAND_RESULT', {
+          documentEpoch: command.documentEpoch,
+          uploadId: command.uploadId,
+          command: command.name,
+          accepted
+        });
       } else if (command.name === 'focus') {
         if (modeRef.current === 'rich') editorRef.current?.commands.focus();
         else sourceViewRef.current?.focus();
       } else if (command.name === 'blur') {
+        closeBuilder();
         editorRef.current?.commands.blur();
         sourceViewRef.current?.contentDOM.blur();
       } else if (command.name === 'undo') {
@@ -2128,7 +2549,16 @@ export function ComposerEditorRuntime() {
         else resolver?.resolve(command.result);
       }
     },
-    [applyInit, cancelHostActions, changeMode, editorRef, postSnapshot]
+    [
+      applyInit,
+      beginImageUpload,
+      cancelHostActions,
+      changeMode,
+      closeBuilder,
+      editorRef,
+      finishImageUpload,
+      postSnapshot
+    ]
   );
 
   useEffect(() => {
@@ -2164,11 +2594,14 @@ export function ComposerEditorRuntime() {
         extensions: [
           markdownLanguage(),
           history(),
+          sourceUploadField,
+          sourceKeyboardPolicyField,
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           EditorView.lineWrapping,
           EditorView.cspNonce.of('wz-composer-runtime'),
           EditorState.changeFilter.of((transaction) => {
             if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
+            if (configRef.current?.readOnly) return false;
             const source = transaction.startState.doc.toString();
             const ranges = [...nodeSeekPendingPollTokenRanges(source), ...nodeSeekRemotePollMarkerRanges(source)];
             let allowed = true;
@@ -2183,13 +2616,6 @@ export function ComposerEditorRuntime() {
           }),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged || sourceProgrammaticRef.current) return;
-            const uploadRange = sourceUploadRangeRef.current;
-            if (uploadRange) {
-              const { from, to } = uploadRange;
-              const empty = from === to;
-              uploadRange.from = update.changes.mapPos(from, empty ? 1 : -1);
-              uploadRange.to = update.changes.mapPos(to, 1);
-            }
             revisionRef.current += 1;
             scheduleSignalsRef.current();
           })
@@ -2203,6 +2629,20 @@ export function ComposerEditorRuntime() {
     };
   }, []);
 
+  useEffect(() => {
+    const initialDocument = document.getElementById('composer-initial-document');
+    if (!editor || !sourceViewRef.current || !initialDocument) return;
+    const serialized = initialDocument.textContent;
+    initialDocument.remove();
+    try {
+      const message = composerHostMessageSchema.parse(JSON.parse(serialized || 'null'));
+      if (message.type !== 'INIT') throw new Error('Expected initial document');
+      applyInit(message.payload);
+    } catch {
+      runtimeError('bridge-invalid-initial-document', '编辑器收到无效初始草稿', revisionRef.current);
+    }
+  }, [applyInit, editor]);
+
   useEffect(
     () => () => {
       cancelHostActions();
@@ -2213,10 +2653,61 @@ export function ComposerEditorRuntime() {
   );
 
   const showBuilder = (next: Exclude<ComposerBuilder, null>) => {
-    setBuilderError('');
-    editorRef.current?.commands.blur();
-    sourceViewRef.current?.contentDOM.blur();
-    setBuilder(next);
+    const current = configRef.current;
+    if (!current || current.readOnly || panelRequestRef.current) return;
+    const open = () => {
+      if (next === 'emoji' || next === 'stickers') setExpressionsOpened(true);
+      setBuilderError('');
+      editorRef.current?.commands.blur();
+      sourceViewRef.current?.contentDOM.blur();
+      setBuilder(next);
+    };
+    const request = {};
+    const generation = documentGenerationRef.current;
+    panelRequestRef.current = request;
+    setPanelPending(true);
+    // Keep Topic metadata folded before the host starts hiding the keyboard.
+    postMessage('PANEL_CHANGED', {
+      documentEpoch: current.documentEpoch ?? 0,
+      open: true,
+      ...(expandedPanel ? { expanded: true } : {})
+    });
+    const isCurrent = () => panelRequestRef.current === request && documentGenerationRef.current === generation;
+    void requestHostAction('prepare-panel', { documentEpoch: current.documentEpoch ?? 0 }).then(
+      () => {
+        if (!isCurrent()) return;
+        panelRequestRef.current = null;
+        setPanelPending(false);
+        if (initializedRef.current && !configRef.current?.readOnly) open();
+      },
+      (error: unknown) => {
+        if (!isCurrent()) return;
+        panelRequestRef.current = null;
+        setPanelPending(false);
+        runtimeError(
+          'panel-open-failed',
+          error instanceof Error ? error.message : '无法打开编辑工具',
+          revisionRef.current
+        );
+      }
+    );
+  };
+
+  const returnToEditor = () => {
+    postMessage('RETURN_TO_EDITOR', { documentEpoch: configRef.current?.documentEpoch ?? 0 });
+    closeBuilder();
+    if (modeRef.current === 'rich') editorRef.current?.commands.focus();
+    else sourceViewRef.current?.focus();
+  };
+  const previewTopic = () => {
+    closeBuilder();
+    void requestHostAction('preview-topic').catch((error) =>
+      runtimeError(
+        'topic-action-failed',
+        error instanceof Error ? error.message : '无法打开编辑选项',
+        revisionRef.current
+      )
+    );
   };
 
   const insertAtSelection = (markdown: string) => {
@@ -2244,7 +2735,7 @@ export function ComposerEditorRuntime() {
         })
         .run();
     }
-    setBuilder(null);
+    closeBuilder();
   };
 
   const transformSourceSelection = (transform: (selected: string) => string, block = false) => {
@@ -2263,7 +2754,7 @@ export function ComposerEditorRuntime() {
       selection: { anchor: from + replacement.length },
       scrollIntoView: true
     });
-    view.focus();
+    if (builder !== 'format') view.focus();
   };
 
   const insertSourceBlock = (markdown: string) => transformSourceSelection(() => markdown, true);
@@ -2292,7 +2783,8 @@ export function ComposerEditorRuntime() {
     }
     const current = editorRef.current;
     if (!current) return;
-    const chain = current.chain().focus();
+    const chain = current.chain();
+    if (builder !== 'format') chain.focus();
     if (action === 'bold') chain.toggleBold().run();
     else if (action === 'italic') chain.toggleItalic().run();
     else if (action === 'quote') chain.toggleBlockquote().run();
@@ -2313,8 +2805,10 @@ export function ComposerEditorRuntime() {
       return;
     }
     if (!editorRef.current) return;
-    if (level === 0) editorRef.current.chain().focus().setParagraph().run();
-    else editorRef.current.chain().focus().setHeading({ level }).run();
+    const chain = editorRef.current.chain();
+    if (builder !== 'format') chain.focus();
+    if (level === 0) chain.setParagraph().run();
+    else chain.setHeading({ level }).run();
   };
 
   const applyLink = (href: string) => {
@@ -2332,42 +2826,20 @@ export function ComposerEditorRuntime() {
     if (imageBusyRef.current) return;
     const documentGeneration = documentGenerationRef.current;
     const isCurrentDocument = () => documentGenerationRef.current === documentGeneration;
-    // Hand off focus before the native picker opens. Completing a background
-    // upload changes the document/selection, not the user's keyboard intent.
-    editorRef.current?.view.dom.blur();
-    sourceViewRef.current?.contentDOM.blur();
-    imageBusyRef.current = true;
-    setImageBusy(true);
+    const uploadId = `reply-upload-${documentGeneration}-${++uploadSequenceRef.current}`;
+    if (!beginImageUpload(uploadId, false)) return;
     try {
-      if (modeRef.current === 'rich' && editorRef.current) {
-        await uploadImageAtSelection(editorRef.current, isCurrentDocument);
-        return;
-      }
-      const view = sourceViewRef.current;
-      if (!view) return;
-      const { from, to } = view.state.selection.main;
-      const uploadRange = { from, to };
-      sourceUploadRangeRef.current = uploadRange;
-      const result = await requestHostAction('upload-image');
+      const result = await requestHostAction('upload-image', {
+        uploadId,
+        documentEpoch: configRef.current?.documentEpoch ?? 0
+      });
       const markdown = typeof result === 'string' ? result : (result as { markdown?: string })?.markdown;
-      if (
-        markdown &&
-        isCurrentDocument() &&
-        sourceViewRef.current === view &&
-        sourceUploadRangeRef.current === uploadRange
-      ) {
-        view.dispatch({
-          changes: { from: uploadRange.from, to: uploadRange.to, insert: markdown },
-          selection: { anchor: uploadRange.from + markdown.length }
-        });
-      }
+      if (isCurrentDocument()) finishImageUpload(uploadId, markdown);
     } catch (error) {
       if (isCurrentDocument()) window.alert(error instanceof Error ? error.message : '图片上传失败');
     } finally {
       if (isCurrentDocument()) {
-        sourceUploadRangeRef.current = null;
-        imageBusyRef.current = false;
-        setImageBusy(false);
+        finishImageUpload(uploadId);
       }
     }
   };
@@ -2399,7 +2871,8 @@ export function ComposerEditorRuntime() {
         transformSourceSelection((selected) => `\`\`\`\n${selected || '代码'}\n\`\`\``, true);
       else if (action === 'divider') insertSourceBlock('---');
     } else if (current) {
-      const chain = current.chain().focus();
+      const chain = current.chain();
+      if (builder !== 'format') chain.focus();
       if (action === 'strike') chain.toggleStrike().run();
       else if (action === 'underline') chain.toggleUnderline().run();
       else if (action === 'ordered-list') chain.toggleOrderedList().run();
@@ -2450,7 +2923,7 @@ export function ComposerEditorRuntime() {
       const attrs = { ...poll, options: JSON.stringify(poll.options) };
       if (modeRef.current === 'source') insertSourceBlock(nodeSeekPendingPollToken(poll.localId));
       else if (editor) insertBlockContent(editor, 'pendingNodeSeekPoll', attrs);
-      setBuilder(null);
+      closeBuilder();
     } catch (error) {
       setBuilderError(error instanceof Error ? error.message : '投票内容不正确');
     }
@@ -2479,13 +2952,13 @@ export function ComposerEditorRuntime() {
       const attrs = { ...receive, modified: true, rawMarker: marker };
       if (modeRef.current === 'source') insertSourceBlock(marker);
       else if (editor) insertBlockContent(editor, 'nodeSeekStardust', attrs);
-      setBuilder(null);
+      closeBuilder();
     } catch (error) {
       setBuilderError(error instanceof Error ? error.message : '收款卡片不正确');
     }
   };
 
-  const loadLinuxDoPollCapabilities = () => {
+  const loadLinuxDoPollCapabilities = (newPoll = false) => {
     if (linuxPollCapabilities || linuxPollCapabilitiesRequestRef.current) return;
     setLinuxPollCapabilitiesBusy(true);
     setLinuxPollCapabilitiesError('');
@@ -2497,6 +2970,8 @@ export function ComposerEditorRuntime() {
         const parsed = linuxDoPollCapabilitiesSchema.safeParse(result);
         if (!parsed.success) throw new Error('原站投票配置格式不正确');
         setLinuxPollCapabilities(parsed.data);
+        if (newPoll && parsed.data.defaultPublic !== undefined)
+          setLinuxPoll((current) => ({ ...current, publicPoll: parsed.data.defaultPublic! }));
       })
       .catch((error) => {
         if (linuxPollCapabilitiesRequestRef.current !== request) return;
@@ -2512,7 +2987,7 @@ export function ComposerEditorRuntime() {
   const openLinuxPoll = () => {
     const selected = modeRef.current === 'rich' ? currentAtom(editor, 'forumPrivateBlock') : null;
     const parsed = selected?.attrs.kind === 'linuxdo-poll' ? parseLinuxDoPoll(String(selected.attrs.raw || '')) : null;
-    setLinuxPoll(parsed || emptyLinuxDoPoll());
+    setLinuxPoll(parsed || { ...emptyLinuxDoPoll(), publicPoll: linuxPollCapabilities?.defaultPublic ?? false });
     setLinuxPollAdvanced(
       Boolean(
         parsed &&
@@ -2526,15 +3001,15 @@ export function ComposerEditorRuntime() {
       )
     );
     showBuilder('linuxdo-poll');
-    loadLinuxDoPollCapabilities();
+    loadLinuxDoPollCapabilities(!parsed);
   };
 
   const saveLinuxPoll = () => {
     try {
-      const raw = serializeLinuxDoPoll(linuxPoll);
+      const raw = serializeLinuxDoPoll(linuxPoll, linuxPollCapabilities);
       if (modeRef.current === 'source') insertAtSelection(raw);
       else if (editor) insertBlockContent(editor, 'forumPrivateBlock', { kind: 'linuxdo-poll', raw });
-      setBuilder(null);
+      closeBuilder();
     } catch (error) {
       setBuilderError(error instanceof Error ? error.message : '投票内容不正确');
     }
@@ -2557,7 +3032,7 @@ export function ComposerEditorRuntime() {
     const value = values[kind];
     if (kind === 'hardbreak' && modeRef.current === 'rich') editor?.chain().focus().setHardBreak().run();
     else if (value) insertAtSelection(value);
-    setBuilder(null);
+    closeBuilder();
   };
 
   const loadTemplates = async () => {
@@ -2584,7 +3059,7 @@ export function ComposerEditorRuntime() {
       return;
     }
     insertAtSelection(template.content);
-    setBuilder(null);
+    closeBuilder();
     const documentGeneration = documentGenerationRef.current;
     void requestHostAction('use-linuxdo-template', { id: template.id }).catch(() => {
       if (documentGenerationRef.current !== documentGeneration) return;
@@ -2599,10 +3074,79 @@ export function ComposerEditorRuntime() {
     }
     const current = editorRef.current;
     if (!current) return;
-    if (!current.isActive('table'))
-      current.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-    current.commands.focus();
+    const chain = current.chain();
+    if (builder !== 'format') chain.focus();
+    if (!current.isActive('table')) chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
   };
+
+  useCommitRefValue(toolbarActionRef, (action) => {
+    const current = configRef.current;
+    if (!initializedRef.current || !current || current.readOnly) return;
+    const isTopic = current.intentKind === 'create-topic' || current.intentKind === 'edit-topic';
+    switch (action) {
+      case 'emoji':
+        showBuilder(current.site === 'linuxdo' ? 'emoji' : 'stickers');
+        break;
+      case 'upload-image':
+        void uploadImage();
+        break;
+      case 'bold':
+      case 'italic':
+      case 'quote':
+      case 'code':
+      case 'list':
+        applyQuickFormat(action);
+        break;
+      case 'heading-0':
+      case 'heading-1':
+      case 'heading-2':
+      case 'heading-3':
+      case 'heading-4':
+      case 'heading-5':
+      case 'heading-6':
+        setHeading(Number(action.slice(-1)) as 0 | 1 | 2 | 3 | 4 | 5 | 6);
+        break;
+      case 'strike':
+      case 'ordered-list':
+      case 'task-list':
+      case 'code-block':
+      case 'divider':
+        runMoreAction(action);
+        break;
+      case 'underline':
+        if (current.site === 'linuxdo') runMoreAction(action);
+        break;
+      case 'link':
+        showBuilder('link');
+        break;
+      case 'table':
+        insertTable();
+        break;
+      case 'poll':
+        if (current.site === 'linuxdo') openLinuxPoll();
+        else if (current.intentKind !== 'private-message') openNodeSeekPoll();
+        break;
+      case 'stardust':
+        if (current.site === 'nodeseek' && current.intentKind !== 'private-message') openStardust();
+        break;
+      case 'private':
+        if (current.site === 'linuxdo') showBuilder('private');
+        break;
+      case 'templates':
+        if (current.site === 'linuxdo') {
+          showBuilder('templates');
+          void loadTemplates();
+        }
+        break;
+      case 'format':
+      case 'more':
+        if (isTopic) showBuilder(action);
+        break;
+      case 'focus-editor':
+        returnToEditor();
+        break;
+    }
+  });
 
   const toolbar = (() => {
     if (!editor || !config) return null;
@@ -2612,25 +3156,7 @@ export function ComposerEditorRuntime() {
         {(toolbarState) => (
           <div className="toolbar-stack">
             <div className="toolbar-shell">
-              <EditorToolbar aria-label="回复常用工具栏" className="toolbar toolbar-scroll">
-                {config.site === 'nodeseek' ? (
-                  <EditorButton aria-label="表情" iconOnly type="button" onClick={() => showBuilder('stickers')}>
-                    <EditorIcon name="smile" />
-                  </EditorButton>
-                ) : (
-                  <EditorButton aria-label="表情" iconOnly type="button" onClick={() => showBuilder('emoji')}>
-                    <EditorIcon name="smile" />
-                  </EditorButton>
-                )}
-                <EditorButton
-                  aria-label={imageBusy ? '上传中…' : '图片'}
-                  disabled={imageBusy}
-                  iconOnly
-                  type="button"
-                  onClick={() => void uploadImage()}
-                >
-                  <EditorIcon name="image" />
-                </EditorButton>
+              <EditorToolbar aria-label="格式与插入选项" className="toolbar toolbar-scroll">
                 <EditorButton
                   active={rich && toolbarState.bold}
                   aria-label="粗体"
@@ -2651,13 +3177,9 @@ export function ComposerEditorRuntime() {
                 </EditorButton>
                 <EditorDropdown
                   label="段落与标题选项"
-                  onCloseAutoFocus={() => {
-                    if (modeRef.current === 'rich') editorRef.current?.commands.focus();
-                    else sourceViewRef.current?.focus();
-                  }}
                   trigger={
                     <EditorButton aria-label="段落与标题" aria-haspopup="menu" className="block-type" type="button">
-                      {rich && toolbarState.heading ? `标题 ${toolbarState.heading}` : '正文'}
+                      <EditorIcon name="paragraph" />
                       <EditorIcon name="chevronDown" />
                     </EditorButton>
                   }
@@ -2698,28 +3220,15 @@ export function ComposerEditorRuntime() {
                     <EditorIcon name="underline" />
                   </EditorButton>
                 ) : null}
-                <EditorLinkPopover
-                  getInitialHref={() =>
-                    modeRef.current === 'rich'
-                      ? String(editorRef.current?.getAttributes('link').href || 'https://')
-                      : 'https://'
-                  }
-                  onApply={applyLink}
-                  onCloseAutoFocus={() => {
-                    if (modeRef.current === 'rich') editorRef.current?.commands.focus();
-                    else sourceViewRef.current?.focus();
-                  }}
-                  onRemove={
-                    rich && editor.isActive('link')
-                      ? () => editor.chain().focus().extendMarkRange('link').unsetLink().run()
-                      : undefined
-                  }
-                  trigger={
-                    <EditorButton aria-label="链接" iconOnly type="button">
-                      <EditorIcon name="link" />
-                    </EditorButton>
-                  }
-                />
+                <EditorButton
+                  active={rich && toolbarState.link}
+                  aria-label="链接"
+                  iconOnly
+                  type="button"
+                  onClick={() => showBuilder('link')}
+                >
+                  <EditorIcon name="link" />
+                </EditorButton>
                 <EditorButton
                   active={rich && toolbarState.blockquote}
                   aria-label="引用"
@@ -2740,10 +3249,6 @@ export function ComposerEditorRuntime() {
                 </EditorButton>
                 <EditorDropdown
                   label="列表选项"
-                  onCloseAutoFocus={() => {
-                    if (modeRef.current === 'rich') editorRef.current?.commands.focus();
-                    else sourceViewRef.current?.focus();
-                  }}
                   trigger={
                     <EditorButton
                       active={
@@ -2804,41 +3309,43 @@ export function ComposerEditorRuntime() {
                 >
                   <EditorIcon name="table" />
                 </EditorButton>
-                {config.site === 'nodeseek' && config.intentKind !== 'private-message' ? (
-                  <>
-                    <EditorButton aria-label="投票" type="button" onClick={openNodeSeekPoll}>
-                      <EditorIcon name="poll" />
-                      投票
-                    </EditorButton>
-                    <EditorButton aria-label="Stardust 收款" type="button" onClick={openStardust}>
-                      <EditorIcon name="wallet" />
-                      Stardust 收款
-                    </EditorButton>
-                  </>
-                ) : null}
-                {config.site === 'linuxdo' ? (
-                  <>
-                    <EditorButton aria-label="投票" type="button" onClick={openLinuxPoll}>
-                      <EditorIcon name="poll" />
-                      投票
-                    </EditorButton>
-                    <EditorButton aria-label="正文工具" type="button" onClick={() => showBuilder('private')}>
-                      <EditorIcon name="tools" />
-                      正文工具
-                    </EditorButton>
-                    <EditorButton
-                      aria-label="动态模板"
-                      type="button"
-                      onClick={() => {
-                        showBuilder('templates');
-                        void loadTemplates();
-                      }}
-                    >
-                      <EditorIcon name="template" />
-                      动态模板
-                    </EditorButton>
-                  </>
-                ) : null}
+                <div className="toolbar-site-tools">
+                  {config.site === 'nodeseek' && config.intentKind !== 'private-message' ? (
+                    <>
+                      <EditorButton aria-label="投票" type="button" onClick={openNodeSeekPoll}>
+                        <EditorIcon name="poll" />
+                        投票
+                      </EditorButton>
+                      <EditorButton aria-label="Stardust 收款" type="button" onClick={openStardust}>
+                        <EditorIcon name="wallet" />
+                        Stardust 收款
+                      </EditorButton>
+                    </>
+                  ) : null}
+                  {config.site === 'linuxdo' ? (
+                    <>
+                      <EditorButton aria-label="投票" type="button" onClick={openLinuxPoll}>
+                        <EditorIcon name="poll" />
+                        投票
+                      </EditorButton>
+                      <EditorButton aria-label="正文工具" type="button" onClick={() => showBuilder('private')}>
+                        <EditorIcon name="tools" />
+                        正文工具
+                      </EditorButton>
+                      <EditorButton
+                        aria-label="动态模板"
+                        type="button"
+                        onClick={() => {
+                          showBuilder('templates');
+                          void loadTemplates();
+                        }}
+                      >
+                        <EditorIcon name="template" />
+                        动态模板
+                      </EditorButton>
+                    </>
+                  ) : null}
+                </div>
               </EditorToolbar>
             </div>
           </div>
@@ -2848,21 +3355,98 @@ export function ComposerEditorRuntime() {
   })();
 
   return (
-    <main className="runtime" onInputCapture={() => builderError && setBuilderError('')}>
-      {toolbar}
-      <div className={mode === 'rich' ? 'editor-pane active' : 'editor-pane'} aria-hidden={mode !== 'rich'}>
-        <EditorContent editor={editor} />
-        {editor && mode === 'rich' ? <TableContextMenu editor={editor} /> : null}
+    <main
+      className={`runtime${topicEditor ? ' topic-runtime' : ''}${expandedPanel ? ' form-open' : ''}`}
+      onInputCapture={() => builderError && setBuilderError('')}
+    >
+      {editor && config ? <ComposerToolbarState editor={editor} onChange={publishToolbarState} /> : null}
+      <div
+        className={mode === 'rich' || config?.readOnly ? 'editor-pane active' : 'editor-pane'}
+        aria-hidden={expandedPanel || (mode !== 'rich' && !config?.readOnly)}
+      >
+        <EditorContent className="editor-content" editor={editor} />
+        {editor && mode === 'rich' && !config?.readOnly && !builder ? <TableContextMenu editor={editor} /> : null}
       </div>
       <div
         ref={sourceHostRef}
-        className={mode === 'source' ? 'source-pane active' : 'source-pane'}
-        aria-hidden={mode !== 'source'}
+        className={mode === 'source' && !config?.readOnly ? 'source-pane active' : 'source-pane'}
+        aria-hidden={expandedPanel || mode !== 'source' || config?.readOnly}
       />
       {!config ? <div className="loading">正在初始化编辑器…</div> : null}
 
+      {builder === 'format' ? (
+        <BuilderPanel title="文字格式" onClose={returnToEditor}>
+          {toolbar}
+        </BuilderPanel>
+      ) : null}
+      {builder === 'more' ? (
+        <BuilderPanel title="更多编辑工具" onClose={returnToEditor}>
+          <div className="topic-more-tools">
+            <EditorButton
+              aria-label={mode === 'rich' ? '切换到源码' : '切换到富文本'}
+              onClick={() => {
+                closeBuilder();
+                changeMode(mode === 'rich' ? 'source' : 'rich');
+              }}
+            >
+              <EditorIcon name={mode === 'rich' ? 'code' : 'type'} />
+              {mode === 'rich' ? '源码' : '富文本'}
+            </EditorButton>
+            <EditorButton onClick={previewTopic}>
+              <EditorIcon name="eye" />
+              预览
+            </EditorButton>
+            <EditorButton
+              onClick={() => {
+                handleHostMessage({ type: 'COMMAND', payload: { name: 'undo' } });
+              }}
+            >
+              <EditorIcon name="undo" />
+              撤销
+            </EditorButton>
+            <EditorButton
+              onClick={() => {
+                handleHostMessage({ type: 'COMMAND', payload: { name: 'redo' } });
+              }}
+            >
+              <EditorIcon name="redo" />
+              重做
+            </EditorButton>
+          </div>
+        </BuilderPanel>
+      ) : null}
+
+      {builder === 'link' ? (
+        <BuilderPanel expanded title="链接设置" onClose={() => closeBuilder()}>
+          <EditorLinkForm
+            initialHref={mode === 'rich' ? String(editor?.getAttributes('link').href || 'https://') : 'https://'}
+            onApply={(href) => {
+              applyLink(href);
+              returnToEditor();
+            }}
+            onRemove={
+              mode === 'rich' && editor?.isActive('link')
+                ? () => {
+                    editor.chain().extendMarkRange('link').unsetLink().run();
+                    returnToEditor();
+                  }
+                : undefined
+            }
+          />
+        </BuilderPanel>
+      ) : null}
+
       {builder === 'nodeseek-poll' ? (
-        <BuilderPanel title="NodeSeek 投票" onClose={() => setBuilder(null)}>
+        <BuilderPanel
+          expanded
+          actions={
+            <EditorButton className="primary" type="button" onClick={saveNodeSeekPoll}>
+              插入投票
+            </EditorButton>
+          }
+          title="NodeSeek 投票"
+          onClose={() => closeBuilder()}
+        >
           <label className="tiptap-field">
             标题
             <EditorInput
@@ -2881,15 +3465,21 @@ export function ComposerEditorRuntime() {
             公开投票人
           </label>
           {builderError ? <p className="error">{builderError}</p> : null}
-          <EditorButton className="primary" type="button" onClick={saveNodeSeekPoll}>
-            插入投票
-          </EditorButton>
-          <p className="hint">这里只保存本地草稿；发送回复前不会创建远端投票。</p>
+          <p className="hint">这里只保存本地草稿；发表前不会创建远端投票。</p>
         </BuilderPanel>
       ) : null}
 
       {builder === 'stardust' ? (
-        <BuilderPanel title="Stardust 收款卡片" onClose={() => setBuilder(null)}>
+        <BuilderPanel
+          expanded
+          actions={
+            <EditorButton className="primary" type="button" onClick={saveStardust}>
+              生成付款码
+            </EditorButton>
+          }
+          title="Stardust 收款卡片"
+          onClose={() => closeBuilder()}
+        >
           <label className="tiptap-field">
             收款人
             <EditorInput disabled value={config?.nodeSeekMemberId || '账号待确认'} />
@@ -2923,15 +3513,26 @@ export function ComposerEditorRuntime() {
             一次性付款
           </label>
           {builderError ? <p className="error">{builderError}</p> : null}
-          <EditorButton className="primary" type="button" onClick={saveStardust}>
-            生成付款码
-          </EditorButton>
           <p className="hint">生成卡片不会扣款，也不会发出网络请求。</p>
         </BuilderPanel>
       ) : null}
 
       {builder === 'linuxdo-poll' ? (
-        <BuilderPanel title="LinuxDo 投票" onClose={() => setBuilder(null)}>
+        <BuilderPanel
+          expanded
+          actions={
+            <EditorButton
+              className="primary"
+              type="button"
+              disabled={linuxPollCapabilities?.canCreate === false}
+              onClick={saveLinuxPoll}
+            >
+              插入投票
+            </EditorButton>
+          }
+          title="LinuxDo 投票"
+          onClose={() => closeBuilder()}
+        >
           <div className="tiptap-field">
             <span>类型</span>
             <div aria-label="投票类型" className="poll-type-segments" role="group">
@@ -2962,6 +3563,7 @@ export function ComposerEditorRuntime() {
           {linuxPoll.type !== 'number' ? (
             <PollOptionFields
               options={linuxPoll.options}
+              maxOptions={linuxPollCapabilities?.maxOptions}
               onChange={(options) => setLinuxPoll((value) => ({ ...value, options }))}
             />
           ) : null}
@@ -2983,7 +3585,7 @@ export function ComposerEditorRuntime() {
           {!linuxPollAdvanced && linuxPollCapabilitiesError ? (
             <div className="inline-retry" role="alert">
               <span>{linuxPollCapabilitiesError}</span>
-              <EditorButton type="button" onClick={loadLinuxDoPollCapabilities}>
+              <EditorButton type="button" onClick={() => loadLinuxDoPollCapabilities()}>
                 重试
               </EditorButton>
             </div>
@@ -3138,7 +3740,7 @@ export function ComposerEditorRuntime() {
                 loading={linuxPollCapabilitiesBusy}
                 selected={linuxPoll.groups}
                 onChange={(groups) => setLinuxPoll((value) => ({ ...value, groups }))}
-                onRetry={loadLinuxDoPollCapabilities}
+                onRetry={() => loadLinuxDoPollCapabilities()}
               />
               <div className="tiptap-field">
                 <span>自动关闭时间</span>
@@ -3176,14 +3778,12 @@ export function ComposerEditorRuntime() {
             <p className="hint">将保留 {linuxPoll.unknownAttributes.length} 个原站未知属性。</p>
           ) : null}
           {builderError ? <p className="error">{builderError}</p> : null}
-          <EditorButton className="primary" type="button" onClick={saveLinuxPoll}>
-            插入投票
-          </EditorButton>
+          {linuxPollCapabilities?.canCreate === false ? <p className="error">当前账号不能创建投票</p> : null}
         </BuilderPanel>
       ) : null}
 
       {builder === 'private' ? (
-        <BuilderPanel title="LinuxDo 正文工具" onClose={() => setBuilder(null)}>
+        <BuilderPanel title="LinuxDo 正文工具" onClose={() => closeBuilder()}>
           <div className="tool-grid">
             {[
               ['details', 'Details'],
@@ -3207,7 +3807,7 @@ export function ComposerEditorRuntime() {
       ) : null}
 
       {builder === 'templates' ? (
-        <BuilderPanel title="动态模板" onClose={() => setBuilder(null)}>
+        <BuilderPanel title="动态模板" onClose={() => closeBuilder()}>
           {templateBusy ? <p>正在读取模板…</p> : null}
           {builderError ? <p className="error">{builderError}</p> : null}
           {!templateBusy && !templates.length && !builderError ? <p>没有可用模板</p> : null}
@@ -3226,9 +3826,9 @@ export function ComposerEditorRuntime() {
         </BuilderPanel>
       ) : null}
 
-      {config?.site === 'nodeseek' ? (
+      {config?.site === 'nodeseek' && expressionsOpened ? (
         <div data-expression-cache="stickers" hidden={builder !== 'stickers'}>
-          <BuilderPanel title="NodeSeek 贴纸" onClose={() => setBuilder(null)}>
+          <BuilderPanel title="NodeSeek 贴纸" onClose={() => closeBuilder()}>
             <div className="category-rail">
               {NODESEEK_STICKER_CATEGORIES.map((category) => (
                 <EditorButton
@@ -3258,7 +3858,7 @@ export function ComposerEditorRuntime() {
         </div>
       ) : null}
 
-      {config?.site === 'linuxdo' ? (
+      {config?.site === 'linuxdo' && expressionsOpened ? (
         <div
           data-expression-cache="emoji"
           hidden={builder !== 'emoji'}
@@ -3273,7 +3873,7 @@ export function ComposerEditorRuntime() {
             }
           }}
         >
-          <BuilderPanel title="LinuxDo Emoji" onClose={() => setBuilder(null)}>
+          <BuilderPanel title="LinuxDo Emoji" onClose={() => closeBuilder()}>
             <div className="expression-search">
               <EditorIcon name="search" />
               <EditorInput

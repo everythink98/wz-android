@@ -143,6 +143,8 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 
 纯算法优化必须以固定输入对照原输出，包括顺序、重复项、权限、错误和删除保护；已授权的 Bug 修正单列，不能伪称等价。随机差分需保存 seed 与输入范围，不宣称穷尽证明。Search 覆盖较新/较旧预览都不截断已有分页，以及首屏重复项的权限合并；User 两 lane 必须并发并分别先完成，不能用顺序请求代替。通知调度组合 owner 运行真实 worker/store，只 mock 外部读取与 Native acknowledgement，证明两来源慢投递期间的重复触发有界合并，未读总数相同但消息 ID 替换仍会投递。NS 内容 owner 使用不同主楼/回复全文，覆盖空/部分/完整终端的 bridge/rendered 链路、两侧身份歧义与块数量不符；无源码的无 class xterm 行也须保持完整文本、ANSI 和邻接内容。
 
+原生媒体循环由 `dev/media-pressure-proof` 与 `scripts/run-media-pressure-device-proof.mjs` 取证：本地合成音视频经过生产组件、共享播放器与 Native 解码；全屏首个 ownership 事件后立即回收内联行，必须仍能打开实际全屏 Activity、保持独立 player 并正常退出释放。首个事件不等于 Activity 已展示，须同时取得真实全屏控件和后续 Native 回执。fixture 保留生产页面的全屏播放例外；回收后持有至少 600ms，起点须真实播放，同一 Native player 的位置前进至少 0.3 秒，并人工核对持有前后两张全屏图。退出生命周期允许正常暂停，不以退出事件时 playing=false 判失败。独立 Activity 暂停 RN timer 时，fixture 由 Native 事件和 React 提交唤醒，不用固定延时躲开回收竞态。系统 HOME 与恢复须由设备操作发生；播放器释放调用和 JS 注册归零只证明相应生命周期，不能替代 native heap、实际音频输出或每帧连续性证据。命令、构建和设备隔离见 operator runbook。
+
 ## 四、随机顺序与可重放性
 
 `npm test` 使用 Vitest shuffled sequence；`npm run test:ui` 使用 Jest randomize 并输出 seed；`npm run verify` 自然继承两者。随机顺序是常规隔离门禁，不再称为“确定性门禁”。
@@ -189,7 +191,21 @@ Jest 的 `it.failing`/`test.failing` 与 Vitest 的 `it.fails`/`test.fails` 只�
 
 多个入口受影响时逐类报告，不能用一个局部绿灯代表全部。相关验证失败且仍有安全、可证伪、在授权范围内的修复路径时继续修复；计划外既有产品 Bug 则停在证据和授权边界。
 
-Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证原生 Insets 分发，`tests/native/ComposerKeyboardTest.kt` 验证 IME 动画目标与当前帧；`tests/tooling/reanimated-settled-props.test.ts` 仅拥有嵌套 host 的同步 GC 生命周期。新版 WebView、外部选图 Activity 暂停/恢复与 settledProps 的 C++ 应用结果必须用匹配构建同设备录屏确认，不能用上述局部测试代替。
+Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证原生 Insets 分发；`tests/native/ComposerKeyboardTest.kt` 验证 IME 动画目标与当前帧，以及中断动画后退订/重订时归零旧计数、按真实窗口恢复隐藏或显示状态、旧 callback 不改新周期、漏 prepare 的运行中动画与无配对 end。`tests/tooling/reanimated-settled-props.test.ts` 仅拥有嵌套 host 的同步 GC 生命周期。新版 WebView、外部选图 Activity 暂停/恢复与 settledProps 的 C++ 应用结果必须用匹配构建同设备录屏确认，不能用上述局部测试代替。
+
+共享底部原生工具栏的 canonical UI owner 为 `tests/ui/topic/composer-toolbar.test.tsx`，验证各站/模式/发帖与回复入口、当前选中状态、禁用与上传忙碌、结束后显式 busy=false、普通点击静默、可访问命中区及动作映射；菜单测量只断言当前 viewport 实例，覆盖旧测量、上下文变化及卸载，不以全局共享 View mock 的调用总数判断本组件；`src/ui/composer/structuredComposerBridge.test.ts` 固定 toolbar-action/TOOLBAR_STATE 的严格协议及文档 epoch。`src/ui/composer/editorRuntime.test.ts` 验证常用操作只由原生工具栏提供、runtime 不渲染重复的 HTML 底栏而继续保留格式 builder 工具，原生命令复用原选区和既有编辑/上传动作，拒绝旧 epoch、只读或重复上传动作；`tests/ui/topic/structured-reply-composer.test.tsx` 固定当前 epoch 状态接收、生命周期禁用和命令接线，继续拥有图片交接与迟到 ACK。原生工具栏不会把 runtime 的格式或上传责任迁到 UI mock。设备须分别验半屏/全屏收键盘、格式/链接等表单进出、有无键盘选图去返程、已有正文/图片保留，并核工具栏与原生 footer 是否分离；CSS 或 software 实验失败和旧包样本通过不能替代新共享入口的匹配 APK 证据。
+
+固定 Composer 的直接几何 owner 为 `tests/ui/topic/composer-keyboard-viewport.test.tsx`：原始 IME SharedValue 变化后，在任何 reaction 或 JS layout 回调尚未运行时，drawing style 就须得到对应 viewport、面板位置与 safe-area padding；另模拟 transform 已更新而原生面板仍保留上一帧高度，核对半屏/全屏 footer 仍在 IME 与导航安全区之上，不能只用同一对象的新 height 与新 transform 自证原子性。半屏未受可用高度限制时，`height - paddingBottom` 保持不变，避免在 IME 退场尾部挤压 WebView 工具栏；半屏/全屏均须覆盖原始 IME 高度进入 safe inset 以下、输入法不再绘制导航区的尾段，面板仍保持完整 safe padding 与自己的背景，footer 坐标不变，原始高度未归零不能放行 picker。同时固定键盘订阅到关闭完成、正文跨订阅保持挂载、迟到关闭不影响重开、半屏/全屏与 Back 次序及交接等待。该 oracle 证明应用侧没有用上一轮 mapper 的几何，不证明原生输入到达时间、屏幕实际提交延迟或真实键盘每帧贴合；锚底的设备验收还须核 header/正文是否反向修正，底边不露灰不能覆盖顶部跳位。
+
+共享工具面板交接沿用既有 owner：Bridge schema 接受 `prepare-panel`；runtime 在 rich/source 的待确认阶段不 blur 或展开，并在请求前同步发布包含 pending 的 `PANEL_CHANGED.open=true`，保持旧 `expanded` 状态；成功确认到实际面板之间没有 open=false 空档，失败或取消释放所属占用，旧回执不能释放新请求。原生工具栏和 HTML 面板内部工具共用该路径；`closeBuilder`、页面 blur、预览、模式切换、只读恢复及 INIT/DESTROY 取消旧请求。Structured UI 核对宿主实际等待键盘交接、拒绝或缺少能力不回成功，以及关闭/重开、只读后恢复不能放行迟到确认。Topic UI 核对交接间隙标题元数据保持折叠，沿用已有 `tests/ui/topic-composer/create-topic-screen.test.tsx` owner。匹配设备另验链接、格式、表情等入口的完整去返程，不能把图片八格通过视为工具表单也通过。
+
+私信图片 proof fixture 的凭据与 HTTP 隔离由 `tests/ui/notifications/notifications-route.test.tsx` 沿真实 `MessageSubmissionFixture → NotificationDetailRoute` 验证：使用合成 NodeImage key，实际进入 picker，再由现有隔离 transport mock 上传并插入草稿；取消保留草稿，真实网络及私信发送均为零。因 fixture 缺少凭据而在 picker 前退出的录像不能计为选择器去返程通过；该 UI oracle 也不替代匹配 APK 的实际选择器和像素验收。
+
+共享原生键盘交接由 `tests/native/ComposerKeyboardHostTest.kt` 验证：在真实 attached RN 容器和焦点子输入框上，驱动平台 Insets 控制回调，核对完整 Back 按键对、重复 Back 不重开 IME、当前 Insets 起点、控制完成回执、请求取消、焦点与窗口归属、disable/detach、零动画缩放及旧 Android 回退。该 owner 另固定 API 30+ Modal 本地 Insets：prepare 后的目标隐藏布局不得提前发布零高度，progress 与最后一个动画结束按实际高度更新；使用真实 root/Host 屏幕矩形扣除已完成的布局避让；普通 Host、关闭跟踪、禁用及 detach 不继续发送逐帧值，旧 API 不启用此事件。`tests/ui/topic/composer-keyboard-host.test.tsx` 拥有命令/回执、Abort 接线，以及本地 native event → UI worklet padding、提前 `keyboardDidHide` 不清 padding 或重挂输入、API 30 以下 KAV 回退；`tests/ui/topic/composer-keyboard-handoff.test.tsx` 拥有原生成功后才开始现有两帧 viewport 等待及后台/超时取消。`src/ui/composer/editorRuntime.test.ts` 用实际 MutationObserver 与 DOM Selection 写入观测，验证富文本/源码先保留不可见且可映射的上传锚点；交接前的图片请求动作只允许当前编辑根节点的 `virtualkeyboardpolicy` 属性变化，不改内容或 DOM Selection，不提前调用 focus/blur。原生 toolbar-action 经异步 Bridge 进入上传 owner，临时 manual 在 runtime 发送宿主请求前生效。激活时 blur 仍处于 manual，随后恢复原策略、安装占位并 ACK。源码通过 CodeMirror 的公开 contentAttributes 随事务持有该属性，不能放宽 DOM oracle 来容纳直接属性写入引发的额外 style 变更。取消保留正文/选区，原属性缺失或显式值均原样恢复；finish、INIT、DESTROY、unmount 释放策略，旧 id/epoch 回执不能激活新请求或恢复它的策略，直接 visible begin 不创建手势策略。`tests/ui/topic/structured-reply-composer.test.tsx` 拥有原生交接、激活 ACK、picker 的顺序，以及错误或迟到 ACK、超时清理和两个等待阶段的文档/生命周期失效；还须覆盖关闭、只读、忙碌及回复/新帖后台状态短暂变化后恢复同 intent/epoch，旧交接仍作废且新请求可成功。已启动 picker 的正常后台/上传忙碌须保留合法结果，Topic 的后台监听不接管草稿 snapshot owner。设备另核系统 Back 已收键盘但 DOM 仍有焦点时点图片，不以已由前次 picker blur 的无键盘样本代替；同时核实际系统手势 Back、原生标题、独立 Modal 窗口和快速重开。Modal 须分别核说明输入 Back 与选文件的完整去程，不能用 picker 返程保留内容证明面板未在 IME 退完前落底。这些 DOM/UI oracle 证明应用交接顺序，fake controller 的测试通过不能证明键盘 Surface 保留或 OEM 回退行为。
+
+编辑器返回预热的 canonical owner 为 `tests/native/ComposerWebViewPrewarmTest.kt`：在真实 Activity 内、具有有效尺寸的实际 `RNCWebView` 上驱动窗口生命周期，只控制硬件层构建及 visual callback 的完成；覆盖默认关闭、首次可见、返回等待、关闭开关、再次隐藏、detach/destroy、迟到回调、失败释放、原 layer 恢复，以及真实 `ReactViewGroup` 下 GONE 祖先和整个屏幕外 translate 后回屏的可见范围。实际 GPU 资源重建、alpha 或其他视图遮挡不在这些 Robolectric 证据范围。`tests/ui/topic/structured-reply-composer.test.tsx` 固定编辑器恒定 opt-in，即使 `visible=false` 仍保留身份标记；`tests/tooling/native-test-plan.test.ts` 固定 native 报告 owner 和受影响编辑器的任务路由。同一有效 harness 的原行为 red 与修后 green 必须分开留存。设备须用最终无探针构建分别验证 Photos/Browse、有/无实际停靠键盘、取消/成功的八条路径，并独立检查 Topic 附件面板下仍可见的正文与私信入口；分别报告去程与返程，最终视觉验收不与构建或测试并行。返回无白帧不能覆盖收键盘末端的灰色间距，生命周期测试不能替代逐帧绘制或真机证据。
+
+系统选图导入与 IO 的 canonical owner 为 `tests/native/DocumentPickerThreadingTest.kt`：通过实际安装的 Expo `ModuleHolder` 捕获真正启动的 Intent，固定缓存图片单/多选 `GET_CONTENT` 与保留原 URI 图片、通配附件、JSON 混合类型 `OPEN_DOCUMENT` 的分流，以及 Openable、MIME、多选和不另设数量上限；再发送 Activity result，分别阻塞真实 `ContentProvider` 元数据查询和缓存打开，验证主 Looper 心跳可继续执行、复制未完成不结算，以及取消、失败、多选和销毁后的单次结算。该 owner 经 `tests/native/composer-keyboard.gradle` 加入 App JVM 测试，`scripts/native-test-plan.mjs` 对应预期报告；它证明共享原生线程和结果契约，不替代新帖/编辑、回复、私信、备份导入四类入口的逐项设备验证，也不证明 WebView 返回无白帧；系统 Photos 与 Browse 文件路线须分开验收，临时直接 Photo Picker 探针不能替代正式 `GET_CONTENT` 构建。
 
 ## 八、交付记录
 
@@ -206,6 +222,8 @@ Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证
 
 
 ### 设备 proof 与视觉结果结算
+
+`WRITE-07` 最低证据按 owner 拆分：domain/source Vitest 固定动态校验与三站真实请求构造、正负成功判据；SQLite 与附件测试固定身份/revision/未知 attempt/文件归属；`tests/ui/topic-composer/` 固定切站、快照、提交前门禁、单次发布与失败保稿。隔离 `dev/composer-proof` 的 `topic-*` 场景必须挂载真实 `TopicComposerRoute`、controller、editor 和 SQLite，仅在 Fetcher 边界返回合成 HTTP 响应。每次生成独立合成身份，未匹配网络禁止透传；receipt 同时验证 source、单次 dispatch、durable attempt、当前稿与另两站稿及 route，切站/重启场景必须零写请求。YH 五类检查实际表单路径与重复字段数量，文件只用隔离目录的小型合成文件。原生输入与重启证据不能由 RNTL 代替，Mock proof 不能标作原站 `LIVE_PASS`。
 
 `tests/tooling/review-proof-checkpoint.test.ts` 是隔离备份/恢复的唯一 tooling owner。runner 在固定隔离 AVD 取得 OS 排他租约，安装后再次停止 App，备份 Reader、AsyncStorage 与 WAL/SHM 的六个固定文件；校验隔离 owner、安装身份、存在性、字节哈希及独立 SQLite 逻辑内容。业务失败、回放失败、超时或 App 中断仍由 runner 恢复，业务与恢复分别记录，双方通过才整体通过。旧 `running` 必须阻断新运行；只有 `restoring` 且当前文件匹配已记录的原始或待恢复哈希、安装身份一致时才允许显式续接。App 不以固定等待后自行还原作为完成证明。
 

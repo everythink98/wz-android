@@ -38,6 +38,8 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/search/SearchRouteRuntime',
   '@/features/topic/TopicRoute',
   '@/features/topic/TopicRouteRuntime',
+  '@/features/topic-composer/TopicComposerRoute',
+  '@/features/topic-composer/TopicComposerRouteRuntime',
   '@/features/user/UserRoute',
   '@/features/user/UserRouteRuntime'
 ]);
@@ -112,8 +114,8 @@ const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
   'aggregateRead'
 ]);
 
-function accountSnapshotOwnershipIssues(filePath, fromFile) {
-  const sourceText = readFileSync(filePath, 'utf8');
+function accountSnapshotOwnershipIssues(sourceFile, fromFile) {
+  const sourceText = sourceFile.text;
   const issues = [];
   if (sourceText.includes('setSiteSessionStates')) {
     issues.push({ code: 'account-snapshot-owner', message: `${fromFile} 不得恢复 workflow session 镜像` });
@@ -125,7 +127,6 @@ function accountSnapshotOwnershipIssues(filePath, fromFile) {
     issues.push({ code: 'account-snapshot-owner', message: `${fromFile} 不得绕过 Account snapshot commit seam` });
   }
   if (fromFile === 'platform/query/serverState.ts') {
-    const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const declaration = sourceFile.statements
       .filter(ts.isVariableStatement)
       .flatMap((statement) => statement.declarationList.declarations)
@@ -158,15 +159,7 @@ function listCodeFiles(directory) {
   });
 }
 
-function importedModuleSpecifiers(filePath) {
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
+function importedModuleSpecifiers(sourceFile) {
   const specifiers = new Set();
   const addStringLiteral = (node) => {
     if (node && ts.isStringLiteralLike(node)) specifiers.add(node.text);
@@ -192,16 +185,8 @@ function importedModuleSpecifiers(filePath) {
   return [...specifiers];
 }
 
-function domainIoIssues(filePath, relativeFile) {
+function domainIoIssues(sourceFile, relativeFile) {
   if (!relativeFile.startsWith('domain/')) return [];
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
   const globals = new Set();
   const visit = (node) => {
     if (ts.isIdentifier(node) && FORBIDDEN_DOMAIN_IO_GLOBALS.has(node.text)) globals.add(node.text);
@@ -214,15 +199,7 @@ function domainIoIssues(filePath, relativeFile) {
   }));
 }
 
-function globalWebViewStateIssues(filePath, relativeFile) {
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
+function globalWebViewStateIssues(sourceFile, relativeFile) {
   const webViewNames = new Set();
   const webViewNamespaces = new Set();
   for (const statement of sourceFile.statements) {
@@ -324,15 +301,7 @@ function globalWebViewPluginIssues(projectRoot) {
   });
 }
 
-function importedRawStateHooks(filePath) {
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
+function importedRawStateHooks(sourceFile) {
   const hooks = new Set();
   const reactNamespaces = new Set();
 
@@ -366,10 +335,8 @@ function importedRawStateHooks(filePath) {
   return [...hooks];
 }
 
-function appRuntimeImportIssues(filePath, fromFile) {
+function appRuntimeImportIssues(sourceFile, fromFile) {
   if (fromFile !== 'app/useAppRuntime.ts' && fromFile !== 'app/useAppRuntime.tsx') return [];
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const issues = [];
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
@@ -399,15 +366,7 @@ function lastEntityName(name) {
   return ts.isIdentifier(name) ? name.text : name.name.text;
 }
 
-function routeRuntimeProjectionIssues(filePath, fromFile) {
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
+function routeRuntimeProjectionIssues(sourceFile, fromFile) {
   const issues = [];
   const visitRuntimeType = (node, ownerName) => {
     if (
@@ -435,15 +394,7 @@ function routeRuntimeProjectionIssues(filePath, fromFile) {
   return issues;
 }
 
-function rawAccountSessionIssues(filePath, fromFile) {
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(
-    filePath,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
+function rawAccountSessionIssues(sourceFile, fromFile) {
   const issues = [];
   const report = () => {
     if (issues.length === 0) {
@@ -482,10 +433,8 @@ function rawAccountSessionIssues(filePath, fromFile) {
   return issues;
 }
 
-function rawAccountCapabilityProjectionIssues(filePath, fromFile) {
+function rawAccountCapabilityProjectionIssues(sourceFile, fromFile) {
   if (fromFile !== 'features/account/useAccountRuntime.ts') return [];
-  const sourceText = readFileSync(filePath, 'utf8');
-  const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const issues = [];
   const accountRuntime = sourceFile.statements.find(
     (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === 'useAccountRuntime'
@@ -802,6 +751,13 @@ export function analyzeArchitecture(srcDir) {
   const graph = new Map(files.map((file) => [relativePath(resolvedSrcDir, file), new Set()]));
 
   for (const file of files) {
+    const sourceFile = ts.createSourceFile(
+      file,
+      readFileSync(file, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    );
     const fromFile = relativePath(resolvedSrcDir, file);
     if (/\/(?:index)\.tsx?$/.test(`/${fromFile}`)) {
       issues.push({ code: 'barrel', message: `禁止 barrel 文件：${fromFile}` });
@@ -810,23 +766,23 @@ export function analyzeArchitecture(srcDir) {
       issues.push({ code: 'legacy-path', message: `禁止恢复旧模块：${fromFile}` });
     }
     if (fromFile === 'app/AppRoot.tsx') {
-      for (const hook of importedRawStateHooks(file)) {
+      for (const hook of importedRawStateHooks(sourceFile)) {
         issues.push({ code: 'app-root-state-hook', message: `${fromFile} 不得持有 React 业务状态 hook：${hook}` });
       }
     }
     if (fromFile === 'app/useAppRuntime.ts' || fromFile === 'app/useAppRuntime.tsx') {
-      for (const hook of importedRawStateHooks(file)) {
+      for (const hook of importedRawStateHooks(sourceFile)) {
         issues.push({ code: 'app-runtime-state-hook', message: `${fromFile} 不得持有 React 业务状态 hook：${hook}` });
       }
     }
-    issues.push(...appRuntimeImportIssues(file, fromFile));
-    issues.push(...routeRuntimeProjectionIssues(file, fromFile));
-    issues.push(...rawAccountSessionIssues(file, fromFile));
-    issues.push(...rawAccountCapabilityProjectionIssues(file, fromFile));
-    issues.push(...accountSnapshotOwnershipIssues(file, fromFile));
-    issues.push(...domainIoIssues(file, fromFile));
-    issues.push(...globalWebViewStateIssues(file, fromFile));
-    for (const specifier of importedModuleSpecifiers(file)) {
+    issues.push(...appRuntimeImportIssues(sourceFile, fromFile));
+    issues.push(...routeRuntimeProjectionIssues(sourceFile, fromFile));
+    issues.push(...rawAccountSessionIssues(sourceFile, fromFile));
+    issues.push(...rawAccountCapabilityProjectionIssues(sourceFile, fromFile));
+    issues.push(...accountSnapshotOwnershipIssues(sourceFile, fromFile));
+    issues.push(...domainIoIssues(sourceFile, fromFile));
+    issues.push(...globalWebViewStateIssues(sourceFile, fromFile));
+    for (const specifier of importedModuleSpecifiers(sourceFile)) {
       const importedPath = internalModulePath(fromFile, specifier);
       if (importedPath && FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(importedPath))) {
         issues.push({ code: 'legacy-path', message: `${fromFile} 不得导入旧模块：${specifier}` });

@@ -40,6 +40,92 @@ function setup() {
 }
 
 describe('Discourse reading lifecycle', () => {
+  it('serializes multi-topic backlogs and discards expired or replaced-account work across repeated slow sends', async () => {
+    const { runtime, send, advance, switchAccount, queryClient } = setup();
+    let nextSlow: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+    let active = 0;
+    let peakActive = 0;
+    const settled: Promise<unknown>[] = [];
+    send.mockImplementation((_batch, _identity, signal) => {
+      const slow = nextSlow;
+      nextSlow = undefined;
+      active++;
+      peakActive = Math.max(peakActive, active);
+      const abort = () => slow?.reject(new Error('aborted'));
+      signal.addEventListener('abort', abort, { once: true });
+      const result = (slow?.promise || Promise.resolve()).finally(() => {
+        active--;
+        signal.removeEventListener('abort', abort);
+      });
+      settled.push(result.catch(() => undefined));
+      return result;
+    });
+    try {
+      for (let round = 0; round < 3; round++) {
+        const slow = Promise.withResolvers<void>();
+        nextSlow = slow;
+        const before = send.mock.calls.length;
+        for (let topicIndex = 0; topicIndex < 8; topicIndex++) {
+          const session = runtime.begin(`pressure-${round}-${topicIndex}`);
+          session.visible([1, 2]);
+          session.active(true);
+          await advance(topicIndex === 0 ? 65_000 : 1_000);
+          session.end();
+        }
+        expect(send).toHaveBeenCalledTimes(before + 1);
+        expect(active).toBe(1);
+        expect(vi.getTimerCount()).toBe(0);
+
+        if (round === 0) {
+          slow.resolve();
+          await advance(1_000);
+          const delivered = send.mock.calls.slice(before).map(([batch]) => batch);
+          expect(delivered).toHaveLength(10);
+          expect(delivered.reduce((sum, batch) => sum + batch.topicTime, 0)).toBe(72_000);
+          expect(Math.max(...delivered.map((batch) => batch.topicTime))).toBe(60_000);
+          for (let index = 0; index < 8; index++)
+            expect(runtime.state()[`pressure-${round}-${index}`].visited).toBe(true);
+        } else if (round === 1) {
+          runtime.foreground(false);
+          await advance(101_000);
+          slow.reject(new Error('response lost after an unknown POST outcome'));
+          await advance(1_000);
+          runtime.foreground(true);
+          await advance(1_000);
+          expect(send).toHaveBeenCalledTimes(before + 1);
+          for (let index = 0; index < 8; index++) {
+            expect(runtime.state()[`pressure-${round}-${index}`]).toMatchObject({
+              visited: false,
+              readPosts: { 1: true, 2: true }
+            });
+          }
+        } else {
+          switchAccount();
+          await advance(1_000);
+          expect(send.mock.calls.at(-1)?.[2].aborted).toBe(true);
+          expect(send).toHaveBeenCalledTimes(before + 1);
+          expect(runtime.state()).toEqual({});
+          const fresh = runtime.begin('fresh-account');
+          fresh.visible([1]);
+          fresh.active(true);
+          await advance(1_000);
+          fresh.end();
+          expect(send).toHaveBeenCalledTimes(before + 2);
+          expect(send.mock.calls.at(-1)?.[1]).toBe('bob');
+          expect(Object.keys(runtime.state())).toEqual(['fresh-account']);
+          expect(runtime.state()['fresh-account'].visited).toBe(true);
+        }
+        expect(active).toBe(0);
+        expect(peakActive).toBe(1);
+        expect(vi.getTimerCount()).toBe(0);
+      }
+    } finally {
+      runtime.dispose();
+      await Promise.all(settled);
+      queryClient.clear();
+    }
+  });
+
   it('honors Retry-After once and cancels the verification wait when backgrounded', async () => {
     const { runtime, send, verify, advance } = setup();
     send.mockRejectedValueOnce({ reason: 'cloudflare', retryAfterMs: 12000 });

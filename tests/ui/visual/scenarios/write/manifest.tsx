@@ -134,6 +134,14 @@ function PollScenario({ state }: { state: PollState }) {
 
 export const writeVisualScenarios: readonly VisualScenarioDefinition[] = [
   {
+    capabilityIds: ['WRITE-07'],
+    id: 'write.topic.create',
+    kind: 'device-only',
+    tags: ['write', 'create-topic', 'drafts', 'device-only'],
+    title: '三站发帖与独立草稿',
+    note: '真实 TopicComposerRoute 的 SQLite/编辑器/导航链路由 composer proof 的 topic-* 场景覆盖；三站普通成功与妖火文件/外链场景从页面常驻的帖子设置、附件与草稿入口直接打开配置和站点媒体面板，核对顶栏账号、单一正文工具栏和保稿。键盘或编辑工具面板打开时，页面操作栏同时保留标题信息、帖子设置及附件与草稿入口，正文工具栏不承载帖子设置。只在隔离 AVD 使用合成账号和禁止透传的 Mock Fetcher。本机缩略图、上传状态与键盘布局仍须原生视觉验收，不能以固定 controller 替身宣称完整发布或原站成功。'
+  },
+  {
     capabilityIds: ['WRITE-01', 'WRITE-04', 'WRITE-05', 'WRITE-06'],
     id: 'write.composer.nodeseek.new',
     kind: 'rendered',

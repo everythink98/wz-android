@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
-import { diagnosticProofFixture } from './run-diagnostic-device-proof.mjs';
+import { buildDeviceProof } from './device-proof-build.mjs';
 import { runAgentDevice } from './agent-device-runtime.mjs';
 import { proofDeviceForSerial, resumeProofCheckpoint, withProofCheckpoint } from './review-proof-checkpoint.mjs';
 
@@ -52,44 +52,11 @@ if (values['resume-restore']) {
   process.exit(0);
 }
 if (values.build) {
-  const android = path.join(root, 'android');
-  const fixture = mkdtempSync(path.join(root, '.codex-tmp', 'review-remediation-proof-build-'));
-  const config = diagnosticProofFixture(android, fixture);
-  writeFileSync(
-    path.join(fixture, 'AndroidManifest.xml'),
-    config.manifest
-      .replace('<activity android:name="com.wz.reader.DiagnosticsProofFaultActivity" android:exported="true"/>', '')
-      .replace('wzdiag', 'wzreviewproof')
-  );
-  writeFileSync(
-    path.join(fixture, 'init.gradle'),
-    config.init.replace('dev/diagnostics-proof/index.tsx', 'dev/review-remediation-proof/index.tsx')
-  );
-  const env = { ...process.env, NODE_ENV: 'production' };
-  delete env.ENTRY_FILE;
-  for (const name of [
-    'WZ_ANDROID_KEYSTORE_PATH',
-    'WZ_ANDROID_KEYSTORE_PASSWORD',
-    'WZ_ANDROID_KEY_ALIAS',
-    'WZ_ANDROID_KEY_PASSWORD'
-  ])
-    delete env[name];
-  execFileSync(
-    'java',
-    [
-      '-jar',
-      'gradle/wrapper/gradle-wrapper.jar',
-      '--no-daemon',
-      '--max-workers=2',
-      '-PreactNativeArchitectures=x86_64',
-      '-I',
-      path.join(fixture, 'init.gradle'),
-      ':app:assembleRelease'
-    ],
-    { cwd: android, env, stdio: 'inherit' }
-  );
-  values.apk = path.join(fixture, 'review-remediation-proof.apk');
-  copyFileSync(path.join(android, 'app/build/outputs/apk/release/app-release.apk'), values.apk);
+  values.apk = buildDeviceProof(root, {
+    name: 'review-remediation-proof',
+    entryFile: 'dev/review-remediation-proof/index.tsx',
+    scheme: 'wzreviewproof'
+  }).apk;
   console.log(`Proof APK: ${values.apk}`);
 }
 const install = () => {

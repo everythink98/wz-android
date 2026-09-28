@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor } from '../render';
 import React from 'react';
+import { View } from 'react-native';
 import type { ComponentProps } from 'react';
 import { LibraryRoute } from '@/features/library/LibraryRoute';
 import { LibraryRouteRuntimeProvider } from '@/features/library/LibraryRouteRuntime';
@@ -92,9 +93,13 @@ async function mount(enabledSources: readonly Source[] = ['nodeseek']) {
   return { ...view, client };
 }
 beforeEach(() => {
+  jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => callback(40, 200, 180, 44));
   query.mockReset();
   mockFocused = true;
   mockListFrames.length = 0;
+});
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 describe('Library route database query lifecycle', () => {
   it('queries only the active collection with filters selected through its controls', async () => {

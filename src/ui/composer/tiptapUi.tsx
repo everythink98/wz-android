@@ -12,11 +12,6 @@ type EditorButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   iconOnly?: boolean;
 };
 
-type EditorSeparatorProps = React.HTMLAttributes<HTMLDivElement> & {
-  decorative?: boolean;
-  orientation?: 'horizontal' | 'vertical';
-};
-
 export const EditorButton = React.forwardRef<HTMLButtonElement, EditorButtonProps>(
   ({ active, children, className = '', danger, iconOnly, onMouseDown, onPointerDown, ...props }, ref) => (
     <button
@@ -70,19 +65,9 @@ export const EditorCardBody = React.forwardRef<HTMLDivElement, React.HTMLAttribu
 );
 EditorCardBody.displayName = 'EditorCardBody';
 
-export const EditorSeparator = React.forwardRef<HTMLDivElement, EditorSeparatorProps>(
-  ({ className = '', decorative, orientation = 'vertical', ...props }, ref) => (
-    <div
-      {...props}
-      ref={ref}
-      aria-orientation={!decorative && orientation === 'vertical' ? 'vertical' : undefined}
-      className={`tiptap-separator${className ? ` ${className}` : ''}`}
-      data-orientation={orientation}
-      role={decorative ? 'none' : 'separator'}
-    />
-  )
-);
-EditorSeparator.displayName = 'EditorSeparator';
+export function EditorSeparator() {
+  return <div className="tiptap-separator" role="none" />;
+}
 
 export function EditorToolbar({
   'aria-label': ariaLabel,
@@ -249,104 +234,70 @@ export function EditorDropdownItem({
   );
 }
 
-export function EditorLinkPopover({
-  getInitialHref,
+export function EditorLinkForm({
+  initialHref,
   onApply,
-  onCloseAutoFocus,
-  onRemove,
-  trigger
+  onRemove
 }: {
-  getInitialHref: () => string;
+  initialHref: string;
   onApply: (href: string) => void;
-  onCloseAutoFocus?: () => void;
   onRemove?: () => void;
-  trigger: React.ReactElement;
 }) {
-  const [open, setOpen] = React.useState(false);
-  const [href, setHref] = React.useState('https://');
+  const [href, setHref] = React.useState(initialHref);
   const [error, setError] = React.useState('');
   const errorId = React.useId();
-
   return (
-    <PopoverPrimitive.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (next) {
-          setHref(getInitialHref());
-          setError('');
+    <form
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        const value = href.trim();
+        if (!/^https?:\/\/\S+$/i.test(value)) {
+          setError('请输入完整的 http/https 链接');
+          return;
         }
-        setOpen(next);
+        onApply(value);
       }}
     >
-      <PopoverPrimitive.Trigger asChild>{trigger}</PopoverPrimitive.Trigger>
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content
-          align="start"
-          aria-label="链接设置"
-          className="tiptap-card tiptap-link-popover"
-          collisionPadding={8}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            onCloseAutoFocus?.();
+      <label className="tiptap-link-field">
+        链接地址
+        <EditorInput
+          aria-describedby={error ? errorId : undefined}
+          aria-invalid={Boolean(error)}
+          aria-label="链接地址"
+          autoCapitalize="none"
+          inputMode="url"
+          spellCheck={false}
+          type="url"
+          value={href}
+          onChange={(event) => {
+            setHref(event.target.value);
+            if (error) setError('');
           }}
-          sideOffset={6}
-        >
-          <form
-            noValidate
-            onSubmit={(event) => {
-              event.preventDefault();
-              const value = href.trim();
-              if (!/^https?:\/\/\S+$/i.test(value)) {
-                setError('请输入完整的 http/https 链接');
-                return;
-              }
-              onApply(value);
-              setOpen(false);
+        />
+      </label>
+      {error ? (
+        <p className="error" id={errorId} role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="tiptap-link-actions">
+        <EditorButton aria-label="应用链接" className="primary" type="submit">
+          应用
+        </EditorButton>
+        {onRemove ? (
+          <EditorButton
+            aria-label="移除链接"
+            danger
+            type="button"
+            onClick={() => {
+              onRemove();
             }}
           >
-            <label className="tiptap-link-field">
-              链接地址
-              <EditorInput
-                aria-describedby={error ? errorId : undefined}
-                aria-invalid={Boolean(error)}
-                aria-label="链接地址"
-                autoCapitalize="none"
-                inputMode="url"
-                spellCheck={false}
-                type="url"
-                value={href}
-                onChange={(event) => {
-                  setHref(event.target.value);
-                  if (error) setError('');
-                }}
-              />
-            </label>
-            {error ? (
-              <p className="error" id={errorId} role="alert">
-                {error}
-              </p>
-            ) : null}
-            <div className="tiptap-link-actions">
-              <EditorButton aria-label="应用链接" className="primary" type="submit">
-                应用
-              </EditorButton>
-              {onRemove ? (
-                <EditorButton
-                  aria-label="移除链接"
-                  danger
-                  type="button"
-                  onClick={() => {
-                    onRemove();
-                    setOpen(false);
-                  }}
-                >
-                  移除
-                </EditorButton>
-              ) : null}
-            </div>
-          </form>
-        </PopoverPrimitive.Content>
-      </PopoverPrimitive.Portal>
-    </PopoverPrimitive.Root>
+            移除
+          </EditorButton>
+        ) : null}
+      </div>
+    </form>
   );
 }

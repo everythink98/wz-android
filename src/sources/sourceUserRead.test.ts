@@ -8,7 +8,7 @@ vi.mock('expo-secure-store', () => ({
 
 import { getUserDetails, getUserTopics, getUserReplies, type UserReadOptions } from './sourceRead';
 import type { UserDetails } from '@/domain/forum/models';
-type UserFixtureOptions = UserReadOptions & { cursor?: string | null; cursorType?: 'topics' | 'replies' };
+type UserFixtureOptions = UserReadOptions & { cursor?: string | null };
 async function readProfileTopics(options: UserFixtureOptions) {
   const profile = await getUserDetails(options);
   const topics = await getUserTopics({ ...options, profile });
@@ -604,7 +604,6 @@ describe('source user read', () => {
         id: '48872',
         username: '我是ikun',
         cursor: '2',
-        cursorType: 'replies',
         fetcher
       })
     ).resolves.toMatchObject({
@@ -618,7 +617,6 @@ describe('source user read', () => {
         id: 'alice',
         username: 'alice',
         cursor: '30',
-        cursorType: 'replies',
         fetcher
       })
     ).resolves.toMatchObject({
@@ -627,7 +625,7 @@ describe('source user read', () => {
       nextRepliesCursor: null
     });
     await expect(
-      readProfileReplies({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', cursorType: 'replies', fetcher })
+      readProfileReplies({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', fetcher })
     ).resolves.toMatchObject({
       replies: [
         {

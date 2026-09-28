@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, within } from '../render';
+import { act, fireEvent, render, within } from '../render';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import type { Topic, UserProfile, UserReference } from '@/domain/forum/models';
@@ -8,6 +8,10 @@ import { UserScreen } from '@/features/user/UserScreen';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
 const mockListRender = jest.fn<(props: { data: unknown[]; header: React.ReactNode }) => void>();
+let mockListOffset = 0;
+const mockListScrollToOffset = jest.fn(({ offset }: { offset: number; animated: boolean }) => {
+  mockListOffset = offset;
+});
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -19,6 +23,9 @@ jest.mock('@shopify/flash-list', () => {
         keyExtractor,
         ListHeaderComponent,
         ListFooterComponent,
+        onContentSizeChange,
+        onMomentumScrollBegin,
+        onScrollBeginDrag,
         renderItem,
         testID
       }: {
@@ -26,16 +33,21 @@ jest.mock('@shopify/flash-list', () => {
         keyExtractor?: (item: unknown, index: number) => string;
         ListHeaderComponent?: React.ReactNode;
         ListFooterComponent?: React.ReactNode;
+        onContentSizeChange?: () => void;
+        onMomentumScrollBegin?: () => void;
+        onScrollBeginDrag?: () => void;
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
         testID?: string;
       },
-      ref: React.ForwardedRef<{ scrollToOffset: () => void }>
+      ref: React.ForwardedRef<{ scrollToOffset: typeof mockListScrollToOffset }>
     ) {
-      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: () => undefined }));
+      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockListScrollToOffset }));
       mockListRender({ data, header: ListHeaderComponent });
       return ReactModule.createElement(
         NativeView,
-        { testID },
+        { testID, onContentSizeChange, onMomentumScrollBegin, onScrollBeginDrag } as React.ComponentProps<
+          typeof NativeView
+        >,
         ListHeaderComponent,
         ...data.map((item, index) =>
           ReactModule.createElement(
@@ -148,6 +160,47 @@ function userScreen(overrides: Partial<React.ComponentProps<typeof UserScreen>> 
 }
 
 describe('User screen behavior', () => {
+  it.each(['scrollBeginDrag', 'momentumScrollBegin'])(
+    'preserves a new %s after switching activity and completing the initial scroll reset',
+    async (event) => {
+      jest.useFakeTimers();
+      const view = await render(userScreen());
+      try {
+        await act(async () => jest.advanceTimersByTime(100));
+        mockListOffset = 500;
+        await fireEvent.press(view.getByLabelText('回复'));
+        await act(async () => jest.advanceTimersByTime(20));
+        expect(mockListOffset).toBe(0);
+
+        await fireEvent(view.getByTestId('user-screen-loaded'), event);
+        mockListOffset = 240;
+        await fireEvent(view.getByTestId('user-screen-loaded'), 'contentSizeChange', 360, 1800);
+        await act(async () => jest.advanceTimersByTime(100));
+        expect(mockListOffset).toBe(240);
+      } finally {
+        await view.unmount();
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it('lets a new drag supersede a tab reset before its first frame', async () => {
+    jest.useFakeTimers();
+    const view = await render(userScreen());
+    try {
+      await act(async () => jest.advanceTimersByTime(100));
+      await fireEvent.press(view.getByLabelText('回复'));
+      await fireEvent(view.getByTestId('user-screen-loaded'), 'scrollBeginDrag');
+      mockListOffset = 240;
+      await fireEvent(view.getByTestId('user-screen-loaded'), 'contentSizeChange', 360, 1800);
+      await act(async () => jest.advanceTimersByTime(100));
+      expect(mockListOffset).toBe(240);
+    } finally {
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
   it('shows a lane failure with its own retry and preserves the other activity', async () => {
     const onRetryTopics = jest.fn();
     const onRefresh = jest.fn();

@@ -41,7 +41,7 @@ const remote = `/data/local/tmp/wz-feed-gestures-${Date.now()}.jar`;
 adb('push', path.join(evidence, 'touch.jar'), remote);
 const results = [];
 function selectSourceAtTop() {
-  // Changing source recreates the list even when the optional top button is hidden.
+  // Switching through All resets the list position without using the floating action.
   device('press', 'id="feed-source-all"');
   device('press', `id="feed-source-${source}"`);
   device('wait', 'id="feed-topic-first"', '60000');
@@ -311,8 +311,8 @@ try {
           assert.notEqual(tab, `feed-source-${source}`, 'A horizontal swipe or short fast flick must switch source.');
         if (tab !== `feed-source-${source}`)
           assert(
-            !after.some((node) => node.label === '回到顶部'),
-            'A new source must not inherit the previous top button.'
+            after.some((node) => node.label === '发帖'),
+            'A new source must restore the create-topic action after the previous list hid it.'
           );
         result.status = 'pass';
         writeFileSync(path.join(evidence, 'results.json'), JSON.stringify(results, null, 2));

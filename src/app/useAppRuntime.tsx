@@ -8,6 +8,7 @@ import type { LibraryRouteRuntimeValue } from '@/features/library/LibraryRouteRu
 import type { MoreRouteRuntimeValue } from '@/features/more/MoreRouteRuntime';
 import type { SearchRouteRuntimeValue } from '@/features/search/SearchRouteRuntime';
 import type { TopicRouteRuntimeValue } from '@/features/topic/TopicRouteRuntime';
+import type { TopicComposerRouteRuntimeValue } from '@/features/topic-composer/TopicComposerRouteRuntime';
 import type { UserRouteRuntimeValue } from '@/features/user/UserRouteRuntime';
 import { nodeSeekUserIdForSession } from '@/domain/session/siteSessionState';
 import { useAppTheme } from './useAppTheme';
@@ -269,6 +270,52 @@ export function useAppRuntime() {
       requestNodeSeekVerification,
       showLinuxDoVerification,
       showYaohuoLogin
+    ]
+  );
+
+  const topicComposerRouteRuntime = useMemo<TopicComposerRouteRuntimeValue>(
+    () => ({
+      enabledSources,
+      sessions: accountSessionViewModels,
+      sessionEpochs: forumSessionEpochs,
+      appActive,
+      fetcher: networkProxyFetcher,
+      ensureNetworkProxyReady,
+      ensureWritableSession,
+      isWritableSessionTicketCurrent,
+      ensureNodeImageApiKey,
+      getUserAgent: (source) => (source === 'nodeseek' ? getNodeSeekUserAgent() : getLinuxDoUserAgent()),
+      getEmojiUrls: readGateway.getEmojiUrls,
+      getLinuxDoTopicCreationContext: readGateway.getLinuxDoTopicCreationContext,
+      getTopicEditContext: readGateway.getTopicEditContext,
+      getTopic: readGateway.getTopic,
+      openAccount: (source, message, recovery) => {
+        if (source === 'linuxdo') return showLinuxDoVerification(message, recovery);
+        else if (source === 'nodeseek') requestNodeSeekVerification(message || '请登录 NodeSeek');
+        else showYaohuoLogin(message);
+      },
+      notify
+    }),
+    [
+      enabledSources,
+      accountSessionViewModels,
+      forumSessionEpochs,
+      appActive,
+      networkProxyFetcher,
+      ensureNetworkProxyReady,
+      ensureWritableSession,
+      isWritableSessionTicketCurrent,
+      ensureNodeImageApiKey,
+      getNodeSeekUserAgent,
+      getLinuxDoUserAgent,
+      readGateway.getEmojiUrls,
+      readGateway.getLinuxDoTopicCreationContext,
+      readGateway.getTopicEditContext,
+      readGateway.getTopic,
+      showLinuxDoVerification,
+      requestNodeSeekVerification,
+      showYaohuoLogin,
+      notify
     ]
   );
 
@@ -534,6 +581,7 @@ export function useAppRuntime() {
     routes:
       readerDataLoaded && sessionsReady
         ? {
+            topicComposerRouteRuntime,
             feedRouteRuntime,
             libraryRouteRuntime,
             moreBadgeState: notificationMoreBadgeState(

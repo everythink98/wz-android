@@ -49,7 +49,6 @@ const V2EX_HTML_TIMEZONE = '+08:00';
 
 export interface V2exOptions {
   cursor?: string | null;
-  cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;

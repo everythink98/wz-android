@@ -58,7 +58,7 @@ function cleanPositiveInteger(value: string | number, name: string) {
   return number;
 }
 
-function randomNodeSeekContentToken() {
+export function randomNodeSeekContentToken() {
   let token = '';
   for (let index = 0; index < 16; index += 1) {
     token += NODESEEK_CONTENT_TOKEN_CHARS.charAt(Math.floor(Math.random() * NODESEEK_CONTENT_TOKEN_CHARS.length));

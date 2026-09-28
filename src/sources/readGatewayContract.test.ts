@@ -8,7 +8,8 @@ import type {
   RepliesResponse,
   SearchResponse,
   Source,
-  Topic
+  Topic,
+  TopicDetail
 } from '@/domain/forum/models';
 import {
   beginDiagnosticTrace,
@@ -23,7 +24,6 @@ import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { acceptForumReadResponse, registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { forumReadEvidenceFetcher } from '../../tests/helpers/forumReadEvidence';
-import { getYaohuoFeedDirect, getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -36,7 +36,7 @@ const forumMocks = vi.hoisted(() => ({
   })),
   getReplies: vi.fn(async (): Promise<RepliesResponse> => ({ items: [], hasMore: false, nextPage: null })),
   getReply: vi.fn(async (): Promise<Reply> => ({ author: '', contentHtml: '', createdAt: '' })),
-  getTopic: vi.fn(async ({ id, source }) => ({
+  getTopic: vi.fn(async ({ id, source }): Promise<TopicDetail> => ({
     source,
     id,
     title: '',
@@ -116,14 +116,7 @@ vi.mock('@/platform/network/readNetworkRuntime', async (importOriginal) => ({
   })
 }));
 
-import {
-  createReadGateway as createProductionReadGateway,
-  getFeed,
-  getReplies,
-  getTopic,
-  getUserDetails,
-  searchTopics
-} from './readGateway';
+import { createReadGateway as createProductionReadGateway, getReplies, getTopic } from './readGateway';
 
 type ReadGatewayTestDependencies = Omit<
   Parameters<typeof createProductionReadGateway>[0],
@@ -815,7 +808,7 @@ describe('source gateway read contract', () => {
 
     expect(linuxDoMocks.getLinuxDoEmojiUrls).toHaveBeenCalledWith(
       expect.objectContaining({
-        linuxDoAccess: { authenticated: true, userAgent: 'LinuxDo UA' },
+        linuxDoAccess: { authenticated: true, categoryCacheScope: 'authenticated:0', userAgent: 'LinuxDo UA' },
         signal
       })
     );
@@ -1099,12 +1092,11 @@ describe('source gateway read contract', () => {
       .fn<Fetcher>()
       .mockRejectedValueOnce(new RequestTimeoutError())
       .mockResolvedValueOnce(new Response('{}'));
-    const readFeed = async (options: Parameters<typeof getYaohuoFeedDirect>[0]) => {
-      if (!options.yaohuoFetcher) throw new Error('missing Yaohuo fetcher');
-      await options.yaohuoFetcher('https://www.yaohuo.me/bbs/book_list.aspx');
+    const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
+      await scopedFetcher('https://www.yaohuo.me/bbs/book_list.aspx');
       return { items: [], errors: {}, hasMore: false, nextPage: null };
     };
-    vi.mocked(getYaohuoFeedDirect).mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+    forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
     const gateway = createReadGateway({
       fetcher,
       isSourceAuthenticated: (source) => source === 'yaohuo',
@@ -1454,7 +1446,7 @@ describe('source gateway read contract', () => {
       isSourceAuthenticated: (source) => source === 'yaohuo',
       nodeSeekUserAgent: () => ''
     });
-    vi.mocked(getYaohuoTopicDirect).mockResolvedValueOnce(
+    forumMocks.getTopic.mockResolvedValueOnce(
       annotateSourceDiagnosticSummary(
         {
           ...topic,
@@ -1489,21 +1481,29 @@ describe('source gateway read contract', () => {
     );
   });
 
-  it.each<Source>(['v2ex', 'linuxdo', 'nodeseek'])('keeps all five reads behind the gateway for %s', async (source) => {
-    await getFeed({ source });
-    await searchTopics({ source, query: 'codex' });
-    await getTopic({ source, id: 'topic-1' });
-    await getReplies({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } });
-    await getUserDetails({ source, id: 'user-1' });
+  it.each<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'])(
+    'keeps all five reads behind the gateway for %s',
+    async (source) => {
+      const gateway = createReadGateway({
+        fetcher: vi.fn(),
+        isSourceAuthenticated: () => true,
+        nodeSeekUserAgent: () => ''
+      });
+      await gateway.getFeed({ source });
+      await gateway.searchTopics({ source, query: 'codex' });
+      await gateway.getTopic({ source, id: 'topic-1' });
+      await gateway.getReplies({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } });
+      await gateway.getUserDetails({ source, id: 'user-1' });
 
-    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source }));
-    expect(forumMocks.searchTopics).toHaveBeenCalledWith(expect.objectContaining({ source, query: 'codex' }));
-    expect(forumMocks.getTopic).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'topic-1' }));
-    expect(forumMocks.getReplies).toHaveBeenCalledWith(
-      expect.objectContaining({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } })
-    );
-    expect(forumMocks.getUserDetails).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
-  });
+      expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source }));
+      expect(forumMocks.searchTopics).toHaveBeenCalledWith(expect.objectContaining({ source, query: 'codex' }));
+      expect(forumMocks.getTopic).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'topic-1' }));
+      expect(forumMocks.getReplies).toHaveBeenCalledWith(
+        expect.objectContaining({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } })
+      );
+      expect(forumMocks.getUserDetails).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
+    }
+  );
 
   it('records order, position kind, and resolved page without reply content', async () => {
     const lines: string[] = [];
@@ -1553,7 +1553,6 @@ describe('source gateway read contract', () => {
       expect.objectContaining({
         source: 'linuxdo',
         query: 'codex',
-        linuxDoAuthenticated: true,
         discourseAuth: {
           authenticated: true,
           categoryCacheScope: 'authenticated:0',

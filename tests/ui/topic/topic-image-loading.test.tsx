@@ -30,7 +30,10 @@ import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import {
   markOriginalImageDisplayed,
+  originalImageDisplayRevision,
   OriginalImageUpgradeBoundary,
+  subscribeOriginalImageDisplay,
+  useOriginalImageDisplayRevision,
   useOriginalImageUpgradeEnabled
 } from '@/platform/media/originalImageLoading';
 import {
@@ -636,6 +639,39 @@ function htmlRenderingControllerProps(mediaSessionIdentity: string) {
     webViewBlockMessage: ''
   };
 }
+
+it('retains a displayed original across equal rerenders while active revisions exceed the cache budget', async () => {
+  const source = {
+    uri: 'https://img.example.com/stable-subscription-pressure.png',
+    headers: { 'X-WZ-Forum-Media-Identity': 'linuxdo:41' }
+  };
+  markOriginalImageDisplayed(source);
+  const view = await renderHook(({ image }: { image: typeof source }) => useOriginalImageDisplayRevision(image), {
+    initialProps: { image: source }
+  });
+  const releases: (() => void)[] = [];
+  try {
+    for (let index = 0; index < 513; index++) {
+      const image = { uri: `https://img.example.com/retained-revision-pressure-${index}.png` };
+      releases.push(subscribeOriginalImageDisplay(image, () => {}));
+      markOriginalImageDisplayed(image);
+    }
+    expect(view.result.current).toBe(1);
+    await view.rerender({ image: { ...source, headers: { ...source.headers } } });
+    expect(view.result.current).toBe(1);
+
+    const next = { ...source, headers: { 'X-WZ-Forum-Media-Identity': 'linuxdo:42' } };
+    await view.rerender({ image: next });
+    expect(view.result.current).toBe(0);
+    await act(() => markOriginalImageDisplayed(next));
+    expect(view.result.current).toBe(1);
+    await act(() => markOriginalImageDisplayed(source));
+    expect(view.result.current).toBe(1);
+  } finally {
+    await view.unmount();
+    releases.forEach((release) => release());
+  }
+});
 
 describe('topic block image loading', () => {
   beforeEach(() => {
@@ -1401,6 +1437,19 @@ describe('topic block image loading', () => {
 
     expect(latestImageProps(imageUrl).recyclingKey).toBe(displayedImage.recyclingKey);
     expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+  });
+
+  it('ignores an original-image display callback after its renderer unmounts', async () => {
+    const displayUrl = 'https://img.example.com/unmounted-display.png';
+    const originalUrl = 'https://img.example.com/unmounted-original.png';
+    const view = await render(<TopicImageHarness attributes={{ src: displayUrl, 'data-original': originalUrl }} />);
+    await loadAndDisplayImage(latestImageProps(displayUrl));
+    const pending = latestImageProps(originalUrl);
+    const source = pending.source!;
+    const revision = originalImageDisplayRevision(source);
+    await view.unmount();
+    await act(() => pending.onDisplay?.());
+    expect(originalImageDisplayRevision(source)).toBe(revision);
   });
 
   it('retries only the still-loading original upgrade layer', async () => {

@@ -19,11 +19,13 @@ describe('source account read', () => {
         }
       })
     ).toString('base64');
-    const fetcher = vi.fn(async (input: string) => {
+    const fetcher = vi.fn(async (input: string, options?: RequestInit) => {
       if (input === 'https://www.nodeseek.com/') {
         return new Response(`<script id="temp-script">${nodeSeekCurrentUserPayload}</script>`);
       }
       if (input === 'https://linux.do/session/current.json') {
+        expect(new Headers(options?.headers).get('User-Agent')).toBe('identity-agent');
+        expect(new Headers(options?.headers).has('Cookie')).toBe(false);
         return new Response(
           JSON.stringify({
             current_user: {
@@ -55,7 +57,7 @@ describe('source account read', () => {
     const linuxdo = await getCurrentUserIdentity({
       source: 'linuxdo',
       fetcher,
-      discourseAuth: { authenticated: true }
+      discourseAuth: { authenticated: true, userAgent: 'identity-agent' }
     });
     const yaohuo = await getCurrentUserIdentity({ source: 'yaohuo', fetcher });
 

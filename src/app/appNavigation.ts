@@ -12,7 +12,7 @@ export function navigateMainTab(screen: keyof MainTabParamList) {
 }
 
 function appScreenForRouteName(routeName?: string): Screen {
-  if (routeName === 'Topic' || routeName === 'ReadingSettings') return 'topic';
+  if (routeName === 'Topic' || routeName === 'ReadingSettings' || routeName === 'TopicComposer') return 'topic';
   if (routeName === 'User') return 'user';
   if (routeName === 'Notifications' || routeName === 'NotificationDetail' || routeName === 'NotificationSettings') {
     return 'more';
@@ -45,6 +45,7 @@ export function isNativeStackScreen() {
   const routeName = navigationRef.getCurrentRoute()?.name;
   return (
     routeName === 'Topic' ||
+    routeName === 'TopicComposer' ||
     routeName === 'User' ||
     routeName === 'Notifications' ||
     routeName === 'NotificationDetail' ||

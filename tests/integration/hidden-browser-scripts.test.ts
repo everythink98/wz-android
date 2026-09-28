@@ -11,6 +11,8 @@ import {
 } from '@/sources/nodeseek/topicParser';
 import { parseNodeSeekPageDocument } from '@/sources/nodeseek/protocol';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
+import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
+import { linuxDoBrowserResponse } from '@/features/account/browserFetchQueue';
 
 function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'account') {
   window.history.pushState(null, '', url);
@@ -823,6 +825,63 @@ describe('hidden browser fetch scripts', () => {
     expect(payload.body).toBe('');
   });
 
+  it.each(['script', 'attribute'] as const)(
+    'compacts readable linux.do %s rules before challenge detection and the bridge limit',
+    async (format) => {
+      const settings = {
+        min_topic_title_length: 6,
+        max_topic_title_length: 255,
+        min_first_post_length: 20,
+        max_post_length: 64000,
+        authorized_extensions: 'png|pdf',
+        site_description: 'Preserve &quot; and </script><p>literal</p>'
+      };
+      const preload = JSON.stringify({
+        siteSettings: JSON.stringify(settings),
+        currentUser: JSON.stringify({ username: 'private-user', token: 'private-token' }),
+        site: 'private site content'
+      });
+      const markup =
+        format === 'script'
+          ? `<script id="data-preloaded" type="application/json">${preload.replace(/</g, '\\u003c')}</script>`
+          : `<div data-preloaded="${preload.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></div>`;
+      const { postMessage } = runLinuxDoBrowserFetchScript(
+        '/latest',
+        `${markup}<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script><main>${'dynamic page '.repeat(80_000)}</main>`,
+        format === 'script' ? 'LINUX DO 普通页面' : '{"topic_list":{"topics":[]}}'
+      );
+      expect(document.documentElement.outerHTML.length).toBeGreaterThan(900_000);
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const message = postMessage.mock.calls[0]![0] as string;
+      expect(message.length).toBeLessThan(900_000);
+      expect(message).not.toContain('private-user');
+      expect(message).not.toContain('private-token');
+      expect(message).not.toContain('private site content');
+      const payload = JSON.parse(message);
+      expect(payload).toMatchObject({ type: 'linuxdo-browser-fetch', id: 9, challenge: false });
+      const fetcher = vi.fn(async (url: string) =>
+        url.endsWith('/latest')
+          ? linuxDoBrowserResponse(payload.body)
+          : Response.json(
+              url.endsWith('/site.json')
+                ? { categories: [{ id: 4, name: '技术', permission: 1 }] }
+                : { current_user: { id: 1, trust_level: 2 } }
+            )
+      );
+      await expect(loadLinuxDoTopicCreationContext({ fetcher, userAgent: 'test' })).resolves.toMatchObject({
+        titleMin: 6,
+        titleMax: 255,
+        bodyMin: 20,
+        bodyMax: 64000,
+        allowedExtensions: ['png', 'pdf']
+      });
+      const parsed = new DOMParser().parseFromString(payload.body, 'text/html');
+      const retained = JSON.parse(parsed.querySelector('#data-preloaded')!.textContent!);
+      expect(Object.keys(retained)).toEqual(['siteSettings']);
+      expect(retained.siteSettings).toEqual(settings);
+    }
+  );
+
   it('returns linux.do JSON bodies larger than 12 KB without truncating them', () => {
     const body = JSON.stringify({ items: ['x'.repeat(13000)] });
     const { postMessage } = runLinuxDoBrowserFetchJson('/latest.json', body);
@@ -835,6 +894,17 @@ describe('hidden browser fetch scripts', () => {
       challenge: false,
       body
     });
+  });
+
+  it('preserves a linux.do JSON endpoint body even when its DOM includes preloaded rules', () => {
+    const body = '{"custom_emoji":[]}';
+    const { postMessage } = runLinuxDoBrowserFetchScript(
+      '/emojis.json',
+      '<script id="data-preloaded" type="application/json">{"siteSettings":{"authorized_extensions":"png"}}</script>',
+      body
+    );
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[0]![0])).toMatchObject({ body, challenge: false });
   });
 
   it('keeps Cloudflare marker text inside linux.do browser-fetched JSON as data', () => {

@@ -1,7 +1,7 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { Dimensions, ScrollView, StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
@@ -102,6 +102,8 @@ jest.mock('@gorhom/bottom-sheet', () => {
     useBottomSheetInternal: () => ({
       animatedIndex: { get: () => -1 },
       animatedAnimationState: { get: () => ({ nextIndex: undefined }) },
+      animatedPosition: { get: () => 0 },
+      animatedDetentsState: { get: () => ({ detents: [] }) },
       animatedKeyboardState: { set: jest.fn() },
       animatedLayoutState: { get: () => ({ rawContainerHeight: 800, containerHeight: 800 }), modify: jest.fn() }
     })
@@ -115,6 +117,7 @@ let mockNotificationFlashListData: unknown;
 let mockNotificationNestedScrollEnabled: boolean | undefined;
 
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ bottom: mockSafeAreaBottom, left: 0, right: 0, top: mockSafeAreaTop })
 }));
 
@@ -641,7 +644,7 @@ describe('notification screens', () => {
     mockSafeAreaBottom = 0;
   });
 
-  it('lets the shared composer grow through the safe viewport before clipping actions', async () => {
+  it('keeps the fixed message editor flexible with its fullscreen and submit actions accessible', async () => {
     mockSafeAreaBottom = 24;
     mockSafeAreaTop = 24;
     const view = await render(
@@ -666,9 +669,10 @@ describe('notification screens', () => {
       />
     );
 
-    expect(view.getByTestId('composer-bottom-sheet').props.maxDynamicContentSize).toBe(
-      Math.round((Dimensions.get('window').height - mockSafeAreaTop - mockSafeAreaBottom) * 0.75)
-    );
+    expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('pointerEvents', 'auto');
+    expect(StyleSheet.flatten(view.getByTestId('composer-bottom-sheet-content').props.style).flex).toBe(1);
+    expect(view.getByLabelText('全屏')).toBeTruthy();
+    expect(view.getByLabelText('发送回复')).toBeTruthy();
     mockSafeAreaBottom = 0;
     mockSafeAreaTop = 0;
   });

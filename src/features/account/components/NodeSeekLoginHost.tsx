@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useEffect } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -9,8 +9,7 @@ import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/platform/network/loginWebViewScri
 import { KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react-native';
 import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { AccountHostStyles } from '../accountHostStyles';
-
-const LOGIN_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
+import { useLoginWebViewLifecycle } from './useLoginWebViewLifecycle';
 
 export function NodeSeekLoginHost({
   checking,
@@ -55,48 +54,22 @@ export function NodeSeekLoginHost({
   onSetLoading: (value: boolean) => void;
   onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
 }) {
-  const [error, setError] = useState('');
-  const [webViewKey, setWebViewKey] = useState(0);
-  const [needsRemount, setNeedsRemount] = useState(false);
-  const [settledForReplay, setSettledForReplay] = useState(false);
-
-  useEffect(() => {
-    if (!visible) {
-      setError('');
-      setNeedsRemount(false);
-      setSettledForReplay(false);
-    }
-  }, [visible]);
-
-  useEffect(() => {
-    if (!visible || !loading || webViewBlockMessage) return undefined;
-    const timeout = setTimeout(() => {
-      setSettledForReplay(true);
-      setNeedsRemount(true);
-      onWebViewState('timeout', credentialAttempt);
-      onSetLoading(false);
-      setError('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
-    }, LOGIN_WEBVIEW_LOADING_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [credentialAttempt, loading, onSetLoading, onWebViewState, visible, webViewBlockMessage]);
+  const page = useLoginWebViewLifecycle({
+    credentialAttempt,
+    messagePrefix: 'NodeSeek ',
+    loading,
+    visible,
+    webViewBlockMessage,
+    webViewRef,
+    onSetLoading,
+    onWebViewState
+  });
 
   useEffect(() => {
     if (visible && loginFormMode && !loading && credentialAttempt > 0) {
       webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
     }
   }, [credentialAttempt, loading, loginFormMode, visible, webViewRef]);
-
-  const refresh = () => {
-    setError('');
-    setSettledForReplay(false);
-    onSetLoading(true);
-    if (needsRemount) {
-      setNeedsRemount(false);
-      setWebViewKey((current) => current + 1);
-      return;
-    }
-    webViewRef.current?.reload();
-  };
 
   return (
     <LoginWebViewModal
@@ -105,12 +78,12 @@ export function NodeSeekLoginHost({
       subtitle={session.summaryLabel}
       loading={!webViewBlockMessage && loading}
       loadingText="正在打开 NodeSeek..."
-      error={webViewBlockMessage || error}
+      error={webViewBlockMessage || page.error}
       onClose={onClose}
       actions={
         <View style={styles.actions}>
           <LoginWebViewAction
-            testID={settledForReplay || webViewBlockMessage ? 'nodeseek-login-webview-settled' : undefined}
+            testID={page.settled || webViewBlockMessage ? 'nodeseek-login-webview-settled' : undefined}
             icon={ShieldCheck}
             primary
             label={checking ? '检测中' : '检测登录'}
@@ -126,14 +99,14 @@ export function NodeSeekLoginHost({
               onPress={onRequestCredentialFill}
             />
           ) : null}
-          <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" onPress={refresh} />
+          <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" onPress={page.refresh} />
           <LoginWebViewAction icon={LogOut} label="清除登录" danger onPress={onClear} />
         </View>
       }
     >
-      {visible && !webViewBlockMessage && !needsRemount ? (
+      {visible && !webViewBlockMessage && !page.needsRemount ? (
         <WebView
-          key={`nodeseek-login-${webViewKey}`}
+          key={`nodeseek-login-${page.key}`}
           ref={webViewRef}
           source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.nodeseek.loginUrl : NODESEEK_URL }}
           javaScriptCanOpenWindowsAutomatically={false}
@@ -142,40 +115,20 @@ export function NodeSeekLoginHost({
           setSupportMultipleWindows={false}
           injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
           onLoadEnd={(event) => {
-            onSetLoading(false);
-            setSettledForReplay(true);
+            page.loadEnd('code' in event.nativeEvent);
             if ('code' in event.nativeEvent) return;
-            onWebViewState('ready', credentialAttempt);
-            setError('');
             webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
             if (loginFormMode) {
               webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
             }
           }}
-          onLoadStart={() => {
-            onWebViewState('start', credentialAttempt);
-            setError('');
-            setNeedsRemount(false);
-            setSettledForReplay(false);
-            onSetLoading(true);
-          }}
+          onLoadStart={page.start}
           onMessage={(event) => {
             if (!onLoginFormMessage(event)) onHandleMessage(event);
           }}
-          onError={(event) => {
-            onWebViewState('error', credentialAttempt);
-            onSetLoading(false);
-            setSettledForReplay(true);
-            setError(`NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后关闭重试。'}`);
-          }}
+          onError={(event) => page.fail(event.nativeEvent.description)}
           renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-          onRenderProcessGone={() => {
-            onWebViewState('renderer-gone', credentialAttempt);
-            onSetLoading(false);
-            setSettledForReplay(true);
-            setNeedsRemount(true);
-            setError('NodeSeek 登录页面已停止，请刷新页面重试。');
-          }}
+          onRenderProcessGone={page.rendererGone}
           onShouldStartLoadWithRequest={onNavigation}
         />
       ) : null}

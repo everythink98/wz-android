@@ -23,7 +23,27 @@ export function normalizeLinuxDoPollCapabilities(siteValue: unknown, sessionValu
     session.current_user && typeof session.current_user === 'object'
       ? (session.current_user as Record<string, unknown>)
       : {};
-  return { groups, canUseStaffResults: currentUser.staff === true };
+  const staff = currentUser.staff === true || currentUser.admin === true || currentUser.moderator === true;
+  const settings =
+    site.site_settings && typeof site.site_settings === 'object' ? (site.site_settings as Record<string, unknown>) : {};
+  const maximum = Number(settings.poll_maximum_options);
+  const minimumTrust = Number(settings.poll_minimum_trust_level_to_create);
+  return {
+    groups,
+    canUseStaffResults: staff,
+    ...(Number.isSafeInteger(maximum) && maximum > 0 ? { maxOptions: maximum } : {}),
+    ...(typeof settings.poll_default_public === 'boolean' ? { defaultPublic: settings.poll_default_public } : {}),
+    ...(Number.isSafeInteger(minimumTrust) && minimumTrust >= 0 ? { minTrust: minimumTrust } : {}),
+    ...(typeof currentUser.can_create_poll === 'boolean'
+      ? { canCreate: settings.poll_enabled !== false && currentUser.can_create_poll }
+      : typeof settings.poll_enabled === 'boolean'
+        ? {
+            canCreate:
+              settings.poll_enabled &&
+              (staff || (Number.isFinite(minimumTrust) && Number(currentUser.trust_level) >= minimumTrust))
+          }
+        : {})
+  };
 }
 
 export async function fetchLinuxDoPollCapabilities({

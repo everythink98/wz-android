@@ -33,5 +33,7 @@ export type LinuxDoReadRecovery = {
   queryKey: readonly unknown[];
   // Local owner callback: explicit reads may have no automatically enabled Query observer.
   isCurrent?: () => boolean;
+  // Settle local reads that are waiting for verification without a Query observer.
+  cancel?: () => void;
   resume: () => Promise<LinuxDoReadResumeOutcome>;
 };

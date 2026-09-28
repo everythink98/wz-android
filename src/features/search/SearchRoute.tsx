@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Topic } from '@/domain/forum/models';
@@ -7,6 +7,7 @@ import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { openForumSearchCustomTab } from '@/platform/android/forumSearchCustomTab';
 import { errorMessage } from '@/platform/network/errors';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import type { SearchListItem } from './listItems';
 import { SearchScreen } from './SearchScreen';
 import { useSearchController } from './useSearchController';
@@ -21,18 +22,24 @@ export function SearchRoute() {
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   useScrollToTop(listRef);
   const enabledSearchSources = runtime.enabledSources;
+  const notify = runtime.notify;
+  const requestNodeSeekVerification = runtime.account.requestNodeSeekVerification;
   const openExternalSearch = useCallback(
     async (url: string) => {
       try {
         const customTabOpened = await openForumSearchCustomTab(url);
         if (!customTabOpened) {
-          runtime.notify('当前浏览器不支持返回阅坛，可继续查看搜索结果');
+          notify('当前浏览器不支持返回阅坛，可继续查看搜索结果');
         }
       } catch (error) {
-        runtime.notify(`无法打开 Google 搜索：${errorMessage(error)}`);
+        notify(`无法打开 Google 搜索：${errorMessage(error)}`);
       }
     },
-    [runtime]
+    [notify]
+  );
+  const showNodeSeekVerification = useCallback(
+    (message?: string) => requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证'),
+    [requestNodeSeekVerification]
   );
   const controller = useSearchController({
     active,
@@ -46,8 +53,7 @@ export function SearchRoute() {
     reconcileIdentityStatus: runtime.account.reconcileAccountStatus,
     sessionViewModels: runtime.account.sessionViewModels,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
-    showNodeSeekVerification: (message) =>
-      runtime.account.requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证'),
+    showNodeSeekVerification,
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway
   });
@@ -57,12 +63,18 @@ export function SearchRoute() {
       : 'linuxdo';
   const tagReadPlan = runtime.account.readGateway.getReadPlan(candidateSource, 'search-tags');
   const userReadPlan = runtime.account.readGateway.getReadPlan(candidateSource, 'search-users');
+  const candidateReadPlanScopes = useMemo(
+    () => ({ tags: tagReadPlan.cacheScope, users: userReadPlan.cacheScope }),
+    [tagReadPlan.cacheScope, userReadPlan.cacheScope]
+  );
+  const runControllerSearch = controller.runSearch;
   const runSearch = useCallback(
     (queryOverride?: string) => {
-      void controller.runSearch(queryOverride === undefined ? undefined : { query: queryOverride });
+      void runControllerSearch(queryOverride === undefined ? undefined : { query: queryOverride });
     },
-    [controller]
+    [runControllerSearch]
   );
+  const changeSearchSource = useLatestCallback(controller.setSearchSource);
   const openTopic = useCallback(
     (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
     [navigation]
@@ -73,7 +85,7 @@ export function SearchRoute() {
       busy={controller.searchBusy}
       categories={runtime.catalogCategories}
       sessionEpochs={runtime.account.sessionEpochs}
-      searchCandidateReadPlanScopes={{ tags: tagReadPlan.cacheScope, users: userReadPlan.cacheScope }}
+      searchCandidateReadPlanScopes={candidateReadPlanScopes}
       requestsEnabled={active && tagReadPlan.state === 'ready' && userReadPlan.state === 'ready'}
       query={controller.searchQuery}
       topicStateIndex={runtime.topicStateIndex}
@@ -98,7 +110,7 @@ export function SearchRoute() {
       onSearchFilterApply={controller.applySearchFilter}
       onSearchDiscourseTags={controller.searchDiscourseTags}
       onSearchDiscourseUsers={controller.searchDiscourseUsers}
-      onSearchSourceChange={controller.setSearchSource}
+      onSearchSourceChange={changeSearchSource}
       onRetrySearchSource={controller.retrySearchSource}
       onToggleLinuxDoAiSearch={controller.toggleLinuxDoAiSearch}
     />

@@ -4,6 +4,12 @@ export type ComposerPresentation = 'sheet' | 'fullscreen';
 export const MAX_COMPOSER_MARKDOWN_LENGTH = 512 * 1024;
 
 export type ComposerIntent =
+  | { kind: 'edit-topic'; site: ComposerSite; topicId: string; draftId: string }
+  | {
+      kind: 'create-topic';
+      site: ComposerSite;
+      draftId: string;
+    }
   | {
       kind: 'reply';
       site: ComposerSite;

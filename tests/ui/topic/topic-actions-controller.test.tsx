@@ -2650,6 +2650,68 @@ describe('topic action query mutations', () => {
     ]);
   });
 
+  it.each(['current', 'changed'] as const)(
+    'guards the Yaohuo image transport after proxy readiness for a %s owner',
+    async (owner) => {
+      const prepared = Promise.withResolvers<void>();
+      let current = true;
+      const transport = jest.fn(
+        async () => new Response(JSON.stringify({ code: 200, data: 'https://images.example.com/photo.png' }))
+      );
+      const fetcher = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        await prepared.promise;
+        prepareRequestToSend(init);
+        expect(String(url)).toBe('https://file.sang.pub/api/upload');
+        expect(init?.body).toEqual({ uri: 'file:///cache/test.png' });
+        return transport();
+      });
+      mockGetDocument.mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+      });
+      const topic = detailFor('yaohuo', { categoryId: '177', polls: [] });
+      seedTopicCache(topic);
+      const hook = await renderActions({ topicDetail: topic, fetcher, isWritableSessionTicketCurrent: () => current });
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = hook.result.current.actions.uploadReplyImage();
+      });
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(hook.result.current.actions.replyImageUploading).toBe(true));
+      current = owner === 'current';
+      await act(async () => {
+        prepared.resolve();
+        await pending;
+      });
+      expect(transport).toHaveBeenCalledTimes(owner === 'current' ? 1 : 0);
+      await waitFor(() => expect(hook.result.current.actions.replyImageUploading).toBe(false));
+      expect(hook.result.current.topicSession.state.replyContent.includes('https://images.example.com/photo.png')).toBe(
+        owner === 'current'
+      );
+    }
+  );
+
+  it('keeps the Yaohuo session and draft when the independent image host returns 401', async () => {
+    const onSessionExpired = jest.fn();
+    const notify = jest.fn();
+    const fetcher = jest.fn(async () => new Response(JSON.stringify({ msg: '图床拒绝请求' }), { status: 401 }));
+    const topic = detailFor('yaohuo', { categoryId: '177', polls: [] });
+    seedTopicCache(topic);
+    mockGetDocument.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    const hook = await renderActions({ topicDetail: topic, fetcher, notify, onSessionExpired });
+    await act(async () => hook.result.current.topicSession.commands.composer.changeContent('保留原稿'));
+    await act(async () => {
+      await hook.result.current.actions.uploadReplyImage();
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('图床上传失败：图床拒绝请求');
+    expect(hook.result.current.topicSession.state.replyContent).toBe('保留原稿');
+  });
+
   it.each([
     ['ordinary', new Error('图片上传网络失败')],
     ['permission-denied', Object.assign(new Error('当前账号不能上传图片'), { status: 403 })]

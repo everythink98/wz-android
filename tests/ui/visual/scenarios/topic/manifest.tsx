@@ -186,6 +186,7 @@ function TopicScenarioScreen({
     () =>
       ({
         actionBusy: state === 'disabled',
+        replyImageUploading: false,
         bookmarkOnDiscourseSite: async () => undefined,
         collectOnNodeSeekSite: async () => undefined,
         decisionFor,

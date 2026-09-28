@@ -169,6 +169,22 @@ afterEach(() => {
 });
 
 describe('linux.do visible verification coordinator', () => {
+  it('settles a cancelled local read without resuming it or changing account identity', async () => {
+    const { controller, onRecoveryStateChanged, reconcileAccountStatus } = createController();
+    const cancel = vi.fn();
+    const resume = vi.fn(async () => 'completed' as const);
+    await controller.showLinuxDoVerification('读取标签需要验证', {
+      queryKey: ['create-topic', 'tags'],
+      isCurrent: () => true,
+      cancel,
+      resume
+    });
+    expect(onRecoveryStateChanged).toHaveBeenLastCalledWith(expect.objectContaining({ dedicated: true, phase: 'web' }));
+    controller.closeLinuxDoPanel();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(resume).not.toHaveBeenCalled();
+    expect(reconcileAccountStatus).not.toHaveBeenCalled();
+  });
   it('attaches reading to an existing verification without resetting its WebView', async () => {
     const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController();
     const resumePage = vi.fn(async () => 'completed' as const);
@@ -742,6 +758,31 @@ describe('reading recovery ownership', () => {
 });
 
 describe('bounded recovery sessions', () => {
+  it('replaces an expired local read with the current attempt without reopening the verification document', async () => {
+    let current = true;
+    const oldCancel = vi.fn();
+    const oldResume = vi.fn(async () => 'completed' as const);
+    const nextResume = vi.fn(async () => 'completed' as const);
+    const { controller, onLinuxDoSurfaceOpened, showLinuxDoPanelRef } = createController();
+    await controller.showLinuxDoVerification('标签读取', {
+      queryKey: ['create-topic', 'tags'],
+      isCurrent: () => current,
+      cancel: oldCancel,
+      resume: oldResume
+    });
+    current = false;
+    await controller.showLinuxDoVerification('返回页面后的标签读取', {
+      queryKey: ['create-topic', 'tags'],
+      isCurrent: () => true,
+      resume: nextResume
+    });
+    await controller.checkLinuxDoCookie();
+    expect(oldCancel).toHaveBeenCalledTimes(1);
+    expect(oldResume).not.toHaveBeenCalled();
+    expect(nextResume).toHaveBeenCalledTimes(1);
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoPanelRef.current).toBe(false);
+  });
   it.each([
     ['completed', 'verification-required'],
     ['verification-required', 'completed'],

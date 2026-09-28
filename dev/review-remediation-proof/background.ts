@@ -22,7 +22,7 @@ import {
 const taskName = 'wz-isolated-headless-proof';
 const configFile = () => new File(Paths.cache, 'background-proof-config.json');
 const receiptFile = () => new File(Paths.cache, 'background-proof.json');
-type Config = { token: string; mode: 'success' | 'deadline' };
+type Config = { token: string; mode: 'success' | 'deadline'; run: number };
 function check(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
@@ -44,13 +44,16 @@ function write(config: Config, checkpoint: string, evidence: object = {}) {
 // Only this developer entry imports the synthetic task. No upstream requests are made.
 TaskManager.defineTask(taskName, async () => {
   const config = JSON.parse(await configFile().text()) as Config;
+  config.run += 1;
   const startedAt = Date.now();
   const states = [AppState.currentState];
   const subscription = AppState.addEventListener('change', (state) => states.push(state));
   try {
     check((await AsyncStorage.getItem('reader-storage-proof-owner')) === 'isolated', 'Unowned device');
     check(config.mode === 'success' || config.mode === 'deadline', 'Invalid mode');
+    check(Number.isSafeInteger(config.run) && config.run > 0, 'Invalid periodic run sequence');
     check(AppState.currentState === 'background', 'Task did not start in the background');
+    configFile().write(JSON.stringify(config));
     write(config, 'running', { startedAt, states });
     const before = JSON.stringify(await loadNotificationState());
     const result = await runNotificationBackgroundWorker({
@@ -106,7 +109,7 @@ export async function prepareBackgroundProof(mode: 'success' | 'deadline' | 'cle
   if (mode === 'cleanup') {
     await BackgroundTask.unregisterTaskAsync(taskName);
     if (configFile().exists) configFile().delete();
-    write({ token, mode: 'success' }, 'cleaned');
+    write({ token, mode: 'success', run: 0 }, 'cleaned');
     return;
   }
   const otherTasks = (await TaskManager.getRegisteredTasksAsync()).filter((task) => task.taskName !== taskName);
@@ -116,7 +119,7 @@ export async function prepareBackgroundProof(mode: 'success' | 'deadline' | 'cle
   state.sources.nodeseek.intentEnabled = true;
   state.sources.nodeseek.identityKey = 'nodeseek:headless-proof';
   await saveNotificationState(state);
-  const config = { token, mode };
+  const config = { token, mode, run: 0 };
   configFile().create({ overwrite: true });
   configFile().write(JSON.stringify(config));
   await BackgroundTask.registerTaskAsync(taskName, { minimumInterval: 15 });

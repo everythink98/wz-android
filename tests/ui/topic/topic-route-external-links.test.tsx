@@ -161,7 +161,12 @@ describe('Topic Route external links', () => {
           </TopicRouteRuntimeProvider>
         </ForumSessionEpochProvider>
       );
-      expect((mockTopicScreen.mock.calls.at(-1)?.[0] as { active: boolean }).active).toBe(false);
+      const backgroundedScreen = mockTopicScreen.mock.calls.at(-1)?.[0] as {
+        active: boolean;
+        composerRouteFocused: boolean;
+      };
+      expect(backgroundedScreen.active).toBe(false);
+      expect(backgroundedScreen.composerRouteFocused).toBe(true);
       expect(view.container.queryAll((node) => node.props.accessibilityElementsHidden === true)).toEqual([nativeFrame]);
       expect(nativeFrame.props.collapsable).toBe(false);
     } finally {

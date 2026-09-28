@@ -1,3 +1,4 @@
+import { createSqliteExecutor } from '@/platform/storage/sqliteExecutor';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
@@ -10,8 +11,10 @@ export type NodeSeekPollJournalEntry = {
 const KEY_PREFIX = 'wz:composer:nodeseek-polls:';
 const DATABASE_NAME = 'composer-journal.db';
 let databasePromise: Promise<SQLiteDatabase> | undefined;
-let queue: Promise<unknown> = Promise.resolve();
-let transactionUncertain = false;
+const { enqueue, transaction, assertUsable } = createSqliteExecutor(
+  '投票事务状态不明，请重新启动后核对。',
+  '投票事务无法确认，已阻止重复创建。'
+);
 
 const schema = `
 CREATE TABLE nodeseek_poll_journal (
@@ -43,37 +46,13 @@ function validEntry(value: unknown): value is NodeSeekPollJournalEntry {
   );
 }
 
-function enqueue<T>(operation: () => Promise<T>) {
-  const result = queue.then(operation, operation);
-  queue = result.catch(() => undefined);
-  return result;
-}
-
-async function transaction<T>(db: SQLiteDatabase, operation: () => Promise<T>) {
-  if (transactionUncertain) throw new Error('投票事务状态不明，请重新启动后核对。');
-  await db.execAsync('BEGIN IMMEDIATE');
-  try {
-    const result = await operation();
-    await db.execAsync('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      await db.execAsync('ROLLBACK');
-    } catch (rollback) {
-      transactionUncertain = true;
-      throw new AggregateError([error, rollback], '投票事务无法确认，已阻止重复创建。');
-    }
-    throw error;
-  }
-}
-
 async function connect() {
   const db = await openDatabaseAsync(DATABASE_NAME, { useNewConnection: true });
   try {
     await db.execAsync('PRAGMA busy_timeout = 3000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
     const version = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
     if (!version?.user_version)
-      await transaction(db, async () => {
+      await transaction(db, true, async () => {
         const current = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
         if (!current?.user_version) await db.execAsync(schema);
         else if (current.user_version !== 1) throw new Error('投票事务版本无法识别，未修改原记录。');
@@ -92,7 +71,7 @@ async function connect() {
 }
 
 function database() {
-  if (transactionUncertain) return Promise.reject(new Error('投票事务状态不明，请重新启动后核对。'));
+  assertUsable();
   databasePromise ??= connect().catch((error) => {
     databasePromise = undefined;
     throw error;
@@ -144,7 +123,7 @@ async function accountDatabase(identityKey: string) {
   let expected: NodeSeekPollJournalEntry[] | undefined;
   if (!migration) {
     expected = await readLegacyEntries(identityKey);
-    await transaction(db, async () => {
+    await transaction(db, true, async () => {
       // Another connection may have finished this account while legacy storage was read.
       migration = await db.getFirstAsync<{ status: string }>(
         'SELECT status FROM nodeseek_poll_migration WHERE identity_key=?',
@@ -193,7 +172,7 @@ async function accountDatabase(identityKey: string) {
     try {
       await AsyncStorage.removeItem(key);
       if ((await AsyncStorage.getItem(key)) !== null) throw new Error('投票旧记录清理尚未完成。');
-      await transaction(db, () =>
+      await transaction(db, true, () =>
         db.runAsync("UPDATE nodeseek_poll_migration SET status='ready' WHERE identity_key=?", identityKey)
       );
     } catch {
@@ -214,7 +193,7 @@ export function saveNodeSeekPollJournalEntry(identityKey: string, entry: NodeSee
   return enqueue(async () => {
     if (!validEntry(entry)) throw new Error('NodeSeek 投票事务记录不正确');
     const db = await accountDatabase(identityKey);
-    await transaction(db, async () => {
+    await transaction(db, true, async () => {
       const previous = await readEntry(db, identityKey, entry.localId, entry.fingerprint);
       if (previous?.remoteId && entry.remoteId && previous.remoteId !== entry.remoteId)
         throw new Error('同一投票意图出现冲突的远端 id，未覆盖原记录。');
@@ -234,7 +213,7 @@ export function claimNodeSeekPollJournalEntry(identityKey: string, intent: Omit<
   return enqueue(async () => {
     if (!validEntry({ ...intent, remoteId: null })) throw new Error('NodeSeek 投票事务记录不正确');
     const db = await accountDatabase(identityKey);
-    return transaction(db, async () => {
+    return transaction(db, true, async () => {
       const existing = await readEntry(db, identityKey, intent.localId, intent.fingerprint);
       if (existing) return { claimed: false, entry: existing };
       await db.runAsync(
@@ -255,7 +234,7 @@ export function releaseNodeSeekPollJournalEntry(
   return enqueue(async () => {
     if (!validEntry({ ...intent, remoteId: null })) throw new Error('NodeSeek 投票事务记录不正确');
     const db = await accountDatabase(identityKey);
-    await transaction(db, () =>
+    await transaction(db, true, () =>
       db.runAsync(
         'DELETE FROM nodeseek_poll_journal WHERE identity_key=? AND local_id=? AND fingerprint=? AND remote_id IS NULL',
         identityKey,

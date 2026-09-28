@@ -370,10 +370,10 @@ index 0000000..b77e1bf
 +  }
 +}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-index 45d3d7b..4467624 100644
+index 45d3d7b..be88d01 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-@@ -8,10 +8,14 @@ import android.os.Bundle
+@@ -8,12 +8,15 @@ import android.os.Bundle
  import android.content.Context
  import android.util.Log
  import android.view.View
@@ -387,9 +387,11 @@ index 45d3d7b..4467624 100644
  import android.view.WindowInsetsController
 -import android.widget.ImageButton
  import androidx.media3.ui.PlayerView
- import expo.modules.kotlin.exception.CodedException
+-import expo.modules.kotlin.exception.CodedException
  import expo.modules.video.listeners.VideoManagerListener
-@@ -38,9 +42,33 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+ import expo.modules.video.player.VideoPlayer
+ import expo.modules.video.records.FullscreenOptions
+@@ -38,14 +41,49 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    private lateinit var options: FullscreenOptions
    private var orientationHelper: FullscreenActivityOrientationHelper? = null
    private var captioningChangeListener: CaptioningManager.CaptioningChangeListener? = null
@@ -422,42 +424,112 @@ index 45d3d7b..4467624 100644
 +    }
  
      try {
-       videoViewId = intent.getStringExtra(VideoManager.INTENT_PLAYER_KEY)
-@@ -78,9 +106,20 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
-     setContentView(R.layout.fullscreen_player_activity)
-     mContentView = findViewById(R.id.enclosing_layout)
-     playerView = findViewById(R.id.player_view)
-+    playerView.setKeepContentOnPlayerReset(true)
-     requestedOrientation = options.orientation.toActivityOrientation()
+-      videoViewId = intent.getStringExtra(VideoManager.INTENT_PLAYER_KEY)
++      val handoffToken = intent.getStringExtra(VideoManager.INTENT_FULLSCREEN_HANDOFF_KEY)
+         ?: throw FullScreenVideoViewNotFoundException()
  
-     videoPlayer = videoView.videoPlayer
-+    (videoView.playerView.videoSurfaceView as? TextureView)?.takeUnless { videoView.shouldHideSurfaceView }?.bitmap?.let { bitmap ->
-+      transitionFrame = ImageView(this).apply {
-+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-+        scaleType = ImageView.ScaleType.FIT_CENTER
-+        setImageBitmap(bitmap)
++      // Claim before parsing options so every later failure releases the same owner.
++      // A missing transfer was canceled (for example, its player was released).
++      val handoff = VideoManager.claimFullscreenHandoff(handoffToken)
++      if (handoff == null) {
++        finish()
++        return
 +      }
-+      playerView.overlayFrameLayout?.addView(transitionFrame, FrameLayout.LayoutParams(-1, -1))
-+      videoPlayer?.player?.addListener(transitionListener)
-+    }
-+    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
-     videoPlayer?.player?.let {
-       PlayerView.switchTargetView(it, videoView.playerView, playerView)
-       videoPlayer?.hasBeenDisconnectedFromVideoView() // The video player is disconnected. We are only using the ExoPlayer it contained
-@@ -121,16 +160,21 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
++      videoView = handoff.videoView
++      videoViewId = videoView.videoViewId
++      videoPlayer = handoff.videoPlayer
++
+       options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+         intent.getSerializableExtra(INTENT_FULLSCREEN_OPTIONS_KEY, FullscreenOptions::class.java)
+           ?: throw FullScreenOptionsNotFoundException()
+@@ -55,9 +93,6 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+           ?: throw FullScreenOptionsNotFoundException()
+       }
+ 
+-      videoView = videoViewId?.let { VideoManager.getVideoView(it) }
+-        ?: throw FullScreenVideoViewNotFoundException()
+-
+       orientationHelper = FullscreenActivityOrientationHelper(
+         this,
+         options,
+@@ -69,33 +104,42 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+         }
+       )
+       orientationHelper?.startOrientationEventListener()
+-    } catch (e: CodedException) {
++      setContentView(R.layout.fullscreen_player_activity)
++      mContentView = findViewById(R.id.enclosing_layout)
++      playerView = findViewById(R.id.player_view)
++      playerView.setKeepContentOnPlayerReset(true)
++      requestedOrientation = options.orientation.toActivityOrientation()
++
++      (videoView.playerView.videoSurfaceView as? TextureView)?.takeUnless { videoView.shouldHideSurfaceView }?.bitmap?.let { bitmap ->
++        transitionFrame = ImageView(this).apply {
++          importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
++          scaleType = ImageView.ScaleType.FIT_CENTER
++          setImageBitmap(bitmap)
++        }
++        playerView.overlayFrameLayout?.addView(transitionFrame, FrameLayout.LayoutParams(-1, -1))
++        videoPlayer?.player?.addListener(transitionListener)
++      }
++      videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
++      videoPlayer?.player?.let {
++        PlayerView.switchTargetView(it, videoView.playerView, playerView)
++        videoPlayer?.hasBeenDisconnectedFromVideoView() // The video player is disconnected. We are only using the ExoPlayer it contained
++      }
++
++      videoViewId?.let { VideoManager.registerFullscreenPlayerActivity(it, this) }
++      VideoManager.registerListener(this)
++      playerView.player?.let {
++        val aspectRatio = calculatePiPAspectRatio(it.videoSize, playerView.width, playerView.height, videoView.contentFit)
++        applyPiPParams(this, videoView.autoEnterPiP, aspectRatio)
++      }
++    } catch (e: Exception) {
+       Log.e("ExpoVideo", "${e.message}", e)
+       finish()
+-      return
+-    }
+-
+-    setContentView(R.layout.fullscreen_player_activity)
+-    mContentView = findViewById(R.id.enclosing_layout)
+-    playerView = findViewById(R.id.player_view)
+-    requestedOrientation = options.orientation.toActivityOrientation()
+-
+-    videoPlayer = videoView.videoPlayer
+-    videoPlayer?.player?.let {
+-      PlayerView.switchTargetView(it, videoView.playerView, playerView)
+-      videoPlayer?.hasBeenDisconnectedFromVideoView() // The video player is disconnected. We are only using the ExoPlayer it contained
+-    }
+-
+-    videoViewId?.let { VideoManager.registerFullscreenPlayerActivity(it, this) }
+-    VideoManager.registerListener(this)
+-    playerView.player?.let {
+-      val aspectRatio = calculatePiPAspectRatio(it.videoSize, playerView.width, playerView.height, videoView.contentFit)
+-      applyPiPParams(this, videoView.autoEnterPiP, aspectRatio)
+     }
+   }
+ 
+   override fun onPostCreate(savedInstanceState: Bundle?) {
+     super.onPostCreate(savedInstanceState)
++    if (!::playerView.isInitialized) return
+     hideStatusBar()
+     setupFullscreenButton()
+     val requiresLinearPlayback = videoPlayer?.requiresLinearPlayback ?: false
+@@ -121,16 +165,22 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun finish() {
 -    super.finish()
++    if (didFinish) return
      didFinish = true
      videoViewId?.let {
        try {
 -        VideoManager.getVideoView(it).attachPlayer()
 +        val inlineView = VideoManager.getVideoView(it)
-+        if (::playerView.isInitialized) {
++        if (::playerView.isInitialized && inlineView === videoView && inlineView.videoPlayer === videoPlayer) {
 +          videoPlayer?.player?.let { player -> PlayerView.switchTargetView(player, playerView, inlineView.playerView) }
++          inlineView.attachPlayer()
 +        }
-+        inlineView.attachPlayer()
        } catch (e: VideoViewNotFoundException) {
          Log.w("ExpoVideo", "VideoView $it already unmounted when finishing fullscreen — skipping attachPlayer")
        }
@@ -468,18 +540,26 @@ index 45d3d7b..4467624 100644
      // Disable the exit transition
      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
        overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
-@@ -141,6 +185,7 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -141,6 +191,11 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onResume() {
++    if (!::playerView.isInitialized) {
++      super.onResume()
++      return
++    }
 +    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
      orientationHelper?.startOrientationEventListener()
      playerView.useController = true
      // Reconfigure subtitles when resuming (handles returning from settings)
-@@ -149,8 +194,9 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -149,8 +204,13 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onPause() {
++    if (!::playerView.isInitialized) {
++      super.onPause()
++      return
++    }
 +    if (!didFinish) videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true, false))
      if (videoPlayer?.staysActiveInBackground != true && !didFinish) {
 -      wasAutoPaused = videoPlayer?.player?.isPlaying == true
@@ -487,7 +567,7 @@ index 45d3d7b..4467624 100644
        if (wasAutoPaused) {
          playerView.useController = false
          videoPlayer?.player?.pause()
-@@ -171,6 +217,8 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -171,6 +231,8 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onDestroy() {
@@ -496,15 +576,18 @@ index 45d3d7b..4467624 100644
      super.onDestroy()
  
      // Clean up captioning change listener
-@@ -183,6 +231,7 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -181,8 +243,9 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+     }
+ 
      if (::videoView.isInitialized) {
-       videoView.exitFullscreen()
+-      videoView.exitFullscreen()
++      videoView.exitFullscreen(restorePlayer = ::playerView.isInitialized && videoView.videoPlayer === videoPlayer)
      }
 +    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(false))
      VideoManager.unregisterListener(this)
      videoViewId?.let { VideoManager.unregisterFullscreenPlayerActivity(it) }
      orientationHelper?.stopOrientationEventListener()
-@@ -200,9 +249,7 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -200,12 +263,14 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
  
    private fun setupFullscreenButton() {
      playerView.setFullscreenButtonClickListener { finish() }
@@ -515,6 +598,13 @@ index 45d3d7b..4467624 100644
    }
  
    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration?) {
++    if (!::playerView.isInitialized) {
++      super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
++      return
++    }
+     if (!isInPictureInPictureMode) {
+       playerView.useController = videoView.useNativeControls
+     } else {
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
 index 235844e..20234f3 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
@@ -585,7 +675,7 @@ index b880e87..0caf646 100644
  
    fun release() {
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
-index 58c8b10..ff81b7e 100644
+index 58c8b10..b5f1bee 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
 @@ -10,7 +10,6 @@ import android.view.LayoutInflater
@@ -605,12 +695,26 @@ index 58c8b10..ff81b7e 100644
      VideoManager.registerVideoView(this)
      playerView.setFullscreenButtonClickListener { enterFullscreen() }
      // The prop `useNativeControls` prop is sometimes applied after the view is created, and sometimes there is a visible
-@@ -222,12 +223,11 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -217,17 +218,23 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+   }
+ 
+   fun enterFullscreen() {
++    if (isInFullscreen) return
+     val intent = Intent(context, FullscreenPlayerActivity::class.java)
+-    intent.putExtra(VideoManager.INTENT_PLAYER_KEY, videoViewId)
      intent.putExtra(FullscreenPlayerActivity.INTENT_FULLSCREEN_OPTIONS_KEY, fullscreenOptions)
++    val handoffToken = VideoManager.beginFullscreenHandoff(this) ?: return
      // Set before starting the activity to avoid entering PiP unintentionally
      isInFullscreen = true
-+    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
-     currentActivity.startActivity(intent)
+-    currentActivity.startActivity(intent)
++    intent.putExtra(VideoManager.INTENT_FULLSCREEN_HANDOFF_KEY, handoffToken)
++    try {
++      videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
++      currentActivity.startActivity(intent)
++    } catch (error: RuntimeException) {
++      VideoManager.cancelFullscreenHandoff(handoffToken)
++      throw error
++    }
  
      // Disable the enter transition
 -    if (Build.VERSION.SDK_INT >= 34) {
@@ -620,16 +724,150 @@ index 58c8b10..ff81b7e 100644
        @Suppress("DEPRECATION")
        currentActivity.overridePendingTransition(0, 0)
      }
-@@ -241,8 +241,7 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -239,11 +246,10 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+     videoPlayer?.changeVideoView(this)
+   }
  
-   fun exitFullscreen() {
+-  fun exitFullscreen() {
++  fun exitFullscreen(restorePlayer: Boolean = true) {
      // Fullscreen uses a different PlayerView instance, because of that we need to manually update the non-fullscreen player icon after exiting
 -    val fullScreenButton: ImageButton = playerView.findViewById(androidx.media3.ui.R.id.exo_fullscreen)
 -    fullScreenButton.setImageResource(androidx.media3.ui.R.drawable.exo_icon_fullscreen_enter)
+-    attachPlayer()
 +    playerView.syncFullscreenButtonState(false)
-     attachPlayer()
++    if (restorePlayer && VideoManager.isVideoViewRegistered(this)) attachPlayer()
      onFullscreenExit(Unit)
      isInFullscreen = false
+     pipParams = pipParams.copy(blocksAppFromEntering = false)
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/managers/VideoManager.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/managers/VideoManager.kt
+index 5f9ad2a..85756a9 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/managers/VideoManager.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/managers/VideoManager.kt
+@@ -1,5 +1,7 @@
+ package expo.modules.video.managers
+ 
++import android.os.Handler
++import android.os.Looper
+ import androidx.annotation.OptIn
+ import androidx.media3.common.util.UnstableApi
+ import expo.modules.kotlin.AppContext
+@@ -12,16 +14,24 @@ import expo.modules.video.listeners.VideoManagerListener
+ import expo.modules.video.player.VideoPlayer
+ import expo.modules.video.utils.weakMutableHashSetOf
+ import java.lang.ref.WeakReference
++import java.util.UUID
+ 
+ // Helper class used to keep track of all existing VideoViews and VideoPlayers
+ @OptIn(UnstableApi::class)
+ object VideoManager {
+-  const val INTENT_PLAYER_KEY = "player_uuid"
++  const val INTENT_FULLSCREEN_HANDOFF_KEY = "fullscreen_handoff_uuid"
+   private var appContext: WeakReference<AppContext?> = WeakReference(null)
+   lateinit var pictureInPicture: PictureInPictureManager
+ 
+   // Used for sharing videoViews between VideoView and FullscreenPlayerActivity
+   private var videoViews = mutableMapOf<String, VideoView>()
++  // A row can unmount after the enter event but before the Activity is created.
++  // Only this pending transfer owns it during that gap; claim/cancel removes it.
++  data class FullscreenHandoff(val videoView: VideoView, val videoPlayer: VideoPlayer?)
++  private val pendingFullscreenHandoffs = mutableMapOf<String, FullscreenHandoff>()
++  private val fullscreenEligiblePlayers = weakMutableHashSetOf<VideoPlayer>()
++  private var acceptsFullscreenHandoffs = false
++  private val fullscreenHandoffHandler = Handler(Looper.getMainLooper())
+   private var fullscreenPlayerActivities = mutableMapOf<String, WeakReference<FullscreenPlayerActivity>>()
+ 
+   // Keeps track of all existing VideoPlayers, and whether they are attached to a VideoView
+@@ -48,9 +58,14 @@ object VideoManager {
+       cache = VideoCache(context)
+     }
+     this.appContext = WeakReference(appContext)
++    acceptsFullscreenHandoffs = true
+   }
+ 
++  @Synchronized
+   fun onModuleDestroyed(appContext: AppContext) {
++    acceptsFullscreenHandoffs = false
++    fullscreenEligiblePlayers.clear()
++    pendingFullscreenHandoffs.keys.toList().forEach { cancelFullscreenHandoff(it) }
+     pictureInPicture.release()
+     listeners.clear()
+   }
+@@ -75,6 +90,45 @@ object VideoManager {
+     return videoViews[id] ?: throw VideoViewNotFoundException(id)
+   }
+ 
++  fun isVideoViewRegistered(videoView: VideoView): Boolean = videoViews[videoView.videoViewId] === videoView
++
++  @Synchronized
++  fun beginFullscreenHandoff(videoView: VideoView): String? {
++    val player = videoView.videoPlayer
++    if (!acceptsFullscreenHandoffs || (player != null && !fullscreenEligiblePlayers.contains(player))) return null
++    val token = UUID.randomUUID().toString()
++    pendingFullscreenHandoffs[token] = FullscreenHandoff(videoView, player)
++    return token
++  }
++
++  @Synchronized
++  fun claimFullscreenHandoff(id: String): FullscreenHandoff? {
++    val handoff = pendingFullscreenHandoffs.remove(id) ?: return null
++    if (!acceptsFullscreenHandoffs || handoff.videoView.videoPlayer !== handoff.videoPlayer ||
++      (handoff.videoPlayer != null && !fullscreenEligiblePlayers.contains(handoff.videoPlayer))) {
++      completeFullscreenCancellation(handoff)
++      return null
++    }
++    return handoff
++  }
++
++  @Synchronized
++  fun cancelFullscreenHandoff(id: String) {
++    val handoff = pendingFullscreenHandoffs.remove(id) ?: return
++    completeFullscreenCancellation(handoff)
++  }
++
++  private fun completeFullscreenCancellation(handoff: FullscreenHandoff) {
++    // SharedObject release can arrive off the UI thread. Remove ownership now;
++    // never post through the detached View, whose queue may no longer drain.
++    val completeCancellation = Runnable {
++      handoff.videoView.exitFullscreen(restorePlayer = false)
++      handoff.videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(false))
++    }
++    if (Looper.myLooper() == Looper.getMainLooper()) completeCancellation.run()
++    else fullscreenHandoffHandler.post(completeCancellation)
++  }
++
+   fun unregisterVideoView(videoView: VideoView) {
+     videoViews.remove(videoView.videoViewId)
+ 
+@@ -83,12 +137,18 @@ object VideoManager {
+     }
+   }
+ 
++  @Synchronized
+   fun registerVideoPlayer(videoPlayer: VideoPlayer) {
++    fullscreenEligiblePlayers.add(videoPlayer)
+     videoPlayersToVideoViews[videoPlayer] = videoPlayersToVideoViews[videoPlayer] ?: mutableListOf()
+     audioFocusManager.registerPlayer(videoPlayer)
+   }
+ 
++  @Synchronized
+   fun unregisterVideoPlayer(videoPlayer: VideoPlayer) {
++    fullscreenEligiblePlayers.remove(videoPlayer)
++    pendingFullscreenHandoffs.filterValues { it.videoPlayer === videoPlayer }.keys.toList()
++      .forEach { cancelFullscreenHandoff(it) }
+     videoPlayersToVideoViews.remove(videoPlayer)
+     audioFocusManager.unregisterPlayer(videoPlayer)
+   }
+@@ -101,7 +161,10 @@ object VideoManager {
+     fullscreenPlayerActivities.remove(id)
+   }
+ 
++  @Synchronized
+   fun finishFullscreenPlayer(id: String) {
++    pendingFullscreenHandoffs.filterValues { it.videoView.videoViewId == id }.keys.toList()
++      .forEach { cancelFullscreenHandoff(it) }
+     val activityRef = fullscreenPlayerActivities[id]
+     activityRef?.get()?.finish()
+   }
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/PlayerEvent.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/player/PlayerEvent.kt
 index 5fcf3e5..b84ef26 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/PlayerEvent.kt

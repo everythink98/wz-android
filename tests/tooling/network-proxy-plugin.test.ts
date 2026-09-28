@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 describe('forum platform native ownership', () => {
   it('keeps runtime sources and test dependencies in the library, not generated App copies', () => {
-    for (const name of ['withNetworkProxyModule.js', 'withDiagnosticJournal.js', 'withSvgRendererModule.js']) {
+    for (const name of ['withDiagnosticJournal.js', 'withForumPlatform.js']) {
       const plugin = readFileSync(join(process.cwd(), 'plugins', name), 'utf8');
       expect(plugin).not.toContain('.kt');
       expect(plugin).not.toContain('testImplementation');

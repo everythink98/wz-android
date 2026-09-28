@@ -1,7 +1,8 @@
 import { searchNodeSeek } from '@/sources/nodeseek/reader';
 import { searchV2ex } from '@/sources/v2ex/search';
 import { searchYaohuoDirect } from '@/sources/yaohuo/reader';
-import { searchDiscourseTopics, type DiscourseReadAuth } from './discourseRead';
+import { searchLinuxDo } from '@/sources/linuxdo/search';
+import type { LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import { aggregateSearchSources, isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   parseSearchExpression,
@@ -68,7 +69,7 @@ function includedAggregateSearchSources(includedSources?: readonly Source[]) {
 export async function searchTopics({
   source,
   query,
-  limit = 20,
+  limit = source === 'yaohuo' ? 30 : 20,
   page = 1,
   categories = [],
   fetcher,
@@ -77,7 +78,6 @@ export async function searchTopics({
   nodeSeekUserAgent,
   discourseAuth,
   includedSources,
-  linuxDoAuthenticated,
   unavailableSources,
   sort = 'relevance',
   filter,
@@ -93,15 +93,25 @@ export async function searchTopics({
   fetcherForSource?: (source: Source) => Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   includedSources?: readonly Source[];
-  linuxDoAuthenticated?: boolean;
   unavailableSources?: readonly Source[];
   sort?: SearchSort;
   filter?: SourceSearchFilter;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SearchResponse> {
+  if (source === 'yaohuo') {
+    return searchYaohuoDirect({
+      query,
+      page,
+      limit,
+      category: filter?.source === 'yaohuo' ? filter.category : undefined,
+      yaohuoFetcher: fetcher,
+      signal,
+      timeoutMs
+    });
+  }
   const adapterQuery = positiveSearchQuery(query);
   const options = {
     authenticated: nodeSeekAuthenticated,
@@ -122,42 +132,17 @@ export async function searchTopics({
             if (unavailableSources?.includes(item)) {
               return requireSearchTopicTitles(await unavailableSourceRead(item));
             }
-            const readSource = async (sourceFetcher: Fetcher) => {
-              if (isDiscourseSource(item)) {
-                return requireSearchTopicTitles(
-                  await searchDiscourseTopics(adapterQuery, {
-                    authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
-                    auth: discourseAuth,
-                    fetcher: sourceFetcher,
-                    limit,
-                    page,
-                    signal,
-                    timeoutMs
-                  })
-                );
-              }
-              if (item === 'nodeseek') {
-                return requireSearchTopicTitles(
-                  await searchNodeSeek(adapterQuery, { ...options, fetcher: sourceFetcher })
-                );
-              }
-              if (item === 'v2ex') {
-                return requireSearchTopicTitles(await searchV2ex(adapterQuery, { ...options, fetcher: sourceFetcher }));
-              }
-              if (item === 'yaohuo') {
-                return requireSearchTopicTitles(
-                  await searchYaohuoDirect({
-                    query: adapterQuery,
-                    page,
-                    limit,
-                    yaohuoFetcher: sourceFetcher,
-                    signal,
-                    timeoutMs
-                  })
-                );
-              }
-              throw new Error(`${item} 未注册聚合搜索 adapter`);
-            };
+            const readSource = async (sourceFetcher: Fetcher) =>
+              requireSearchTopicTitles(
+                await searchTopics({
+                  ...options,
+                  source: item,
+                  query: adapterQuery,
+                  nodeSeekAuthenticated,
+                  discourseAuth,
+                  fetcher: sourceFetcher
+                })
+              );
             const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
             return item === 'linuxdo' || item === 'nodeseek'
               ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => signal?.aborted !== true)
@@ -197,13 +182,12 @@ export async function searchTopics({
   }
   const activeFilter = filter?.source === source ? filter : undefined;
   const response = isDiscourseSource(source)
-    ? await searchDiscourseTopics(
+    ? await searchLinuxDo(
         activeFilter && isDiscourseSearchFilter(activeFilter)
           ? buildDiscourseSearchQuery(adapterQuery, activeFilter, categories)
           : adapterQuery,
         {
-          authenticated: source === 'linuxdo' && linuxDoAuthenticated === true,
-          auth: discourseAuth,
+          linuxDoAccess: discourseAuth,
           fetcher,
           limit,
           page,

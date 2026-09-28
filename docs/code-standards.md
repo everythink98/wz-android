@@ -36,10 +36,10 @@
 | `app` | 六类模块 |
 
 - feature 不得反向依赖 app，也不得跨 feature 直接调用；共享语义下沉到 domain/platform/ui，共享来源能力留在 sources。
-- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/discourseRead.ts`、`src/sources/readGateway.ts`、`src/sources/discourseNotifications.ts`、`src/sources/notificationAdapter.ts`、`src/sources/notificationAdapters.ts`、`src/sources/notificationForegroundAccess.ts`、`src/sources/notificationBackgroundAccess.ts` 与 `src/sources/notificationGateway.ts` 是允许承担来源组合的根模块。
+- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/readGateway.ts`、`src/sources/discourseNotifications.ts`、`src/sources/notificationAdapter.ts`、`src/sources/notificationAdapters.ts`、`src/sources/notificationForegroundAccess.ts`、`src/sources/notificationBackgroundAccess.ts` 与 `src/sources/notificationGateway.ts` 是允许承担来源组合的根模块。
 - `src/sources/readGateway.ts` 是论坛读取统一入口，`src/sources/notificationGateway.ts` 是消息读取与已读协议的独立统一入口。写操作继续复用现有 action client；不为目录整洁另造 service、factory 或 provider registry。
 - 禁止新增 barrel `index.ts`、旧内部路径 re-export 和纯转发 facade。移动内部模块时一次性更新调用方、测试与文档。
-- App 组合链固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`：`AppRoot` 只能依赖 `AppComposition`；`useAppRuntime` 只能组合深 runtime、用 `useMemo` 投影 route capability，不得持有 `useState/useRef/useEffect/useCallback` 或导入 Screen/component；`AppComposition` 只依赖深 runtime、全局 provider 与 `AppRoutes`；`AppRoutes` 只映射七个 feature route entry；`AppNavigator` 不得依赖 feature。
+- App 组合链固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`：`AppRoot` 只能依赖 `AppComposition`；`useAppRuntime` 只能组合深 runtime、用 `useMemo` 投影 route capability，不得持有 `useState/useRef/useEffect/useCallback` 或导入 Screen/component；`AppComposition` 只依赖深 runtime、全局 provider 与 `AppRoutes`；`AppRoutes` 只映射八个 feature route entry；`AppNavigator` 不得依赖 feature。
 - Feed、Search、Library、More tab 长期挂载但以 `active` 控制 Query 和副作用；Topic/User 的 controller、list ref、草稿、筛选和滚动状态归各自 native route。禁止恢复 Topic presentation cache、route snapshot、手工 back stack、全局 openTopic/openUser ref 或 deferred navigation registry。
 
 ## 模块与文件拆分
@@ -53,7 +53,7 @@
 - 通用有状态 UI 在自研前依次核对平台控件、现有依赖和成熟受控组件；展示组件可以拥有拖动中的临时预览，但最终值、播放真相、网络身份、错误语义和领域生命周期必须留在现有 owner，禁止为了现成皮肤引入第二套播放内核或网络边界。
 - 不增加未要求的扩展点、配置层或单实现 interface。新增抽象必须减少现有重复或切断真实反向依赖。
 
-`modules/forum-platform` 直接拥有网络、诊断、SVG、文件保存源码与测试；plugin 仅修改配置及必要启动注册。新原生能力优先进入已有模块，不恢复 Kotlin 复制、包名替换或测试源码注入。原生具体启动及 source set 边界见 `docs/architecture.md`。
+`modules/forum-platform` 直接拥有网络、诊断、SVG、文件保存、安装器、Custom Tab、通知摘要、安全随机和区域图片源码与测试；plugin 仅修改配置及必要启动注册。新原生能力优先进入已有模块，不恢复 Kotlin 复制、包名替换或测试源码注入。原生具体启动及 source set 边界见 `docs/architecture.md`。
 
 ## 测试归属
 

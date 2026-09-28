@@ -153,7 +153,21 @@ export async function runNodeSeekAction({
   }
 
   if (!response.ok) {
-    throw nodeSeekActionError(data, response.status, request.fallbackErrorMessage);
+    let confirmedRejection: boolean | undefined;
+    if (
+      request.method === 'POST' &&
+      ['/api/vote/info', '/api/content/edit-discussion', '/api/content/new-discussion'].includes(request.path) &&
+      [408, 409].includes(response.status)
+    ) {
+      const payload =
+        data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
+      confirmedRejection = Boolean(
+        payload?.success === false ||
+        (typeof payload?.error === 'string' && payload.error.trim()) ||
+        (Array.isArray(payload?.errors) && payload.errors.some((error) => typeof error === 'string' && error.trim()))
+      );
+    }
+    throw nodeSeekActionError(data, response.status, request.fallbackErrorMessage, confirmedRejection);
   }
   if (!parsedJson) {
     throw new Error('NodeSeek 返回内容格式不正确');

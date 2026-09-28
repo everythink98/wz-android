@@ -213,14 +213,6 @@ function fileSha256(filePath) {
   return createHash('sha256').update(readFileSync(filePath)).digest('hex');
 }
 
-function releaseApkSha256() {
-  return fileSha256(releaseApkPath);
-}
-
-function printReleaseApkSha256(sha256) {
-  console.log(`release APK SHA-256: ${sha256}`);
-}
-
 function writeReleaseManifest({
   sha256,
   signerSha256,
@@ -429,7 +421,7 @@ run('npm', [
   smokeApkPath,
   ...(releaseOptions['replay-directory'] ? ['--replay-directory', releaseOptions['replay-directory']] : [])
 ]);
-const sha256 = releaseApkSha256();
+const sha256 = fileSha256(releaseApkPath);
 archiveDiagnosticSymbols({ rootDir, androidDir, apkPaths: [releaseApkPath, builtSmokeApkPath], gitSha });
 writeReleaseManifest({
   sha256,
@@ -441,4 +433,4 @@ writeReleaseManifest({
   gradleVersion,
   builtAbis: releaseApkAbis
 });
-printReleaseApkSha256(sha256);
+console.log(`release APK SHA-256: ${sha256}`);

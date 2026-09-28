@@ -280,6 +280,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
         >
           <TopicScreen
             active={active}
+            composerRouteFocused={focused}
             actions={actions}
             article={{
               busy: topicBusy,
@@ -288,6 +289,24 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
               ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
             }}
             chrome={{
+              ...(topicDetail &&
+              topicDetail.source !== 'v2ex' &&
+              !(topicDetail.source === 'linuxdo' && topicDetail.isPrivateMessage) &&
+              topicDetail.canEdit &&
+              topicDetail.authorId &&
+              runtime.account.sessionViewModels[topicDetail.source].canWrite &&
+              String(runtime.account.sessionViewModels[topicDetail.source].currentUser?.id) === topicDetail.authorId
+                ? {
+                    editTopic: () => {
+                      if (topicDetail.source !== 'v2ex')
+                        navigation.push('TopicComposer', {
+                          kind: 'edit',
+                          source: topicDetail.source,
+                          topicId: topicDetail.id
+                        });
+                    }
+                  }
+                : {}),
               back: navigation.goBack,
               favorite: topicFavorite,
               getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,

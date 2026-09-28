@@ -1,6 +1,6 @@
 import type { Source } from '@/domain/forum/sourceCatalog';
 import { createContext, type ReactNode, useCallback, useContext, useRef } from 'react';
-import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
+import { CommonActions, StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -79,9 +79,20 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
     [navigation]
   );
   const manageContentSources = useCallback(() => navigation.dispatch(manageContentSourcesAction()), [navigation]);
+  const createTopic = useCallback(() => {
+    const source = controller.feedSource;
+    navigation.dispatch(
+      CommonActions.navigate('TopicComposer', {
+        kind: 'create',
+        ...(source === 'nodeseek' || source === 'linuxdo' || source === 'yaohuo' ? { initialSource: source } : {})
+      })
+    );
+  }, [controller.feedSource, navigation]);
 
   return (
     <FeedScreen
+      active={active}
+      onCreateTopic={createTopic}
       busy={controller.feedBusy}
       categories={controller.feedCategories}
       categoryFilter={controller.categoryFilter}

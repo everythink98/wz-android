@@ -7,8 +7,12 @@ import type { ReaderData } from '@/domain/reader/readerData';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { useFeedController } from '@/features/feed/useFeedController';
 import type { ReadGateway } from '@/sources/readGateway';
+import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 
 const mockUseAccountRuntime = jest.fn();
+const mockShowLinuxDoVerification = jest.fn<(_message?: string, _recovery?: LinuxDoReadRecovery) => Promise<boolean>>(
+  async () => true
+);
 const mockNotify = jest.fn<(message?: string) => void>();
 const mockUseNotificationsRuntime = jest.fn();
 let mockActualReader = false;
@@ -133,7 +137,7 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
         element: null,
         linuxDoVerificationVisible: false,
         requestNodeSeekVerification: jest.fn(),
-        showLinuxDoVerification: jest.fn(),
+        showLinuxDoVerification: mockShowLinuxDoVerification,
         showYaohuoLogin: jest.fn(),
         surfaces: { linuxdo: {}, nodeseek: {}, yaohuo: {} }
       },
@@ -201,8 +205,23 @@ describe('app runtime startup', () => {
     mockHandleNavigationReady.mockClear();
     mockNotificationNavigationReady.mockClear();
     mockUseAccountRuntime.mockClear();
+    mockShowLinuxDoVerification.mockClear();
     mockUseAppUpdateRuntime.mockClear();
     mockUseForumCatalogRuntime.mockClear();
+  });
+
+  it('forwards the exact create-topic read recovery to the existing linux.do verification host', async () => {
+    const hook = await renderHook(() => useAppRuntime());
+    const recovery: LinuxDoReadRecovery = {
+      queryKey: ['create-topic', 'tags'],
+      isCurrent: () => true,
+      resume: async () => 'completed',
+      cancel: jest.fn()
+    };
+    expect(
+      await hook.result.current.routes!.topicComposerRouteRuntime.openAccount('linuxdo', '读取标签需要验证', recovery)
+    ).toBe(true);
+    expect(mockShowLinuxDoVerification).toHaveBeenCalledWith('读取标签需要验证', recovery);
   });
 
   it('settles local routes without trusting fallback settings, then enables only restored sources', async () => {

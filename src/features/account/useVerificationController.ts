@@ -164,6 +164,7 @@ export function useVerificationController({
     linuxDoCanceledRecoveriesRef.current.add(target.recovery);
     if ('kind' in target.recovery) target.recovery.cancel();
     else {
+      target.recovery.cancel?.();
       const query = appQueryClient.getQueryCache().find({ queryKey: target.recovery.queryKey, exact: true });
       if (query) canceledQueriesRef.current.set(query, query.state?.errorUpdatedAt);
       void appQueryClient.cancelQueries({ queryKey: target.recovery.queryKey, exact: true });
@@ -592,8 +593,14 @@ export function useVerificationController({
         }
         const session = recoverySessionRef.current;
         if (session) {
-          if (!session.targets.some((target) => target.id === id)) {
+          const index = session.targets.findIndex((target) => target.id === id);
+          if (index < 0) {
             session.targets.push({ id, recovery, outcome: 'pending' });
+            publishRecovery();
+          } else if (!('kind' in recovery) && !isActiveRecoveryQuery(session.targets[index].recovery)) {
+            cancelRecoveryTarget(session.targets[index]);
+            // Replace the target object so a late check cannot overwrite this attempt.
+            session.targets[index] = { id, recovery, outcome: 'pending' };
             publishRecovery();
           }
           return true;

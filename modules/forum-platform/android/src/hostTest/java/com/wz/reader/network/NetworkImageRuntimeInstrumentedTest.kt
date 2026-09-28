@@ -39,6 +39,23 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
+internal fun awaitImageRuntimeProof(
+  instrumentation: android.app.Instrumentation,
+  activity: android.app.Activity
+) {
+  fun containsProof(view: android.view.View): Boolean =
+    view.getTag(com.facebook.react.R.id.react_test_id) == "image-runtime-proof" ||
+      (view is ViewGroup && (0 until view.childCount).any { containsProof(view.getChildAt(it)) })
+  val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+  var ready = false
+  while (!ready && System.nanoTime() < deadline) {
+    instrumentation.runOnMainSync { ready = containsProof(activity.window.decorView) }
+    if (!ready) Thread.sleep(25)
+  }
+  assertTrue("image runtime proof must mount without production Feed requests", ready)
+  assertTrue("the real RN pipeline must initialize", FrescoModule.hasBeenInitialized())
+}
+
 @RunWith(AndroidJUnit4::class)
 class NetworkImageRuntimeInstrumentedTest {
   @Test
@@ -46,6 +63,7 @@ class NetworkImageRuntimeInstrumentedTest {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
     val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    awaitImageRuntimeProof(instrumentation, activity)
     val initialized = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
     while ((!FrescoModule.hasBeenInitialized() || NetworkProxyRuntime.currentLocalProxy() != null) && System.nanoTime() < initialized) Thread.sleep(100)
     assertTrue(FrescoModule.hasBeenInitialized())
@@ -120,6 +138,7 @@ class NetworkImageRuntimeInstrumentedTest {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
     val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    awaitImageRuntimeProof(instrumentation, activity)
     val png = ByteArrayOutputStream().also { output ->
       Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888).apply {
         eraseColor(Color.MAGENTA); compress(Bitmap.CompressFormat.PNG, 100, output); recycle()
@@ -226,6 +245,7 @@ class NetworkImageRuntimeInstrumentedTest {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
     val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    awaitImageRuntimeProof(instrumentation, activity)
     val initializedDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
     while (!FrescoModule.hasBeenInitialized() && System.nanoTime() < initializedDeadline) Thread.sleep(100)
     assertTrue("the production RN pipeline must initialize", FrescoModule.hasBeenInitialized())

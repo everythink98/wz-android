@@ -2,7 +2,7 @@ import { getNodeSeekCategories, getNodeSeekFeed } from '@/sources/nodeseek/reade
 import { yaohuoCategoriesResponse } from '@/sources/yaohuo/feedParser';
 import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
 import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
-import { getDiscourseCategories, getDiscourseFeed, type DiscourseReadAuth } from './discourseRead';
+import { getLinuxDoCategories, getLinuxDoFeed, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import { isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
 import { balanceTopicsBySource } from '@/domain/forum/feed';
 import type {
@@ -109,7 +109,7 @@ function topicIdentity(topic: Topic) {
 export async function getFeed({
   source,
   page = 1,
-  limit = 20,
+  limit = source === 'yaohuo' ? 30 : 20,
   cursor,
   category,
   feedFilter,
@@ -134,7 +134,7 @@ export async function getFeed({
   fetcherForSource?: (source: Source) => Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   diagnosticTrace?: DiagnosticTrace;
   includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
@@ -188,49 +188,18 @@ export async function getFeed({
                   nextCursor: cursorState.sourceCursors?.[item] ?? null
                 });
               }
-              const readSource = (sourceFetcher: Fetcher) => {
-                if (isDiscourseSource(item)) {
-                  return getDiscourseFeed({
-                    auth: discourseAuth,
-                    category,
-                    fetcher: sourceFetcher,
-                    limit: adapterLimit,
-                    page: requestedPages[item],
-                    signal: sourceSignal,
-                    timeoutMs
-                  });
-                }
-                if (item === 'nodeseek') {
-                  return getNodeSeekFeed({
-                    ...options,
-                    fetcher: sourceFetcher,
-                    limit: adapterLimit,
-                    page: requestedPages[item],
-                    signal: sourceSignal
-                  });
-                }
-                if (item === 'v2ex') {
-                  return getV2exFeed({
-                    ...options,
-                    cursor: cursorState.sourceCursors?.[item],
-                    fetcher: sourceFetcher,
-                    limit,
-                    page: requestedPages[item],
-                    signal: sourceSignal
-                  });
-                }
-                if (item === 'yaohuo') {
-                  return getYaohuoFeedDirect({
-                    category,
-                    page: requestedPages[item],
-                    limit: adapterLimit,
-                    yaohuoFetcher: sourceFetcher,
-                    signal: sourceSignal,
-                    timeoutMs
-                  });
-                }
-                throw new Error(`${item} 未注册聚合首页读取 adapter`);
-              };
+              const readSource = (sourceFetcher: Fetcher) =>
+                getFeed({
+                  ...options,
+                  source: item,
+                  nodeSeekAuthenticated,
+                  discourseAuth,
+                  cursor: item === 'v2ex' ? cursorState.sourceCursors?.[item] || undefined : cursor,
+                  fetcher: sourceFetcher,
+                  limit: item === 'v2ex' ? limit : adapterLimit,
+                  page: requestedPages[item],
+                  signal: sourceSignal
+                });
               const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
               return item === 'linuxdo' || item === 'nodeseek'
                 ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
@@ -331,11 +300,11 @@ export async function getFeed({
     );
   }
   if (isDiscourseSource(source)) {
-    return getDiscourseFeed({
-      auth: discourseAuth,
+    return getLinuxDoFeed({
+      linuxDoAccess: discourseAuth,
       category,
       fetcher,
-      filter: feedFilter as DiscourseFeedFilter | undefined,
+      linuxDoFilter: feedFilter as DiscourseFeedFilter | undefined,
       limit,
       page,
       signal,
@@ -344,7 +313,8 @@ export async function getFeed({
   }
   return dispatchSourceRead(source, {
     nodeseek: () => getNodeSeekFeed({ ...options, feedFilter: feedFilter as NodeSeekFeedFilter | undefined }),
-    v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined })
+    v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined }),
+    yaohuo: () => getYaohuoFeedDirect({ category, page, limit, yaohuoFetcher: fetcher, signal, timeoutMs })
   });
 }
 
@@ -365,7 +335,7 @@ export async function getCategories({
   fetcherForSource?: (source: Source) => Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
@@ -383,26 +353,15 @@ export async function getCategories({
               if (unavailableSources?.includes(item)) {
                 return unavailableSourceRead(item);
               }
-              const readSource = (sourceFetcher: Fetcher) => {
-                if (isDiscourseSource(item)) {
-                  return getDiscourseCategories({
-                    auth: discourseAuth,
-                    fetcher: sourceFetcher,
-                    signal: sourceSignal,
-                    timeoutMs
-                  });
-                }
-                if (item === 'nodeseek') {
-                  return getNodeSeekCategories({ ...options, fetcher: sourceFetcher, signal: sourceSignal });
-                }
-                if (item === 'v2ex') {
-                  return getV2exCategories({ ...options, fetcher: sourceFetcher, signal: sourceSignal });
-                }
-                if (item === 'yaohuo') {
-                  return Promise.resolve(yaohuoCategoriesResponse());
-                }
-                throw new Error(`${item} 未注册分类读取 adapter`);
-              };
+              const readSource = (sourceFetcher: Fetcher) =>
+                getCategories({
+                  ...options,
+                  source: item,
+                  nodeSeekAuthenticated,
+                  discourseAuth,
+                  fetcher: sourceFetcher,
+                  signal: sourceSignal
+                });
               const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
               return item === 'linuxdo' || item === 'nodeseek'
                 ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
@@ -437,8 +396,8 @@ export async function getCategories({
     return yaohuoCategoriesResponse();
   }
   if (isDiscourseSource(source)) {
-    return getDiscourseCategories({
-      auth: discourseAuth,
+    return getLinuxDoCategories({
+      linuxDoAccess: discourseAuth,
       fetcher,
       signal,
       timeoutMs

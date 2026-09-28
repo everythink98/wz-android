@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- React Navigation getComponent defers synchronous page evaluation. */
 import type { ComponentProps } from 'react';
+import {
+  TopicComposerRouteRuntimeProvider,
+  type TopicComposerRouteRuntimeValue
+} from '@/features/topic-composer/TopicComposerRouteRuntime';
 import { AppNavigator } from './AppNavigator';
 import { FeedRoute, FeedRouteRuntimeProvider, type FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
 import { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from '@/features/library/LibraryRouteRuntime';
@@ -23,6 +27,9 @@ const getTopicRoute = () =>
   require('@/features/topic/TopicRoute').TopicRoute as typeof import('@/features/topic/TopicRoute').TopicRoute;
 const getUserRoute = () =>
   require('@/features/user/UserRoute').UserRoute as typeof import('@/features/user/UserRoute').UserRoute;
+const getTopicComposerRoute = () =>
+  require('@/features/topic-composer/TopicComposerRoute')
+    .TopicComposerRoute as typeof import('@/features/topic-composer/TopicComposerRoute').TopicComposerRoute;
 const getNotificationsRoute = () =>
   require('@/features/notifications/NotificationRoute')
     .NotificationsRoute as typeof import('@/features/notifications/NotificationRoute').NotificationsRoute;
@@ -39,6 +46,7 @@ const getNotificationSettingsRoute = () =>
 type NavigatorProps = ComponentProps<typeof AppNavigator>;
 
 export function AppRoutes({
+  topicComposerRouteRuntime,
   feedRouteRuntime,
   libraryRouteRuntime,
   moreBadgeState,
@@ -53,6 +61,7 @@ export function AppRoutes({
   onReady,
   onScreenChange
 }: {
+  topicComposerRouteRuntime: TopicComposerRouteRuntimeValue;
   feedRouteRuntime: FeedRouteRuntimeValue;
   libraryRouteRuntime: LibraryRouteRuntimeValue;
   moreBadgeState: NavigatorProps['moreBadgeState'];
@@ -68,37 +77,40 @@ export function AppRoutes({
   onScreenChange: NavigatorProps['onScreenChange'];
 }) {
   return (
-    <TopicRouteRuntimeProvider value={topicRouteRuntime}>
-      <UserRouteRuntimeProvider value={userRouteRuntime}>
-        <FeedRouteRuntimeProvider value={feedRouteRuntime}>
-          <SearchRouteRuntimeProvider value={searchRouteRuntime}>
-            <LibraryRouteRuntimeProvider value={libraryRouteRuntime}>
-              <MoreRouteRuntimeProvider value={moreRouteRuntime}>
-                <NotificationRouteRuntimeProvider value={notificationRouteRuntime}>
-                  <AppNavigator
-                    moreBadgeState={moreBadgeState}
-                    navigationTheme={navigationTheme}
-                    FeedRouteComponent={FeedRoute}
-                    getLibraryRoute={getLibraryRoute}
-                    getMoreRoute={getMoreRoute}
-                    getNotificationDetailRoute={getNotificationDetailRoute}
-                    getNotificationSettingsRoute={getNotificationSettingsRoute}
-                    getNotificationsRoute={getNotificationsRoute}
-                    getReadingSettingsRoute={getReadingSettingsRoute}
-                    getSearchRoute={getSearchRoute}
-                    getTopicRoute={getTopicRoute}
-                    getUserRoute={getUserRoute}
-                    styles={styles}
-                    theme={theme}
-                    onReady={onReady}
-                    onScreenChange={onScreenChange}
-                  />
-                </NotificationRouteRuntimeProvider>
-              </MoreRouteRuntimeProvider>
-            </LibraryRouteRuntimeProvider>
-          </SearchRouteRuntimeProvider>
-        </FeedRouteRuntimeProvider>
-      </UserRouteRuntimeProvider>
-    </TopicRouteRuntimeProvider>
+    <TopicComposerRouteRuntimeProvider value={topicComposerRouteRuntime}>
+      <TopicRouteRuntimeProvider value={topicRouteRuntime}>
+        <UserRouteRuntimeProvider value={userRouteRuntime}>
+          <FeedRouteRuntimeProvider value={feedRouteRuntime}>
+            <SearchRouteRuntimeProvider value={searchRouteRuntime}>
+              <LibraryRouteRuntimeProvider value={libraryRouteRuntime}>
+                <MoreRouteRuntimeProvider value={moreRouteRuntime}>
+                  <NotificationRouteRuntimeProvider value={notificationRouteRuntime}>
+                    <AppNavigator
+                      moreBadgeState={moreBadgeState}
+                      navigationTheme={navigationTheme}
+                      FeedRouteComponent={FeedRoute}
+                      getLibraryRoute={getLibraryRoute}
+                      getMoreRoute={getMoreRoute}
+                      getNotificationDetailRoute={getNotificationDetailRoute}
+                      getNotificationSettingsRoute={getNotificationSettingsRoute}
+                      getNotificationsRoute={getNotificationsRoute}
+                      getReadingSettingsRoute={getReadingSettingsRoute}
+                      getSearchRoute={getSearchRoute}
+                      getTopicRoute={getTopicRoute}
+                      getTopicComposerRoute={getTopicComposerRoute}
+                      getUserRoute={getUserRoute}
+                      styles={styles}
+                      theme={theme}
+                      onReady={onReady}
+                      onScreenChange={onScreenChange}
+                    />
+                  </NotificationRouteRuntimeProvider>
+                </MoreRouteRuntimeProvider>
+              </LibraryRouteRuntimeProvider>
+            </SearchRouteRuntimeProvider>
+          </FeedRouteRuntimeProvider>
+        </UserRouteRuntimeProvider>
+      </TopicRouteRuntimeProvider>
+    </TopicComposerRouteRuntimeProvider>
   );
 }

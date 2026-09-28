@@ -24,7 +24,6 @@ import {
 const SEARCH_PAGE_SIZE = 50;
 
 type LinuxDoSearchOptions = LinuxDoOptions & {
-  authenticated?: boolean;
   limit?: number;
   page?: number;
 };
@@ -133,8 +132,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   const limit = options.limit || 30;
   const page = options.page || 1;
   const cleanQuery = query.trim();
-  const access = options.linuxDoAccess;
-  if (!options.authenticated || access?.authenticated !== true) {
+  if (options.linuxDoAccess?.authenticated !== true) {
     throw Object.assign(new Error('linux.do 匿名搜索由外部浏览器提供'), {
       kind: 'login-required' as const,
       loginRequired: true,

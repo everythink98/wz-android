@@ -2519,23 +2519,25 @@ export function prepareSanitizedForumContent(
     role === 'opening' ? String(html || '') : `<div class="${FORUM_COMPACT_CONTENT_CLASS}">${String(html || '')}</div>`;
   const sanitized = sanitizeContentHtmlWithRoot(sourceHtml, baseUrl, transformRoot);
   afterSanitizeRoot?.(sanitized.root);
-  const compactShell = sanitized.root.querySelector(`.${FORUM_COMPACT_CONTENT_CLASS}`);
+  const compactShell = role === 'opening' ? null : sanitized.root.querySelector(`.${FORUM_COMPACT_CONTENT_CLASS}`);
   const contentRoot = role === 'opening' ? sanitized.root : compactShell;
-  const contentHtml = role === 'opening' ? sanitized.root.toString() : compactShell?.innerHTML || '';
+  const contentHtml =
+    role === 'opening'
+      ? afterSanitizeRoot
+        ? sanitized.root.toString()
+        : sanitized.contentHtml
+      : compactShell?.innerHTML || '';
   const trimmedContentHtml = contentHtml.trim();
   const raw = stripCompilerOwnedAttributes(trimmedContentHtml);
-  const normalized = normalizeRenderableHtml(raw);
   if (!contentRoot) {
     return prepareForumContentHtml(contentHtml, { polls, role, source, topicId });
   }
   stripCompilerOwnedNodeAttributes(contentRoot);
   normalizeForumUserMentionNodes(contentRoot);
-  if (normalized !== raw) {
-    if (!/<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*)?>/.test(raw)) {
-      const paragraph = new HTMLElement('p', {});
-      paragraph.set_content([...contentRoot.childNodes]);
-      contentRoot.set_content([paragraph]);
-    }
+  if (!/<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*)?>/.test(raw)) {
+    const paragraph = new HTMLElement('p', {});
+    paragraph.set_content([...contentRoot.childNodes]);
+    contentRoot.set_content([paragraph]);
   }
   const options = { polls, role, source, topicId };
   const pollList = compileRoleIncludesPolls(role, source) ? polls || [] : [];

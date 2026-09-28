@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { cleanup } from '@testing-library/react-native';
-import { DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/native';
+import { CommonActions, DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useRef, useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
 import { useAppLifecycleRuntime } from '@/app/useAppLifecycleRuntime';
+import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   navigateMainTab,
@@ -94,6 +95,10 @@ function NotificationDetailRoute() {
 
 function NotificationSettingsRoute() {
   return <Text>消息设置页面</Text>;
+}
+
+function TopicComposerRoute() {
+  return <Text>新主题编辑页</Text>;
 }
 
 function OriginalUpgradeProbe({ id }: { id: string }) {
@@ -192,10 +197,12 @@ function StatefulUserRoute({ navigation, route }: NativeStackScreenProps<RootSta
 function Navigator({
   moreBadgeState,
   moreHasBadge = false,
+  onReady = jest.fn(),
   onScreenChange = jest.fn()
 }: {
   moreBadgeState?: MoreBadgeState;
   moreHasBadge?: boolean;
+  onReady?: () => void;
   onScreenChange?: (screen: Screen, routeKey: string) => void;
 }) {
   return (
@@ -203,6 +210,7 @@ function Navigator({
       moreBadgeState={moreBadgeState ?? (moreHasBadge ? 'update' : 'none')}
       navigationTheme={DefaultTheme}
       FeedRouteComponent={FeedTab}
+      getTopicComposerRoute={() => TopicComposerRoute}
       getLibraryRoute={() => LibraryTab}
       getMoreRoute={() => MoreTab}
       getNotificationDetailRoute={() => NotificationDetailRoute}
@@ -214,7 +222,7 @@ function Navigator({
       getUserRoute={() => StatefulUserRoute}
       styles={styles}
       theme={theme}
-      onReady={jest.fn()}
+      onReady={onReady}
       onScreenChange={onScreenChange}
     />
   );
@@ -223,6 +231,11 @@ function Navigator({
 function DiagnosticNavigator() {
   const lifecycle = useAppLifecycleRuntime();
   return <Navigator onScreenChange={lifecycle.onScreenChange} />;
+}
+
+function DeepLinkNavigator({ linking }: { linking: Pick<typeof Linking, 'addEventListener' | 'getInitialURL'> }) {
+  const onReady = useAppDeepLinkNavigation(linking);
+  return <Navigator onReady={onReady} />;
 }
 
 async function renderNavigator(moreHasBadge = false) {
@@ -249,6 +262,103 @@ describe('App navigator UI state', () => {
 
   afterAll(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  });
+
+  it('isolates repeated cross-source route stacks from initial links belonging to unmounted apps', async () => {
+    const pendingLinks: ReturnType<typeof Promise.withResolvers<string | null>>[] = [];
+    const listeners = new Set<(event: { url: string }) => void>();
+    const removeListener = jest.fn();
+    const initialUrl = jest.fn(() => {
+      const pending = Promise.withResolvers<string | null>();
+      pendingLinks.push(pending);
+      return pending.promise;
+    });
+    const subscribe = jest.fn((_type: 'url', listener: (event: { url: string }) => void) => {
+      listeners.add(listener);
+      return {
+        remove: () => {
+          listeners.delete(listener);
+          removeListener();
+        }
+      };
+    });
+    const linking = { addEventListener: subscribe, getInitialURL: initialUrl } as unknown as Pick<
+      typeof Linking,
+      'addEventListener' | 'getInitialURL'
+    >;
+    const sources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    try {
+      for (let round = 0; round < 20; round++) {
+        view = await render(<DeepLinkNavigator linking={linking} />);
+        await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+        expect(listeners.size).toBe(1);
+        expect(initialUrl).toHaveBeenCalledTimes(round + 1);
+        if (round > 0) {
+          await act(async () => pendingLinks[round - 1].resolve(`https://linux.do/t/stale/${90_000 + round}/3`));
+        }
+        expect(navigationRef.getRootState()?.routes).toHaveLength(1);
+        expect(navigationRef.getCurrentRoute()?.name).toBe('feed');
+        await fireEvent.changeText(view.getByLabelText('首页状态'), `feed-${round}`);
+        await fireEvent.press(view.getByTestId('main-tab-search'));
+        await fireEvent.changeText(view.getByLabelText('搜索状态'), `search-${round}`);
+
+        const routeKeys: string[] = [];
+        for (const [index, source] of sources.entries()) {
+          const id = String(10_000 + round * sources.length + index);
+          const url = {
+            v2ex: `https://www.v2ex.com/t/${id}`,
+            linuxdo: `https://linux.do/t/${id}`,
+            nodeseek: `https://www.nodeseek.com/post-${id}-1`,
+            yaohuo: `https://www.yaohuo.me/bbs-${id}.html`
+          }[source];
+          await act(async () => {
+            expect(pushTopicRoute({ topic: { ...topic(id), source, url } })).toBe(true);
+          });
+          expect(navigationRef.getCurrentRoute()).toMatchObject({ name: 'Topic', params: { topic: { id, source } } });
+          expect(navigationRef.getRootState()?.routes).toHaveLength(index + 2);
+          routeKeys.push(navigationRef.getCurrentRoute()!.key);
+          await fireEvent.changeText(view.getByLabelText(`${id}草稿`), `${source}-${round}`);
+        }
+        expect(new Set(routeKeys).size).toBe(sources.length);
+        for (let index = sources.length - 1; index >= 0; index--) {
+          const id = String(10_000 + round * sources.length + index);
+          expect(navigationRef.getCurrentRoute()?.key).toBe(routeKeys[index]);
+          expect(view.getByLabelText(`${id}草稿`).props.value).toBe(`${sources[index]}-${round}`);
+          await act(async () => navigationRef.goBack());
+          expect(view.queryByLabelText(`${id}草稿`, { includeHiddenElements: true })).toBeNull();
+        }
+        expect(navigationRef.getRootState()?.routes).toHaveLength(1);
+        expect(view.getByLabelText('搜索状态').props.value).toBe(`search-${round}`);
+        await fireEvent.press(view.getByTestId('main-tab-feed'));
+        expect(view.getByLabelText('首页状态').props.value).toBe(`feed-${round}`);
+        await view.unmount();
+        view = undefined;
+        expect(listeners.size).toBe(0);
+        expect(removeListener).toHaveBeenCalledTimes(round + 1);
+      }
+    } finally {
+      await view?.unmount();
+      await act(async () => pendingLinks.forEach((pending) => pending.resolve(null)));
+    }
+  }, 30_000);
+
+  it('opens one draft page for repeated create navigation and returns to the original feed', async () => {
+    const view = await renderNavigator();
+    await fireEvent.changeText(view.getByLabelText('首页状态'), '保留首页状态');
+    const originalRootKey = navigationRef.getRootState()!.routes[0]!.key;
+    await act(async () => {
+      navigationRef.dispatch(CommonActions.navigate('TopicComposer', { initialSource: 'nodeseek' }));
+      navigationRef.dispatch(CommonActions.navigate('TopicComposer', { initialSource: 'nodeseek' }));
+    });
+    await waitFor(() => expect(view.getByText('新主题编辑页')).toBeTruthy());
+    expect(navigationRef.getRootState()!.routes.filter((route) => route.name === 'TopicComposer')).toHaveLength(1);
+    await act(async () => {
+      navigationRef.goBack();
+    });
+    await waitFor(() => expect(view.getByLabelText('首页状态').props.value).toBe('保留首页状态'));
+    expect(navigationRef.getRootState()!.routes).toHaveLength(1);
+    expect(navigationRef.getRootState()!.routes[0]!.key).toBe(originalRootKey);
   });
 
   it('distinguishes same-screen topic and user navigation with stable anonymous targets', async () => {

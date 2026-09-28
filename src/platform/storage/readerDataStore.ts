@@ -1,3 +1,4 @@
+import { createSqliteExecutor } from './sqliteExecutor';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import {
@@ -26,14 +27,10 @@ import {
 const DATABASE_NAME = 'reader-data.db';
 const LEGACY_KEYS = ['reader-data', 'reader-settings'];
 let databasePromise: Promise<SQLiteDatabase> | undefined;
-let queue: Promise<unknown> = Promise.resolve();
-let transactionUncertain = false;
-
-function enqueue<T>(operation: () => Promise<T>): Promise<T> {
-  const result = queue.then(operation, operation);
-  queue = result.catch(() => undefined);
-  return result;
-}
+const { enqueue, transaction } = createSqliteExecutor(
+  '本机资料事务状态不明，请重新启动后恢复。',
+  '本机资料事务无法确认，已停止修改。'
+);
 
 async function connect() {
   const db = await openDatabaseAsync(DATABASE_NAME, { useNewConnection: true });
@@ -55,26 +52,6 @@ async function connect() {
     return db;
   } catch (error) {
     await db.closeAsync();
-    throw error;
-  }
-}
-
-// All statements on this connection belong to the owner queue. BEGIN IMMEDIATE
-// reserves the writer before reading; no unrelated async query can join it.
-async function transaction<T>(db: SQLiteDatabase, write: boolean, task: () => Promise<T>): Promise<T> {
-  if (transactionUncertain) throw new Error('本机资料事务状态不明，请重新启动后恢复。');
-  await db.execAsync(write ? 'BEGIN IMMEDIATE' : 'BEGIN DEFERRED');
-  try {
-    const value = await task();
-    await db.execAsync('COMMIT');
-    return value;
-  } catch (error) {
-    try {
-      await db.execAsync('ROLLBACK');
-    } catch (rollback) {
-      transactionUncertain = true;
-      throw new AggregateError([error, rollback], '本机资料事务无法确认，已停止修改。');
-    }
     throw error;
   }
 }

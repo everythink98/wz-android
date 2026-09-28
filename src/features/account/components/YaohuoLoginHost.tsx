@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useEffect } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { YAOHUO_URL } from '@/domain/forum/sourceUrls';
@@ -8,10 +8,10 @@ import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react-native';
 import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { AccountHostStyles } from '../accountHostStyles';
+import { useLoginWebViewLifecycle } from './useLoginWebViewLifecycle';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';
-const LOGIN_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
 
 export function YaohuoLoginHost({
   checking,
@@ -56,44 +56,22 @@ export function YaohuoLoginHost({
   onSetLoading: (value: boolean) => void;
   onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
 }) {
-  const [error, setError] = useState('');
-  const [webViewKey, setWebViewKey] = useState(0);
-  const [needsRemount, setNeedsRemount] = useState(false);
-
-  useEffect(() => {
-    if (!visible) {
-      setError('');
-      setNeedsRemount(false);
-    }
-  }, [visible]);
-
-  useEffect(() => {
-    if (!visible || !loading || webViewBlockMessage) return undefined;
-    const timeout = setTimeout(() => {
-      setNeedsRemount(true);
-      onWebViewState('timeout', credentialAttempt);
-      onSetLoading(false);
-      setError('妖火页面打开超时：请检查模拟器网络后刷新页面。');
-    }, LOGIN_WEBVIEW_LOADING_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [credentialAttempt, loading, onSetLoading, onWebViewState, visible, webViewBlockMessage]);
+  const page = useLoginWebViewLifecycle({
+    credentialAttempt,
+    messagePrefix: '妖火',
+    loading,
+    visible,
+    webViewBlockMessage,
+    webViewRef,
+    onSetLoading,
+    onWebViewState
+  });
 
   useEffect(() => {
     if (visible && loginFormMode && !loading && credentialAttempt > 0) {
       webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt));
     }
   }, [credentialAttempt, loading, loginFormMode, visible, webViewRef]);
-
-  const refresh = () => {
-    setError('');
-    onSetLoading(true);
-    if (needsRemount) {
-      setNeedsRemount(false);
-      setWebViewKey((current) => current + 1);
-      return;
-    }
-    webViewRef.current?.reload();
-  };
 
   return (
     <LoginWebViewModal
@@ -102,7 +80,7 @@ export function YaohuoLoginHost({
       subtitle={session.summaryLabel}
       loading={!webViewBlockMessage && loading}
       loadingText="正在打开妖火..."
-      error={webViewBlockMessage || error}
+      error={webViewBlockMessage || page.error}
       onClose={onClose}
       actions={
         <View style={styles.actions}>
@@ -122,7 +100,7 @@ export function YaohuoLoginHost({
               onPress={onRequestCredentialFill}
             />
           ) : null}
-          <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" onPress={refresh} />
+          <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" onPress={page.refresh} />
           <LoginWebViewAction icon={LogOut} label="清除登录" danger onPress={onClear} />
         </View>
       }
@@ -130,10 +108,10 @@ export function YaohuoLoginHost({
       {visible && !webViewBlockMessage ? (
         <View style={styles.flex}>
           {prompt ? <Text style={styles.meta}>{prompt}</Text> : null}
-          {!needsRemount ? (
+          {!page.needsRemount ? (
             <WebView
               style={styles.flex}
-              key={`yaohuo-login-${webViewKey}`}
+              key={`yaohuo-login-${page.key}`}
               ref={webViewRef}
               source={{
                 uri: loginFormMode
@@ -147,33 +125,17 @@ export function YaohuoLoginHost({
               thirdPartyCookiesEnabled
               setSupportMultipleWindows={false}
               onLoadEnd={(event) => {
-                onSetLoading(false);
+                page.loadEnd('code' in event.nativeEvent);
                 if ('code' in event.nativeEvent) return;
-                onWebViewState('ready', credentialAttempt);
-                setError('');
                 if (loginFormMode) {
                   webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt));
                 }
               }}
-              onLoadStart={() => {
-                onWebViewState('start', credentialAttempt);
-                setError('');
-                setNeedsRemount(false);
-                onSetLoading(true);
-              }}
+              onLoadStart={page.start}
               onMessage={onLoginFormMessage}
-              onError={(event) => {
-                onWebViewState('error', credentialAttempt);
-                onSetLoading(false);
-                setError(`妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后关闭重试。'}`);
-              }}
+              onError={(event) => page.fail(event.nativeEvent.description)}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-              onRenderProcessGone={() => {
-                onWebViewState('renderer-gone', credentialAttempt);
-                onSetLoading(false);
-                setNeedsRemount(true);
-                setError('妖火登录页面已停止，请刷新页面重试。');
-              }}
+              onRenderProcessGone={page.rendererGone}
               onShouldStartLoadWithRequest={onNavigation}
             />
           ) : null}

@@ -65,6 +65,7 @@ function NavShellScenario() {
       moreBadgeState="messages"
       navigationTheme={navigationTheme}
       FeedRouteComponent={FeedTabSurface}
+      getTopicComposerRoute={() => PlaceholderRoute}
       getLibraryRoute={() => LibraryRoute}
       getMoreRoute={() => MoreRoute}
       getNotificationDetailRoute={() => PlaceholderRoute}

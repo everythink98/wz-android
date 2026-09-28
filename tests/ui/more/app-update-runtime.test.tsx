@@ -187,6 +187,71 @@ function RuntimePanel({ visible = true }: { visible?: boolean }) {
 }
 
 describe('recoverable app updates', () => {
+  it('keeps one writer and bounded metadata saves through repeated progress bursts, pause and remount', async () => {
+    const oldCallbacks: ((data: DownloadProgress) => void)[] = [];
+    let active = 0;
+    let peak = 0;
+    let hook = await readyHook();
+    await act(() => hook.result.current.checkAppUpdate());
+    for (let round = 0; round < 50; round++) {
+      const pending = Promise.withResolvers<object | null>();
+      mockPlans.push(async (uri, progress) => {
+        peak = Math.max(peak, ++active);
+        mockFiles.set(uri, round + 1);
+        for (let event = 0; event < 200; event++) progress({ bytesWritten: round + 1, totalBytes: 100 });
+        for (const stale of oldCallbacks) stale({ bytesWritten: 99, totalBytes: 200 });
+        oldCallbacks.push(progress);
+        try {
+          return await pending.promise;
+        } finally {
+          active--;
+        }
+      });
+      mockPause.mockImplementationOnce(async () => pending.resolve(null));
+      let downloads: Promise<void>[] = [];
+      try {
+        await act(async () => {
+          downloads = Array.from({ length: 100 }, () =>
+            round === 0 ? hook.result.current.startAppUpdateDownload() : hook.result.current.resumeAppUpdateDownload()
+          );
+        });
+        await waitFor(() => expect(mockReceivedOffsets).toHaveLength(round + 1));
+        expect(active).toBe(1);
+        expect(hook.result.current.appUpdateDownloadProgress?.downloadedBytes).toBe(round + 1);
+        await act(async () => {
+          await Promise.all(Array.from({ length: 100 }, () => hook.result.current.pauseAppUpdateDownload()));
+          await Promise.all(downloads);
+          for (let event = 0; event < 100; event++) mockLastProgress!({ bytesWritten: 99, totalBytes: 200 });
+        });
+        expect(hook.result.current.artifact).toMatchObject({
+          downloadedBytes: round + 1,
+          totalBytes: 100,
+          ready: false
+        });
+        expect(hook.result.current.appUpdateDownloadProgress).toBeNull();
+        expect(active).toBe(0);
+        await hook.unmount();
+        hook = await readyHook();
+        expect(hook.result.current.artifact?.downloadedBytes).toBe(round + 1);
+      } finally {
+        await act(async () => {
+          pending.resolve(null);
+          await Promise.all(downloads);
+        });
+      }
+    }
+    await act(() => hook.result.current.resumeAppUpdateDownload());
+    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(mockReceivedOffsets).toEqual(Array.from({ length: 51 }, (_, index) => index));
+    expect(mockPause).toHaveBeenCalledTimes(50);
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+    expect(peak).toBe(1);
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(2);
+    expect(mockFiles.has(target())).toBe(false);
+    expect(mockFiles.get(target(update(), true))).toBe(100);
+    await hook.unmount();
+  });
+
   it('records discarded invalid update metadata during startup recovery', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {

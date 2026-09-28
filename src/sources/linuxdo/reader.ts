@@ -64,13 +64,17 @@ let categoryCache: LinuxDoCategoryMap = new Map();
 let categoryData: Record<string, unknown> | null = null;
 let categoryRequest: Promise<Record<string, unknown>> | null = null;
 
+export type LinuxDoReadAuth = {
+  authenticated?: boolean;
+  categoryCacheScope?: string;
+  userAgent?: string;
+};
+
 export interface LinuxDoOptions {
   browserFetchIntent?: BrowserFetchIntent;
-  categoryCacheScope?: string;
   cursor?: string | null;
-  cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
-  linuxDoAccess?: { authenticated?: boolean; userAgent?: string };
+  linuxDoAccess?: LinuxDoReadAuth;
   signal?: AbortSignal;
   timeoutMs?: number;
   trackVisit?: boolean;
@@ -123,7 +127,7 @@ function topicsNeedCategoryMap(topics: unknown[], categoryMap: LinuxDoCategoryMa
 }
 
 function activateCategoryCacheScope(options: LinuxDoOptions) {
-  const scope = options.categoryCacheScope?.trim() || null;
+  const scope = options.linuxDoAccess?.categoryCacheScope?.trim() || null;
   if (scope !== categoryCacheScope) {
     categoryCacheScope = scope;
     categoryCache = new Map();
@@ -636,6 +640,9 @@ export async function getLinuxDoTopic(
     replyNextPage: replyHasMore ? 2 : null,
     replyNextOffset: replyHasMore ? initialReplyPosts.length : null,
     ...(firstPostFields?.commentId ? { commentId: firstPostFields.commentId } : {}),
+    canEdit:
+      firstPostFields.canEdit === true ||
+      (isRecord(data.details) && (data.details.can_edit === true || data.details.can_edit_tags === true)),
     ...(firstPostFields?.likeCount === undefined ? {} : { likeCount: firstPostFields.likeCount }),
     ...(firstPostFields?.liked === undefined ? {} : { liked: firstPostFields.liked }),
     ...(firstPostFields?.canLike === undefined ? {} : { canLike: firstPostFields.canLike }),

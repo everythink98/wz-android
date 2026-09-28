@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
-import { diagnosticProofFixture } from './run-diagnostic-device-proof.mjs';
+import { buildDeviceProof } from './device-proof-build.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -43,35 +43,11 @@ const pkg = 'com.wz.reader';
 const identity = () => /firstInstallTime=([^\r\n]+)/.exec(adb('shell', 'dumpsys', 'package', pkg))?.[1]?.trim();
 const before = identity();
 if (values.build) {
-  const android = path.join(root, 'android');
-  const fixture = mkdtempSync(path.join(root, '.codex-tmp', 'reader-storage-proof-build-'));
-  const config = diagnosticProofFixture(android, fixture);
-  writeFileSync(
-    path.join(fixture, 'AndroidManifest.xml'),
-    config.manifest
-      .replace('<activity android:name="com.wz.reader.DiagnosticsProofFaultActivity" android:exported="true"/>', '')
-      .replace('wzdiag', 'wzreaderproof')
-  );
-  writeFileSync(
-    path.join(fixture, 'init.gradle'),
-    config.init.replace('dev/diagnostics-proof/index.tsx', 'dev/reader-storage-proof/index.tsx')
-  );
-  execFileSync(
-    'java',
-    [
-      '-jar',
-      'gradle/wrapper/gradle-wrapper.jar',
-      '--no-daemon',
-      '--max-workers=2',
-      '-PreactNativeArchitectures=x86_64',
-      '-I',
-      path.join(fixture, 'init.gradle'),
-      ':app:assembleRelease'
-    ],
-    { cwd: android, env: { ...process.env, NODE_ENV: 'production' }, stdio: 'inherit' }
-  );
-  values.apk = path.join(fixture, 'reader-storage-proof.apk');
-  copyFileSync(path.join(android, 'app/build/outputs/apk/release/app-release.apk'), values.apk);
+  values.apk = buildDeviceProof(root, {
+    name: 'reader-storage-proof',
+    entryFile: 'dev/reader-storage-proof/index.tsx',
+    scheme: 'wzreaderproof'
+  }).apk;
   console.log(`Proof APK: ${values.apk}`);
 }
 if (values.apk) {

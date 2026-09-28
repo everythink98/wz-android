@@ -1,7 +1,14 @@
 export type LinuxDoPollType = 'regular' | 'multiple' | 'number' | 'ranked_choice';
 export type LinuxDoPollResults = 'always' | 'on_vote' | 'on_close' | 'staff_only';
 export type LinuxDoPollGroup = { id: number; name: string; displayName: string };
-export type LinuxDoPollCapabilities = { groups: LinuxDoPollGroup[]; canUseStaffResults: boolean };
+export type LinuxDoPollCapabilities = {
+  groups: LinuxDoPollGroup[];
+  canUseStaffResults: boolean;
+  maxOptions?: number;
+  minTrust?: number;
+  defaultPublic?: boolean;
+  canCreate?: boolean;
+};
 export type LinuxDoPollDraft = {
   type: LinuxDoPollType;
   name: string;
@@ -121,8 +128,11 @@ function cleanInline(value: string) {
   return value.replace(/[\r\n]/g, ' ').trim();
 }
 
-export function serializeLinuxDoPoll(draft: LinuxDoPollDraft) {
+export function serializeLinuxDoPoll(draft: LinuxDoPollDraft, capabilities?: LinuxDoPollCapabilities | null) {
   const options = draft.options.map(cleanInline).filter(Boolean);
+  if (capabilities?.canCreate === false) throw new Error('当前账号不能创建投票');
+  if (draft.type !== 'number' && capabilities?.maxOptions !== undefined && options.length > capabilities.maxOptions)
+    throw new Error(`投票最多允许 ${capabilities.maxOptions} 个选项`);
   if (draft.type !== 'number' && options.length < 1) throw new Error('投票至少需要一个选项');
   if (new Set(options).size !== options.length) throw new Error('投票选项不能重复');
   if (!Number.isSafeInteger(draft.min) || draft.min < 0) throw new Error('最小值不正确');

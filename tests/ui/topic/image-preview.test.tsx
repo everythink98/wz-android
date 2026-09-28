@@ -33,6 +33,7 @@ let mockZoomNextToken = 0;
 const mockZoomResets = jest.fn<(index: string) => void>();
 const mockPreviewImageUnmounts = jest.fn<(testID: string) => void>();
 let mockPreviewImageNextToken = 0;
+const mockCommittedPreviewImages = new Map<number, string | null>();
 let mockWebViewMounts = 0;
 let mockWebViewUnmounts = 0;
 let mockWebViewNextToken = 0;
@@ -92,6 +93,13 @@ jest.mock('expo-image', () => {
       token.current = ++mockPreviewImageNextToken;
     }
     latestTestID.current = testID;
+    ReactModule.useLayoutEffect(() => {
+      if (!testID?.startsWith('preview-image-')) return;
+      mockCommittedPreviewImages.set(token.current, props.source?.uri || null);
+      return () => {
+        mockCommittedPreviewImages.delete(token.current);
+      };
+    });
     ReactModule.useEffect(
       () => () => {
         if (latestTestID.current?.startsWith('preview-image-')) {
@@ -247,6 +255,7 @@ jest.mock('react-native-gesture-handler', () => {
 });
 
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ bottom: 24, left: 0, right: 0, top: 36 })
 }));
 
@@ -383,6 +392,7 @@ describe('Image preview', () => {
     mockZoomResets.mockClear();
     mockPreviewImageUnmounts.mockClear();
     mockPreviewImageNextToken = 0;
+    mockCommittedPreviewImages.clear();
     mockWebViewMounts = 0;
     mockWebViewUnmounts = 0;
     mockWebViewNextToken = 0;
@@ -1177,6 +1187,63 @@ describe('Image preview', () => {
     await fireEvent(view.getByTestId('preview-zoom-2'), 'tap', {});
     expect(view.getByLabelText('关闭图片预览')).toBeTruthy();
     expect(view.getByLabelText('保存图片')).toBeTruthy();
+  });
+
+  it.each(['v2ex', null] as const)(
+    'commits only the requested images when opening and reopening a %s preview',
+    async (contentSource) => {
+      const first = previewItem('https://example.com/first-visible-a.png');
+      const second = previewItem('https://example.com/first-visible-b.png');
+      const visibleCommits: (string | null)[][] = [];
+      const props = callbacks();
+      function PreviewCommitProbe({ preview }: Pick<React.ComponentProps<typeof ImagePreviewModal>, 'preview'>) {
+        React.useLayoutEffect(() => {
+          if (preview) visibleCommits.push([...mockCommittedPreviewImages.values()]);
+        });
+        return <ImagePreviewModal preview={preview} {...props} />;
+      }
+      const view = await render(<PreviewCommitProbe preview={null} />);
+
+      await view.rerender(<PreviewCommitProbe preview={{ contentSource, items: [first], index: 0 }} />);
+      const firstOpen = visibleCommits.at(-1);
+      expect(view.getByTestId('preview-image-0').props.source.uri).toBe(first.originalUri);
+      await view.rerender(<PreviewCommitProbe preview={null} />);
+      expect(view.queryByTestId('image-preview-ring')).toBeNull();
+      await view.rerender(<PreviewCommitProbe preview={{ contentSource, items: [second], index: 0 }} />);
+      const reopen = visibleCommits.at(-1);
+      expect(view.getByTestId('preview-image-0').props.source.uri).toBe(second.originalUri);
+
+      expect({ firstOpen, reopen }).toEqual({ firstOpen: [first.originalUri], reopen: [second.originalUri] });
+    }
+  );
+
+  it('ignores queued page and image callbacks after a preview closes and reopens', async () => {
+    mockDeferAnimations = true;
+    const props = callbacks();
+    const firstItems = [
+      previewItem('https://example.com/closed-page-a.png'),
+      previewItem('https://example.com/closed-page-adjacent.png')
+    ];
+    const secondItem = previewItem('https://example.com/reopened-page-b.png');
+    const view = await render(<ImagePreviewModal preview={previewProps(firstItems)} {...props} />);
+    const lateDisplay = view.getByTestId('preview-image-0').props.onDisplay as () => void;
+    await swipePreviewNext(view);
+    expect(mockDeferredAnimationCallbacks).toHaveLength(1);
+
+    await fireEvent.press(view.getByLabelText('关闭图片预览'));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    await view.rerender(<ImagePreviewModal preview={null} {...props} />);
+    expect(mockPreviewImageUnmounts.mock.calls.map(([testID]) => testID).sort()).toEqual([
+      'preview-image-0',
+      'preview-image-1'
+    ]);
+    await view.rerender(<ImagePreviewModal preview={previewProps([secondItem])} {...props} />);
+    await flushNextPreviewAnimation();
+    await act(lateDisplay);
+
+    expect(props.onSelect).not.toHaveBeenCalled();
+    expect(view.getByTestId('preview-image-0').props.source.uri).toBe(secondItem.originalUri);
+    expect(view.getByText('图片加载中...')).toBeTruthy();
   });
 
   it('restores controls when a hidden preview is closed and opened again', async () => {

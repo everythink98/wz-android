@@ -1,9 +1,15 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { ReaderTheme } from '@/ui/theme/tokens';
+import {
+  ComposerKeyboardHost,
+  type ComposerKeyboardHostHandle,
+  type ComposerImeInsetsEvent
+} from '@/ui/composer/ComposerKeyboardHost';
+import Animated, { useAnimatedStyle, useEvent, useSharedValue } from 'react-native-reanimated';
 
 function createStyles(theme: ReaderTheme, _settings: ReaderSettings) {
   return StyleSheet.create({
@@ -41,6 +47,7 @@ export function ModalSheetFrame({
   children,
   keyboardAvoiding = true,
   keyboardAvoidingEnabled = true,
+  keyboardHostRef,
   visible,
   onRequestClose
 }: {
@@ -49,15 +56,28 @@ export function ModalSheetFrame({
   children: ReactNode;
   keyboardAvoiding?: boolean;
   keyboardAvoidingEnabled?: boolean;
+  keyboardHostRef?: RefObject<ComposerKeyboardHostHandle | null>;
   visible: boolean;
   onRequestClose: () => void;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
-  // Android KAV can retain a positive internal bottom after keyboardDidHide; remount to drop its fixed-height frame.
+  const localImeInsets = Platform.OS === 'android' && Number(Platform.Version) >= 30 && !!keyboardHostRef;
+  const trackImeInsets = localImeInsets && keyboardAvoiding && keyboardAvoidingEnabled && visible;
+  const imeBottom = useSharedValue(0);
+  const onImeInsets = useEvent<ComposerImeInsetsEvent>(
+    (event) => {
+      'worklet';
+      imeBottom.set(event.bottom);
+    },
+    ['onImeInsets']
+  );
+  const imeStyle = useAnimatedStyle(() => ({ paddingBottom: trackImeInsets ? imeBottom.value : 0 }));
+  // Legacy windows keep their existing KAV fallback. The local animated window
+  // follows native Insets instead of keyboardDidHide's early target visibility.
   const [androidKeyboardResetKey, setAndroidKeyboardResetKey] = useState(0);
   const [androidKeyboardVisible, setAndroidKeyboardVisible] = useState(false);
   useEffect(() => {
-    if (Platform.OS !== 'android' || !visible || !keyboardAvoiding) {
+    if (Platform.OS !== 'android' || !visible || !keyboardAvoiding || localImeInsets) {
       setAndroidKeyboardVisible(false);
       return;
     }
@@ -70,7 +90,7 @@ export function ModalSheetFrame({
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [keyboardAvoiding, visible]);
+  }, [keyboardAvoiding, localImeInsets, visible]);
   const sheet = (
     <>
       <Pressable
@@ -86,23 +106,45 @@ export function ModalSheetFrame({
     </>
   );
 
+  const content = localImeInsets ? (
+    <Animated.View
+      onTouchStart={recordUserInteraction}
+      onTouchMove={recordUserInteraction}
+      style={[styles.root, imeStyle]}
+    >
+      {sheet}
+    </Animated.View>
+  ) : keyboardAvoiding ? (
+    <KeyboardAvoidingView
+      onTouchStart={recordUserInteraction}
+      onTouchMove={recordUserInteraction}
+      key={Platform.OS === 'android' && !keyboardHostRef ? `${visible}-${androidKeyboardResetKey}` : undefined}
+      behavior={keyboardHostRef ? 'padding' : 'height'}
+      enabled={keyboardAvoidingEnabled && visible && (Platform.OS !== 'android' || androidKeyboardVisible)}
+      style={styles.root}
+    >
+      {sheet}
+    </KeyboardAvoidingView>
+  ) : (
+    <View style={styles.root} onTouchStart={recordUserInteraction} onTouchMove={recordUserInteraction}>
+      {sheet}
+    </View>
+  );
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onRequestClose}>
-      {keyboardAvoiding ? (
-        <KeyboardAvoidingView
-          onTouchStart={recordUserInteraction}
-          onTouchMove={recordUserInteraction}
-          key={Platform.OS === 'android' ? `${visible}-${androidKeyboardResetKey}` : undefined}
-          behavior="height"
-          enabled={keyboardAvoidingEnabled && visible && (Platform.OS !== 'android' || androidKeyboardVisible)}
-          style={styles.root}
+      {keyboardHostRef ? (
+        <ComposerKeyboardHost
+          ref={keyboardHostRef}
+          enabled={visible}
+          trackImeInsets={trackImeInsets}
+          onImeInsets={trackImeInsets ? onImeInsets : undefined}
+          testID="composer-modal-keyboard-host"
+          style={{ flex: 1 }}
         >
-          {sheet}
-        </KeyboardAvoidingView>
+          {content}
+        </ComposerKeyboardHost>
       ) : (
-        <View style={styles.root} onTouchStart={recordUserInteraction} onTouchMove={recordUserInteraction}>
-          {sheet}
-        </View>
+        content
       )}
     </Modal>
   );

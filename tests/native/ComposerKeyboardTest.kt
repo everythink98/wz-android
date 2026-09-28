@@ -4,16 +4,22 @@ import android.util.DisplayMetrics
 import androidx.core.graphics.Insets
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.swmansion.reanimated.keyboard.Keyboard
 import com.swmansion.reanimated.keyboard.KeyboardAnimationCallback
 import com.swmansion.reanimated.keyboard.KeyboardState
 import com.swmansion.reanimated.keyboard.NotifyAboutKeyboardChangeFunction
+import com.swmansion.reanimated.keyboard.WindowsInsetsManager
+import java.lang.ref.WeakReference
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLooper
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], manifest = Config.NONE)
@@ -81,5 +87,132 @@ class ComposerKeyboardTest {
         callback.onEnd(show)
         assertEquals(336, keyboard.getHeight())
         assertEquals(KeyboardState.OPEN, keyboard.getState())
+    }
+
+    @Test
+    fun resubscribingAfterAnUnfinishedHidePublishesTheActualHiddenWindow() {
+        DisplayMetricsHolder.setScreenDisplayMetrics(DisplayMetrics().apply { density = 1f })
+        val keyboard = Keyboard()
+        var restingInsets = insets(336)
+        val observations = mutableListOf<Pair<KeyboardState, Int>>()
+        val notify = NotifyAboutKeyboardChangeFunction { observations.add(keyboard.getState() to keyboard.getHeight()) }
+        val windows = WindowsInsetsManager(WeakReference<ReactApplicationContext>(null), keyboard, notify)
+        val old = KeyboardAnimationCallback(keyboard, notify, true) { restingInsets }
+        windows.startObservingChanges(old, true, true)
+        ShadowLooper.idleMainLooper()
+        keyboard.updateHeight(restingInsets, true)
+        val hide = WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250)
+        old.onPrepare(hide)
+        old.onProgress(insets(142), listOf(hide))
+        windows.stopObservingChanges() // The detached observer never receives onEnd.
+        ShadowLooper.idleMainLooper()
+        restingInsets = insets(0)
+        val current = KeyboardAnimationCallback(keyboard, notify, true) { restingInsets }
+        windows.startObservingChanges(current, true, true)
+        ShadowLooper.idleMainLooper()
+        assertFalse(keyboard.isAnimating())
+        assertEquals(KeyboardState.CLOSED to 0, observations.last())
+        windows.stopObservingChanges()
+        ShadowLooper.idleMainLooper()
+    }
+
+    @Test
+    fun resubscribingWhileImeRemainsVisibleRestoresItsHeightBeforeTheNextHide() {
+        DisplayMetricsHolder.setScreenDisplayMetrics(DisplayMetrics().apply { density = 1f })
+        val keyboard = Keyboard()
+        var restingInsets = insets(336)
+        val observations = mutableListOf<Pair<KeyboardState, Int>>()
+        val notify = NotifyAboutKeyboardChangeFunction { observations.add(keyboard.getState() to keyboard.getHeight()) }
+        val windows = WindowsInsetsManager(WeakReference<ReactApplicationContext>(null), keyboard, notify)
+        val old = KeyboardAnimationCallback(keyboard, notify, true) { restingInsets }
+        windows.startObservingChanges(old, true, true)
+        ShadowLooper.idleMainLooper()
+        keyboard.updateHeight(restingInsets, true)
+        val abandoned = WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250)
+        old.onPrepare(abandoned)
+        old.onProgress(insets(142), listOf(abandoned))
+        windows.stopObservingChanges()
+        ShadowLooper.idleMainLooper()
+        val current = KeyboardAnimationCallback(keyboard, notify, true) { restingInsets }
+        windows.startObservingChanges(current, true, true)
+        ShadowLooper.idleMainLooper()
+        assertEquals(KeyboardState.OPEN to 336, observations.last())
+        val hide = WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250)
+        current.onPrepare(hide)
+        current.onProgress(insets(18), listOf(hide))
+        restingInsets = insets(0)
+        current.onEnd(hide)
+        assertEquals(KeyboardState.CLOSED to 0, observations.last())
+        assertFalse(keyboard.isAnimating())
+        windows.stopObservingChanges()
+        ShadowLooper.idleMainLooper()
+    }
+
+    @Test
+    fun detachedAnimationCallbacksCannotChangeOrPublishTheNewObserversTransition() {
+        DisplayMetricsHolder.setScreenDisplayMetrics(DisplayMetrics().apply { density = 1f })
+        val keyboard = Keyboard()
+        var restingInsets = insets(336)
+        val observations = mutableListOf<Pair<KeyboardState, Int>>()
+        val notify = NotifyAboutKeyboardChangeFunction { observations.add(keyboard.getState() to keyboard.getHeight()) }
+        val windows = WindowsInsetsManager(WeakReference<ReactApplicationContext>(null), keyboard, notify)
+        val old = KeyboardAnimationCallback(keyboard, notify, true) { restingInsets }
+        windows.startObservingChanges(old, true, true)
+        ShadowLooper.idleMainLooper()
+        keyboard.updateHeight(restingInsets, true)
+        val abandoned = WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250)
+        old.onPrepare(abandoned)
+        old.onProgress(insets(142), listOf(abandoned))
+        windows.stopObservingChanges()
+        ShadowLooper.idleMainLooper()
+        restingInsets = insets(0)
+        val current = KeyboardAnimationCallback(keyboard, notify, true) { restingInsets }
+        windows.startObservingChanges(current, true, true)
+        ShadowLooper.idleMainLooper()
+        old.onEnd(abandoned)
+        val show = WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250)
+        current.onPrepare(show)
+        current.onProgress(insets(100), listOf(show))
+        val count = observations.size
+        old.onPrepare(abandoned)
+        old.onProgress(insets(220), listOf(abandoned))
+        old.onEnd(abandoned)
+        assertEquals(KeyboardState.OPENING, keyboard.getState())
+        assertEquals(100, keyboard.getHeight())
+        assertEquals(count, observations.size)
+        restingInsets = insets(336)
+        current.onEnd(show)
+        assertEquals(KeyboardState.OPEN to 336, observations.last())
+        windows.stopObservingChanges()
+        ShadowLooper.idleMainLooper()
+    }
+
+    @Test
+    fun subscribingDuringAnAnimationTracksItsProgressAndIgnoresUnpairedEnds() {
+        DisplayMetricsHolder.setScreenDisplayMetrics(DisplayMetrics().apply { density = 1f })
+        val keyboard = Keyboard()
+        val notify = NotifyAboutKeyboardChangeFunction {}
+        val windows = WindowsInsetsManager(WeakReference<ReactApplicationContext>(null), keyboard, notify)
+        val callback = KeyboardAnimationCallback(keyboard, notify, true) { insets(0) }
+        windows.startObservingChanges(callback, true, true)
+        ShadowLooper.idleMainLooper()
+        val running = WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250)
+        callback.onProgress(insets(142), listOf(running)) // Prepare preceded subscription.
+        assertTrue(keyboard.isAnimating())
+        callback.onEnd(WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250))
+        assertTrue(keyboard.isAnimating())
+        assertEquals(142, keyboard.getHeight())
+        callback.onEnd(running)
+        assertFalse(keyboard.isAnimating())
+        assertEquals(KeyboardState.CLOSED, keyboard.getState())
+        assertEquals(0, keyboard.getHeight())
+        callback.onPrepare(running)
+        callback.onPrepare(running)
+        callback.onProgress(insets(40), listOf(running))
+        callback.onEnd(running)
+        assertFalse(keyboard.isAnimating())
+        assertEquals(KeyboardState.CLOSED, keyboard.getState())
+        windows.stopObservingChanges()
+        ShadowLooper.idleMainLooper()
     }
 }

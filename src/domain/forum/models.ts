@@ -271,6 +271,7 @@ export interface TopicPoll {
 }
 
 export interface TopicDetail extends Topic {
+  canEdit?: boolean;
   contentHtml: string;
   preparedContent?: PreparedForumContent;
   mediaReferrer?: MediaReferrerContext;

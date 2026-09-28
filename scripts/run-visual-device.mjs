@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { PNG } from 'pngjs';
 import { assertAgentDeviceVersion, runAgentDevice } from './agent-device-runtime.mjs';
-import { diagnosticProofFixture } from './run-diagnostic-device-proof.mjs';
+import { buildDeviceProof } from './device-proof-build.mjs';
 import { proofDeviceForSerial, withProofCheckpoint } from './review-proof-checkpoint.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -88,44 +88,11 @@ export function approveVisualBaseline(candidate, directory = baselineDirectory) 
 }
 
 function buildGallery() {
-  const android = path.join(root, 'android');
-  const fixture = mkdtempSync(path.join(root, '.codex-tmp', 'visual-gallery-build-'));
-  const config = diagnosticProofFixture(android, fixture);
-  writeFileSync(
-    path.join(fixture, 'AndroidManifest.xml'),
-    config.manifest
-      .replace('<activity android:name="com.wz.reader.DiagnosticsProofFaultActivity" android:exported="true"/>', '')
-      .replace('wzdiag', 'wzvisual')
-  );
-  writeFileSync(
-    path.join(fixture, 'init.gradle'),
-    config.init.replace('dev/diagnostics-proof/index.tsx', 'dev/visual-gallery/index.ts')
-  );
-  const env = { ...process.env, NODE_ENV: 'production' };
-  delete env.ENTRY_FILE;
-  for (const name of [
-    'WZ_ANDROID_KEYSTORE_PATH',
-    'WZ_ANDROID_KEYSTORE_PASSWORD',
-    'WZ_ANDROID_KEY_ALIAS',
-    'WZ_ANDROID_KEY_PASSWORD'
-  ])
-    delete env[name];
-  execFileSync(
-    'java',
-    [
-      '-jar',
-      'gradle/wrapper/gradle-wrapper.jar',
-      '--no-daemon',
-      '--max-workers=2',
-      '-PreactNativeArchitectures=x86_64',
-      '-I',
-      path.join(fixture, 'init.gradle'),
-      ':app:assembleRelease'
-    ],
-    { cwd: android, env, stdio: 'inherit' }
-  );
-  const apk = path.join(fixture, 'visual-gallery.apk');
-  copyFileSync(path.join(android, 'app/build/outputs/apk/release/app-release.apk'), apk);
+  const { apk } = buildDeviceProof(root, {
+    name: 'visual-gallery',
+    entryFile: 'dev/visual-gallery/index.ts',
+    scheme: 'wzvisual'
+  });
   console.log(`Gallery APK: ${apk}`);
   return apk;
 }

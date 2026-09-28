@@ -1,6 +1,9 @@
 beforeProject { p ->
     p.plugins.withId('com.android.application') {
         p.extensions.getByName('android').sourceSets.getByName('test').java.srcDir(new File(p.rootDir.parentFile, 'tests/native'))
+        p.dependencies.add('testImplementation', 'junit:junit:4.13.2')
         p.dependencies.add('testImplementation', 'org.robolectric:robolectric:4.16')
+        // Expo's generated Record classes expose this implementation dependency as a supertype.
+        p.dependencies.add('testImplementation', 'io.github.lukmccall.pika:pika-api:0.3.2')
     }
 }

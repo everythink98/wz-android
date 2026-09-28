@@ -32,7 +32,7 @@ import {
   type DiscourseAction
 } from '@/sources/discourse/actionRequest';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
-import { fetchNodeSeekVoteInfo, nodeSeekCreatedPollId, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
 import {
   applyBookmarkToTopic,
@@ -76,19 +76,8 @@ import {
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { TopicSessionController } from '../useTopicSessionController';
 import type { ComposerSnapshot, NodeSeekStardustReceive, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
-import {
-  fingerprintNodeSeekPoll,
-  nodeSeekPendingPollTokenRanges,
-  nodeSeekStardustMarkerRanges,
-  replacePendingNodeSeekPollToken
-} from '@/domain/forum/structuredComposer';
-import {
-  claimNodeSeekPollJournalEntry,
-  readNodeSeekPollJournalEntry,
-  releaseNodeSeekPollJournalEntry,
-  saveNodeSeekPollJournalEntry
-} from '@/platform/persistence/nodeSeekPollJournal';
-import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
+import { nodeSeekStardustMarkerRanges } from '@/domain/forum/structuredComposer';
+import { materializePendingNodeSeekPolls, PendingNodeSeekPollError } from '@/sources/nodeseek/pendingPolls';
 import { fetchNodeSeekStardustStatus, nodeSeekStardustReceiverName } from '@/sources/nodeseek/stardust';
 import { fetchLinuxDoTemplates, recordLinuxDoTemplateUse } from '@/sources/linuxdo/templates';
 import { fetchLinuxDoPollCapabilities } from '@/sources/linuxdo/pollCapabilities';
@@ -146,7 +135,6 @@ type MutationVariables = {
 };
 
 const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE = 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
-const nodeSeekPollCreations = createKeyedSerialRunner<string>();
 
 class HandledMutationError extends Error {
   constructor(
@@ -865,6 +853,7 @@ export function useTopicActionsController({
   );
 
   const actionBusy = pendingVariables.some((variables) => variables?.busy !== false);
+  const replyImageUploading = pendingVariables.some((variables) => variables?.decision.action === 'upload');
 
   const materializeNodeSeekPolls = useCallback(
     async ({
@@ -878,107 +867,26 @@ export function useTopicActionsController({
       ticket: WritableSessionTicket;
       trace: DiagnosticTrace;
     }) => {
-      let markdown = content;
-      const tokenRanges = nodeSeekPendingPollTokenRanges(content);
-      const tokenIds = tokenRanges.map((range) => range.localId);
-      const pollIds = polls.map((poll) => poll.localId);
-      const rawTokenCount = content.split('<!-- wz:nodeseek-poll:').length - 1;
-      const invalidSnapshot =
-        rawTokenCount !== tokenRanges.length ||
-        tokenIds.length !== polls.length ||
-        new Set(tokenIds).size !== tokenIds.length ||
-        new Set(pollIds).size !== pollIds.length ||
-        tokenIds.some((localId) => !pollIds.includes(localId));
-      if (invalidSnapshot) {
-        const message = '本地投票数据不完整，请移除后重新插入';
-        notify(message);
-        throw new HandledMutationError(message, 'blocked', 'invalid_response');
+      try {
+        return await materializePendingNodeSeekPolls({
+          content,
+          polls,
+          identityKey: ticket.identityKey,
+          assertCurrent: () => assertWritableTicket(ticket),
+          confirmReplacement: confirmNodeSeekPollReplacement,
+          createPoll: (poll, lifecycle) =>
+            runNodeSeekRequest(buildNodeSeekPollCreateRequest({ poll }), trace, ticket, true, lifecycle),
+          notify
+        });
+      } catch (error) {
+        if (error instanceof PendingNodeSeekPollError)
+          throw new HandledMutationError(
+            error.message,
+            error.outcome,
+            error.outcome === 'canceled' ? 'canceled' : 'invalid_response'
+          );
+        throw error;
       }
-
-      for (const poll of polls) {
-        assertWritableTicket(ticket);
-        const fingerprint = fingerprintNodeSeekPoll(poll);
-        if (fingerprint !== poll.fingerprint) {
-          const message = '投票草稿校验失败，请重新打开投票编辑器';
-          notify(message);
-          throw new HandledMutationError(message, 'blocked', 'invalid_response');
-        }
-      }
-
-      const confirmedReplacements = new Set<string>();
-      const unknown = () => {
-        const message = '该投票上次创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。';
-        notify(message);
-        return new HandledMutationError(message, 'blocked', 'invalid_response');
-      };
-      const checkedRemoteId = async (poll: PendingNodeSeekPoll) => {
-        assertWritableTicket(ticket);
-        const journal = await readNodeSeekPollJournalEntry(ticket.identityKey, poll.localId, poll.fingerprint);
-        assertWritableTicket(ticket);
-        if (journal?.remoteId) return journal.remoteId;
-        if (journal) throw unknown();
-        const previous = await readNodeSeekPollJournalEntry(ticket.identityKey, poll.localId);
-        assertWritableTicket(ticket);
-        if (previous && !confirmedReplacements.has(poll.localId)) {
-          if (!(await confirmNodeSeekPollReplacement(poll)))
-            throw new HandledMutationError('已取消创建新投票', 'canceled', 'canceled');
-          confirmedReplacements.add(poll.localId);
-        }
-        assertWritableTicket(ticket);
-        return undefined;
-      };
-      for (const poll of polls) {
-        await nodeSeekPollCreations.run(`${ticket.identityKey}\u0000${poll.localId}\u0000${poll.fingerprint}`, () =>
-          checkedRemoteId(poll)
-        );
-      }
-
-      for (const poll of polls) {
-        const intent = { localId: poll.localId, fingerprint: poll.fingerprint };
-        const remoteId = await nodeSeekPollCreations.run(
-          `${ticket.identityKey}\u0000${poll.localId}\u0000${poll.fingerprint}`,
-          async () => {
-            const existingRemoteId = await checkedRemoteId(poll);
-            if (existingRemoteId) return existingRemoteId;
-            const reservation = await claimNodeSeekPollJournalEntry(ticket.identityKey, intent);
-            if (!reservation.claimed) {
-              if (reservation.entry.remoteId) return reservation.entry.remoteId;
-              throw unknown();
-            }
-            const dispatchState: RequestDispatchState = { mayHaveSent: false };
-            let createdId = '';
-            try {
-              await runNodeSeekRequest(buildNodeSeekPollCreateRequest({ poll }), trace, ticket, true, {
-                dispatchState,
-                persistResult: async (result) => {
-                  createdId = nodeSeekCreatedPollId(result);
-                  await saveNodeSeekPollJournalEntry(ticket.identityKey, { ...intent, remoteId: createdId });
-                }
-              });
-              return createdId;
-            } catch (error) {
-              if (
-                !createdId &&
-                (!dispatchState.mayHaveSent ||
-                  isRawUnauthorized(error) ||
-                  (error && typeof error === 'object' && (error as { serverRejected?: unknown }).serverRejected))
-              ) {
-                await releaseNodeSeekPollJournalEntry(ticket.identityKey, intent);
-              } else if (!createdId) {
-                notify('投票创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。');
-              }
-              throw error;
-            }
-          }
-        );
-        markdown = replacePendingNodeSeekPollToken(markdown, poll.localId, remoteId);
-      }
-      if (markdown.includes('<!-- wz:nodeseek-poll:')) {
-        const message = '本地投票数据不完整，请移除后重新插入';
-        notify(message);
-        throw new HandledMutationError(message, 'blocked', 'invalid_response');
-      }
-      return markdown;
     },
     [assertWritableTicket, notify, runNodeSeekRequest]
   );
@@ -1557,7 +1465,11 @@ export function useTopicActionsController({
           imageUrl = discourseImageUrlFromUploadResponse(result, LINUXDO_BASE_URL, 'linux.do');
         } else if (isYaohuoActionTopic(actionTopic)) {
           imageUrl = await uploadYaohuoReplyImage({
-            fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+            fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, fetcher), () => {
+              assertWritableTicket(ticket);
+              assertCurrentEditTarget();
+              assertReplyNotEnded();
+            }),
             file
           });
         } else if (isNodeSeekActionTopic(actionTopic)) {
@@ -1603,6 +1515,7 @@ export function useTopicActionsController({
     ensureNodeImageApiKey,
     executeMutation,
     authenticatedFetcher,
+    fetcher,
     notify,
     queryClient,
     replyComposerIntent,
@@ -1974,79 +1887,56 @@ export function useTopicActionsController({
     [topicDetail, selectedTopic, ensureWritableSession, assertWritableTicket, authenticatedFetcher, linuxDoUserAgent]
   );
 
-  const loadLinuxDoTemplates = useCallback(async () => {
-    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-    const trace = beginDiagnosticTrace('reply', 'load-templates', {
-      ...(actionTopic ? { source: actionTopic.source } : {})
-    });
-    if (!actionTopic || actionTopic.source !== 'linuxdo') {
-      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-      throw new Error('当前入口不支持 LinuxDo 模板');
-    }
-    try {
-      const ticket = await ensureWritableSession('linuxdo');
-      assertWritableTicket(ticket);
-      const templates = await fetchLinuxDoTemplates({
-        fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () => assertWritableTicket(ticket)),
-        userAgent: linuxDoUserAgent()
+  const loadLinuxDoEditorData = useCallback(
+    async <T>(
+      operation: 'load-templates' | 'load-poll-capabilities',
+      read: (options: Parameters<typeof fetchLinuxDoTemplates>[0]) => Promise<T>,
+      itemCount: (result: T) => number
+    ) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      const trace = beginDiagnosticTrace('reply', operation, {
+        ...(actionTopic ? { source: actionTopic.source } : {})
       });
-      assertWritableTicket(ticket);
-      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: templates.length });
-      return templates;
-    } catch (error) {
-      const message = errorMessage(error);
-      if (isLoginRequiredError(error)) {
-        showLinuxDoVerification(message);
+      if (!actionTopic || actionTopic.source !== 'linuxdo') {
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        throw new Error(`当前入口不支持 LinuxDo ${operation === 'load-templates' ? '模板' : '投票配置'}`);
       }
-      finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
-      throw error;
-    }
-  }, [
-    assertWritableTicket,
-    authenticatedFetcher,
-    linuxDoUserAgent,
-    showLinuxDoVerification,
-    ensureWritableSession,
-    selectedTopic,
-    topicDetail
-  ]);
-
-  const loadLinuxDoPollCapabilities = useCallback(async () => {
-    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-    const trace = beginDiagnosticTrace('reply', 'load-poll-capabilities', {
-      ...(actionTopic ? { source: actionTopic.source } : {})
-    });
-    if (!actionTopic || actionTopic.source !== 'linuxdo') {
-      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-      throw new Error('当前入口不支持 LinuxDo 投票配置');
-    }
-    try {
-      const ticket = await ensureWritableSession('linuxdo');
-      assertWritableTicket(ticket);
-      const capabilities = await fetchLinuxDoPollCapabilities({
-        fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () => assertWritableTicket(ticket)),
-        userAgent: linuxDoUserAgent()
-      });
-      assertWritableTicket(ticket);
-      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: capabilities.groups.length });
-      return capabilities;
-    } catch (error) {
-      const message = errorMessage(error);
-      if (isLoginRequiredError(error)) {
-        showLinuxDoVerification(message);
+      try {
+        const ticket = await ensureWritableSession('linuxdo');
+        assertWritableTicket(ticket);
+        const result = await read({
+          fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
+            assertWritableTicket(ticket)
+          ),
+          userAgent: linuxDoUserAgent()
+        });
+        assertWritableTicket(ticket);
+        finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: itemCount(result) });
+        return result;
+      } catch (error) {
+        if (isLoginRequiredError(error)) showLinuxDoVerification(errorMessage(error));
+        finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
+        throw error;
       }
-      finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
-      throw error;
-    }
-  }, [
-    assertWritableTicket,
-    authenticatedFetcher,
-    linuxDoUserAgent,
-    showLinuxDoVerification,
-    ensureWritableSession,
-    selectedTopic,
-    topicDetail
-  ]);
+    },
+    [
+      assertWritableTicket,
+      authenticatedFetcher,
+      linuxDoUserAgent,
+      showLinuxDoVerification,
+      ensureWritableSession,
+      selectedTopic,
+      topicDetail
+    ]
+  );
+  const loadLinuxDoTemplates = useCallback(
+    () => loadLinuxDoEditorData('load-templates', fetchLinuxDoTemplates, (items) => items.length),
+    [loadLinuxDoEditorData]
+  );
+  const loadLinuxDoPollCapabilities = useCallback(
+    () => loadLinuxDoEditorData('load-poll-capabilities', fetchLinuxDoPollCapabilities, (value) => value.groups.length),
+    [loadLinuxDoEditorData]
+  );
 
   const useLinuxDoTemplate = useCallback(
     async (id: string) => {
@@ -2349,6 +2239,7 @@ export function useTopicActionsController({
 
   return {
     actionBusy,
+    replyImageUploading,
     bookmarkOnDiscourseSite,
     collectOnNodeSeekSite,
     decisionFor,

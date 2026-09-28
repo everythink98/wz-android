@@ -25,30 +25,7 @@ vi.mock('expo-secure-store', () => ({
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import { html, htmlAt, json, routeFetcher } from './fixtures';
-
-const nodeSeekPayload = Buffer.from(
-  JSON.stringify({
-    rotateTopics: [
-      {
-        postId: 101,
-        titleText: 'NodeSeek topic',
-        titleLink: '/post-101-1',
-        op: { name: 'alice', avatar: '/avatar.png' },
-        category: { key: 'tech', name: '技术' },
-        time: { createdDate: '2026-05-20T00:00:00.000Z' },
-        updatedDate: '2026-05-20T01:00:00.000Z',
-        comments: 2,
-        views: '1.2k',
-        content: 'NodeSeek body'
-      }
-    ],
-    allCategory: [
-      { key: 'tech', cn_text: '技术' },
-      { key: 'admin', cn_text: '管理', adminOnly: true }
-    ]
-  })
-).toString('base64');
+import { html, htmlAt, json, routeFetcher, nodeSeekPayload } from './fixtures';
 
 const nodeSeekTopicPayload = Buffer.from(
   JSON.stringify({
@@ -4572,15 +4549,15 @@ describe('Android local sources', () => {
 // Compose only the lanes explicitly requested by this parser fixture.
 async function readNodeSeekUser(
   id: string,
-  options: Parameters<typeof getNodeSeekUserDetails>[1] = {}
+  { cursorType, ...options }: Parameters<typeof getNodeSeekUserDetails>[1] & { cursorType?: 'topics' | 'replies' } = {}
 ): Promise<
   import('@/domain/forum/models').UserDetails &
     Partial<import('@/domain/forum/models').UserTopicsPage> &
     import('@/domain/forum/models').UserRepliesPage
 > {
   const profile = await getNodeSeekUserDetails(id, options);
-  if (options.cursorType === 'topics') return { ...profile, ...(await getNodeSeekUserTopics(profile, options)) };
-  if (options.cursorType === 'replies') return { ...profile, ...(await getNodeSeekUserReplies(profile, options)) };
+  if (cursorType === 'topics') return { ...profile, ...(await getNodeSeekUserTopics(profile, options)) };
+  if (cursorType === 'replies') return { ...profile, ...(await getNodeSeekUserReplies(profile, options)) };
   const [topics, replies] = await Promise.all([
     getNodeSeekUserTopics(profile, options),
     getNodeSeekUserReplies(profile, options)

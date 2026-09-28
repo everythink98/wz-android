@@ -10,10 +10,10 @@ function readProjectFile(...parts: string[]) {
   return readFileSync(path.join(rootDir, ...parts), 'utf8');
 }
 
-function readNativePlugin(plugin: string, directory: string) {
+function readNativePlugin(directory: string) {
   const sources = ['modules', 'forum-platform', 'android', 'src', 'main', 'java', 'com', 'wz', 'reader', directory];
   return [
-    readProjectFile('plugins', plugin),
+    readProjectFile('plugins', 'withForumPlatform.js'),
     readProjectFile('modules', 'forum-platform', 'android', 'build.gradle'),
     ...readdirSync(path.join(rootDir, ...sources))
       .filter((name) => name.endsWith('.kt'))
@@ -215,7 +215,9 @@ describe('Android release packaging guards', () => {
     );
 
     expect(buildProperties?.[1]?.android?.buildReactNativeFromSource).toBe(true);
-    expect(pkg.expo.autolinking.android.buildFromSource).toEqual(expect.arrayContaining(['expo-image', 'expo-video']));
+    expect(pkg.expo.autolinking.android.buildFromSource).toEqual(
+      expect.arrayContaining(['expo-document-picker', 'expo-image', 'expo-video'])
+    );
     expect(reactNativePatch).toContain('ReactAndroid/src/main/java');
     expect(reactNativePatch).toContain('jsiDir.invariantSeparatorsPath');
     expect(reactNativePatch).toContain('node_modules/react-native/settings.gradle.kts');
@@ -225,19 +227,10 @@ describe('Android release packaging guards', () => {
   });
 
   it.each([
-    ['withApkInstaller.js', 'ApkInstaller'],
-    ['withForumSearchCustomTab.js', 'ForumSearchCustomTab'],
-    ['withSecureRandomModule.js', 'SecureRandom'],
-    ['withNotificationDigestModule.js', 'NotificationDigest'],
-    ['withNetworkProxyModule.js', 'NetworkProxy'],
-    ['withSvgRendererModule.js', 'SvgRenderer']
-  ])('generates %s with the RN 0.86 lazy package API', (pluginFile, owner) => {
-    const plugin =
-      owner === 'NetworkProxy'
-        ? readNativePlugin(pluginFile, 'network')
-        : owner === 'SvgRenderer'
-          ? readNativePlugin(pluginFile, 'svg')
-          : readProjectFile('plugins', pluginFile);
+    ['network', 'NetworkProxy'],
+    ['svg', 'SvgRenderer']
+  ])('packages %s with the RN 0.86 lazy package API', (directory, owner) => {
+    const plugin = readNativePlugin(directory);
 
     expect(plugin).toContain(`class ${owner}Package : BaseReactPackage()`);
     expect(plugin).toContain(
@@ -247,21 +240,11 @@ describe('Android release packaging guards', () => {
     expect(plugin).not.toContain('override fun createNativeModules(');
   });
 
-  it('packages the Custom Tabs API with its direct AndroidX dependency', () => {
-    const plugin = readProjectFile('plugins', 'withForumSearchCustomTab.js');
-
-    expect(plugin).toContain('androidx.browser:browser:1.10.0');
-  });
-
-  it('generates the exact Android digest presentation bridge', () => {
-    const app = JSON.parse(readProjectFile('app.json'));
-    const plugin = readProjectFile('plugins', 'withNotificationDigestModule.js');
-
-    expect(app.expo.plugins).toContain('./plugins/withNotificationDigestModule');
+  it('packages the exact Android digest presentation bridge', () => {
+    const plugin = readProjectFile(
+      'modules/forum-platform/android/src/main/java/com/wz/reader/notifications/NotificationDigestModule.kt'
+    );
     for (const required of [
-      "path.join(outputDir, 'NotificationDigestModule.kt')",
-      "path.join(outputDir, 'NotificationDigestPackage.kt')",
-      "path.join(testOutputDir, 'NotificationDigestExecutorTest.kt')",
       'ExpoNotificationBuilder(',
       'check(notificationManager.areNotificationsEnabled())',
       'getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE',
@@ -273,7 +256,9 @@ describe('Android release packaging guards', () => {
   });
 
   it('keeps APK inspection available before opening the Android installer', () => {
-    const plugin = readProjectFile('plugins', 'withApkInstaller.js');
+    const plugin = readProjectFile(
+      'modules/forum-platform/android/src/main/java/com/wz/reader/update/ApkInstallerModule.kt'
+    );
 
     expect(plugin).toContain('fun inspectApk');
     expect(plugin).toContain('fileSha256');
@@ -284,9 +269,9 @@ describe('Android release packaging guards', () => {
   it('keeps the Android network proxy and narrow managed-Cookie boundary enabled', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const packageJson = JSON.parse(readProjectFile('package.json'));
-    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
+    const plugin = readNativePlugin('network');
 
-    expect(app.expo.plugins).toContain('./plugins/withNetworkProxyModule');
+    expect(app.expo.plugins).toContain('./plugins/withForumPlatform');
     for (const required of [
       'NetworkProxyModule',
       'NetworkProxyPackage',
@@ -375,12 +360,14 @@ describe('Android release packaging guards', () => {
     }
   });
 
-  it('keeps preview region decoding in its own Android package', () => {
+  it('keeps preview region decoding independent from the network proxy', () => {
     const app = JSON.parse(readProjectFile('app.json'));
-    const networkPlugin = readNativePlugin('withNetworkProxyModule.js', 'network');
-    const previewPlugin = readProjectFile('plugins', 'withPreviewRegionImageNative.js');
+    const networkPlugin = readNativePlugin('network');
+    const previewPlugin = readProjectFile(
+      'modules/forum-platform/android/src/main/java/com/wz/reader/media/PreviewRegionImageView.kt'
+    );
 
-    expect(app.expo.plugins).toContain('./plugins/withPreviewRegionImageNative');
+    expect(app.expo.plugins).toContain('./plugins/withForumPlatform');
     expect(networkPlugin).not.toContain('PreviewRegionImage');
     for (const required of [
       'BitmapRegionDecoder',
@@ -388,10 +375,7 @@ describe('Android release packaging guards', () => {
       'UIManagerHelper.getEventDispatcher(reactContext)',
       'SourceSizeEvent(UIManagerHelper.getSurfaceId(this), id, size)',
       'Handler(Looper.getMainLooper())',
-      'PreviewRegionImagePackage',
-      'PreviewRegionImageViewManager',
-      "path.join(outputDir, 'PreviewRegionImageView.kt')",
-      "path.join(testOutputDir, 'PreviewRegionImageMathTest.kt')"
+      'PreviewRegionImageViewManager'
     ]) {
       expect(previewPlugin).toContain(required);
     }
@@ -401,9 +385,9 @@ describe('Android release packaging guards', () => {
 
   it('generates the isolated single-WebView SVG poster renderer', () => {
     const app = JSON.parse(readProjectFile('app.json'));
-    const plugin = readNativePlugin('withSvgRendererModule.js', 'svg');
+    const plugin = readNativePlugin('svg');
 
-    expect(app.expo.plugins).toContain('./plugins/withSvgRendererModule');
+    expect(app.expo.plugins).toContain('./plugins/withForumPlatform');
     for (const required of [
       'class SvgRendererModule',
       'fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise)',
@@ -432,7 +416,7 @@ describe('Android release packaging guards', () => {
   });
 
   it('keeps native proxy lifecycle logs free of destinations and upstream addresses', () => {
-    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
+    const plugin = readNativePlugin('network');
 
     expect(plugin).toContain('Log.i(LOG_TAG, "local proxy started")');
     expect(plugin).not.toContain('select proxy for ');
@@ -443,14 +427,14 @@ describe('Android release packaging guards', () => {
   });
 
   it('rejects invalid IPv4 literals before encoding SOCKS5 addresses', () => {
-    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
+    const plugin = readNativePlugin('network');
 
     expect(plugin).toContain('Invalid SOCKS5 IPv4 host');
     expect(plugin).not.toContain('output.write(part.toInt() and 0xff)');
   });
 
   it('keeps local Android development hosts direct even when a system proxy exists', () => {
-    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
+    const plugin = readNativePlugin('network');
     const localHostIndex = plugin.indexOf('if (isLocalDevHost(targetHost))');
     const noProxyIndex = plugin.indexOf('return mutableListOf(Proxy.NO_PROXY)', localHostIndex);
     const delegateIndex = plugin.indexOf('delegate?.select(uri)', localHostIndex);
@@ -461,7 +445,7 @@ describe('Android release packaging guards', () => {
   });
 
   it('keeps the phone system proxy available when the app proxy is disabled', () => {
-    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
+    const plugin = readNativePlugin('network');
     const disabledIndex = plugin.indexOf('if (proxy == null)');
     const delegateIndex = plugin.indexOf('delegate?.select(uri)', disabledIndex);
 
@@ -530,7 +514,7 @@ describe('Android release packaging guards', () => {
       'utils',
       'ReadNetworkVideoClientRegistry.kt'
     );
-    const networkPlugin = readNativePlugin('withNetworkProxyModule.js', 'network');
+    const networkPlugin = readNativePlugin('network');
 
     expect(pkg.dependencies['expo-video']).toBe('~57.0.3');
     expect(lock.packages['node_modules/expo-video'].version).toBe('57.0.3');
@@ -539,6 +523,11 @@ describe('Android release packaging guards', () => {
     );
     expect(patch).toContain('DataSourceUtils.kt');
     expect(patch).toContain('ReadNetworkVideoClientRegistry.kt');
+    // Packaging evidence only; real handoff/recycle behavior belongs to the device proof.
+    expect(patch).toContain('VideoManager.kt');
+    expect(patch).toContain('VideoManager.beginFullscreenHandoff(this)');
+    expect(patch).toContain('VideoManager.claimFullscreenHandoff(handoffToken)');
+    expect(patch).toContain('VideoManager.cancelFullscreenHandoff(handoffToken)');
     expect(dataSource).toContain('ReadNetworkVideoClientRegistry.clientForGeneration');
     expect(dataSource).toContain('?: OkHttpClientProvider.createClient()');
     expect(dataSource).toContain('filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }');

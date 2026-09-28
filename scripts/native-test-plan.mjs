@@ -10,12 +10,11 @@ const selectionClasses = [
   'ForumReplacementRangeMatcherTest'
 ].map((name) => `expo.modules.forumcontentselection.${name}`);
 const appClasses = [
-  'ApkInstallerSignerTest',
-  'ForumSearchCustomTabUrlTest',
-  'NotificationDigestExecutorTest',
-  'PreviewRegionImageMathTest',
   'ComposerKeyboardTest',
-  'ComposerWebViewInsetsTest'
+  'ComposerKeyboardHostTest',
+  'ComposerWebViewInsetsTest',
+  'ComposerWebViewPrewarmTest',
+  'DocumentPickerThreadingTest'
 ].map((name) => `com.wz.reader.${name}`);
 const reactClasses = [
   'com.facebook.react.modules.fresco.ReactOkHttpNetworkFetcherTest',
@@ -26,6 +25,19 @@ const reactClasses = [
 ];
 export const nativeTestTasks = {
   ':forum-platform:testDebugUnitTest': {
+    related: (file) =>
+      file.startsWith('modules/forum-platform/') ||
+      file.startsWith('plugins/') ||
+      file.startsWith('src/platform/network/') ||
+      file.startsWith('src/platform/diagnostics/') ||
+      file.startsWith('src/platform/media/') ||
+      file.startsWith('src/platform/update/') ||
+      file === 'src/platform/android/forumSearchCustomTab.ts' ||
+      file === 'src/platform/android/secureRandom.ts' ||
+      file === 'src/platform/notifications/notificationSystem.ts' ||
+      file === 'src/ui/media/PreviewRegionImage.tsx' ||
+      file.startsWith('src/platform/storage/backup') ||
+      file === 'src/features/more/useBackupStatusController.ts',
     args: [],
     reports: 'modules/forum-platform/android/build/test-results/testDebugUnitTest',
     classes: [
@@ -34,30 +46,62 @@ export const nativeTestTasks = {
       'NetworkProxyRuntimeTest',
       'SvgRendererPolicyTest',
       'BackupExportTest',
-      'ImageDownloadTest'
+      'ImageDownloadTest',
+      'ApkInstallerSignerTest',
+      'ForumSearchCustomTabUrlTest',
+      'NotificationDigestExecutorTest',
+      'PreviewRegionImageMathTest',
+      'ForumPlatformPackageTest'
     ].map((name) => `com.wz.reader.${name}`)
   },
   ':forum-content-selection:testDebugUnitTest': {
+    related: (file) =>
+      file.startsWith('modules/forum-content-selection/') ||
+      file.startsWith('src/features/topic/selection/') ||
+      file === 'src/features/topic/useTopicRouteBeforeRemove.ts' ||
+      file === 'scripts/run-forum-selection-native-tests.mjs' ||
+      file.startsWith('patches/react-native+'),
     args: [],
     reports: 'modules/forum-content-selection/android/build/test-results/testDebugUnitTest',
     classes: selectionClasses
   },
   ':app:testReleaseUnitTest': {
+    related: (file) =>
+      file.startsWith('tests/native/') ||
+      file.startsWith('modules/forum-platform/android/src/main/java/com/wz/reader/composer/') ||
+      file === 'src/ui/composer/ComposerKeyboardHost.tsx' ||
+      file === 'src/ui/hooks/useKeyboardHandoff.ts' ||
+      file === 'src/ui/sheets/FixedComposerPanel.tsx' ||
+      file === 'src/ui/sheets/ComposerBottomSheet.tsx' ||
+      file === 'src/ui/composer/StructuredReplyComposer.tsx' ||
+      file.startsWith('src/platform/update/') ||
+      file.startsWith('plugins/') ||
+      file.startsWith('patches/') ||
+      file.startsWith('src/platform/network/') ||
+      file.startsWith('src/platform/media/svgPosterRenderer') ||
+      file.startsWith('src/platform/diagnostics/'),
     args: ['-I', '../tests/native/composer-keyboard.gradle', '-PreactNativeArchitectures=x86_64'],
     reports: 'android/app/build/test-results/testReleaseUnitTest',
     classes: appClasses
   },
   ':react-native:packages:react-native:ReactAndroid:testDebugUnitTest': {
+    related: (file) =>
+      file.startsWith('patches/react-native+') ||
+      file.startsWith('modules/forum-platform/') ||
+      file === 'plugins/withForumPlatform.js' ||
+      file.startsWith('src/platform/network/'),
     args: reactClasses.flatMap((name) => ['--tests', name]),
     reports: 'node_modules/react-native/ReactAndroid/build/test-results/testDebugUnitTest',
     classes: reactClasses
   },
   ':expo-file-system:testDebugUnitTest': {
+    related: (file) => file.startsWith('patches/expo-file-system+') || file.startsWith('src/platform/update/'),
     args: ['--tests', 'expo.modules.filesystem.DownloadResponseTest'],
     reports: 'node_modules/expo-file-system/android/build/test-results/testDebugUnitTest',
     classes: ['expo.modules.filesystem.DownloadResponseTest']
   },
   ':expo-image:testDebugUnitTest': {
+    related: (file) => file.startsWith('patches/expo-image+'),
     args: [
       '--tests',
       'expo.modules.image.events.GlideRequestListenerTest',
@@ -84,64 +128,7 @@ export function relatedNativeTasks(files) {
       'gradle.properties'
     ].includes(file)
   );
-  const selection =
-    shared ||
-    changed.some(
-      (file) =>
-        file.startsWith('modules/forum-content-selection/') ||
-        file.startsWith('src/features/topic/selection/') ||
-        file === 'src/features/topic/useTopicRouteBeforeRemove.ts' ||
-        file === 'scripts/run-forum-selection-native-tests.mjs' ||
-        file.startsWith('patches/react-native+')
-    );
-  const app =
-    shared ||
-    changed.some(
-      (file) =>
-        file.startsWith('tests/native/') ||
-        file === 'src/ui/controls/ComposerBottomSheet.tsx' ||
-        file.startsWith('src/platform/update/') ||
-        file.startsWith('plugins/') ||
-        file.startsWith('patches/') ||
-        file.startsWith('src/platform/network/') ||
-        file.startsWith('src/platform/media/svgPosterRenderer') ||
-        file.startsWith('src/platform/diagnostics/')
-    );
-  return [
-    ...(shared ||
-    changed.some(
-      (file) =>
-        file.startsWith('modules/forum-platform/') ||
-        file.startsWith('plugins/') ||
-        file.startsWith('src/platform/network/') ||
-        file.startsWith('src/platform/diagnostics/') ||
-        file.startsWith('src/platform/media/') ||
-        file.startsWith('src/platform/storage/backup') ||
-        file === 'src/features/more/useBackupStatusController.ts'
-    )
-      ? [':forum-platform:testDebugUnitTest']
-      : []),
-    ...(selection ? [':forum-content-selection:testDebugUnitTest'] : []),
-    ...(app ? [':app:testReleaseUnitTest'] : []),
-    ...(shared ||
-    changed.some(
-      (file) =>
-        file.startsWith('patches/react-native+') ||
-        file.startsWith('plugins/network/') ||
-        file.startsWith('modules/forum-platform/') ||
-        file === 'plugins/withNetworkProxyModule.js' ||
-        file.startsWith('src/platform/network/')
-    )
-      ? [':react-native:packages:react-native:ReactAndroid:testDebugUnitTest']
-      : []),
-    ...(shared ||
-    changed.some((file) => file.startsWith('patches/expo-file-system+') || file.startsWith('src/platform/update/'))
-      ? [':expo-file-system:testDebugUnitTest']
-      : []),
-    ...(shared || changed.some((file) => file.startsWith('patches/expo-image+'))
-      ? [':expo-image:testDebugUnitTest']
-      : [])
-  ];
+  return Object.keys(nativeTestTasks).filter((task) => shared || changed.some(nativeTestTasks[task].related));
 }
 
 export function verifyNativeTestReports(root, startedAt, expectedClasses = []) {

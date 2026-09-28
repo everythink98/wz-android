@@ -242,6 +242,80 @@ function parsedBalancedTable(html: string) {
 }
 
 describe('Android topic content splitting', () => {
+  it.each(['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const)(
+    'preserves sanitized text, media and safety for every %s content role',
+    (source) => {
+      const cases = [
+        { html: undefined, text: '', images: [] },
+        { html: null, text: '', images: [] },
+        { html: '', text: '', images: [] },
+        { html: '  ', text: '', images: [] },
+        { html: '中文 👩‍💻 &amp; &lt;tag&gt;', text: '中文 👩‍💻 & <tag>', images: [] },
+        {
+          html: '<p>@<a href="https://www.v2ex.com/member/alice">alice</a> &amp; 中文 👩‍💻</p>',
+          text: '@alice & 中文 👩‍💻',
+          images: []
+        },
+        {
+          html:
+            '<p>before<script>unsafe()</script><a href="javascript:unsafe()">link</a><img src="/image.png" onerror="unsafe()"><b>after</b></p>' +
+            '<table><caption>caption</caption><tr><td>A&amp;B</td><td>尾👩‍💻</td></tr></table>' +
+            '<pre><code>code &lt; line\nsecond</code></pre>',
+          text: 'beforelinkafter caption A&B 尾👩‍💻 code < line second',
+          images: ['https://example.com/image.png']
+        }
+      ];
+      for (const role of ['opening', 'reply', 'quoted-reply', 'accepted-answer', 'signature'] as const) {
+        for (const { html, text, images } of cases) {
+          const prepared = prepareSanitizedForumContent(html, { baseUrl: 'https://example.com/', source, role });
+          const selection = prepared.contentPlan.rows
+            .flatMap((row) => selectionToken(row).owners.map((owner) => owner.text))
+            .join('\n')
+            .replace(/\s+/gu, ' ')
+            .trim();
+          expect(selection, `${source}/${role}/${String(html)}`).toBe(text);
+          expect(prepared.contentPlan.previewImages.map((image) => image.source)).toEqual(images);
+          const renderedHtml = renderedContentRows(prepared.contentPlan)
+            .map((row) => row.html)
+            .join('');
+          expect(prepared.contentHtml + renderedHtml).not.toMatch(/<script|javascript:|onerror=|unsafe\(\)/i);
+          if (!String(html || '').includes('<')) expect(prepared.contentHtml).toBe(String(html || ''));
+        }
+      }
+    }
+  );
+
+  it.each(['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const)(
+    'preserves post-sanitizer DOM edits in stored %s content and every compiled role',
+    (source) => {
+      for (const role of ['opening', 'reply', 'quoted-reply', 'accepted-answer', 'signature'] as const) {
+        const steps: string[] = [];
+        const prepared = prepareSanitizedForumContent('<p>before</p><img src="/before.png">', {
+          baseUrl: 'https://example.com/',
+          source,
+          role,
+          transformRoot: (root) => {
+            steps.push('source');
+            root.querySelector('p')!.set_content('source');
+          },
+          afterSanitizeRoot: (root) => {
+            steps.push('after');
+            root.querySelector('p')!.set_content('after &amp; 👩‍💻');
+            root.querySelector('img')!.setAttribute('src', 'https://example.com/after.png');
+          }
+        });
+        expect(steps).toEqual(['source', 'after']);
+        expect(prepared.contentHtml).toBe('<p>after &amp; 👩‍💻</p><img src="https://example.com/after.png">');
+        expect(
+          prepared.contentPlan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text))
+        ).toEqual(['after & 👩‍💻']);
+        expect(prepared.contentPlan.previewImages.map((image) => image.source)).toEqual([
+          'https://example.com/after.png'
+        ]);
+      }
+    }
+  );
+
   it('keeps table captions readable once before the split table and in selection order', () => {
     const tableRows = Array.from(
       { length: 9 },

@@ -293,6 +293,60 @@ function ManagedOriginalImageLayer({
   );
 }
 
+function useOriginalImageUpgrade(
+  requestIdentity: string,
+  originalSource: ImageURISource | null,
+  imageDisplayed: boolean
+) {
+  const originalRequestIdentity = originalImageDisplayIdentity(originalSource);
+  const displayRevision = useOriginalImageDisplayRevision(originalSource);
+  const upgradeEnabled = useOriginalImageUpgradeEnabled();
+  const [forcedIdentity, setForcedIdentity] = useRecyclingState('', [requestIdentity]);
+  const [displayedIdentity, setDisplayedIdentity] = useRecyclingState('', [requestIdentity]);
+  const [failedOriginal, setFailedOriginal] = useRecyclingState({ identity: '', revision: -1 }, [requestIdentity]);
+  const cachedArtifact = originalSource && displayRevision > 0 ? cachedCompatibleSvgArtifact(originalSource) : null;
+  useEffect(() => {
+    if (cachedArtifact) promoteCachedCompatibleSvgArtifact(originalRequestIdentity);
+  }, [cachedArtifact, originalRequestIdentity]);
+  const source = cachedArtifact?.posterSource || originalSource;
+  const identity = source ? compatibleImageRequestIdentity(source) : '';
+  const attempt = originalImageAttempt(identity, displayRevision, failedOriginal);
+  const activeAttempt = useRef<string | null>(attempt.identity);
+  useLayoutEffect(() => {
+    activeAttempt.current = attempt.identity;
+    return () => {
+      activeAttempt.current = null;
+    };
+  }, [attempt.identity]);
+  const forced = Boolean(originalRequestIdentity) && forcedIdentity === originalRequestIdentity;
+  const displayed = Boolean(identity) && displayedIdentity === identity;
+  const shouldLoad =
+    source && !attempt.failed && (forced || (upgradeEnabled && (displayRevision > 0 || imageDisplayed)));
+  const acceptsResult = () => activeAttempt.current === attempt.identity && displayedIdentity !== identity;
+  return {
+    displayed,
+    force: () => {
+      if (originalRequestIdentity) setForcedIdentity(originalRequestIdentity, true);
+    },
+    layer: shouldLoad ? (
+      <ManagedOriginalImageLayer
+        forced={forced}
+        requestIdentity={attempt.identity}
+        source={source}
+        onRequestError={acceptsResult}
+        onDisplay={() => {
+          if (!acceptsResult()) return;
+          setDisplayedIdentity(identity, true);
+          markOriginalImageDisplayed(originalSource);
+        }}
+        onTerminalFailure={() => {
+          if (acceptsResult()) setFailedOriginal({ identity, revision: displayRevision }, true);
+        }}
+      />
+    ) : null
+  };
+}
+
 function AdmittedPreviewImageBlock({
   alignment,
   attributes,
@@ -327,10 +381,6 @@ function AdmittedPreviewImageBlock({
         }) as ImageURISource)
       : null;
   }, [imageProps.source, mediaContext, nodeSeekMediaUserAgent, originalUri, referrerPolicy, src]);
-  const originalRequestIdentity = originalImageDisplayIdentity(originalSource);
-  const originalDisplayRevision = useOriginalImageDisplayRevision(originalSource);
-  const originalUpgradeEnabled = useOriginalImageUpgradeEnabled();
-  const mountedRef = useRef(true);
   const [loadedImage, setLoadedImage] = useRecyclingState<{
     cacheType: ImageLoadEventData['cacheType'];
     dimensions: CachedImageDimensions;
@@ -339,9 +389,6 @@ function AdmittedPreviewImageBlock({
   } | null>(null, [requestIdentity]);
   const [displayedImageLoadIdentity, setDisplayedImageLoadIdentity] = useRecyclingState('', [requestIdentity]);
   const [failedRequestIdentity, setFailedRequestIdentity] = useRecyclingState('', [requestIdentity]);
-  const [forcedOriginalIdentity, setForcedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
-  const [displayedOriginalIdentity, setDisplayedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
-  const [failedOriginal, setFailedOriginal] = useRecyclingState({ identity: '', revision: -1 }, [requestIdentity]);
   const contentWidth = Math.max(1, availableContentWidth);
   const handleTerminalFailure = useCallback(
     () => setFailedRequestIdentity(bodyRequestIdentity, true),
@@ -371,12 +418,6 @@ function AdmittedPreviewImageBlock({
   const naturalDimensions = activeLoadedImage
     ? activeLoadedImage.dimensions
     : cachedDimensions || displaySize || { height: Math.round(contentWidth * 0.75), width: contentWidth };
-  useLayoutEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
   const handleImageLoad = useCallback(
     (event: ImageLoadEventData) => {
       if (!isCurrentImageAttempt() || isImageAttemptSettled()) return;
@@ -457,31 +498,7 @@ function AdmittedPreviewImageBlock({
   ];
   const imageLoadingOverlayStyle = [StyleSheet.absoluteFill, imageStateFrameStyle];
   const imageDisplayed = Boolean(activeLoadedImage) && displayedImageLoadIdentity === imageLoadIdentity;
-  const cachedOriginalArtifact =
-    originalSource && originalDisplayRevision > 0 ? cachedCompatibleSvgArtifact(originalSource) : null;
-  useEffect(() => {
-    if (cachedOriginalArtifact) {
-      promoteCachedCompatibleSvgArtifact(originalRequestIdentity);
-    }
-  }, [cachedOriginalArtifact, originalRequestIdentity]);
-  const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
-  const progressiveIdentity = progressiveSource ? compatibleImageRequestIdentity(progressiveSource) : '';
-  const { failed: originalFailed, identity: originalAttemptIdentity } = originalImageAttempt(
-    progressiveIdentity,
-    originalDisplayRevision,
-    failedOriginal
-  );
-  const progressiveIdentityRef = useRef(originalAttemptIdentity);
-  const originalForced = Boolean(originalRequestIdentity) && forcedOriginalIdentity === originalRequestIdentity;
-  const originalDisplayed = Boolean(progressiveIdentity) && displayedOriginalIdentity === progressiveIdentity;
-  const shouldLoadOriginal = Boolean(
-    progressiveSource &&
-    !originalFailed &&
-    (originalForced || (originalUpgradeEnabled && (originalDisplayRevision > 0 || imageDisplayed)))
-  );
-  useLayoutEffect(() => {
-    progressiveIdentityRef.current = originalAttemptIdentity;
-  }, [originalAttemptIdentity]);
+  const original = useOriginalImageUpgrade(requestIdentity, originalSource, imageDisplayed);
   useEffect(() => {
     if (!imageDisplayed || !settleImageAttempt()) return;
     bodyMediaLease.settle('displayed');
@@ -496,9 +513,7 @@ function AdmittedPreviewImageBlock({
       style={sharedContainerStyle}
       onPress={(event) => {
         event.stopPropagation?.();
-        if (originalRequestIdentity) {
-          setForcedOriginalIdentity(originalRequestIdentity, true);
-        }
+        original.force();
         if (referrerPolicy) {
           onOpenImagePreview(
             src,
@@ -530,49 +545,12 @@ function AdmittedPreviewImageBlock({
             onProgress={handleImageProgress}
           />
         ) : null}
-        {shouldLoadOriginal && progressiveSource ? (
-          <ManagedOriginalImageLayer
-            forced={originalForced}
-            requestIdentity={originalAttemptIdentity}
-            source={progressiveSource}
-            onDisplay={() => {
-              if (
-                !mountedRef.current ||
-                progressiveIdentityRef.current !== originalAttemptIdentity ||
-                displayedOriginalIdentity === progressiveIdentity
-              ) {
-                return;
-              }
-              setDisplayedOriginalIdentity(progressiveIdentity, true);
-              markOriginalImageDisplayed(originalSource);
-            }}
-            onRequestError={() => {
-              if (
-                !mountedRef.current ||
-                progressiveIdentityRef.current !== originalAttemptIdentity ||
-                displayedOriginalIdentity === progressiveIdentity
-              ) {
-                return false;
-              }
-              return true;
-            }}
-            onTerminalFailure={() => {
-              if (
-                !mountedRef.current ||
-                progressiveIdentityRef.current !== originalAttemptIdentity ||
-                displayedOriginalIdentity === progressiveIdentity
-              ) {
-                return;
-              }
-              setFailedOriginal({ identity: progressiveIdentity, revision: originalDisplayRevision }, true);
-            }}
-          />
-        ) : null}
-        {!imageDisplayed && !loadFailed && !originalDisplayed ? (
+        {original.layer}
+        {!imageDisplayed && !loadFailed && !original.displayed ? (
           <View style={imageLoadingOverlayStyle}>
             <ActivityIndicator color={loadingColor} size="small" />
           </View>
-        ) : loadFailed && !originalDisplayed ? (
+        ) : loadFailed && !original.displayed ? (
           <View style={imageLoadingOverlayStyle}>
             <Text numberOfLines={2} style={errorTextStyle}>
               {imageState.alt || '图片加载失败'}
@@ -790,16 +768,12 @@ function ManagedMixedForumImage({
   const cacheKey = imageDisplayCacheIdentity(source);
   const lease = useTopicBodyMediaLease({ kind: 'inline', requestIdentity });
   const attemptIdentity = `${requestIdentity}\u0000attempt:${lease.attemptId}`;
-  const mountedRef = useRef(true);
   const [naturalDimensions, setNaturalDimensions] = useRecyclingState<CachedImageDimensions | null>(
     cachedImageDisplayDimensions(cacheKey) || null,
     [requestIdentity]
   );
   const [displayedImageIdentity, setDisplayedImageIdentity] = useRecyclingState('', [requestIdentity]);
   const [failedAttemptIdentity, setFailedAttemptIdentity] = useRecyclingState('', [requestIdentity]);
-  const [forcedOriginalIdentity, setForcedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
-  const [displayedOriginalIdentity, setDisplayedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
-  const [failedOriginal, setFailedOriginal] = useRecyclingState({ identity: '', revision: -1 }, [requestIdentity]);
   const handleTerminalFailure = useCallback(
     () => setFailedAttemptIdentity(attemptIdentity, true),
     [attemptIdentity, setFailedAttemptIdentity]
@@ -811,12 +785,6 @@ function ManagedMixedForumImage({
       onTerminalFailure: handleTerminalFailure,
       source
     });
-  useLayoutEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
   const imageVisualIdentity = `${requestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
   const requestGeneration = `wz-inline-attempt-${stableImageRequestKey(`${lease.attemptId}:${imageVisualIdentity}`)}`;
   const nativeSource = useMemo(
@@ -830,32 +798,7 @@ function ManagedMixedForumImage({
   useEffect(() => {
     if (failedAttemptIdentity === attemptIdentity) lease.settle('error');
   }, [attemptIdentity, failedAttemptIdentity, lease]);
-  const originalRequestIdentity = originalImageDisplayIdentity(originalSource);
-  const originalDisplayRevision = useOriginalImageDisplayRevision(originalSource);
-  const originalUpgradeEnabled = useOriginalImageUpgradeEnabled();
-  const cachedOriginalArtifact =
-    originalSource && originalDisplayRevision > 0 ? cachedCompatibleSvgArtifact(originalSource) : null;
-  useEffect(() => {
-    if (cachedOriginalArtifact) promoteCachedCompatibleSvgArtifact(originalRequestIdentity);
-  }, [cachedOriginalArtifact, originalRequestIdentity]);
-  const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
-  const progressiveIdentity = progressiveSource ? compatibleImageRequestIdentity(progressiveSource) : '';
-  const { failed: originalFailed, identity: originalAttemptIdentity } = originalImageAttempt(
-    progressiveIdentity,
-    originalDisplayRevision,
-    failedOriginal
-  );
-  const progressiveIdentityRef = useRef(originalAttemptIdentity);
-  const originalForced = Boolean(originalRequestIdentity) && forcedOriginalIdentity === originalRequestIdentity;
-  const originalDisplayed = Boolean(progressiveIdentity) && displayedOriginalIdentity === progressiveIdentity;
-  const shouldLoadOriginal = Boolean(
-    progressiveSource &&
-    !originalFailed &&
-    (originalForced || (originalUpgradeEnabled && (originalDisplayRevision > 0 || imageDisplayed)))
-  );
-  useLayoutEffect(() => {
-    progressiveIdentityRef.current = originalAttemptIdentity;
-  }, [originalAttemptIdentity]);
+  const original = useOriginalImageUpgrade(requestIdentity, originalSource, imageDisplayed);
   const frameStyle = [
     {
       backgroundColor: frameBackgroundColor,
@@ -895,7 +838,7 @@ function ManagedMixedForumImage({
       testID="topic-inline-image-attachment"
       onPress={(event) => {
         event.stopPropagation?.();
-        if (originalRequestIdentity) setForcedOriginalIdentity(originalRequestIdentity, true);
+        original.force();
         const displaySize = naturalDimensions || cachedImageDisplayDimensions(cacheKey) || undefined;
         if (referrerPolicy) {
           onOpenImagePreview(src, displaySize, activeArtifact?.posterSource.uri, referrerPolicy);
@@ -946,40 +889,8 @@ function ManagedMixedForumImage({
             : undefined
         }
       />
-      {shouldLoadOriginal && progressiveSource ? (
-        <ManagedOriginalImageLayer
-          forced={originalForced}
-          requestIdentity={originalAttemptIdentity}
-          source={progressiveSource}
-          onDisplay={() => {
-            if (
-              !mountedRef.current ||
-              progressiveIdentityRef.current !== originalAttemptIdentity ||
-              displayedOriginalIdentity === progressiveIdentity
-            ) {
-              return;
-            }
-            setDisplayedOriginalIdentity(progressiveIdentity, true);
-            markOriginalImageDisplayed(originalSource);
-          }}
-          onRequestError={() =>
-            mountedRef.current &&
-            progressiveIdentityRef.current === originalAttemptIdentity &&
-            displayedOriginalIdentity !== progressiveIdentity
-          }
-          onTerminalFailure={() => {
-            if (
-              !mountedRef.current ||
-              progressiveIdentityRef.current !== originalAttemptIdentity ||
-              displayedOriginalIdentity === progressiveIdentity
-            ) {
-              return;
-            }
-            setFailedOriginal({ identity: progressiveIdentity, revision: originalDisplayRevision }, true);
-          }}
-        />
-      ) : null}
-      {lease.admitted && !imageDisplayed && !originalDisplayed ? (
+      {original.layer}
+      {lease.admitted && !imageDisplayed && !original.displayed ? (
         <View
           style={[
             StyleSheet.absoluteFill,

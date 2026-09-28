@@ -9,17 +9,14 @@ import {
 import { getYaohuoUserDetails, getYaohuoUserTopics, getYaohuoUserReplies } from '@/sources/yaohuo/user';
 import { getV2exReplies, getV2exTopic } from '@/sources/v2ex/reader';
 import { getV2exUserDetails, getV2exUserTopics, getV2exUserReplies } from '@/sources/v2ex/account';
-import { checkYaohuoLoginDirect } from '@/sources/yaohuo/reader';
+import { checkYaohuoLoginDirect, getYaohuoTopicDirect, getYaohuoRepliesDirect } from '@/sources/yaohuo/reader';
+import { getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import {
-  getDiscourseCurrentUserIdentity,
-  getDiscourseReplies,
-  getDiscourseReply,
-  getDiscourseTopic,
-  getDiscourseUserDetails,
-  getDiscourseUserTopics,
-  getDiscourseUserReplies,
-  type DiscourseReadAuth
-} from './discourseRead';
+  getLinuxDoCurrentUserIdentity,
+  getLinuxDoUserDetails,
+  getLinuxDoUserTopics,
+  getLinuxDoUserReplies
+} from '@/sources/linuxdo/account';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import type {
   Reply,
@@ -27,6 +24,7 @@ import type {
   ReplyOrder,
   ReplyWindowPosition,
   Source,
+  Topic,
   TopicDetail,
   UserIdentity,
   UserDetails
@@ -37,6 +35,7 @@ import { dispatchSourceRead } from './readAggregation';
 export function getTopic({
   source,
   id,
+  topic,
   fetcher,
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
@@ -48,19 +47,24 @@ export function getTopic({
 }: {
   source: Source;
   id: string;
+  topic?: Topic;
   fetcher?: Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   diagnosticTrace?: DiagnosticTrace;
   trackVisit?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
+  if (source === 'yaohuo') {
+    if (!topic) throw new Error('妖火详情需要主题上下文');
+    return getYaohuoTopicDirect({ topic, yaohuoFetcher: fetcher, signal, timeoutMs });
+  }
   const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   if (isDiscourseSource(source)) {
-    return getDiscourseTopic(id, {
-      auth: discourseAuth,
+    return getLinuxDoTopic(id, {
+      linuxDoAccess: discourseAuth,
       trackVisit,
       trackView: trackVisit,
       fetcher,
@@ -77,9 +81,10 @@ export function getTopic({
 export function getReplies({
   source,
   id,
+  categoryId,
   order,
   position,
-  limit = 20,
+  limit = source === 'yaohuo' ? 30 : 20,
   fetcher,
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
@@ -91,13 +96,14 @@ export function getReplies({
 }: {
   source: Source;
   id: string;
+  categoryId?: string;
   order: ReplyOrder;
   position: ReplyWindowPosition;
   limit?: number;
   fetcher?: Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   fillPages?: boolean;
   replyCount?: number;
   signal?: AbortSignal;
@@ -116,8 +122,8 @@ export function getReplies({
     timeoutMs
   };
   if (isDiscourseSource(source)) {
-    return getDiscourseReplies(id, {
-      auth: discourseAuth,
+    return getLinuxDoReplies(id, {
+      linuxDoAccess: discourseAuth,
       fetcher,
       limit,
       order,
@@ -128,7 +134,19 @@ export function getReplies({
   }
   return dispatchSourceRead<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
-    v2ex: () => getV2exReplies(id, options)
+    v2ex: () => getV2exReplies(id, options),
+    yaohuo: () =>
+      getYaohuoRepliesDirect({
+        id,
+        categoryId,
+        order,
+        position,
+        limit,
+        replyCount,
+        yaohuoFetcher: fetcher,
+        signal,
+        timeoutMs
+      })
   });
 }
 
@@ -145,15 +163,15 @@ export function getReply({
   id: string;
   floor: number;
   fetcher?: Fetcher;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<Reply> {
   if (!isDiscourseSource(source)) {
     throw new Error('该来源不支持按楼层读取引用');
   }
-  return getDiscourseReply(id, floor, {
-    auth: discourseAuth,
+  return getLinuxDoReply(id, floor, {
+    linuxDoAccess: discourseAuth,
     fetcher,
     signal,
     timeoutMs
@@ -168,7 +186,7 @@ export type UserReadOptions = {
   fetcher?: Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
@@ -180,7 +198,7 @@ export type UserActivityReadOptions = Omit<UserReadOptions, 'id' | 'username'> &
 export function getUserDetails(options: UserReadOptions): Promise<UserDetails> {
   const { source, id, username, discourseAuth, nodeSeekAuthenticated, ...request } = options;
   return dispatchSourceRead(source, {
-    linuxdo: () => getDiscourseUserDetails(id, username || id, { ...request, auth: discourseAuth }),
+    linuxdo: () => getLinuxDoUserDetails(id, username || id, { ...request, linuxDoAccess: discourseAuth }),
     nodeseek: () => getNodeSeekUserDetails(id, { ...request, authenticated: nodeSeekAuthenticated }),
     v2ex: () => getV2exUserDetails(id, username || id, request),
     yaohuo: () => getYaohuoUserDetails(id, username, request)
@@ -191,7 +209,7 @@ export function getUserTopics(options: UserActivityReadOptions) {
   const { source, profile, discourseAuth, nodeSeekAuthenticated, ...request } = options;
   if (profile.source !== source) throw new Error('用户活动来源不匹配');
   return dispatchSourceRead(source, {
-    linuxdo: () => getDiscourseUserTopics(profile, { ...request, auth: discourseAuth }),
+    linuxdo: () => getLinuxDoUserTopics(profile, { ...request, linuxDoAccess: discourseAuth }),
     nodeseek: () => getNodeSeekUserTopics(profile, { ...request, authenticated: nodeSeekAuthenticated }),
     v2ex: () => getV2exUserTopics(profile, request),
     yaohuo: () => getYaohuoUserTopics(profile, request)
@@ -202,7 +220,7 @@ export function getUserReplies(options: UserActivityReadOptions) {
   const { source, profile, discourseAuth, nodeSeekAuthenticated, ...request } = options;
   if (profile.source !== source) throw new Error('用户活动来源不匹配');
   return dispatchSourceRead(source, {
-    linuxdo: () => getDiscourseUserReplies(profile, { ...request, auth: discourseAuth }),
+    linuxdo: () => getLinuxDoUserReplies(profile, { ...request, linuxDoAccess: discourseAuth }),
     nodeseek: () => getNodeSeekUserReplies(profile, { ...request, authenticated: nodeSeekAuthenticated }),
     v2ex: () => getV2exUserReplies(profile, request),
     yaohuo: () => getYaohuoUserReplies(profile, request)
@@ -220,15 +238,15 @@ export function getCurrentUserIdentity({
 }: {
   source: Source;
   fetcher?: Fetcher;
-  discourseAuth?: DiscourseReadAuth;
+  discourseAuth?: LinuxDoReadAuth;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<UserIdentity> {
   if (isDiscourseSource(source)) {
-    return getDiscourseCurrentUserIdentity({
-      auth: discourseAuth,
+    return getLinuxDoCurrentUserIdentity({
+      linuxDoUserAgent: discourseAuth?.userAgent,
       fetcher,
       signal,
       timeoutMs

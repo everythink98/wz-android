@@ -70,3 +70,26 @@ export function routeFetcher(routes: readonly Route[]) {
   };
   return vi.fn(fetcher);
 }
+
+export const nodeSeekPayload = Buffer.from(
+  JSON.stringify({
+    rotateTopics: [
+      {
+        postId: 101,
+        titleText: 'NodeSeek topic',
+        titleLink: '/post-101-1',
+        op: { name: 'alice', avatar: '/avatar.png' },
+        category: { key: 'tech', name: '技术' },
+        time: { createdDate: '2026-05-20T00:00:00.000Z' },
+        updatedDate: '2026-05-20T01:00:00.000Z',
+        comments: 2,
+        views: '1.2k',
+        content: 'NodeSeek body'
+      }
+    ],
+    allCategory: [
+      { key: 'tech', cn_text: '技术' },
+      { key: 'admin', cn_text: '管理', adminOnly: true }
+    ]
+  })
+).toString('base64');

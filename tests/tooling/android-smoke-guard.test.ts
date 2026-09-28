@@ -6,7 +6,6 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import {
-  capturedAgentDeviceOutput,
   deviceSelectionArgs,
   isVersionSupported,
   runAgentDevice,
@@ -22,7 +21,6 @@ import {
   parseAndroidPackageInfo,
   replayRecordingRecoverySession,
   ReplayCleanupError,
-  replayDeviceSelectionArgs,
   runReplayBatch
 } from '../../scripts/run-device-replay.mjs';
 import { loggedOutDeviceName } from '../../scripts/run-logged-out-device-replay.mjs';
@@ -49,7 +47,7 @@ describe('Android release evidence guards', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
     const nativePlugin =
-      readProjectFile('plugins', 'withNetworkProxyModule.js') +
+      readProjectFile('plugins', 'withForumPlatform.js') +
       readProjectFile(
         'modules',
         'forum-platform',
@@ -112,31 +110,28 @@ describe('Android release evidence guards', () => {
     expect(deviceSelectionArgs('  WZ Pixel API 35  ')).toEqual(['--device', 'WZ Pixel API 35']);
   });
 
-  it.runIf(process.platform === 'win32')('runs the installed Windows Node CLI with unchanged arguments', () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'agent-device-command-'));
-    const originalPath = process.env.PATH;
-    try {
-      const bin = path.join(directory, 'node_modules', 'agent-device', 'bin');
-      mkdirSync(bin, { recursive: true });
-      writeFileSync(path.join(directory, 'agent-device.ps1'), "throw 'Do not launch a PowerShell shim'");
-      writeFileSync(path.join(bin, 'agent-device.mjs'), 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
-      process.env.PATH = directory;
-      const args = ['--device', 'WZ Pixel API 35', '带空格 " 引号'];
-      expect(JSON.parse(runAgentDevice(args, { capture: true, echoCapture: false }))).toEqual(args);
-    } finally {
-      process.env.PATH = originalPath;
-      rmSync(directory, { recursive: true, force: true });
+  it.runIf(process.platform === 'win32')(
+    'captures only stdout from the Windows Node CLI with unchanged arguments',
+    () => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'agent-device-command-'));
+      const originalPath = process.env.PATH;
+      try {
+        const bin = path.join(directory, 'node_modules', 'agent-device', 'bin');
+        mkdirSync(bin, { recursive: true });
+        writeFileSync(path.join(directory, 'agent-device.ps1'), "throw 'Do not launch a PowerShell shim'");
+        writeFileSync(
+          path.join(bin, 'agent-device.mjs'),
+          'process.stderr.write("warning: backend probe timed out\\n"); process.stdout.write(JSON.stringify(process.argv.slice(2)))'
+        );
+        process.env.PATH = directory;
+        const args = ['--device', 'WZ Pixel API 35', '带空格 " 引号'];
+        expect(JSON.parse(runAgentDevice(args, { capture: true, echoCapture: false }))).toEqual(args);
+      } finally {
+        process.env.PATH = originalPath;
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
-  });
-
-  it('keeps successful agent-device diagnostics out of captured JSON', () => {
-    const output = capturedAgentDeviceOutput({
-      stdout: '{"success":true,"data":{"devices":[]}}',
-      stderr: 'warning: backend probe timed out\n'
-    });
-
-    expect(parseAgentDeviceList(output)).toEqual([]);
-  });
+  );
 
   it('lets each Replay own its wall-clock budget', () => {
     const runner = readProjectFile('scripts', 'run-device-replay.mjs');
@@ -279,7 +274,7 @@ describe('Android release evidence guards', () => {
       })
     );
     expect(devices).toEqual([{ id: 'emulator-5554', name: 'WZ Pixel API 35', platform: 'android', booted: true }]);
-    expect(replayDeviceSelectionArgs(devices[0])).toEqual(['--device', 'WZ Pixel API 35']);
+    expect(deviceSelectionArgs(devices[0].name)).toEqual(['--device', 'WZ Pixel API 35']);
     expect(parseAndroidPackageInfo('versionCode=67 minSdk=24\nversionName=1.3.63\n')).toEqual({
       versionCode: 67,
       versionName: '1.3.63'
@@ -982,7 +977,6 @@ describe('Android release evidence guards', () => {
     const accountCenter = readProjectFile('src', 'features', 'more', 'components', 'AccountCenterPanel.tsx');
     expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
     const nodeSeekLoginHost = readProjectFile('src', 'features', 'account', 'components', 'NodeSeekLoginHost.tsx');
-    expect(nodeSeekLoginHost).toContain('settledForReplay');
     expect(nodeSeekLoginHost).toContain("'nodeseek-login-webview-settled'");
     expect(nodeSeekLoginHost).not.toContain("'nodeseek-login-webview-ready'");
     expect(nodeSeekLoginHost).not.toContain('NODESEEK_REPLAY_READINESS_SCRIPT');

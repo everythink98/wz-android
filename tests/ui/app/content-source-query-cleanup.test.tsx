@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { accountQueryKeys, forumQueryKeys } from '@/platform/query/serverState';
 import { cleanupContentSourceQueries } from '@/app/useContentSourceQueryCleanup';
+import { canonicalEnabledSourcesKey } from '@/domain/reader/contentSourcePreferences';
 
 function pendingRead(onAbort: () => void) {
   return ({ signal }: { signal: AbortSignal }) =>
@@ -19,6 +20,114 @@ function pendingRead(onAbort: () => void) {
 }
 
 describe('content source query cleanup', () => {
+  it('bounds cached queries and pending reads across repeated source disable and enable cycles', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
+    const sources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
+    const allSources = {
+      enabledSources: sources,
+      enabledSourcesKey: canonicalEnabledSourcesKey(sources.map((source) => ({ source, enabled: true })))
+    };
+    const siteCaches = sources.map((source) => ({
+      source,
+      accountKey: accountQueryKeys.snapshot(source),
+      entries: Array.from({ length: 100 }, (_, index) => ({
+        key: forumQueryKeys.topic({ source, topicId: `pressure-${index}`, scope: initialForumSessionEpochs }),
+        data: `${source} cached topic ${index}`
+      }))
+    }));
+    const aggregateKeys = (enabledSourcesKey: string) => [
+      forumQueryKeys.feed({ source: 'all', scope: initialForumSessionEpochs, enabledSourcesKey }),
+      forumQueryKeys.categories('all', initialForumSessionEpochs, enabledSourcesKey)
+    ];
+    const fullAggregate = aggregateKeys(allSources.enabledSourcesKey);
+    let pendingReads: Promise<unknown>[] = [];
+    try {
+      for (let round = 0; round < 20; round++) {
+        const disabled = siteCaches[round % sources.length];
+        const nextSources = {
+          enabledSources: sources.filter((source) => source !== disabled.source),
+          enabledSourcesKey: canonicalEnabledSourcesKey(
+            sources.map((source) => ({ source, enabled: source !== disabled.source }))
+          )
+        };
+        const nextAggregate = aggregateKeys(nextSources.enabledSourcesKey);
+        siteCaches.forEach(({ source, accountKey, entries }) => {
+          client.setQueryData(accountKey, `${source} canonical account`);
+          entries.forEach(({ key, data }) => client.setQueryData(key, data));
+        });
+        fullAggregate.forEach((key) => client.setQueryData(key, 'all sources'));
+        nextAggregate.forEach((key) => client.setQueryData(key, 'next sources'));
+        const sourceReads = siteCaches.flatMap(({ source, entries }) =>
+          entries.slice(0, 2).map(({ key }) => ({ source, key, abort: jest.fn() }))
+        );
+        const previousAggregateAbort = jest.fn();
+        const nextAggregateAbort = jest.fn();
+        const reads = [
+          ...sourceReads,
+          { key: fullAggregate[0], abort: previousAggregateAbort },
+          { key: nextAggregate[0], abort: nextAggregateAbort }
+        ];
+        pendingReads = reads.map(({ key, abort }) =>
+          client.query({ queryKey: key, queryFn: pendingRead(abort), staleTime: 0 }).catch(() => undefined)
+        );
+        await Promise.resolve();
+        expect(client.isFetching()).toBe(10);
+        expect(client.getQueryCache().getAll()).toHaveLength(408);
+
+        const beforeReorder = client.getQueryCache().getAll();
+        cleanupContentSourceQueries(client, allSources, {
+          ...allSources,
+          enabledSources: [...sources].reverse()
+        });
+        expect(client.getQueryCache().getAll()).toEqual(beforeReorder);
+        reads.forEach(({ abort }) => expect(abort).not.toHaveBeenCalled());
+
+        cleanupContentSourceQueries(client, allSources, nextSources);
+        await Promise.resolve();
+        siteCaches.forEach(({ source, accountKey, entries }) => {
+          expect(client.getQueryData(accountKey)).toBe(`${source} canonical account`);
+          entries.forEach(({ key, data }) => {
+            expect(client.getQueryData(key)).toBe(source === disabled.source ? undefined : data);
+          });
+        });
+        sourceReads.forEach(({ source, key, abort }) => {
+          expect(abort).toHaveBeenCalledTimes(source === disabled.source ? 1 : 0);
+          if (source !== disabled.source) expect(client.getQueryState(key)?.fetchStatus).toBe('fetching');
+        });
+        fullAggregate.forEach((key) => expect(client.getQueryData(key)).toBeUndefined());
+        nextAggregate.forEach((key) => expect(client.getQueryData(key)).toBe('next sources'));
+        expect(previousAggregateAbort).toHaveBeenCalledTimes(1);
+        expect(nextAggregateAbort).not.toHaveBeenCalled();
+        expect(client.getQueryCache().getAll()).toHaveLength(306);
+
+        cleanupContentSourceQueries(client, nextSources, allSources);
+        await Promise.resolve();
+        expect(nextAggregateAbort).toHaveBeenCalledTimes(1);
+        nextAggregate.forEach((key) => expect(client.getQueryData(key)).toBeUndefined());
+        sourceReads.forEach(({ source, abort }) => {
+          expect(abort).toHaveBeenCalledTimes(source === disabled.source ? 1 : 0);
+        });
+        expect(client.isFetching()).toBe(6);
+        expect(client.getQueryCache().getAll()).toHaveLength(304);
+        disabled.entries.forEach(({ key, data }) => client.setQueryData(key, data));
+        fullAggregate.forEach((key) => client.setQueryData(key, 'all sources'));
+        await client.cancelQueries();
+        await Promise.all(pendingReads);
+        reads.forEach(({ abort }) => expect(abort).toHaveBeenCalledTimes(1));
+        siteCaches.forEach(({ source, accountKey, entries }) => {
+          expect(client.getQueryData(accountKey)).toBe(`${source} canonical account`);
+          entries.forEach(({ key, data }) => expect(client.getQueryData(key)).toBe(data));
+        });
+        expect(client.isFetching()).toBe(0);
+        expect(client.getQueryCache().getAll()).toHaveLength(406);
+      }
+    } finally {
+      await client.cancelQueries();
+      await Promise.all(pendingReads);
+      client.clear();
+    }
+  });
+
   it('removes only disabled business queries and the previous aggregate snapshot', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
     const disabledTopic = forumQueryKeys.topic({

@@ -199,6 +199,8 @@ const operationValues = closedValues(
   'getEmojiUrls',
   'getFeed',
   'getLevelProfile',
+  'getTopicCreationContext',
+  'getTopicEditContext',
   'getReplies',
   'getReply',
   'getTopic',

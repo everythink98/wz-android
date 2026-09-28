@@ -18,6 +18,7 @@ import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
 
 export function ReplyComposerSheet({
   actionBusy,
+  uploadingImage = false,
   discourseEmojiUrls = {},
   intent,
   nodeSeekMemberId,
@@ -42,6 +43,7 @@ export function ReplyComposerSheet({
   onUploadReplyImage
 }: {
   actionBusy: boolean;
+  uploadingImage?: boolean;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
   intent: ReplyComposerIntent;
   nodeSeekMemberId?: string;
@@ -137,17 +139,18 @@ export function ReplyComposerSheet({
   );
   return (
     <ComposerBottomSheet
+      active={routeActive}
       backgroundStyle={styles.replyComposerBottomSheetBackground}
       containerStyle={styles.replyComposerBottomSheetContainer}
       contentStyle={styles.replyComposerBottomSheetContent}
       dark={theme.dark}
       fixedContent={structured}
       presentation={presentation}
-      visible={visible && routeActive}
+      visible={visible}
       onOpenChange={handleOpenChange}
       onPresentationChange={setPresentation}
     >
-      {(focusSignal) =>
+      {(focusSignal, awaitKeyboardSettled) =>
         structuredIntent ? (
           <StructuredReplyComposer
             ref={structuredRef}
@@ -171,11 +174,13 @@ export function ReplyComposerSheet({
             onSnapshot={handleSnapshot}
             onSubmit={onSubmitReply}
             onUploadImage={onUploadReplyImage}
+            awaitKeyboardSettled={awaitKeyboardSettled}
             onUseLinuxDoTemplate={onUseLinuxDoTemplate}
           />
         ) : source === 'yaohuo' ? (
           <YaohuoReplyComposer
             actionBusy={actionBusy}
+            uploadingImage={uploadingImage}
             closeLabel={closeLabel}
             content={replyContent}
             focusSignal={focusSignal}
@@ -188,6 +193,7 @@ export function ReplyComposerSheet({
             onOpenChange={handleOpenChange}
             onSubmit={() => onSubmitReply()}
             onUploadImage={onUploadReplyImage}
+            awaitKeyboardSettled={awaitKeyboardSettled}
           />
         ) : null
       }

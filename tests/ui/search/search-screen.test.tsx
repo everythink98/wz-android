@@ -23,6 +23,8 @@ import { createTheme } from '@/ui/theme/tokens';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 const mockSearchNavigationDispatch = jest.fn();
+const mockSearchNavigation = { dispatch: mockSearchNavigationDispatch };
+const mockSearchInputCommit = jest.fn();
 let lastSearchListData: readonly unknown[] = [];
 let mockSearchFlashListExtraData: unknown;
 let lastSearchListSeparatorComponent:
@@ -31,7 +33,7 @@ let lastSearchListSeparatorComponent:
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
   useIsFocused: () => true,
-  useNavigation: () => ({ dispatch: mockSearchNavigationDispatch }),
+  useNavigation: () => mockSearchNavigation,
   useScrollToTop: () => undefined
 }));
 
@@ -121,7 +123,14 @@ jest.mock('lucide-react-native', () => ({
   Eye: () => null,
   History: () => null,
   MessageCircle: () => null,
-  Search: () => null,
+  Search: function MockSearchIcon({ size }: { size: number }) {
+    const { useLayoutEffect } = require('react') as typeof React;
+    useLayoutEffect(() => {
+      // The leading icon records committed work inside the production search input.
+      if (size === 18) mockSearchInputCommit();
+    });
+    return null;
+  },
   SlidersHorizontal: () => null,
   X: () => null
 }));
@@ -519,7 +528,7 @@ describe('Search state', () => {
     expect(view.getByText('输入关键词后开始搜索')).toBeTruthy();
   });
 
-  it('keeps settled route results stable across an unrelated runtime rerender', async () => {
+  it('keeps settled results and the search input stable across equivalent runtime updates', async () => {
     appQueryClient.clear();
     const enabledSources = ['v2ex', 'yaohuo'] as const;
     const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
@@ -570,6 +579,20 @@ describe('Search state', () => {
     expect(view.getByLabelText('搜索关键词').props.value).toBe('codex');
     expect(searchTopics).toHaveBeenCalledTimes(2);
     const settledListItems = lastSearchListData;
+    const settledInputCommits = mockSearchInputCommit.mock.calls.length;
+
+    for (let update = 0; update < 10; update++) {
+      await view.rerender(
+        <SearchRouteRuntimeProvider value={{ ...runtime }}>
+          <SearchRoute />
+        </SearchRouteRuntimeProvider>
+      );
+    }
+
+    expect(mockSearchInputCommit.mock.calls.length - settledInputCommits).toBe(0);
+    expect(lastSearchListData).toBe(settledListItems);
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+    expect(view.getByLabelText('搜索关键词').props.value).toBe('codex');
 
     await view.rerender(
       <SearchRouteRuntimeProvider value={{ ...runtime, notify: jest.fn() }}>
@@ -579,6 +602,21 @@ describe('Search state', () => {
 
     expect(lastSearchListData).toBe(settledListItems);
     expect(searchTopics).toHaveBeenCalledTimes(2);
+
+    await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'updated query');
+    await fireEvent.press(view.getByLabelText('提交搜索'));
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
+    expect(searchTopics.mock.calls.slice(2).map(([request]) => request.query)).toEqual([
+      'updated query',
+      'updated query'
+    ]);
+    expect(mockSearchInputCommit.mock.calls.length).toBeGreaterThan(settledInputCommits);
+    await waitFor(() => expect(view.getByTestId('search-all-sources-settled')).toBeTruthy());
+    await fireEvent.press(view.getByTestId('search-source-v2ex'));
+    await waitFor(() => expect(view.getByTestId('search-complete')).toBeTruthy());
+    expect(view.getByLabelText('搜索关键词').props.value).toBe('updated query');
+    expect(view.getByText('V2EX 公开搜索正常结算')).toBeTruthy();
+    expect(searchTopics).toHaveBeenCalledTimes(4);
   });
 
   it('gates candidate reads by the selected source during linux.do verification', async () => {

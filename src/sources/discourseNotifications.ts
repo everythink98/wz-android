@@ -14,11 +14,10 @@ import type {
 } from '@/domain/notifications/models';
 import type { NotificationAdapter, NotificationAdapterAccess, NotificationListOptions } from './notificationAdapter';
 import { discourseAvatarUrl } from '@/sources/discourse/content';
-import { fetchLinuxDoJson } from '@/sources/linuxdo/reader';
+import { fetchLinuxDoJson, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic } from '@/sources/linuxdo/reader';
 import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
-import { getDiscourseReplies, getDiscourseReply, getDiscourseTopic } from './discourseRead';
 import { buildDiscourseActionRequest, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { sourceErrorFromUnknown } from './sourceErrors';
 import { isCanceledRequest } from '@/platform/network/errors';
@@ -309,7 +308,7 @@ const readOptions = (options: NotificationAdapterAccess) => ({
   fetcher: options.fetcher,
   signal: options.signal,
   timeoutMs: options.timeoutMs,
-  auth: { authenticated: true, userAgent: options.userAgent }
+  linuxDoAccess: { authenticated: true, userAgent: options.userAgent }
 });
 
 async function runMarkRead(id: string | undefined, options: NotificationAdapterAccess) {
@@ -432,7 +431,7 @@ export const linuxDoNotificationAdapter = {
 
   async loadDetail(item: ForumNotification, options: NotificationAdapterAccess): Promise<NotificationDetail> {
     if (item.target.type === 'private-conversation') {
-      const topic = await getDiscourseTopic(item.target.conversationId, {
+      const topic = await getLinuxDoTopic(item.target.conversationId, {
         ...readOptions(options),
         replyLimit: 30,
         trackVisit: true
@@ -449,7 +448,7 @@ export const linuxDoNotificationAdapter = {
           break;
         }
         cursors.add(cursor);
-        const page = await getDiscourseReplies(item.target.conversationId, {
+        const page = await getLinuxDoReplies(item.target.conversationId, {
           ...readOptions(options),
           limit: 30,
           order: 'oldest',
@@ -521,12 +520,7 @@ export const linuxDoNotificationAdapter = {
       author = text(data, 'username') || author;
       createdAt = toIsoString(text(data, 'created_at')) || createdAt;
     } else if (item.target.postNumber) {
-      const reply = await getDiscourseReply(item.target.topicId, item.target.postNumber, {
-        fetcher: options.fetcher,
-        signal: options.signal,
-        timeoutMs: options.timeoutMs,
-        auth: readOptions(options).auth
-      });
+      const reply = await getLinuxDoReply(item.target.topicId, item.target.postNumber, readOptions(options));
       contentHtml = reply.contentHtml;
       author = reply.author || author;
       createdAt = reply.createdAt || createdAt;

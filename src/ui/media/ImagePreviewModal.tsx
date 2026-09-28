@@ -171,6 +171,7 @@ export function ImagePreviewModal(props: ImagePreviewModalProps) {
     () => (props.preview?.referrer ? { ...sessionContext, referrer: props.preview.referrer } : sessionContext),
     [props.preview?.referrer, sessionContext]
   );
+  if (!props.preview?.items.length) return null;
   return <ImagePreviewModalContent key={mediaContext.sessionIdentity} {...props} mediaContext={mediaContext} />;
 }
 

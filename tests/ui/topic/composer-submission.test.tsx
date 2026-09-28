@@ -12,10 +12,14 @@ import {
 } from '../composerSubmissionFixture';
 import type { SessionSite } from '@/domain/session/siteSessionState';
 import { MessageSubmissionFixture } from '../composerMessageFixture';
+import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
+import { appendReplyImageMarkup, replyImageMarkupForSource } from '@/sources/imageUpload';
 
 jest.mock('react-native-reanimated', () => ({
   ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
-  useAnimatedKeyboard: () => ({ height: { value: 0 } }),
+  __esModule: true,
+  useAnimatedKeyboard: () =>
+    (require('react') as typeof React).useRef({ height: { value: 0 }, state: { value: 4 } }).current,
   useAnimatedReaction: () => {}
 }));
 // This owner tests the production submission wiring, not native sheet geometry.
@@ -59,18 +63,18 @@ jest.mock('react-native-safe-area-context', () => ({
 type Rendered = Awaited<ReturnType<typeof render>>;
 function messages(view: Rendered) {
   return view
-    .getByTestId('structured-composer-webview')
+    .getByTestId('structured-composer-webview', { includeHiddenElements: true })
     .props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
 }
 async function bridge(view: Rendered, type: string, payload: unknown) {
   const documentEpoch = messages(view).findLast((message: { type: string }) => message.type === 'INIT')?.payload
     .documentEpoch;
-  await fireEvent(view.getByTestId('structured-composer-webview'), 'message', {
+  await fireEvent(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }), 'message', {
     nativeEvent: { data: JSON.stringify({ type, payload: { documentEpoch, ...(payload as object) } }) }
   });
 }
 async function ready(view: Rendered) {
-  await fireEvent(view.getByTestId('structured-composer-webview'), 'loadEnd');
+  await fireEvent(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }), 'loadEnd');
   await waitFor(() => expect(messages(view).some((message: { type: string }) => message.type === 'INIT')).toBe(true));
   await bridge(view, 'READY', { revision: 0 });
 }
@@ -96,6 +100,12 @@ async function submit(
     }
   });
 }
+function sheetOpen(view: Rendered) {
+  const fixed = view.queryByTestId('composer-bottom-sheet', { includeHiddenElements: true });
+  return fixed
+    ? fixed.props.pointerEvents === 'auto'
+    : view.getByTestId('submission-sheet').props.accessibilityState.expanded;
+}
 function state(view: Rendered) {
   return JSON.parse(view.getByTestId('composer-proof-state').props.children);
 }
@@ -108,6 +118,44 @@ describe('composer submission through the production controller and sheet', () =
   });
   afterEach(async () => {
     await act(async () => transports.splice(0).forEach((transport) => transport.dispose()));
+  });
+  it('provides the real Yaohuo upload response through the isolated composer fixture', async () => {
+    const transport = createComposerTransport('success', false, 0, true);
+    transports.push(transport);
+    const realNetwork = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected real network'));
+    try {
+      const imageUrl = await uploadYaohuoReplyImage({
+        file: { uri: 'file:///cache/composer-proof.png', name: 'composer-proof.png', mimeType: 'image/png' },
+        fetcher: transport.fetcher
+      });
+      const markup = replyImageMarkupForSource('yaohuo', imageUrl, 'composer-proof.png');
+      expect(appendReplyImageMarkup(COMPOSER_DRAFT, markup)).toBe(
+        `${COMPOSER_DRAFT}\n[img]https://example.invalid/composer-proof.png[/img]`
+      );
+      expect(transport.uploads).toBe(1);
+      expect(transport.requests).toHaveLength(0);
+      expect(transport.confirmations).toBe(0);
+      expect(realNetwork).not.toHaveBeenCalled();
+    } finally {
+      realNetwork.mockRestore();
+    }
+  });
+  it('keeps uploads opt-in and rejects requests outside the exact Yaohuo mock endpoint', async () => {
+    const disabled = createComposerTransport();
+    const enabled = createComposerTransport('success', false, 0, true);
+    transports.push(disabled, enabled);
+    await expect(disabled.fetcher('https://file.sang.pub/api/upload', { method: 'POST' })).rejects.toThrow(
+      'Unmatched mock request'
+    );
+    for (const [url, method] of [
+      ['https://file.sang.pub/api/upload', 'GET'],
+      ['https://file.sang.pub/api/upload/other', 'POST'],
+      ['https://file.sang.pub/api/upload?other=1', 'POST'],
+      ['https://unknown.invalid/api/upload', 'POST']
+    ] as const) {
+      await expect(enabled.fetcher(url, { method })).rejects.toThrow('Unmatched mock request');
+    }
+    expect(disabled.uploads + enabled.uploads).toBe(0);
   });
   async function open(
     source: SessionSite = 'nodeseek',
@@ -241,7 +289,7 @@ describe('composer submission through the production controller and sheet', () =
     await waitFor(() => expect(state(view).visible).toBe(false));
     expect(transport.requests).toHaveLength(1);
   });
-  it('preserves an unsent document across a manual close and reopen', async () => {
+  it('preserves an unsent document across closing, reopening, presentation and mode changes', async () => {
     const { view, transport } = await open();
     await submit(view, COMPOSER_DRAFT, '收起回复');
     await waitFor(() => expect(state(view).visible).toBe(false));
@@ -249,12 +297,22 @@ describe('composer submission through the production controller and sheet', () =
     await fireEvent.press(view.getByText('打开测试回复'));
     expect(state(view).content).toBe(COMPOSER_DRAFT);
     expect(transport.requests).toHaveLength(0);
+    const postMessage = view.getByTestId('structured-composer-webview', { includeHiddenElements: true }).props
+      .postMessageMock;
+    await fireEvent.press(view.getByLabelText('全屏'));
+    await fireEvent.press(view.getByLabelText('源码'));
+    await bridge(view, 'STATE_CHANGED', { revision: 1, mode: 'source', isEmpty: false, canUndo: true, canRedo: false });
+    await fireEvent.press(view.getByLabelText('退出全屏'));
+    expect(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }).props.postMessageMock).toBe(
+      postMessage
+    );
+    expect(state(view).content).toBe(COMPOSER_DRAFT);
   });
   it('hides the root-portal composer while its route is inactive and restores the same draft on return', async () => {
     const { view, transport } = await open();
-    const webView = view.getByTestId('structured-composer-webview');
+    const webView = view.getByTestId('structured-composer-webview', { includeHiddenElements: true });
     await view.rerender(<TopicSubmissionFixture transport={transport} active={false} />);
-    expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(false);
+    expect(sheetOpen(view)).toBe(false);
     expect(state(view)).toMatchObject({ visible: true, content: COMPOSER_DRAFT });
     const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
     await bridge(view, 'SNAPSHOT', {
@@ -269,8 +327,8 @@ describe('composer submission through the production controller and sheet', () =
       }
     });
     await view.rerender(<TopicSubmissionFixture transport={transport} />);
-    expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(true);
-    expect(view.getByTestId('structured-composer-webview')).toBe(webView);
+    expect(sheetOpen(view)).toBe(true);
+    expect(view.getByTestId('structured-composer-webview', { includeHiddenElements: true })).toBe(webView);
     expect(state(view).content).toBe('draft before navigation');
     expect(transport.requests).toHaveLength(0);
   });
@@ -336,16 +394,6 @@ describe('composer submission through the production controller and sheet', () =
     expect(state(view).content).toBe('');
     expect(state(view).visible).toBe(false);
   });
-  it('keeps the same WebView and draft across presentation and mode changes', async () => {
-    const { view } = await open();
-    const postMessage = view.getByTestId('structured-composer-webview').props.postMessageMock;
-    await fireEvent.press(view.getByLabelText('全屏'));
-    await fireEvent.press(view.getByLabelText('源码'));
-    await bridge(view, 'STATE_CHANGED', { revision: 1, mode: 'source', isEmpty: false, canUndo: true, canRedo: false });
-    await fireEvent.press(view.getByLabelText('退出全屏'));
-    expect(view.getByTestId('structured-composer-webview').props.postMessageMock).toBe(postMessage);
-    expect(state(view).content).toBe(COMPOSER_DRAFT);
-  });
   it.each(
     (['nodeseek', 'linuxdo', 'yaohuo'] as const).flatMap((source) =>
       (['success', 'refresh-error'] as const).map((outcome) => ({ source, outcome }))
@@ -374,13 +422,20 @@ describe('composer submission through the production controller and sheet', () =
           pendingNodeSeekPolls: []
         }
       });
+      const count = () =>
+        messages(view).filter((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT').length;
+      const before = count();
+      await fireEvent.press(view.getByLabelText('发送回复'));
+      expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
       await submit(view);
+      expect(count()).toBe(before + 1);
     }
     await waitFor(() => expect(transport.requests).toHaveLength(1));
+    if (source !== 'yaohuo') expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText(source === 'yaohuo' ? '发送中…' : '发送回复'));
     expect(transport.requests).toHaveLength(1);
     await act(async () => transport.release());
-    await waitFor(() => expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(false));
+    await waitFor(() => expect(sheetOpen(view)).toBe(false));
     if (outcome === 'refresh-error')
       await waitFor(() =>
         expect(
@@ -453,14 +508,14 @@ describe('composer submission through the production controller and sheet', () =
           ? 'Mock rejected'
           : 'Mock unconfirmed';
     await waitFor(() => expect(view.getByText(error)).toBeTruthy());
-    expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(true);
+    expect(sheetOpen(view)).toBe(true);
     expect(transport.requests).toHaveLength(1);
     transport.outcome = 'success';
     if (source === 'yaohuo') {
       expect(view.getByLabelText('私信回复内容').props.value).toBe(COMPOSER_DRAFT);
       await fireEvent.press(view.getByLabelText('发送回复'));
     } else await submit(view);
-    await waitFor(() => expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(false));
+    await waitFor(() => expect(sheetOpen(view)).toBe(false));
     expect(transport.requests.map((request) => request.body)).toEqual([COMPOSER_DRAFT, COMPOSER_DRAFT]);
     expect(transport.confirmations).toBe(1);
   });
@@ -498,7 +553,7 @@ describe('composer submission through the production controller and sheet', () =
       }
     });
     await act(async () => transport.release());
-    expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(true);
+    expect(sheetOpen(view)).toBe(true);
     expect(transport.confirmations).toBe(0);
     expect(view.getByText('16 字符')).toBeTruthy();
   });
@@ -522,15 +577,15 @@ describe('composer submission through the production controller and sheet', () =
     await submit(view);
     await waitFor(() => expect(transport.requests).toHaveLength(1));
     await submit(view, COMPOSER_DRAFT, '取消', 2);
-    await waitFor(() => expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(false));
+    await waitFor(() => expect(sheetOpen(view)).toBe(false));
     expect(view.getByLabelText('发私信').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText('发私信'));
-    expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(false);
+    expect(sheetOpen(view)).toBe(false);
     await act(async () => transport.release());
     await waitFor(() => expect(transport.confirmations).toBe(1));
     await waitFor(() => expect(view.getByLabelText('发私信').props.accessibilityState.disabled).toBe(false));
     await fireEvent.press(view.getByLabelText('发私信'));
-    expect(view.getByTestId('submission-sheet').props.accessibilityState.expanded).toBe(true);
+    expect(sheetOpen(view)).toBe(true);
     expect(messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload.markdown).toBe('');
   });
   it('does not close or clear a different topic after an old confirmation', async () => {

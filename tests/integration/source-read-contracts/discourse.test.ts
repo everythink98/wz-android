@@ -1840,8 +1840,7 @@ describe('Android local sources', () => {
         source: 'linuxdo',
         query: 'codex',
         fetcher: expiredFetcher,
-        discourseAuth: testLinuxDoAccess(),
-        linuxDoAuthenticated: true
+        discourseAuth: testLinuxDoAccess()
       })
     ).rejects.toThrow();
     expect(expiredFetcher.mock.calls.every(([input]) => new URL(String(input)).hostname === 'linux.do')).toBe(true);
@@ -1862,8 +1861,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'fallback keyword',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(search.items).toEqual([]);
@@ -1906,8 +1904,7 @@ describe('Android local sources', () => {
       query: 'keyword',
       limit: 1,
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
     const second = await searchTopics({
       source: 'linuxdo',
@@ -1915,8 +1912,7 @@ describe('Android local sources', () => {
       page: first.nextPage ?? 2,
       limit: 1,
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(first.items).toEqual([
@@ -1970,8 +1966,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'cf-turnstile',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(result.items).toEqual([
@@ -2042,8 +2037,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'reply-only',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(search.items).toEqual([
@@ -2106,8 +2100,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: '安卓手机免',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['901', '902']);
@@ -2142,8 +2135,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['605']);
@@ -2208,8 +2200,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(search.items[0]).toMatchObject({
@@ -2258,8 +2249,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['801', '802']);
@@ -2296,8 +2286,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true
+      discourseAuth: testLinuxDoAccess()
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['601']);
@@ -2358,7 +2347,6 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'AI',
       discourseAuth: testLinuxDoAccess(),
-      linuxDoAuthenticated: true,
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
       filter: {
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
@@ -2577,18 +2565,18 @@ describe('Android local sources', () => {
 async function readLinuxDoUser(
   id: string,
   username: string,
-  options: Parameters<typeof getLinuxDoUserDetails>[2] = {}
+  { cursorType, ...options }: Parameters<typeof getLinuxDoUserDetails>[2] & { cursorType?: 'topics' | 'replies' } = {}
 ): Promise<
   import('@/domain/forum/models').UserDetails &
     Partial<import('@/domain/forum/models').UserTopicsPage> &
     import('@/domain/forum/models').UserRepliesPage
 > {
   const profile = await getLinuxDoUserDetails(id, username, options);
-  if (options.cursorType === 'topics') {
+  if (cursorType === 'topics') {
     const page = await getLinuxDoUserTopics(profile, options);
     return mergeSourceDiagnosticSummaries({ ...profile, ...page }, 'discourse-user', [profile, page]);
   }
-  if (options.cursorType === 'replies') {
+  if (cursorType === 'replies') {
     const page = await getLinuxDoUserReplies(profile, options);
     return mergeSourceDiagnosticSummaries({ ...profile, ...page }, 'discourse-user', [profile, page]);
   }

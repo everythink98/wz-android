@@ -1,6 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { PortalHost } from '@gorhom/portal';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 import { ChevronDown, CodeXml, Maximize2, Minimize2, Redo2, TextCursorInput, Undo2, X } from 'lucide-react-native';
 import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
@@ -15,14 +27,18 @@ import { recordUserInteraction } from '@/platform/network/userPresence';
 import {
   composerEditorMessageSchema,
   MAX_COMPOSER_EMOJI_COUNT,
-  type ComposerHostMessage
+  type ComposerHostMessage,
+  type ComposerToolbarAction,
+  type ComposerToolbarState
 } from './structuredComposerBridge';
+import { ComposerToolbar } from './ComposerToolbar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type TemplateSummary = { id: string; title: string; content: string };
 type EmojiUrlMap = Record<string, string>;
@@ -30,7 +46,9 @@ const EMPTY_EMOJI_URLS: EmojiUrlMap = {};
 
 export type StructuredReplyComposerHandle = {
   requestSnapshot: () => Promise<ComposerSnapshot>;
-  focus: () => void;
+  insertMarkup: (markup: string) => Promise<void>;
+  beginImageUpload: () => Promise<string>;
+  finishImageUpload: (uploadId: string, markup?: string) => Promise<void>;
 };
 
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
@@ -114,27 +132,35 @@ export const StructuredReplyComposer = forwardRef<
   StructuredReplyComposerHandle,
   {
     actionBusy: boolean;
-    closeLabel: string;
+    awaitKeyboardSettled?: () => Promise<void>;
+    closeLabel?: string;
     content: string;
     disabledReason?: string;
     discourseEmojiUrls?: EmojiUrlMap;
     error?: string;
-    focusSignal: number;
+    focusSignal?: number;
+    footerActions?: ReactNode;
+    initialMode?: ComposerMode;
+    readOnly?: boolean;
     intent: ComposerIntent;
     nodeSeekMemberId?: string;
     pendingNodeSeekPolls: PendingNodeSeekPoll[];
-    presentation: ComposerPresentation;
+    presentation: ComposerPresentation | 'embedded';
     status?: string;
-    submitLabel: string;
-    title: string;
+    submitLabel?: string;
+    title?: string;
     visible: boolean;
     onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
     onResolveLinuxDoUpload?: (shortUrl: string) => Promise<string>;
     onLoadLinuxDoTemplates?: () => Promise<TemplateSummary[]>;
-    onOpenChange: (open: boolean) => void;
-    onPresentationChange: (presentation: ComposerPresentation) => void;
+    onOpenChange?: (open: boolean) => void;
+    onTogglePreview?: () => void;
+    dismissPanels?: boolean;
+    onPanelChange?: (open: boolean) => void;
+    onReturnToEditor?: () => void;
+    onPresentationChange?: (presentation: ComposerPresentation) => void;
     onSnapshot: (snapshot: ComposerSnapshot) => void;
-    onSubmit: (snapshot: ComposerSnapshot) => unknown;
+    onSubmit?: (snapshot: ComposerSnapshot) => unknown;
     onUploadImage?: () => unknown;
     onUseLinuxDoTemplate?: (id: string) => Promise<void>;
   }
@@ -142,24 +168,32 @@ export const StructuredReplyComposer = forwardRef<
   (
     {
       actionBusy,
-      closeLabel,
+      awaitKeyboardSettled,
+      closeLabel = '收起回复',
       content,
       disabledReason,
       discourseEmojiUrls = EMPTY_EMOJI_URLS,
       error,
-      focusSignal,
+      focusSignal = 0,
+      footerActions,
+      initialMode,
+      readOnly = false,
       intent,
       nodeSeekMemberId,
       pendingNodeSeekPolls,
       presentation,
       status,
-      submitLabel,
-      title,
+      submitLabel = '发送回复',
+      title = '回复',
       visible,
       onLoadLinuxDoPollCapabilities,
       onResolveLinuxDoUpload,
       onLoadLinuxDoTemplates,
       onOpenChange,
+      onTogglePreview,
+      onPanelChange,
+      onReturnToEditor,
+      dismissPanels = false,
       onPresentationChange,
       onSnapshot,
       onSubmit,
@@ -169,6 +203,14 @@ export const StructuredReplyComposer = forwardRef<
     ref
   ) => {
     const { settings, styles, theme } = useReaderThemeStyles(createStyles);
+    const uploadAvailable = useCommittedRef(visible && !readOnly && !actionBusy);
+    const mounted = useRef(true);
+    useEffect(() => {
+      mounted.current = true;
+      return () => {
+        mounted.current = false;
+      };
+    }, []);
     const editorTheme = useMemo(
       () => ({
         dark: theme.dark,
@@ -195,15 +237,18 @@ export const StructuredReplyComposer = forwardRef<
         theme.surface2
       ]
     );
+    const intentKey =
+      intent.kind === 'private-message'
+        ? `${intent.site}:pm:${intent.conversationId}`
+        : intent.kind === 'create-topic' || intent.kind === 'edit-topic'
+          ? `${intent.site}:${intent.kind}:${intent.draftId}`
+          : `${intent.site}:${intent.kind}:${intent.topicId}:${intent.kind === 'edit-reply' ? intent.commentId : ''}`;
+    const currentIntentKey = useCommittedRef(intentKey);
     const webViewRef = useRef<WebView>(null);
-    const latestSnapshotRef = useRef<ComposerSnapshot>({
-      revision: 0,
-      markdown: content,
-      mode: 'rich',
-      isEmpty: !content.trim(),
-      validationIssues: [],
-      pendingNodeSeekPolls
-    });
+    const editorFrameRef = useRef<View>(null);
+    const toolbarHostRef = useRef<View>(null);
+    const toolbarMenuHost = `composer-tools-${useId()}`;
+    const consumedFocusSignalRef = useRef(0);
     const snapshotResolversRef = useRef(
       new Map<
         string,
@@ -215,41 +260,58 @@ export const StructuredReplyComposer = forwardRef<
         }
       >()
     );
-    const [mode, setMode] = useState<ComposerMode>('rich');
+    const [mode, setMode] = useState<ComposerMode>(initialMode ?? 'rich');
     const [modeLoaded, setModeLoaded] = useState(false);
     const [webLoaded, setWebLoaded] = useState(false);
     const [ready, setReady] = useState(false);
     const [rendererGone, setRendererGone] = useState(false);
     const [localError, setLocalError] = useState('');
-    const [editorState, setEditorState] = useState({
+    const [submitting, setSubmitting] = useState(false);
+    const submissionRef = useRef<object | null>(null);
+    const [imageHandoffPending, setImageHandoffPending] = useState(false);
+    const [panelHandoffPending, setPanelHandoffPending] = useState(false);
+    const panelHandoffRef = useRef<object | null>(null);
+    const imageHandoffRef = useRef<{
+      requestId: string;
+      uploadId: string;
+      epoch: number;
+      invalidated: boolean;
+      pickerStarted: boolean;
+    } | null>(null);
+    const [expandedPanel, setExpandedPanel] = useState(false);
+    const [toolbarState, setToolbarState] = useState<ComposerToolbarState | null>(null);
+    const panelPresentationRef = useRef<ComposerPresentation | null>(null);
+    const previousPresentationRef = useRef(presentation);
+    const [editorState, setEditorState] = useState(() => ({
       isEmpty: !content.trim(),
       canUndo: false,
       canRedo: false,
       markdownLength: content.length
-    });
+    }));
     const lastConfirmedMarkdownRef = useRef(content);
     const lastExternalSentRef = useRef(content);
+    const lastContentPropRef = useRef(content);
     const lastRevisionRef = useRef(0);
-    const documentEpochRef = useRef(-1);
-    const initializingRef = useRef(false);
-    const modePreferenceRef = useRef<ComposerMode>('rich');
-    const initKeyRef = useRef('');
-    const editorThemeRef = useRef(editorTheme);
+    const documentEpochRef = useRef(initialMode ? 0 : -1);
+    const imageUploadRef = useRef<{ id: string; epoch: number } | null>(null);
+    const uploadCommandRef = useRef<{
+      id: string;
+      epoch: number;
+      command: string;
+      resolve: () => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    } | null>(null);
+    const initializingRef = useRef(Boolean(initialMode));
+    const modePreferenceRef = useRef<ComposerMode>(initialMode ?? 'rich');
+    const initKeyRef = useRef(initialMode ? intentKey : '');
     const sentThemeRef = useRef(editorTheme);
     const sentDiscourseEmojiRef = useRef<readonly { name: string; url: string }[] | null>(null);
     const wasVisibleRef = useRef(visible);
     const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const initializationTraceRef = useRef<DiagnosticTrace | null>(null);
-    const source = useMemo(() => {
-      // The bundled document is evaluated only when an editor mounts; Metro caches it.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- Evaluate the large payload only when opening the editor.
-      const editorDocument = require('./generated/editorDocument.js') as { html: string };
-      return { html: editorDocument.html, baseUrl: 'https://composer.local/' };
-    }, []);
-    const intentKey =
-      intent.kind === 'private-message'
-        ? `${intent.site}:pm:${intent.conversationId}`
-        : `${intent.site}:${intent.kind}:${intent.topicId}:${intent.kind === 'edit-reply' ? intent.commentId : ''}`;
+    const initialModeRef = useRef(initialMode);
+    initialModeRef.current = initialMode;
     const discourseEmoji = useMemo(
       () =>
         Object.entries(discourseEmojiUrls)
@@ -258,10 +320,48 @@ export const StructuredReplyComposer = forwardRef<
           .map(([name, url]) => ({ name, url })),
       [discourseEmojiUrls]
     );
-
-    useEffect(() => {
-      editorThemeRef.current = editorTheme;
-    }, [editorTheme]);
+    const initPayload = useMemo(
+      () => ({
+        site: intent.site,
+        intentKind: intent.kind,
+        markdown: content,
+        pendingNodeSeekPolls,
+        mode: initialMode ?? mode,
+        readOnly,
+        ...(nodeSeekMemberId && /^\d+$/.test(nodeSeekMemberId) ? { nodeSeekMemberId } : {}),
+        discourseEmoji,
+        theme: editorTheme
+      }),
+      [
+        content,
+        discourseEmoji,
+        editorTheme,
+        initialMode,
+        intent.kind,
+        intent.site,
+        mode,
+        nodeSeekMemberId,
+        pendingNodeSeekPolls,
+        readOnly
+      ]
+    );
+    const initialDocumentRef = useRef(
+      initialMode ? { type: 'INIT', payload: { ...initPayload, documentEpoch: 0 } } : null
+    );
+    const [useInitialDocument, setUseInitialDocument] = useState(Boolean(initialMode));
+    const source = useMemo(() => {
+      // Keep the initial HTML stable: later edits still use the versioned bridge.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- Evaluate the large payload only when opening the editor.
+      const editorDocument = require('./generated/editorDocument.js') as { html: string };
+      const initialDocument = useInitialDocument ? initialDocumentRef.current : null;
+      const html = initialDocument
+        ? editorDocument.html.replace(
+            '</head>',
+            `<script type="application/json" id="composer-initial-document">${JSON.stringify(initialDocument).replaceAll('<', '\\u003c')}</script></head>`
+          )
+        : editorDocument.html;
+      return { html, baseUrl: 'https://composer.local/' };
+    }, [useInitialDocument]);
 
     useEffect(() => {
       const isEmpty = !content.trim();
@@ -275,6 +375,17 @@ export const StructuredReplyComposer = forwardRef<
     const send = useCallback((message: ComposerHostMessage) => {
       webViewRef.current?.postMessage(JSON.stringify(message));
     }, []);
+    useEffect(() => {
+      // Android Back first collapses the native sheet. Close its expanded form too.
+      if (expandedPanel && previousPresentationRef.current === 'fullscreen' && presentation === 'sheet') {
+        panelPresentationRef.current = presentation;
+        send({ type: 'COMMAND', payload: { name: 'blur' } });
+      }
+      previousPresentationRef.current = presentation;
+    }, [expandedPanel, presentation, send]);
+    useEffect(() => {
+      if (dismissPanels && ready) send({ type: 'COMMAND', payload: { name: 'blur' } });
+    }, [dismissPanels, ready, send]);
     const recordInvalidBridgeMessage = useCallback(
       (channel: 'native' | 'webview') => {
         const trace = beginDiagnosticTrace('webview', 'webview-transport', {
@@ -287,14 +398,55 @@ export const StructuredReplyComposer = forwardRef<
       },
       [intent.site, ready, visible]
     );
-    const focusEditor = useCallback(() => {
-      webViewRef.current?.requestFocus();
-      send({ type: 'COMMAND', payload: { name: 'focus' } });
-    }, [send]);
+    const cancelUploadCommand = useCallback(() => {
+      const pending = uploadCommandRef.current;
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      uploadCommandRef.current = null;
+      pending.reject(new Error('编辑文档已变化'));
+    }, []);
+    const invalidateImageHandoff = useCallback(() => {
+      const handoff = imageHandoffRef.current;
+      if (!handoff || handoff.pickerStarted) return;
+      handoff.invalidated = true;
+      const pending = uploadCommandRef.current;
+      if (
+        pending?.command === 'begin-image-upload' &&
+        pending.id === handoff.uploadId &&
+        pending.epoch === handoff.epoch
+      )
+        cancelUploadCommand();
+    }, [cancelUploadCommand]);
+    const invalidatePanelHandoff = useCallback(() => {
+      panelHandoffRef.current = null;
+      setPanelHandoffPending(false);
+    }, []);
+
+    useLayoutEffect(() => {
+      if (!visible || readOnly || actionBusy) invalidateImageHandoff();
+    }, [actionBusy, invalidateImageHandoff, readOnly, visible]);
+    useLayoutEffect(() => {
+      if (!visible || readOnly || actionBusy || dismissPanels || rendererGone || !ready || submitting)
+        invalidatePanelHandoff();
+    }, [actionBusy, dismissPanels, invalidatePanelHandoff, readOnly, ready, rendererGone, submitting, visible]);
+
+    const watchInitialization = useCallback(() => {
+      const trace = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
+      initializationTraceRef.current = trace;
+      if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
+      readyTimerRef.current = setTimeout(() => {
+        finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
+        setLocalError('编辑器启动超时，可重载后继续');
+      }, 1500);
+    }, [intent.site, mode]);
 
     const sendInit = useCallback(() => {
       if (!modeLoaded) return;
       documentEpochRef.current++;
+      setToolbarState(null);
+      submissionRef.current = null;
+      setSubmitting(false);
+      cancelUploadCommand();
       initializingRef.current = true;
       snapshotResolversRef.current.forEach(({ reject, timer, trace }) => {
         clearTimeout(timer);
@@ -304,54 +456,31 @@ export const StructuredReplyComposer = forwardRef<
       snapshotResolversRef.current.clear();
       if (initializationTraceRef.current)
         finishDiagnosticTrace(initializationTraceRef.current, 'stale', { reason: 'superseded' });
-      const trace = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
-      initializationTraceRef.current = trace;
+      watchInitialization();
       setLocalError('');
-      const initialTheme = editorThemeRef.current;
-      pendingNodeSeekPolls.forEach((poll) => {
-        // Zod at the bridge boundary validates the full sidecar again.
-        void poll;
-      });
       send({
         type: 'INIT',
         payload: {
-          documentEpoch: documentEpochRef.current,
-          site: intent.site,
-          intentKind: intent.kind,
-          markdown: content,
-          pendingNodeSeekPolls,
-          mode,
-          ...(nodeSeekMemberId && /^\d+$/.test(nodeSeekMemberId) ? { nodeSeekMemberId } : {}),
-          discourseEmoji,
-          theme: initialTheme
+          ...initPayload,
+          documentEpoch: documentEpochRef.current
         }
       });
-      sentThemeRef.current = initialTheme;
+      sentThemeRef.current = initPayload.theme;
       sentDiscourseEmojiRef.current = discourseEmoji;
       initKeyRef.current = intentKey;
       lastConfirmedMarkdownRef.current = content;
       lastExternalSentRef.current = content;
       lastRevisionRef.current = 0;
-      if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
-      readyTimerRef.current = setTimeout(() => {
-        finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
-        setLocalError('编辑器启动超时，可重载后继续');
-      }, 1500);
-    }, [
-      content,
-      discourseEmoji,
-      intent.kind,
-      intent.site,
-      intentKey,
-      mode,
-      modeLoaded,
-      nodeSeekMemberId,
-      pendingNodeSeekPolls,
-      send
-    ]);
+    }, [cancelUploadCommand, content, discourseEmoji, initPayload, intentKey, modeLoaded, send, watchInitialization]);
 
     useEffect(() => {
       let current = true;
+      if (initialModeRef.current) {
+        modePreferenceRef.current = initialModeRef.current;
+        setMode(initialModeRef.current);
+        setModeLoaded(true);
+        return;
+      }
       setModeLoaded(false);
       void AsyncStorage.getItem(modePreferenceKey(intent.site))
         .then((stored) => {
@@ -366,11 +495,13 @@ export const StructuredReplyComposer = forwardRef<
       return () => {
         current = false;
       };
-    }, [intent.site]);
+    }, [intent.site, intentKey]);
 
     useEffect(() => {
-      if (webLoaded && modeLoaded && !ready && !initializingRef.current) sendInit();
-    }, [modeLoaded, ready, sendInit, webLoaded]);
+      if (!webLoaded || !modeLoaded || ready) return;
+      if (!initializingRef.current) sendInit();
+      else if (!initializationTraceRef.current) watchInitialization();
+    }, [modeLoaded, ready, sendInit, watchInitialization, webLoaded]);
 
     useEffect(() => {
       if (!ready || initKeyRef.current === intentKey) return;
@@ -384,14 +515,20 @@ export const StructuredReplyComposer = forwardRef<
     }, [editorTheme, ready, send]);
 
     useEffect(() => {
+      if (ready) send({ type: 'SET_READ_ONLY', payload: { readOnly } });
+    }, [readOnly, ready, send]);
+
+    useEffect(() => {
       if (!ready || intent.site !== 'linuxdo' || sentDiscourseEmojiRef.current === discourseEmoji) return;
       sentDiscourseEmojiRef.current = discourseEmoji;
       send({ type: 'COMMAND', payload: { name: 'set-discourse-emoji', discourseEmoji } });
     }, [discourseEmoji, intent.site, ready, send]);
 
     useEffect(() => {
-      if (!ready || content === lastConfirmedMarkdownRef.current || content === lastExternalSentRef.current) return;
-      if (!content) {
+      if (!ready || content === lastContentPropRef.current) return;
+      lastContentPropRef.current = content;
+      if (content === lastConfirmedMarkdownRef.current || content === lastExternalSentRef.current) return;
+      if (!content || intent.kind === 'create-topic' || intent.kind === 'edit-topic') {
         sendInit();
         return;
       }
@@ -399,7 +536,7 @@ export const StructuredReplyComposer = forwardRef<
       const confirmed = lastConfirmedMarkdownRef.current;
       const markdown = content.startsWith(confirmed) ? content.slice(confirmed.length) : content;
       send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
-    }, [content, ready, send, sendInit]);
+    }, [content, intent.kind, ready, send, sendInit]);
 
     const requestSnapshot = useCallback(() => {
       const trace = beginDiagnosticTrace('webview', 'composer-snapshot', {
@@ -423,18 +560,115 @@ export const StructuredReplyComposer = forwardRef<
       });
     }, [intent.site, ready, send]);
 
+    const insertMarkup = useCallback(
+      async (markdown: string) => {
+        if (!ready || initializingRef.current) throw new Error('编辑器尚未就绪');
+        if (readOnly) throw new Error('请先退出预览');
+        send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
+        await requestSnapshot();
+      },
+      [readOnly, ready, requestSnapshot, send]
+    );
+
+    const sendUploadCommand = useCallback(
+      (
+        payload: Extract<ComposerHostMessage, { type: 'COMMAND' }>['payload'] & {
+          uploadId: string;
+          documentEpoch: number;
+        }
+      ) =>
+        new Promise<void>((resolve, reject) => {
+          if (uploadCommandRef.current) {
+            reject(new Error('请等待当前上传准备完成'));
+            return;
+          }
+          const timer = setTimeout(() => {
+            uploadCommandRef.current = null;
+            reject(new Error('编辑器未确认上传位置，请重试'));
+          }, 1500);
+          uploadCommandRef.current = {
+            id: payload.uploadId,
+            epoch: payload.documentEpoch,
+            command: payload.name,
+            resolve,
+            reject,
+            timer
+          };
+          send({ type: 'COMMAND', payload });
+        }),
+      [send]
+    );
+
+    const beginImageUpload = useCallback(async () => {
+      if (!ready || initializingRef.current) throw new Error('编辑器尚未就绪');
+      if (readOnly) throw new Error('请先退出预览');
+      if (
+        panelHandoffRef.current ||
+        imageHandoffRef.current ||
+        imageUploadRef.current?.epoch === documentEpochRef.current
+      )
+        throw new Error('请等待当前上传完成');
+      const upload = { id: requestId(), epoch: documentEpochRef.current };
+      imageUploadRef.current = upload;
+      try {
+        await sendUploadCommand({ name: 'begin-image-upload', uploadId: upload.id, documentEpoch: upload.epoch });
+        // Preserve current IME text; an ACK never replaces the document.
+        await requestSnapshot();
+        if (documentEpochRef.current !== upload.epoch) throw new Error('编辑文档已变化');
+        return upload.id;
+      } catch (error) {
+        send({
+          type: 'COMMAND',
+          payload: { name: 'finish-image-upload', uploadId: upload.id, documentEpoch: upload.epoch }
+        });
+        if (imageUploadRef.current === upload) imageUploadRef.current = null;
+        throw error;
+      }
+    }, [readOnly, ready, requestSnapshot, send, sendUploadCommand]);
+
+    const finishImageUpload = useCallback(
+      async (uploadId: string, markdown?: string) => {
+        const upload = imageUploadRef.current;
+        if (!upload || upload.id !== uploadId || upload.epoch !== documentEpochRef.current)
+          throw new Error('编辑文档已变化');
+        try {
+          if (!ready || initializingRef.current) throw new Error('编辑器尚未就绪');
+          if (markdown && readOnly) throw new Error('请先退出预览');
+          await sendUploadCommand({
+            name: 'finish-image-upload',
+            uploadId,
+            documentEpoch: upload.epoch,
+            ...(markdown ? { markdown } : {})
+          });
+        } catch (error) {
+          // A lost ACK may follow a successful insertion. Only clear its placeholder, never replay the image.
+          send({ type: 'COMMAND', payload: { name: 'finish-image-upload', uploadId, documentEpoch: upload.epoch } });
+          throw error;
+        } finally {
+          if (imageUploadRef.current === upload) imageUploadRef.current = null;
+        }
+        await requestSnapshot();
+      },
+      [readOnly, ready, requestSnapshot, send, sendUploadCommand]
+    );
+
     useImperativeHandle(
       ref,
       () => ({
         requestSnapshot,
-        focus: focusEditor
+        insertMarkup,
+        beginImageUpload,
+        finishImageUpload
       }),
-      [focusEditor, requestSnapshot]
+      [beginImageUpload, finishImageUpload, insertMarkup, requestSnapshot]
     );
 
     useEffect(() => {
-      if (focusSignal > 0 && ready) focusEditor();
-    }, [focusEditor, focusSignal, ready]);
+      if (focusSignal <= 0 || !ready || readOnly || consumedFocusSignalRef.current === focusSignal) return;
+      consumedFocusSignalRef.current = focusSignal;
+      webViewRef.current?.requestFocus();
+      send({ type: 'COMMAND', payload: { name: 'focus' } });
+    }, [focusSignal, readOnly, ready, send]);
 
     useEffect(() => {
       if (wasVisibleRef.current && !visible && ready) {
@@ -444,14 +678,23 @@ export const StructuredReplyComposer = forwardRef<
     }, [ready, send, visible]);
 
     useEffect(() => {
+      // Topic drafts persist confirmed state on background; runtime autosnapshots resume with the WebView.
+      if (!visible || !ready) return;
       const subscription = AppState.addEventListener('change', (state) => {
-        if (state !== 'active' && visible && ready) void requestSnapshot().catch(() => undefined);
+        if (state !== 'active') {
+          invalidateImageHandoff();
+          invalidatePanelHandoff();
+          if (intent.kind !== 'create-topic' && intent.kind !== 'edit-topic')
+            void requestSnapshot().catch(() => undefined);
+        }
       });
       return () => subscription.remove();
-    }, [ready, requestSnapshot, visible]);
+    }, [intent.kind, invalidateImageHandoff, invalidatePanelHandoff, ready, requestSnapshot, visible]);
 
     useEffect(
       () => () => {
+        submissionRef.current = null;
+        cancelUploadCommand();
         if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
         if (initializationTraceRef.current)
           finishDiagnosticTrace(initializationTraceRef.current, 'canceled', { reason: 'canceled' });
@@ -463,7 +706,7 @@ export const StructuredReplyComposer = forwardRef<
         snapshotResolversRef.current.clear();
         send({ type: 'DESTROY' });
       },
-      [send]
+      [cancelUploadCommand, send]
     );
 
     const handleMessage = useCallback(
@@ -481,12 +724,58 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         const message = parsed.data;
+        if (message.type === 'UPLOAD_COMMAND_RESULT') {
+          const pending = uploadCommandRef.current;
+          if (
+            !pending ||
+            pending.id !== message.payload.uploadId ||
+            pending.epoch !== message.payload.documentEpoch ||
+            pending.command !== message.payload.command
+          )
+            return;
+          clearTimeout(pending.timer);
+          uploadCommandRef.current = null;
+          if (message.payload.accepted && pending.epoch === documentEpochRef.current) pending.resolve();
+          else pending.reject(new Error('编辑器未接受上传位置，请退出预览后重试'));
+          return;
+        }
         // Revisions restart on INIT. A previous document can still have bridge messages in flight.
         if (
-          (message.type === 'READY' || message.type === 'STATE_CHANGED' || message.type === 'SNAPSHOT') &&
+          (message.type === 'READY' ||
+            message.type === 'RETURN_TO_EDITOR' ||
+            message.type === 'STATE_CHANGED' ||
+            message.type === 'TOOLBAR_STATE' ||
+            message.type === 'SNAPSHOT' ||
+            message.type === 'PANEL_CHANGED') &&
           (message.payload.documentEpoch ?? 0) !== documentEpochRef.current
         )
           return;
+        if (message.type === 'TOOLBAR_STATE') {
+          setToolbarState(message.payload.state);
+          return;
+        }
+        if (message.type === 'RETURN_TO_EDITOR') {
+          if (!ready || !visible || readOnly || dismissPanels || rendererGone) return;
+          onReturnToEditor?.();
+          webViewRef.current?.requestFocus();
+          return;
+        }
+        if (message.type === 'PANEL_CHANGED') {
+          onPanelChange?.(message.payload.open);
+          const expanded = Boolean(message.payload.open && message.payload.expanded);
+          setExpandedPanel(expanded);
+          if (presentation !== 'embedded') {
+            if (expanded && panelPresentationRef.current === null) {
+              panelPresentationRef.current = presentation;
+              onPresentationChange?.('fullscreen');
+            } else if (!expanded && panelPresentationRef.current !== null) {
+              const previous = panelPresentationRef.current;
+              panelPresentationRef.current = null;
+              onPresentationChange?.(previous);
+            }
+          }
+          return;
+        }
         if (message.type === 'USER_INTERACTION') {
           if (visible) recordUserInteraction();
           return;
@@ -546,7 +835,6 @@ export const StructuredReplyComposer = forwardRef<
           lastRevisionRef.current = snapshot.revision;
           lastConfirmedMarkdownRef.current = snapshot.markdown;
           lastExternalSentRef.current = snapshot.markdown;
-          latestSnapshotRef.current = snapshot;
           onSnapshot(snapshot);
           setMode(snapshot.mode);
           setEditorState((current) =>
@@ -565,6 +853,8 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         if (message.type === 'REQUEST_HOST_ACTION') {
+          let imageRequest: NonNullable<typeof imageHandoffRef.current> | undefined;
+          let panelRequest: object | undefined;
           const reply = (result?: unknown, actionError?: string) =>
             send({
               type: 'COMMAND',
@@ -577,8 +867,88 @@ export const StructuredReplyComposer = forwardRef<
             });
           void (async () => {
             try {
-              if (message.payload.action === 'upload-image') {
+              if (message.payload.action === 'preview-topic') {
+                if (presentation !== 'embedded' || !visible || actionBusy) throw new Error('当前无法打开编辑选项');
+                onTogglePreview?.();
+                reply();
+              } else if (message.payload.action === 'prepare-panel') {
+                const epoch = (message.payload.data as { documentEpoch?: unknown } | undefined)?.documentEpoch;
+                if (!awaitKeyboardSettled) throw new Error('当前入口尚未准备好编辑工具');
+                if (panelHandoffRef.current || imageHandoffRef.current || submissionRef.current)
+                  throw new Error('正在准备编辑操作，请稍候');
+                const request = {};
+                panelRequest = request;
+                panelHandoffRef.current = request;
+                const assertCurrent = () => {
+                  if (
+                    panelHandoffRef.current !== request ||
+                    !mounted.current ||
+                    !uploadAvailable.current ||
+                    !ready ||
+                    dismissPanels ||
+                    rendererGone ||
+                    AppState.currentState === 'background' ||
+                    AppState.currentState === 'inactive' ||
+                    currentIntentKey.current !== intentKey ||
+                    epoch !== documentEpochRef.current
+                  )
+                    throw new Error('编辑文档已变化，请重新打开工具');
+                };
+                assertCurrent();
+                setPanelHandoffPending(true);
+                await awaitKeyboardSettled();
+                assertCurrent();
+                reply();
+              } else if (message.payload.action === 'upload-image') {
                 if (!onUploadImage) throw new Error('当前入口不支持上传图片');
+                if (!awaitKeyboardSettled) throw new Error('当前入口尚未准备好图片选择');
+                if (
+                  panelHandoffRef.current ||
+                  imageHandoffRef.current ||
+                  imageUploadRef.current?.epoch === documentEpochRef.current
+                )
+                  throw new Error('正在准备选择，请稍候');
+                const data = message.payload.data as { uploadId?: unknown; documentEpoch?: unknown } | undefined;
+                const uploadId = data?.uploadId;
+                const epoch = data?.documentEpoch;
+                if (
+                  typeof uploadId !== 'string' ||
+                  !uploadId.length ||
+                  uploadId.length > 80 ||
+                  typeof epoch !== 'number' ||
+                  !Number.isInteger(epoch) ||
+                  epoch < 0 ||
+                  epoch !== documentEpochRef.current
+                )
+                  throw new Error('编辑文档已变化，请重新选择');
+                const handoff = {
+                  requestId: message.payload.requestId,
+                  uploadId,
+                  epoch,
+                  invalidated: false,
+                  pickerStarted: false
+                };
+                imageRequest = handoff;
+                imageHandoffRef.current = handoff;
+                setImageHandoffPending(true);
+                const assertCurrent = () => {
+                  if (
+                    handoff.invalidated ||
+                    !mounted.current ||
+                    !uploadAvailable.current ||
+                    AppState.currentState === 'background' ||
+                    AppState.currentState === 'inactive' ||
+                    currentIntentKey.current !== intentKey ||
+                    epoch !== documentEpochRef.current
+                  )
+                    throw new Error('编辑文档已变化，请重新选择');
+                };
+                assertCurrent();
+                await awaitKeyboardSettled();
+                assertCurrent();
+                await sendUploadCommand({ name: 'begin-image-upload', uploadId, documentEpoch: epoch });
+                assertCurrent();
+                handoff.pickerStarted = true;
                 const markdown = await onUploadImage();
                 reply(typeof markdown === 'string' ? { markdown } : undefined);
               } else if (message.payload.action === 'resolve-linuxdo-upload') {
@@ -601,7 +971,25 @@ export const StructuredReplyComposer = forwardRef<
                 reply({ used: true });
               }
             } catch (actionError) {
+              if (imageRequest)
+                send({
+                  type: 'COMMAND',
+                  payload: {
+                    name: 'finish-image-upload',
+                    uploadId: imageRequest.uploadId,
+                    documentEpoch: imageRequest.epoch
+                  }
+                });
               reply(undefined, actionError instanceof Error ? actionError.message : '操作失败');
+            } finally {
+              if (panelRequest && panelHandoffRef.current === panelRequest) {
+                panelHandoffRef.current = null;
+                if (mounted.current) setPanelHandoffPending(false);
+              }
+              if (imageRequest && imageHandoffRef.current === imageRequest) {
+                imageHandoffRef.current = null;
+                if (mounted.current) setImageHandoffPending(false);
+              }
             }
           })();
           return;
@@ -624,6 +1012,8 @@ export const StructuredReplyComposer = forwardRef<
       },
       [
         intent.site,
+        intentKey,
+        currentIntentKey,
         localError,
         onLoadLinuxDoPollCapabilities,
         onResolveLinuxDoUpload,
@@ -631,10 +1021,22 @@ export const StructuredReplyComposer = forwardRef<
         onSnapshot,
         onUploadImage,
         onUseLinuxDoTemplate,
+        onTogglePreview,
+        onPanelChange,
+        onReturnToEditor,
+        onPresentationChange,
+        presentation,
+        actionBusy,
+        awaitKeyboardSettled,
+        dismissPanels,
+        readOnly,
+        ready,
         recordInvalidBridgeMessage,
         rendererGone,
         send,
-        visible
+        sendUploadCommand,
+        visible,
+        uploadAvailable
       ]
     );
 
@@ -647,10 +1049,34 @@ export const StructuredReplyComposer = forwardRef<
       [send]
     );
 
+    const runToolbarAction = (action: ComposerToolbarAction) => {
+      if (
+        !ready ||
+        initializingRef.current ||
+        !toolbarState ||
+        !visible ||
+        readOnly ||
+        dismissPanels ||
+        rendererGone ||
+        actionBusy ||
+        submitting ||
+        panelHandoffRef.current ||
+        imageHandoffRef.current
+      )
+        return;
+      recordUserInteraction();
+      send({ type: 'COMMAND', payload: { name: 'toolbar-action', documentEpoch: documentEpochRef.current, action } });
+    };
+
     const submit = useCallback(() => {
+      if (submissionRef.current || imageHandoffRef.current || panelHandoffRef.current || actionBusy) return;
+      const submission = {};
+      submissionRef.current = submission;
+      setSubmitting(true);
       setLocalError('');
       void requestSnapshot()
         .then((snapshot) => {
+          if (submissionRef.current !== submission || imageHandoffRef.current) return;
           if (snapshot.validationIssues.length) {
             setLocalError(snapshot.validationIssues[0]!.message);
             return;
@@ -659,62 +1085,103 @@ export const StructuredReplyComposer = forwardRef<
             setLocalError('请输入回复内容');
             return;
           }
-          return onSubmit(snapshot);
+          return onSubmit?.(snapshot);
         })
-        .catch((snapshotError) =>
-          setLocalError(snapshotError instanceof Error ? snapshotError.message : '无法取得最新正文')
-        );
-    }, [onSubmit, requestSnapshot]);
+        .catch((snapshotError) => {
+          if (submissionRef.current === submission)
+            setLocalError(snapshotError instanceof Error ? snapshotError.message : '无法取得最新正文');
+        })
+        .finally(() => {
+          if (submissionRef.current !== submission) return;
+          submissionRef.current = null;
+          setSubmitting(false);
+        });
+    }, [actionBusy, onSubmit, requestSnapshot]);
 
     const displayError = localError || error || disabledReason;
     const fullscreenFeedback = displayError || status;
     const CloseIcon = closeLabel.includes('收起') ? ChevronDown : X;
+    const embedded = presentation === 'embedded';
+    const modeSwitch = (
+      <View accessibilityRole="tablist" style={styles.modeSwitch}>
+        {(['rich', 'source'] as const).map((value) => {
+          const active = mode === value;
+          const label = value === 'rich' ? '富文本' : '源码';
+          const ModeIcon = value === 'rich' ? TextCursorInput : CodeXml;
+          return (
+            <Pressable
+              key={value}
+              accessibilityRole="tab"
+              accessibilityLabel={label}
+              accessibilityState={{ selected: active, disabled: readOnly }}
+              disabled={readOnly}
+              style={[styles.modeButton, active && styles.modeButtonActive]}
+              onPress={() => changeMode(value)}
+            >
+              <ModeIcon color={active ? theme.primary : theme.muted} size={19} strokeWidth={1.9} />
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+    const historyActions = (
+      <>
+        <IconButton
+          ghost
+          iconOnly
+          icon={Undo2}
+          iconSize={19}
+          label="撤销"
+          disabled={readOnly || !ready || !editorState.canUndo}
+          onPress={() => send({ type: 'COMMAND', payload: { name: 'undo' } })}
+        />
+        <IconButton
+          ghost
+          iconOnly
+          icon={Redo2}
+          iconSize={19}
+          label="重做"
+          disabled={readOnly || !ready || !editorState.canRedo}
+          onPress={() => send({ type: 'COMMAND', payload: { name: 'redo' } })}
+        />
+      </>
+    );
+    const count = ready ? `${editorState.markdownLength} 字符` : '编辑器初始化中';
 
     return (
-      <View style={styles.root}>
-        <View testID="structured-composer-header" style={styles.header}>
-          <IconButton
-            ghost
-            iconOnly
-            icon={CloseIcon}
-            iconSize={20}
-            label={closeLabel}
-            onPress={() => onOpenChange(false)}
-          />
-          <View style={styles.headerBody}>
-            <Text numberOfLines={1} style={styles.title}>
-              {title}
-            </Text>
+      <View ref={toolbarHostRef} collapsable={false} style={styles.root}>
+        {!embedded && !expandedPanel ? (
+          <View testID="structured-composer-header" style={styles.header}>
+            <IconButton
+              ghost
+              iconOnly
+              icon={CloseIcon}
+              iconSize={20}
+              label={closeLabel}
+              onPress={() => onOpenChange?.(false)}
+            />
+            <View style={styles.headerBody}>
+              <Text numberOfLines={1} style={styles.title}>
+                {title}
+              </Text>
+            </View>
+            {modeSwitch}
+            <IconButton
+              ghost
+              iconOnly
+              icon={presentation === 'fullscreen' ? Minimize2 : Maximize2}
+              iconSize={20}
+              label={presentation === 'fullscreen' ? '退出全屏' : '全屏'}
+              onPress={() => onPresentationChange?.(presentation === 'fullscreen' ? 'sheet' : 'fullscreen')}
+            />
           </View>
-          <View accessibilityRole="tablist" style={styles.modeSwitch}>
-            {(['rich', 'source'] as const).map((value) => {
-              const active = mode === value;
-              const label = value === 'rich' ? '富文本' : '源码';
-              const ModeIcon = value === 'rich' ? TextCursorInput : CodeXml;
-              return (
-                <Pressable
-                  key={value}
-                  accessibilityRole="tab"
-                  accessibilityLabel={label}
-                  accessibilityState={{ selected: active }}
-                  style={[styles.modeButton, active && styles.modeButtonActive]}
-                  onPress={() => changeMode(value)}
-                >
-                  <ModeIcon color={active ? theme.primary : theme.muted} size={19} strokeWidth={1.9} />
-                </Pressable>
-              );
-            })}
-          </View>
-          <IconButton
-            ghost
-            iconOnly
-            icon={presentation === 'fullscreen' ? Minimize2 : Maximize2}
-            iconSize={20}
-            label={presentation === 'fullscreen' ? '退出全屏' : '全屏'}
-            onPress={() => onPresentationChange(presentation === 'fullscreen' ? 'sheet' : 'fullscreen')}
-          />
-        </View>
-        <View testID="structured-composer-editor-frame" style={styles.editorFrame}>
+        ) : null}
+        <View
+          ref={editorFrameRef}
+          collapsable={false}
+          testID="structured-composer-editor-frame"
+          style={styles.editorFrame}
+        >
           {rendererGone ? (
             <View style={styles.rendererGone}>
               <Text style={[styles.message, styles.error]}>编辑器进程已退出，最后确认草稿仍在。</Text>
@@ -725,6 +1192,8 @@ export const StructuredReplyComposer = forwardRef<
                   finishDiagnosticTrace(trace, 'success', { state: 'started' });
                   setRendererGone(false);
                   setReady(false);
+                  setUseInitialDocument(false);
+                  documentEpochRef.current += 1;
                   initializingRef.current = false;
                   setWebLoaded(false);
                   webViewRef.current?.reload();
@@ -751,6 +1220,8 @@ export const StructuredReplyComposer = forwardRef<
               setSupportMultipleWindows={false}
               mixedContentMode="never"
               automaticallyAdjustContentInsets={false}
+              androidLayerType="hardware"
+              androidPrewarmOnWindowVisible
               nestedScrollEnabled
               overScrollMode="never"
               textZoom={100}
@@ -777,7 +1248,28 @@ export const StructuredReplyComposer = forwardRef<
             />
           )}
         </View>
-        {presentation === 'fullscreen' ? (
+        {!readOnly && !expandedPanel && !rendererGone ? (
+          <ComposerToolbar
+            state={toolbarState}
+            site={intent.site}
+            intentKind={intent.kind}
+            disabled={
+              !ready ||
+              !toolbarState ||
+              !visible ||
+              Boolean(dismissPanels) ||
+              actionBusy ||
+              submitting ||
+              panelHandoffPending ||
+              imageHandoffPending
+            }
+            onAction={runToolbarAction}
+            viewportRef={editorFrameRef}
+            hostRef={toolbarHostRef}
+            menuHostName={toolbarMenuHost}
+          />
+        ) : null}
+        {presentation === 'fullscreen' && !expandedPanel ? (
           fullscreenFeedback ? (
             <Text accessibilityLiveRegion="polite" style={[styles.message, displayError && styles.error]}>
               {fullscreenFeedback}
@@ -797,39 +1289,40 @@ export const StructuredReplyComposer = forwardRef<
             ) : null}
           </>
         )}
-        <View testID="structured-composer-footer" style={styles.footer}>
-          <View style={styles.footerBody}>
-            <Text numberOfLines={1} style={styles.metaText}>
-              {ready ? `${editorState.markdownLength} 字符` : '编辑器初始化中'}
-            </Text>
+        {(!embedded || readOnly) && !expandedPanel ? (
+          <View testID="structured-composer-footer" style={styles.footer}>
+            {embedded ? (
+              footerActions
+            ) : (
+              <>
+                <View style={styles.footerBody}>
+                  <Text numberOfLines={1} style={styles.metaText}>
+                    {count}
+                  </Text>
+                </View>
+                {historyActions}
+                <AppButton
+                  compact
+                  variant="primary"
+                  accessibilityLabel={submitLabel}
+                  label={actionBusy || submitting ? '处理中…' : submitLabel}
+                  disabled={
+                    !ready ||
+                    actionBusy ||
+                    submitting ||
+                    panelHandoffPending ||
+                    imageHandoffPending ||
+                    editorState.isEmpty ||
+                    Boolean(disabledReason) ||
+                    rendererGone
+                  }
+                  onPress={submit}
+                />
+              </>
+            )}
           </View>
-          <IconButton
-            ghost
-            iconOnly
-            icon={Undo2}
-            iconSize={19}
-            label="撤销"
-            disabled={!ready || !editorState.canUndo}
-            onPress={() => send({ type: 'COMMAND', payload: { name: 'undo' } })}
-          />
-          <IconButton
-            ghost
-            iconOnly
-            icon={Redo2}
-            iconSize={19}
-            label="重做"
-            disabled={!ready || !editorState.canRedo}
-            onPress={() => send({ type: 'COMMAND', payload: { name: 'redo' } })}
-          />
-          <AppButton
-            compact
-            variant="primary"
-            accessibilityLabel={submitLabel}
-            label={actionBusy ? '处理中…' : submitLabel}
-            disabled={!ready || actionBusy || editorState.isEmpty || Boolean(disabledReason) || rendererGone}
-            onPress={submit}
-          />
-        </View>
+        ) : null}
+        <PortalHost name={toolbarMenuHost} />
       </View>
     );
   }

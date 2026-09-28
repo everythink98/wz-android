@@ -312,7 +312,22 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
     const text = pageText();
     return /^\\s*[{[]/.test(text) ? text : "";
   };
-  const hasReadablePage = () => Boolean(jsonText());
+  const preloadedRulesHtml = () => {
+    if (location.pathname !== "/latest") return "";
+    try {
+      const script = document.querySelector('script#data-preloaded[type="application/json"]');
+      const legacy = document.querySelector('[data-preloaded]');
+      const preload = JSON.parse(script ? (script.textContent || "") : (legacy?.getAttribute('data-preloaded') || ""));
+      const raw = preload.siteSettings ?? preload.site_settings;
+      const settings = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (!settings || typeof settings !== "object" || Array.isArray(settings) || !Object.keys(settings).length) return "";
+      const json = JSON.stringify({ siteSettings: settings }).replace(/</g, "\\\\u003c");
+      return '<html><body><script id="data-preloaded" type="application/json">' + json + '</script></body></html>';
+    } catch {
+      return "";
+    }
+  };
+  const hasReadablePage = () => Boolean(preloadedRulesHtml() || jsonText());
   const postBridgeMessage = (payload) => {
     const message = JSON.stringify(payload);
     if (message.length <= bridgeMessageLimit) {
@@ -331,15 +346,16 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
     }));
   };
   const postResult = () => {
+    const rules = preloadedRulesHtml();
     const json = jsonText();
-    const challenge = !hasReadablePage() && isChallengePage();
+    const challenge = !(rules || json) && isChallengePage();
     postBridgeMessage({
       type: 'linuxdo-browser-fetch',
       id: requestId,
       url: location.href,
       title: document.title || "",
       challenge,
-      body: challenge ? "" : (json || pageHtml()),
+      body: challenge ? "" : (rules || json || pageHtml()),
       userAgent: navigator.userAgent || ""
     });
   };

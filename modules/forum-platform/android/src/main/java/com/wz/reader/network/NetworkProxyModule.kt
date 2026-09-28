@@ -1,5 +1,7 @@
 package com.wz.reader
 
+import android.os.Handler
+import android.os.Looper
 import android.webkit.WebSettings
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
@@ -10,7 +12,9 @@ import androidx.webkit.WebViewStartUpResult
 import androidx.webkit.WebViewStartupException
 import androidx.webkit.WebViewOutcomeReceiver
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.ForkJoinPool
+import java.util.concurrent.FutureTask
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -23,6 +27,29 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
+
+internal fun readDefaultWebViewUserAgentOnMainThread(
+  isMainThread: Boolean,
+  postToMainThread: (Runnable) -> Boolean,
+  timeoutMs: Long = 10_000L,
+  readUserAgent: () -> String
+): String {
+  if (isMainThread) return readUserAgent()
+  // A background UA lookup can start Chromium asynchronously before the first
+  // UI-thread WebView initializes it. Keep this shared startup read on main.
+  val task = FutureTask<String> { readUserAgent() }
+  check(postToMainThread(task)) { "无法调度 WebView User-Agent 读取" }
+  return try {
+    task.get(timeoutMs, TimeUnit.MILLISECONDS)
+  } catch (error: InterruptedException) {
+    Thread.currentThread().interrupt()
+    throw error
+  } catch (error: ExecutionException) {
+    throw (error.cause ?: error)
+  } finally {
+    task.cancel(false)
+  }
+}
 
 internal fun awaitWebViewProxyOperation(
   timeoutMessage: String,
@@ -190,7 +217,11 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   override fun getConstants(): MutableMap<String, Any> = mutableMapOf(
     "defaultWebViewUserAgent" to runCatching {
-      WebSettings.getDefaultUserAgent(reactContext)
+      readDefaultWebViewUserAgentOnMainThread(
+        isMainThread = Looper.myLooper() == Looper.getMainLooper(),
+        postToMainThread = { action -> Handler(Looper.getMainLooper()).post(action) },
+        readUserAgent = { WebSettings.getDefaultUserAgent(reactContext) }
+      )
     }.getOrDefault("")
   )
 

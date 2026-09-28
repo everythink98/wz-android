@@ -38,6 +38,12 @@ let mockFlashListMountCount = 0;
 const mockFlashListRenderItemByTopicId = new Map<string, unknown>();
 const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
 
+jest.mock('react-native-reanimated', () => ({
+  __esModule: true,
+  ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
+  withTiming: (value: unknown) => value
+}));
+
 beforeEach(() => {
   mockPagerPosition = new Animated.Value(0);
   jest.spyOn(global, 'requestAnimationFrame').mockImplementation(() => 0);
@@ -190,7 +196,7 @@ jest.mock('lucide-react-native', () => {
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     ChevronDown: () => null,
-    ChevronUp: () => null,
+    SquarePen: () => null,
     Eye: () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' }),
     MessageCircle: () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' })
   };
@@ -256,6 +262,7 @@ function renderFeed(
       readingFilter="all"
       refreshing={false}
       onCategoryChange={jest.fn()}
+      onCreateTopic={jest.fn()}
       onFeedFilterChange={jest.fn()}
       onFeedSourceChange={jest.fn()}
       onManageContentSources={jest.fn()}
@@ -907,28 +914,53 @@ describe('Feed loading', () => {
     expect(relations.get(scrollTag!)).toMatchObject({ blocksHandlers: [] });
   });
 
-  it('keeps the scrolled-list state when the same Feed screen is revisited', async () => {
-    const view = await render(renderFeed(false, [topic]));
-
-    await act(async () => {
-      view.getByTestId('feed-outcome-data-all-default').props.onScroll({
-        nativeEvent: {
-          contentOffset: { y: 500 },
-          contentSize: { height: 3000 },
-          layoutMeasurement: { height: 1000 }
-        }
+  it('hides creation on downward scrolling, reveals it upward and restores it when returning', async () => {
+    const onCreateTopic = jest.fn();
+    const view = await render(renderFeed(false, [topic], { onCreateTopic }));
+    const scroll = async (y: number) =>
+      act(async () => {
+        view.getByTestId('feed-outcome-data-all-default').props.onScroll({
+          nativeEvent: {
+            contentOffset: { y },
+            contentSize: { height: 3000 },
+            layoutMeasurement: { height: 1000 }
+          }
+        });
       });
-    });
-
-    expect(view.getByLabelText('回到顶部')).toBeTruthy();
-
-    await view.rerender(renderFeed(false, [topic]));
-
-    expect(view.getByLabelText('回到顶部')).toBeTruthy();
+    expect(view.queryByLabelText('回到顶部')).toBeNull();
+    expect(view.getByLabelText('发帖')).toBeTruthy();
+    expect(view.queryByText('发帖')).toBeNull();
+    await scroll(0);
+    await scroll(500);
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    const hiddenButton = view.getByLabelText('发帖', { includeHiddenElements: true });
+    expect(hiddenButton).toBeDisabled();
+    expect(StyleSheet.flatten(hiddenButton.props.style).opacity ?? 1).toBe(1);
+    expect(
+      view.getByTestId('feed-create-topic-action', { includeHiddenElements: true }).props.needsOffscreenAlphaCompositing
+    ).toBe(true);
+    const hiddenActionStyle = StyleSheet.flatten(
+      view.getByTestId('feed-create-topic-action', { includeHiddenElements: true }).props.style
+    );
+    expect(hiddenActionStyle.transform).toBeUndefined();
+    await scroll(495);
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    await scroll(470);
+    await fireEvent.press(view.getByLabelText('发帖'));
+    expect(onCreateTopic).toHaveBeenCalledTimes(1);
+    await scroll(550);
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    await view.rerender(renderFeed(false, [topic], { active: false, onCreateTopic }));
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    await view.rerender(renderFeed(false, [topic], { active: true, onCreateTopic }));
+    expect(view.getByLabelText('发帖')).toBeTruthy();
   });
 
-  it('clears the previous source top button when a new source starts at the first item', async () => {
+  it('hides creation for V2EX and restores it when switching to a supported source', async () => {
     const view = await render(renderFeed(false, [topic]));
+    await fireEvent.scroll(view.getByTestId('feed-outcome-data-all-default'), {
+      nativeEvent: { contentOffset: { y: 0 }, contentSize: { height: 3000 }, layoutMeasurement: { height: 1000 } }
+    });
     await fireEvent.scroll(view.getByTestId('feed-outcome-data-all-default'), {
       nativeEvent: {
         contentOffset: { y: 640 },
@@ -936,13 +968,45 @@ describe('Feed loading', () => {
         layoutMeasurement: { height: 1000 }
       }
     });
-    expect(view.getByLabelText('回到顶部')).toBeTruthy();
+    expect(view.queryByLabelText('发帖')).toBeNull();
 
     await view.rerender(renderFeed(true, [], { feedSource: 'v2ex' }));
-    expect(view.queryByLabelText('回到顶部')).toBeNull();
+    expect(view.queryByTestId('feed-create-topic-action')).toBeNull();
     await view.rerender(renderFeed(false, [topic], { feedSource: 'v2ex' }));
     expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
-    expect(view.queryByLabelText('回到顶部')).toBeNull();
+    expect(view.queryByTestId('feed-create-topic-action')).toBeNull();
+    await view.rerender(renderFeed(true, [], { feedSource: 'linuxdo' }));
+    expect(view.getByLabelText('发帖')).toBeTruthy();
+    await view.rerender(renderFeed(false, [topic], { feedSource: 'linuxdo' }));
+    expect(view.getByLabelText('发帖')).toBeTruthy();
+  });
+
+  it('keeps creation visibility stable when list measurements change without a reading gesture', async () => {
+    const view = await render(renderFeed(false, [topic]));
+    const scroll = async (y: number, height = 3000, viewport = 1000) =>
+      fireEvent.scroll(view.getByTestId('feed-outcome-data-all-default'), {
+        nativeEvent: {
+          contentOffset: { y },
+          contentSize: { height },
+          layoutMeasurement: { height: viewport }
+        }
+      });
+
+    await scroll(0);
+    await scroll(500);
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    await scroll(480, 2980);
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    await scroll(450, 2980);
+    expect(view.getByLabelText('发帖')).toBeTruthy();
+    await scroll(500, 3030);
+    expect(view.getByLabelText('发帖')).toBeTruthy();
+    await scroll(540, 3030);
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    await scroll(500, 3030, 1040);
+    expect(view.queryByLabelText('发帖')).toBeNull();
+    await scroll(0, 600, 1040);
+    expect(view.getByLabelText('发帖')).toBeTruthy();
   });
 
   it('resets the stable list before and after changing the Feed filter', async () => {

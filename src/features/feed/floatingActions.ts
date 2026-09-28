@@ -1,4 +1,3 @@
-const feedFloatingActionsOffset = 420;
 const feedLoadMoreThresholdRatio = 0.6;
 
 interface FeedScrollMetrics {
@@ -21,10 +20,6 @@ export function shouldLoadMoreFeedFromScroll(metrics: FeedScrollMetrics, thresho
 
   const remainingDistance = contentHeight - (offsetY + viewportHeight);
   return remainingDistance <= viewportHeight * thresholdRatio;
-}
-
-export function shouldShowFeedFloatingActions(scrollY: number) {
-  return scrollY > feedFloatingActionsOffset;
 }
 
 export function shouldAllowFeedAutoLoadRequest({

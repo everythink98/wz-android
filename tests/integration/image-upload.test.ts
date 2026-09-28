@@ -241,9 +241,9 @@ describe('reply image upload helpers', () => {
     expect(
       yaohuoImageUrlFromUploadResponse({
         code: 200,
-        data: { url: 'https://cdn.example.com/a.png' }
+        data: 'https://nos.netease.com/vcloud-statistic/nrtc/example.png'
       })
-    ).toBe('https://cdn.example.com/a.png');
+    ).toBe('https://nos.netease.com/vcloud-statistic/nrtc/example.png');
 
     expect(
       yaohuoImageUrlFromUploadResponse({
@@ -253,30 +253,63 @@ describe('reply image upload helpers', () => {
     ).toBe('https://cdn.example.com/b.png');
   });
 
-  it('uploads Yaohuo reply images through the image bed', async () => {
-    const fetcher = async (input: string, init?: RequestInit) => {
-      expect(input).toBe('https://tucdn.wpon.cn/api/upload');
+  it.each([
+    { code: 500, msg: '上传限制', data: 'https://cdn.example.com/rejected.png' },
+    { data: 'https://cdn.example.com/unconfirmed.png' },
+    { code: '200', data: 'https://cdn.example.com/unconfirmed.png' },
+    { code: 200, data: { url: 'https://cdn.example.com/legacy.png' } },
+    { code: 200, data: 'javascript:alert(1)' },
+    { code: 200, data: 'file:///cache/image.png' },
+    { code: 200, data: '/image.png' },
+    { code: 200, data: '' }
+  ])('requires an explicit Yaohuo image success and a remote HTTP URL: %j', (data) => {
+    expect(() => yaohuoImageUrlFromUploadResponse(data)).toThrow();
+  });
+
+  it('uploads Yaohuo reply images once through the current provider using the native file stream', async () => {
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe('https://file.sang.pub/api/upload');
       expect(init?.method).toBe('POST');
-      expect(init?.body).toBeInstanceOf(FormData);
+      expect(init?.body).toEqual({ uri: 'file:///cache/photo.png' });
+      expect(init?.headers).toEqual({
+        'Content-Type': 'image/png',
+        'X-Upload-Type': 'qiyu',
+        'X-File-Name': encodeURIComponent('测试图片.png')
+      });
       return new Response(
         JSON.stringify({
-          data: { url: 'https://cdn.example.com/uploaded.png' }
+          code: 200,
+          data: 'https://cdn.example.com/uploaded.png'
         }),
         { status: 200 }
       );
-    };
+    });
 
     await expect(
       uploadYaohuoReplyImage({
         file: {
           uri: 'file:///cache/photo.png',
-          name: 'photo.png',
+          name: '测试图片.png',
           mimeType: 'image/png'
         },
         fetcher
       })
     ).resolves.toBe('https://cdn.example.com/uploaded.png');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(nativeImage.render).not.toHaveBeenCalled();
   });
+
+  it.each([200, 502])(
+    'keeps a provider rejection message at HTTP %s without falling back or retrying',
+    async (status) => {
+      const fetcher = vi.fn(
+        async () => new Response(JSON.stringify({ code: 500, msg: '图片服务暂时不可用', data: null }), { status })
+      );
+      await expect(uploadYaohuoReplyImage({ file: localImage, fetcher })).rejects.toThrow('图片服务暂时不可用');
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(nativeImage.delete).not.toHaveBeenCalled();
+    }
+  );
 
   it('reads NodeImage upload responses', () => {
     expect(

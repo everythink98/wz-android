@@ -69,7 +69,6 @@ export function LinuxDoVerifyModal({
   onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
 }) {
-  const linuxDoWebViewReadyRef = useRef(false);
   const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
   const [challengeEnded, setChallengeEnded] = useState(false);
   const documentKeyRef = useRef(linuxDoWebViewKey);
@@ -81,13 +80,7 @@ export function LinuxDoVerifyModal({
   const canRetry = recovery?.results.some(
     (result) => result.outcome === 'pending' || result.outcome === 'verification-required'
   );
-  const markLinuxDoPageReady = () => {
-    linuxDoWebViewReadyRef.current = true;
-    onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-  };
-
   useEffect(() => {
-    linuxDoWebViewReadyRef.current = false;
     documentKeyRef.current = linuxDoWebViewKey;
     setChallengeEnded(false);
     httpErrorRef.current = false;
@@ -232,12 +225,12 @@ export function LinuxDoVerifyModal({
           injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
           onLoadProgress={(event) => {
             if (event.nativeEvent.progress >= 0.8) {
-              markLinuxDoPageReady();
+              onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
             }
           }}
           onLoadEnd={(event) => {
             if (documentKeyRef.current !== linuxDoWebViewKey) return;
-            markLinuxDoPageReady();
+            onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
             if (!httpErrorRef.current && !('code' in event.nativeEvent)) {
               onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
             }
@@ -251,7 +244,6 @@ export function LinuxDoVerifyModal({
             documentUrlRef.current = event?.nativeEvent.url || '';
             httpErrorRef.current = false;
             setChallengeEnded(false);
-            linuxDoWebViewReadyRef.current = false;
             setWebViewNeedsRemount(false);
             onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
             onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
@@ -277,10 +269,10 @@ export function LinuxDoVerifyModal({
             // Android WebView emits this event only for the current main document.
             if (recovery?.dedicated && url === LINUXDO_CHALLENGE_URL && statusCode === 404) {
               setChallengeEnded(true);
-              markLinuxDoPageReady();
+              onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
             } else {
               onSetLinuxDoWebViewError(`linux.do 页面返回 HTTP ${statusCode}，请刷新或返回。`, linuxDoWebViewKey);
-              markLinuxDoPageReady();
+              onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
             }
           }}
           renderError={() => <View style={styles.webViewErrorPlaceholder} />}

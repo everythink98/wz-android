@@ -209,7 +209,10 @@ execFileSync('adb', [
     `input tap ${Math.round(target.rect.x + target.rect.width / 2)} ${Math.round(target.rect.y + target.rect.height / 2)}`
 ]);
 await check('fling-then-distant-tab', target.identifier);
-assert(!snapshot().some((n) => n.label === '回到顶部'), 'A source tap must clear the previous list top button.');
+assert(
+  snapshot().some((n) => n.label === '发帖'),
+  'A source tap must restore the create-topic action.'
+);
 await checkCategoryRails();
 device('press', 'id="main-tab-more"');
 device('press', 'id="main-tab-feed"');

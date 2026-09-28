@@ -1,0 +1,216 @@
+diff --git a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
+index 6c2bff05..1c931bb9 100644
+--- a/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
++++ b/node_modules/expo-document-picker/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
+@@ -10,8 +10,13 @@ import expo.modules.core.utilities.FileUtilities
+ import expo.modules.kotlin.Promise
+ import expo.modules.kotlin.exception.Exceptions
+ import expo.modules.kotlin.exception.toCodedException
++import expo.modules.kotlin.functions.Queues
+ import expo.modules.kotlin.modules.Module
+ import expo.modules.kotlin.modules.ModuleDefinition
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
+ import org.apache.commons.io.FilenameUtils
+ import java.io.File
+ import java.io.FileNotFoundException
+@@ -24,62 +29,117 @@ class DocumentPickerModule : Module() {
+     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+   private var pendingPromise: Promise? = null
+   private var copyToCacheDirectory = true
++  private val requestLock = Any()
++  private var selectionJob: Job? = null
++  private var destroyed = false
+ 
+   override fun definition() = ModuleDefinition {
+     Name("ExpoDocumentPicker")
+ 
+     AsyncFunction("getDocumentAsync") { options: DocumentPickerOptions, promise: Promise ->
+-      if (pendingPromise != null) {
+-        throw PickingInProgressException()
+-      }
++      synchronized(requestLock) {
++        if (destroyed) {
++          throw Exceptions.AppContextLost()
++        }
++        if (pendingPromise != null) {
++          throw PickingInProgressException()
++        }
+ 
+-      if (options.type.isEmpty()) {
+-        throw DocumentPickerOptionsEmptyListException()
+-      }
++        if (options.type.isEmpty()) {
++          throw DocumentPickerOptionsEmptyListException()
++        }
+ 
+-      pendingPromise = promise
+-      copyToCacheDirectory = options.copyToCacheDirectory
+-      val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+-        addCategory(Intent.CATEGORY_OPENABLE)
+-        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, options.multiple)
+-        type = if (options.type.size > 1) {
+-          putExtra(Intent.EXTRA_MIME_TYPES, options.type.toTypedArray())
+-          "*/*"
++        pendingPromise = promise
++        copyToCacheDirectory = options.copyToCacheDirectory
++        val action = if (options.copyToCacheDirectory && options.type == listOf("image/*")) {
++          Intent.ACTION_GET_CONTENT
+         } else {
+-          options.type[0]
++          Intent.ACTION_OPEN_DOCUMENT
++        }
++        val intent = Intent(action).apply {
++          addCategory(Intent.CATEGORY_OPENABLE)
++          putExtra(Intent.EXTRA_ALLOW_MULTIPLE, options.multiple)
++          type = if (options.type.size > 1) {
++            putExtra(Intent.EXTRA_MIME_TYPES, options.type.toTypedArray())
++            "*/*"
++          } else {
++            options.type[0]
++          }
++        }
++        try {
++          appContext.throwingActivity.startActivityForResult(intent, OPEN_DOCUMENT_CODE)
++        } catch (e: Exception) {
++          pendingPromise = null
++          throw e
+         }
+       }
+-      appContext.throwingActivity.startActivityForResult(intent, OPEN_DOCUMENT_CODE)
+-    }
++    }.runOnQueue(Queues.MAIN)
+ 
+     OnActivityResult { _, (requestCode, resultCode, intent) ->
+-      if (requestCode != OPEN_DOCUMENT_CODE || pendingPromise == null) {
+-        return@OnActivityResult
+-      }
++      synchronized(requestLock) {
++        if (requestCode != OPEN_DOCUMENT_CODE || selectionJob != null) {
++          return@OnActivityResult
++        }
++        val promise = pendingPromise ?: return@OnActivityResult
+ 
+-      val promise = pendingPromise!!
++        if (resultCode != Activity.RESULT_OK) {
++          finish(promise) { promise.resolve(DocumentPickerResult(canceled = true)) }
++          return@OnActivityResult
++        }
+ 
+-      if (resultCode == Activity.RESULT_OK) {
+         try {
+-          if (intent?.clipData != null) {
+-            handleMultipleSelection(intent)
+-          } else {
+-            handleSingleSelection(intent)
++          val selectedContext = context
++          val shouldCopy = copyToCacheDirectory
++          val job = appContext.mainQueue.launch {
++            try {
++              val result = withContext(Dispatchers.IO) {
++                if (intent?.clipData != null) {
++                  handleMultipleSelection(intent, selectedContext, shouldCopy)
++                } else {
++                  handleSingleSelection(intent, selectedContext, shouldCopy)
++                }
++              }
++              finish(promise) { promise.resolve(result) }
++            } catch (e: Exception) {
++              finish(promise) { promise.reject(e.toCodedException()) }
++            }
++          }
++          selectionJob = job
++          // A cancelled scope may prevent the launch body (including finally) from running.
++          job.invokeOnCompletion { cause ->
++            if (cause != null) {
++              finish(promise) { promise.reject(cause.toCodedException()) }
++            }
+           }
+         } catch (e: Exception) {
+-          promise.reject(e.toCodedException())
++          finish(promise) { promise.reject(e.toCodedException()) }
+         }
+-      } else {
+-        promise.resolve(
+-          DocumentPickerResult(canceled = true)
+-        )
+       }
++    }
++
++    OnDestroy {
++      synchronized(requestLock) {
++        destroyed = true
++        val job = selectionJob
++        pendingPromise?.let { promise ->
++          finish(promise) { promise.reject(Exceptions.AppContextLost()) }
++        }
++        job?.cancel()
++      }
++    }
++  }
+ 
++  private fun finish(promise: Promise, settle: () -> Unit) {
++    // Module destruction can arrive off the main queue. Never settle a later request.
++    synchronized(requestLock) {
++      if (pendingPromise !== promise) return
+       pendingPromise = null
++      selectionJob = null
++      settle()
+     }
+   }
+ 
+-  private fun copyDocumentToCacheDirectory(documentUri: Uri, name: String): Uri {
++  private fun copyDocumentToCacheDirectory(documentUri: Uri, name: String, context: Context): Uri {
+     val outputFilePath = FileUtilities.generateOutputPath(
+       context.cacheDir,
+       "DocumentPicker",
+@@ -99,37 +159,36 @@ class DocumentPickerModule : Module() {
+     return Uri.fromFile(outputFile)
+   }
+ 
+-  private fun handleSingleSelection(intent: Intent?) {
+-    intent?.data?.let { uri ->
+-      val details = readDocumentDetails(uri)
+-      val result = DocumentPickerResult(
++  private fun handleSingleSelection(intent: Intent?, context: Context, shouldCopy: Boolean): DocumentPickerResult {
++    return intent?.data?.let { uri ->
++      val details = readDocumentDetails(uri, context, shouldCopy)
++      DocumentPickerResult(
+         assets = listOf(details)
+       )
+-      pendingPromise?.resolve(result)
+     } ?: throw FailedToReadDocumentException()
+   }
+ 
+-  private fun handleMultipleSelection(intent: Intent?) {
++  private fun handleMultipleSelection(intent: Intent?, context: Context, shouldCopy: Boolean): DocumentPickerResult {
+     val count = intent?.clipData?.itemCount ?: 0
+     val assets = mutableListOf<DocumentInfo>()
+ 
+     for (i in 0 until count) {
+       val uri = intent?.clipData?.getItemAt(i)?.uri
+         ?: throw FailedToReadDocumentException()
+-      val document = readDocumentDetails(uri)
++      val document = readDocumentDetails(uri, context, shouldCopy)
+       assets.add(document)
+     }
+ 
+-    pendingPromise?.resolve(DocumentPickerResult(assets = assets))
++    return DocumentPickerResult(assets = assets)
+   }
+ 
+-  private fun readDocumentDetails(uri: Uri): DocumentInfo {
++  private fun readDocumentDetails(uri: Uri, context: Context, shouldCopy: Boolean): DocumentInfo {
+     val originalDocumentDetails = DocumentDetailsReader(context).read(uri)
+ 
+-    val details = if (!copyToCacheDirectory) {
++    val details = if (!shouldCopy) {
+       originalDocumentDetails
+     } else {
+-      val copyPath = copyDocumentToCacheDirectory(uri, originalDocumentDetails.name)
++      val copyPath = copyDocumentToCacheDirectory(uri, originalDocumentDetails.name, context)
+       originalDocumentDetails.copy(uri = copyPath)
+     }
+ 

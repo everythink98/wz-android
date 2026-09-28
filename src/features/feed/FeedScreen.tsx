@@ -13,7 +13,9 @@ import {
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { RefreshControl, ScrollView } from 'react-native-gesture-handler';
 import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
-import { ChevronDown, ChevronUp } from 'lucide-react-native';
+import { ChevronDown, SquarePen } from 'lucide-react-native';
+import Animated from 'react-native-reanimated';
+import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
 import type {
   Category,
   FeedFilterState,
@@ -32,11 +34,7 @@ import {
   shouldUseFeedFilter,
   shouldUseReadingFilter
 } from '@/domain/forum/feedOptions';
-import {
-  shouldAllowFeedAutoLoadRequest,
-  shouldLoadMoreFeedFromScroll,
-  shouldShowFeedFloatingActions
-} from './floatingActions';
+import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll } from './floatingActions';
 import type { ReadingFilter } from '@/domain/forum/feed';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -53,6 +51,7 @@ import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
 const AUTO_LOAD_SCROLL_STEP = 80;
 
 export const FeedScreen = memo(function FeedScreen({
+  active = true,
   busy,
   categories,
   categoryFilter,
@@ -71,6 +70,7 @@ export const FeedScreen = memo(function FeedScreen({
   refreshing,
   scrollRef,
   onCategoryChange,
+  onCreateTopic,
   onFeedFilterChange,
   onFeedSourceChange,
   onInitialContentReady,
@@ -80,6 +80,7 @@ export const FeedScreen = memo(function FeedScreen({
   onReadingFilterChange,
   onRefresh
 }: {
+  active?: boolean;
   busy: boolean;
   categories: Category[];
   categoryFilter: string;
@@ -98,6 +99,7 @@ export const FeedScreen = memo(function FeedScreen({
   refreshing: boolean;
   scrollRef?: RefObject<FlashListRef<Topic> | null>;
   onCategoryChange: (categoryId: string) => void;
+  onCreateTopic?: () => void;
   onFeedFilterChange: (filter: SourceFeedFilter) => void;
   onFeedSourceChange: (source: FeedSource) => void;
   onInitialContentReady?: () => void;
@@ -117,7 +119,15 @@ export const FeedScreen = memo(function FeedScreen({
   const requestedFeedPageRef = useRef<number | null>(null);
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
   const autoLoadPausedAfterFailureRef = useRef(false);
-  const [showFloatingActions, setShowFloatingActions] = useState(false);
+  const {
+    hidden: createActionHidden,
+    animatedStyle: createActionAnimation,
+    onScroll: updateCreateActionForScroll,
+    reset: resetCreateAction
+  } = useScrollActionVisibility({
+    active,
+    resetKey: `${feedSource}:${feedFilter}:${categoryFilter}:${readingFilter}`
+  });
   const enabledFeedSourceItems = useMemo(
     () => [
       { value: 'all' as const, label: '全部' },
@@ -229,13 +239,12 @@ export const FeedScreen = memo(function FeedScreen({
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
-      const nextVisible = shouldShowFeedFloatingActions(offsetY);
-      setShowFloatingActions((current) => (current === nextVisible ? current : nextVisible));
+      updateCreateActionForScroll(event);
       if (shouldLoadMoreFeedFromScroll(event.nativeEvent)) {
         requestFeedLoadMore('scroll', offsetY);
       }
     },
-    [requestFeedLoadMore]
+    [requestFeedLoadMore, updateCreateActionForScroll]
   );
 
   const handleScrollBeginDrag = useCallback(() => {
@@ -258,9 +267,9 @@ export const FeedScreen = memo(function FeedScreen({
   const scrollFeedToTop = useCallback(
     (animated = true) => {
       listRef.current?.scrollToOffset({ offset: 0, animated });
-      setShowFloatingActions(false);
+      resetCreateAction();
     },
-    [listRef]
+    [listRef, resetCreateAction]
   );
 
   const commitFeedSelectionChange = useCallback(
@@ -276,7 +285,6 @@ export const FeedScreen = memo(function FeedScreen({
     requestedFeedPageRef.current = null;
     lastAutoLoadMoreOffsetRef.current = null;
     autoLoadPausedAfterFailureRef.current = false;
-    setShowFloatingActions(false);
   }, [categoryFilter, feedFilter, feedSource, readingFilter]);
 
   useEffect(() => {
@@ -337,10 +345,6 @@ export const FeedScreen = memo(function FeedScreen({
     },
     [commitFeedSelectionChange, feedFilter, onFeedFilterChange]
   );
-  const scrollFeedToTopPress = useCallback(() => {
-    scrollFeedToTop();
-  }, [scrollFeedToTop]);
-
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(
     ({ index, item: topic }) => (
       <MemoizedTopicCard
@@ -610,10 +614,17 @@ export const FeedScreen = memo(function FeedScreen({
         onSwipeStart={closeFeedFilterMenu}
         onIndexChange={changeFeedSourceFromPager}
       />
-      {showFloatingActions ? (
-        <View style={styles.feedFloatingActions}>
-          <FloatingIconButton icon={ChevronUp} label="回到顶部" onPress={scrollFeedToTopPress} />
-        </View>
+      {onCreateTopic && feedSource !== 'v2ex' ? (
+        <Animated.View
+          testID="feed-create-topic-action"
+          needsOffscreenAlphaCompositing
+          style={[styles.feedFloatingActions, createActionAnimation]}
+          pointerEvents={createActionHidden ? 'none' : 'box-none'}
+          accessibilityElementsHidden={createActionHidden}
+          importantForAccessibility={createActionHidden ? 'no-hide-descendants' : 'auto'}
+        >
+          <FloatingIconButton icon={SquarePen} label="发帖" disabled={createActionHidden} onPress={onCreateTopic} />
+        </Animated.View>
       ) : null}
     </View>
   );

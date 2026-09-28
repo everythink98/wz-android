@@ -1,8 +1,9 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
-import { memo, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, type RefObject, useCallback, useEffect, useState } from 'react';
 import { type NativeScrollEvent, type NativeSyntheticEvent, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
+import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
 import type { FlashListRef } from '@shopify/flash-list';
 import { ChevronLeft, MoreHorizontal, SquarePen, Star } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
@@ -37,6 +38,7 @@ const AnimatedSafeAreaView = Animated.createAnimatedComponent(SafeAreaView);
 
 export const TopicScreen = memo(function TopicScreen({
   active = true,
+  composerRouteFocused = active,
   actions,
   article,
   bodyMediaPaused = false,
@@ -52,6 +54,7 @@ export const TopicScreen = memo(function TopicScreen({
   topicScrollRef
 }: {
   active?: boolean;
+  composerRouteFocused?: boolean;
   actions: TopicActionsController;
   article: {
     busy: boolean;
@@ -61,6 +64,7 @@ export const TopicScreen = memo(function TopicScreen({
   };
   bodyMediaPaused?: boolean;
   chrome: {
+    editTopic?: () => void;
     favorite: boolean;
     getDiscourseEmojiUrls: (options: {
       signal?: AbortSignal;
@@ -99,15 +103,17 @@ export const TopicScreen = memo(function TopicScreen({
   const itemSource = topic?.source;
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const [replyActionHeight, setReplyActionHeight] = useState(0);
-  const [replyActionVisible, setReplyActionVisible] = useState(true);
-  const replyScrollRef = useRef<{ offset: number; anchor: number; direction: number } | null>(null);
   const replyComposerIntent = state.replyComposerIntent;
   const replyComposerOpen = replyComposerIntent.kind !== 'closed';
-  const replyActionHidden = replyComposerOpen || !active || !replyActionVisible;
-  const replyActionAnimation = useAnimatedStyle(() => ({
-    opacity: withTiming(replyActionHidden ? 0 : 1, { duration: 160 }),
-    transform: [{ translateY: withTiming(replyActionHidden ? 8 : 0, { duration: 160 }) }]
-  }));
+  const {
+    hidden: replyActionHidden,
+    animatedStyle: replyActionAnimation,
+    onScroll: updateReplyActionForScroll
+  } = useScrollActionVisibility({
+    active,
+    paused: replyComposerOpen,
+    resetKey: `${item?.source}:${item?.id}`
+  });
   const discourseEmojiSource = active && isDiscourseSource(itemSource) ? itemSource : null;
   const { data: discourseEmojiData, refetch: refetchDiscourseEmojiUrls } = useQuery({
     queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
@@ -125,32 +131,6 @@ export const TopicScreen = memo(function TopicScreen({
   useEffect(() => {
     setTopicMenuOpen(false);
   }, [item?.id, item?.source]);
-  useEffect(() => {
-    replyScrollRef.current = null;
-    setReplyActionVisible(true);
-  }, [active, item?.id, item?.source]);
-
-  const updateReplyActionForScroll = useCallback(
-    ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (!active || replyComposerOpen) return;
-      const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
-      const maxOffset = Math.max(0, contentSize.height - layoutMeasurement.height);
-      const offset = Math.max(0, Math.min(contentOffset.y, maxOffset));
-      const previous = replyScrollRef.current;
-      if (!previous) {
-        replyScrollRef.current = { offset, anchor: offset, direction: 0 };
-        return;
-      }
-      if (offset === previous.offset) return;
-      const direction = Math.sign(offset - previous.offset);
-      const anchor = direction === previous.direction ? previous.anchor : previous.offset;
-      replyScrollRef.current = { offset, anchor, direction };
-      if (offset > 12 && Math.abs(offset - anchor) < 12) return;
-      const visible = offset <= 12 || direction < 0;
-      if (visible !== replyActionVisible) setReplyActionVisible(visible);
-    },
-    [active, replyActionVisible, replyComposerOpen]
-  );
 
   const runTopicMenuAction = useCallback((action: () => void) => {
     setTopicMenuOpen(false);
@@ -265,6 +245,7 @@ export const TopicScreen = memo(function TopicScreen({
       {canWrite ? (
         <AnimatedSafeAreaView
           edges={['bottom']}
+          needsOffscreenAlphaCompositing
           pointerEvents={replyActionHidden ? 'none' : 'box-none'}
           style={[styles.replyActionPosition, replyActionAnimation]}
           onLayout={(event) => setReplyActionHeight(event.nativeEvent.layout.height)}
@@ -286,6 +267,7 @@ export const TopicScreen = memo(function TopicScreen({
         </AnimatedSafeAreaView>
       ) : null}
       <TopicMenu
+        onEditTopic={chrome.editTopic}
         onOpenOpening={item.source === 'linuxdo' ? () => chrome.openTopic(item, { kind: 'opening' }) : undefined}
         onOpenOriginal={chrome.openOriginal}
         onOpenReadingSettings={chrome.openReadingSettings}
@@ -300,13 +282,14 @@ export const TopicScreen = memo(function TopicScreen({
       />
       <ReplyComposerSheet
         actionBusy={actionBusy}
+        uploadingImage={actions.replyImageUploading}
         discourseEmojiUrls={discourseEmojiUrls}
         intent={replyComposerIntent}
         nodeSeekMemberId={nodeSeekUserId ? String(nodeSeekUserId) : undefined}
         pendingNodeSeekPolls={state.replyPendingNodeSeekPolls}
         replyContent={state.replyContent}
         replyFace={state.replyFace}
-        routeActive={active}
+        routeActive={composerRouteFocused}
         source={topic?.source}
         styles={styles}
         theme={theme}

@@ -632,6 +632,7 @@ function HtmlRendererIdentityHarness({
 }
 
 function TopicFilterHarness({
+  active = true,
   canUseLinuxDoActions = false,
   canUseNodeSeekActions = false,
   canUseYaohuoActions = false,
@@ -658,6 +659,7 @@ function TopicFilterHarness({
   onYaohuoFavorite = jest.fn(),
   onVerifyNodeSeek = jest.fn(),
   onVerifyLinuxDo = jest.fn(),
+  composerRouteFocused = active,
   onVotePoll = jest.fn(),
   onDiscourseBookmark = jest.fn(),
   onToggleTopicBodyQuote = jest.fn(),
@@ -685,6 +687,7 @@ function TopicFilterHarness({
   targetReplyRequestId,
   yaohuoVisualBookmarked
 }: {
+  active?: boolean;
   canUseLinuxDoActions?: boolean;
   canUseNodeSeekActions?: boolean;
   canUseYaohuoActions?: boolean;
@@ -711,6 +714,7 @@ function TopicFilterHarness({
   onYaohuoFavorite?: () => void;
   onVerifyNodeSeek?: () => void;
   onVerifyLinuxDo?: () => void;
+  composerRouteFocused?: boolean;
   onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
   onDiscourseBookmark?: () => void;
   onToggleTopicBodyQuote?: (options: ToggleTopicBodyQuoteOptions) => void;
@@ -776,6 +780,7 @@ function TopicFilterHarness({
   }) satisfies TopicActionDecisionFor;
   const actions = {
     actionBusy: false,
+    replyImageUploading: false,
     bookmarkOnDiscourseSite: async () => onDiscourseBookmark(),
     collectOnNodeSeekSite: async () => undefined,
     decisionFor,
@@ -863,6 +868,8 @@ function TopicFilterHarness({
     <QueryTestWrapper>
       <View>
         <TopicScreen
+          active={active}
+          composerRouteFocused={composerRouteFocused}
           actions={actions}
           article={{
             busy: topicBusy,
@@ -3851,9 +3858,11 @@ describe('Topic reply filters', () => {
   it('reserves room for the floating reply action and keeps the reading layout and draft during composition', async () => {
     const writableTopic: TopicDetail = { ...topic, source: 'linuxdo', url: 'https://linux.do/t/1' };
     const hook = await renderHook(() => useTopicSessionController({ notify: jest.fn(), topic: writableTopic }));
-    const screen = () => (
+    const screen = (appActive = true) => (
       <TopicFilterHarness
+        active={appActive}
         canUseLinuxDoActions
+        composerRouteFocused
         selectedTopic={writableTopic}
         topicDetail={writableTopic}
         sessionOverride={hook.result.current}
@@ -3872,6 +3881,11 @@ describe('Topic reply filters', () => {
     expect(mockReplyComposerSheet.mock.lastCall?.[0]).toEqual(
       expect.objectContaining({ visible: true, intent: { kind: 'new' } })
     );
+    await view.rerender(screen(false));
+    expect(mockReplyComposerSheet.mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({ visible: true, routeActive: true })
+    );
+    await view.rerender(screen());
     expect(view.queryByLabelText('写回复')).toBeNull();
     const hiddenEntry = view.getByLabelText('写回复', { includeHiddenElements: true });
     expect(hiddenEntry).toBeDisabled();

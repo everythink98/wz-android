@@ -26,6 +26,9 @@ import { notificationPermissionGranted } from '@/platform/notifications/notifica
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { NotificationAdapter, NotificationAdapterAccess } from '@/sources/notificationAdapter';
 import { createNotificationGateway } from '@/sources/notificationGateway';
+import * as uploadImagePreparation from '@/platform/media/prepareUploadImage';
+import { MessageSubmissionFixture } from '../composerMessageFixture';
+import { COMPOSER_DRAFT, createComposerTransport } from '../composerSubmissionFixture';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { act, fireEvent, render, waitFor } from '../render';
 
@@ -2284,6 +2287,48 @@ describe('notification routes', () => {
     await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Other'));
     expect(signal.aborted).toBe(true);
     expect(view.queryByLabelText('私信回复内容')).toBeNull();
+  });
+
+  it('lets the private-message fixture pick and mock-upload an image without sending or losing the draft on cancellation', async () => {
+    appQueryClient.clear();
+    mockGetDocumentAsync.mockReset();
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///reply.png', name: 'reply.png', mimeType: 'image/png', size: 512, lastModified: 0 }]
+    });
+    const transport = createComposerTransport('success', false, 0, true);
+    const prepareImage = jest
+      .spyOn(uploadImagePreparation, 'prepareUploadImage')
+      .mockImplementation(async (file) => ({ file: { ...file, size: 512 }, cleanup() {} }));
+    const realNetwork = jest.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      throw new Error('The composer fixture must not use the real network');
+    });
+    const view = await render(<MessageSubmissionFixture transport={transport} />, { wrapper: QueryTestWrapper });
+    try {
+      await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
+      await fireEvent.press(view.getByLabelText('发私信'));
+      await fireEvent.changeText(view.getByLabelText('私信回复内容'), COMPOSER_DRAFT);
+      await fireEvent.press(view.getByLabelText('测试上传图片'));
+      await waitFor(() => expect(mockGetDocumentAsync).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(transport.uploads).toBe(1));
+      const uploadedDraft = `${COMPOSER_DRAFT}![reply.png](https://example.invalid/composer-proof.png)`;
+      expect(view.getByLabelText('私信回复内容').props.value).toBe(uploadedDraft);
+      expect(view.getByText('图片已插入草稿')).toBeTruthy();
+
+      mockGetDocumentAsync.mockResolvedValueOnce({ canceled: true, assets: null });
+      await fireEvent.press(view.getByLabelText('测试上传图片'));
+      await waitFor(() => expect(mockGetDocumentAsync).toHaveBeenCalledTimes(2));
+      expect(view.getByLabelText('私信回复内容').props.value).toBe(uploadedDraft);
+      expect(transport.uploads).toBe(1);
+      expect(transport.requests).toHaveLength(0);
+      expect(transport.confirmations).toBe(0);
+      expect(realNetwork).not.toHaveBeenCalled();
+    } finally {
+      await view.unmount();
+      transport.dispose();
+      prepareImage.mockRestore();
+      realNetwork.mockRestore();
+    }
   });
 
   it('gates private-message image picking, inserts markup without sending, and ignores duplicate or canceled picks', async () => {

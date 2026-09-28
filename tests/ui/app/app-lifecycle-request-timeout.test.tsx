@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import { AppState, type AppStateStatus, type NativeEventSubscription } from 'react-native';
+import { useLayoutEffect } from 'react';
 import { useAppLifecycleRuntime } from '@/app/useAppLifecycleRuntime';
 import { fetchWithTimeout, RequestTimeoutError } from '@/platform/network/request';
 import { userPresent } from '@/platform/network/userPresence';
@@ -31,6 +32,24 @@ describe('App lifecycle request timeout', () => {
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it('adopts a foreground transition that happens before the lifecycle listener mounts', async () => {
+    const originalState = AppState.currentState;
+    AppState.currentState = 'background';
+    const runtime = await renderHook(() => {
+      const lifecycle = useAppLifecycleRuntime();
+      useLayoutEffect(() => {
+        AppState.currentState = 'active';
+      }, []);
+      return lifecycle;
+    });
+    try {
+      expect(runtime.result.current.appActive).toBe(true);
+    } finally {
+      await runtime.unmount();
+      AppState.currentState = originalState;
+    }
   });
 
   it('renews presence on foreground startup and resume without letting rerenders renew it', async () => {

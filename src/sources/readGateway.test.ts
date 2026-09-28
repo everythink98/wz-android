@@ -13,8 +13,200 @@ import { createReadGateway, getTopic } from './readGateway';
 import type { Topic } from '@/domain/forum/models';
 import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
+import { createLinuxDoWebViewFallbackFetcher } from '@/sources/linuxdo/browserFallback';
+import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { RequestCanceledError } from '@/platform/network/request';
 
 describe('source gateway reads', () => {
+  it.each([
+    { path: '/site.json', status: 400, recheck: true },
+    { path: '/session/current.json', status: 400, recheck: true },
+    { path: '/latest', status: 400, recheck: true },
+    { path: '/session/current.json', status: 200, recheck: true },
+    { path: '/latest', status: 400, challenge: true, recheck: false },
+    { path: '/site.json', status: 403, recheck: false },
+    { path: '/latest', status: 503, recheck: false },
+    { path: '/site.json', status: 400, edit: true, recheck: true }
+  ])('rechecks the account only for suspect composer rules: %j', async (scenario) => {
+    const requestAccountRecheck = vi.fn();
+    const onSessionExpired = vi.fn();
+    const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === scenario.path)
+        return scenario.challenge
+          ? new Response('<title>Just a moment...</title>', {
+              status: scenario.status,
+              headers: { 'Content-Type': 'text/html' }
+            })
+          : Response.json(scenario.status === 200 ? { current_user: null } : { errors: ['分类读取失败'] }, {
+              status: scenario.status
+            });
+      if (pathname === '/latest')
+        return new Response(
+          `<script id="data-preloaded" type="application/json">${JSON.stringify({ siteSettings: { authorized_extensions: 'png' } })}</script>`
+        );
+      if (pathname === '/t/1.json')
+        return Response.json({
+          id: 1,
+          title: '原帖',
+          details: { can_edit: true },
+          post_stream: { posts: [{ id: 2, post_number: 1 }] }
+        });
+      if (pathname === '/posts/2.json')
+        return Response.json({ id: 2, topic_id: 1, post_number: 1, user_id: 7, raw: '原文', can_edit: true });
+      return Response.json(
+        pathname === '/site.json'
+          ? { categories: [{ id: 4, name: '技术', permission: 1 }] }
+          : { current_user: { id: 7, trust_level: 2 } }
+      );
+    });
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      nodeSeekUserAgent: () => 'test',
+      requestAccountRecheck,
+      onSessionExpired,
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityKey: 'linuxdo:7',
+        identityTrust: 'confirmed',
+        sessionEpoch: 4,
+        sourceEnabled: true
+      })
+    });
+    const failure = await (
+      scenario.edit
+        ? gateway.getTopicEditContext({ source: 'linuxdo', topicId: '1', identityKey: 'linuxdo:7', userAgent: 'test' })
+        : gateway.getLinuxDoTopicCreationContext({ source: 'linuxdo' })
+    ).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toMatchObject(
+      scenario.status === 200
+        ? { loginRequired: true }
+        : { status: scenario.status, ...(scenario.challenge ? { kind: 'verification-required' } : {}) }
+    );
+    if (scenario.status === 400 && !scenario.challenge) expect(failure).toHaveProperty('kind', 'ordinary');
+    expect(requestAccountRecheck).toHaveBeenCalledTimes(Number(scenario.recheck));
+    if (scenario.recheck)
+      expect(requestAccountRecheck).toHaveBeenCalledWith('linuxdo', 4, expect.stringMatching(/^trace-/));
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(scenario.edit ? 5 : 3);
+    for (const [, init] of fetcher.mock.calls) expect(init?.method || 'GET').toBe('GET');
+  });
+
+  it('discards a composer HTTP 400 received after the request is canceled during body reading', async () => {
+    let body!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          body = controller;
+        }
+      }),
+      { status: 400 }
+    );
+    const readBody = vi.spyOn(response, 'text');
+    const requestAccountRecheck = vi.fn();
+    const onSessionExpired = vi.fn();
+    const fetcher = vi.fn(async (url: string) =>
+      url.endsWith('/site.json')
+        ? response
+        : url.endsWith('/latest')
+          ? new Response('<html></html>')
+          : Response.json({ current_user: { id: 7, trust_level: 2 } })
+    );
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      nodeSeekUserAgent: () => 'test',
+      requestAccountRecheck,
+      onSessionExpired,
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityKey: 'linuxdo:7',
+        identityTrust: 'confirmed',
+        sessionEpoch: 4,
+        sourceEnabled: true
+      })
+    });
+    const abort = new AbortController();
+    const result = gateway
+      .getLinuxDoTopicCreationContext({ source: 'linuxdo', signal: abort.signal })
+      .catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(readBody).toHaveBeenCalledOnce());
+      abort.abort();
+    } finally {
+      body.enqueue(new TextEncoder().encode(JSON.stringify({ errors: ['分类读取失败'] })));
+      body.close();
+    }
+    const failure = await result;
+    expect.soft(requestAccountRecheck).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(failure).toBeInstanceOf(RequestCanceledError);
+  });
+
+  it('recovers authenticated creation rules through the existing browser fallback without sending writes', async () => {
+    const native = vi.fn(async (url: string, _init?: RequestInit) =>
+      url.endsWith('/latest')
+        ? new Response('<html><title>Just a moment...</title></html>', {
+            status: 403,
+            headers: { 'Content-Type': 'text/html' }
+          })
+        : Response.json(
+            url.endsWith('/site.json')
+              ? { categories: [{ id: 4, name: '技术', permission: 1 }] }
+              : { current_user: { id: 1, trust_level: 2 } }
+          )
+    );
+    const preload = JSON.stringify({ siteSettings: JSON.stringify({ authorized_extensions: 'png|pdf' }) });
+    const browser = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(`<script id="data-preloaded" type="application/json">${preload}</script>`)
+    );
+    let authenticated = true;
+    const gateway = createReadGateway({
+      anonymousFetcher: native,
+      fetcher: createLinuxDoWebViewFallbackFetcher({ defaultFetcher: native, webViewFetcher: browser }),
+      linuxDoUserAgent: () => 'current-account-agent',
+      nodeSeekUserAgent: () => 'test',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated,
+        authSurfaceOpen: false,
+        identityKey: 'alice',
+        identityTrust: authenticated ? 'confirmed' : 'none',
+        sessionEpoch: 1,
+        sourceEnabled: true
+      })
+    });
+    await expect(gateway.getLinuxDoTopicCreationContext({ source: 'linuxdo' })).resolves.toMatchObject({
+      source: 'linuxdo',
+      categories: [{ id: '4', canCreate: true }],
+      allowedExtensions: ['png', 'pdf']
+    });
+    expect(native).toHaveBeenCalledTimes(3);
+    expect(browser).toHaveBeenCalledTimes(1);
+    expect(browser.mock.calls[0]?.[0]).toBe('https://linux.do/latest');
+    for (const [, init] of [...native.mock.calls, ...browser.mock.calls]) {
+      expect(init?.method || 'GET').toBe('GET');
+      expect(init?.credentials).toBe('include');
+      expect(new Headers(init?.headers).get('User-Agent')).toBe('current-account-agent');
+      expect(browserFetchIntentFromInit(init)).toEqual({ owner: 'topic', priority: 'foreground' });
+    }
+    native.mockClear();
+    browser.mockClear();
+    authenticated = false;
+    await expect(gateway.getLinuxDoTopicCreationContext({ source: 'linuxdo' })).rejects.toMatchObject({
+      loginRequired: true
+    });
+    expect(native).not.toHaveBeenCalled();
+    expect(browser).not.toHaveBeenCalled();
+  });
+
   it('ends aggregate pagination after readable sources finish while yaohuo is anonymous', async () => {
     const fetcher = vi.fn(async () => Response.json({ topic_list: { topics: [] }, categories: [] }));
     const gateway = createReadGateway({

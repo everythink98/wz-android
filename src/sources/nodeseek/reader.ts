@@ -98,7 +98,6 @@ interface NodeSeekOptions {
   fetcher?: Fetcher;
   nodeSeekUserAgent?: string;
   cursor?: string | null;
-  cursorType?: 'topics' | 'replies';
   signal?: AbortSignal;
   timeoutMs?: number;
   browserFetchIntent?: BrowserFetchIntent;

@@ -6,6 +6,18 @@ function json(value: unknown) {
 }
 
 describe('LinuxDo poll capabilities', () => {
+  it.each([
+    { trust_level: 0, can_create_poll: true },
+    { trust_level: 2, can_create_poll: false }
+  ])('uses the server poll permission for $can_create_poll regardless of trust level', (current_user) => {
+    const site = { site_settings: { poll_enabled: true, poll_minimum_trust_level_to_create: 1 } };
+    expect(normalizeLinuxDoPollCapabilities(site, { current_user }).canCreate).toBe(current_user.can_create_poll);
+    expect(normalizeLinuxDoPollCapabilities({}, { current_user }).canCreate).toBe(current_user.can_create_poll);
+    expect(
+      normalizeLinuxDoPollCapabilities({ site_settings: { poll_enabled: false } }, { current_user }).canCreate
+    ).toBe(false);
+  });
+
   it('keeps bounded site groups, excludes everyone and reads the current staff permission', () => {
     expect(
       normalizeLinuxDoPollCapabilities(

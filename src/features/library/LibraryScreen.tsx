@@ -207,6 +207,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   const userListRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const favoriteCategoryMenuTriggerRef = useRef<View>(null);
   const historyCategoryMenuTriggerRef = useRef<View>(null);
+  const categoryMenuRequestRef = useRef(0);
   const [categoryMenuTab, setCategoryMenuTab] = useState<'favorites' | 'history' | null>(null);
   const [categoryMenuPlacement, setCategoryMenuPlacement] = useState<ViewStyle>({
     position: 'absolute',
@@ -245,6 +246,16 @@ export const LibraryScreen = memo(function LibraryScreen({
     [favoriteRecords]
   );
   const historyListItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(historyRecords), [historyRecords]);
+  const closeCategoryMenu = useCallback(() => {
+    categoryMenuRequestRef.current += 1;
+    setCategoryMenuTab(null);
+  }, []);
+  useEffect(() => {
+    closeCategoryMenu();
+    return () => {
+      categoryMenuRequestRef.current += 1;
+    };
+  }, [active, categoryItems, closeCategoryMenu, libraryTab, windowHeight]);
   const scrollLibraryToTop = useCallback((tab: LibraryTab) => {
     const listRef = tab === 'favorites' ? favoriteListRef : tab === 'history' ? historyListRef : userListRef;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -262,7 +273,7 @@ export const LibraryScreen = memo(function LibraryScreen({
     if (value === libraryTab) return;
     const nextTab = value as LibraryTab;
     setMountedTabs((current) => (current.includes(nextTab) ? current : [...current, nextTab]));
-    setCategoryMenuTab(null);
+    closeCategoryMenu();
     setSourceFilter('all');
     setCategoryFilter('all');
     scrollLibraryToTop(nextTab);
@@ -271,17 +282,19 @@ export const LibraryScreen = memo(function LibraryScreen({
   });
   const changeSourceFilter = useCallback(
     (value: string) => {
-      setCategoryMenuTab(null);
+      closeCategoryMenu();
       setSourceFilter(value as FeedSource);
     },
-    [setSourceFilter]
+    [closeCategoryMenu, setSourceFilter]
   );
   const openCategoryMenu = useCallback(
     (tab: 'favorites' | 'history') => {
-      if (categoryItems.length <= 1) return;
-      setCategoryMenuTab(tab);
+      if (!active || categoryItems.length <= 1) return;
+      closeCategoryMenu();
+      const request = categoryMenuRequestRef.current;
       const triggerRef = tab === 'favorites' ? favoriteCategoryMenuTriggerRef : historyCategoryMenuTriggerRef;
       triggerRef.current?.measureInWindow((x, y, _width, height) => {
+        if (categoryMenuRequestRef.current !== request) return;
         const margin = 8;
         const opensAbove = y + height / 2 > windowHeight / 2;
         setCategoryMenuPlacement({
@@ -291,25 +304,25 @@ export const LibraryScreen = memo(function LibraryScreen({
           maxHeight: Math.max(160, opensAbove ? y - margin : windowHeight - y - height - margin),
           minWidth: 180
         });
+        setCategoryMenuTab(tab);
       });
     },
-    [categoryItems.length, windowHeight]
+    [active, categoryItems.length, closeCategoryMenu, windowHeight]
   );
-  const closeCategoryMenu = useCallback(() => setCategoryMenuTab(null), []);
   const selectCategory = useCallback(
     (value: string) => {
-      setCategoryMenuTab(null);
+      closeCategoryMenu();
       setCategoryFilter(value);
     },
-    [setCategoryFilter]
+    [closeCategoryMenu, setCategoryFilter]
   );
   useEffect(() => {
     if (sourceFilter !== 'all' && !enabledSourceSet.has(sourceFilter as Source)) {
-      setCategoryMenuTab(null);
+      closeCategoryMenu();
       setSourceFilter('all');
       setCategoryFilter('all');
     }
-  }, [enabledMembershipKey, enabledSourceSet, sourceFilter, setSourceFilter, setCategoryFilter]);
+  }, [closeCategoryMenu, enabledMembershipKey, enabledSourceSet, sourceFilter, setSourceFilter, setCategoryFilter]);
   useEffect(() => {
     if (effectiveCategoryFilter !== 'all' && !categoryItems.some((item) => item.value === effectiveCategoryFilter)) {
       setCategoryFilter('all');

@@ -326,10 +326,13 @@ describe('linux.do reader', () => {
     );
 
     const [categories, feed] = await Promise.all([
-      getLinuxDoCategories({ categoryCacheScope: 'public:omit', fetcher }),
-      getLinuxDoFeed({ categoryCacheScope: 'public:omit', fetcher, limit: 1 })
+      getLinuxDoCategories({ linuxDoAccess: { categoryCacheScope: 'public:omit' }, fetcher }),
+      getLinuxDoFeed({ linuxDoAccess: { categoryCacheScope: 'public:omit' }, fetcher, limit: 1 })
     ]);
-    const cachedCategories = await getLinuxDoCategories({ categoryCacheScope: 'public:omit', fetcher });
+    const cachedCategories = await getLinuxDoCategories({
+      linuxDoAccess: { categoryCacheScope: 'public:omit' },
+      fetcher
+    });
 
     expect(categories.items).toEqual([expect.objectContaining({ id: '5', name: 'Performance' })]);
     expect(cachedCategories.items).toEqual(categories.items);
@@ -348,8 +351,8 @@ describe('linux.do reader', () => {
       });
     });
 
-    const accountA = await getLinuxDoCategories({ categoryCacheScope: 'authenticated:1', fetcher });
-    const accountB = await getLinuxDoCategories({ categoryCacheScope: 'authenticated:2', fetcher });
+    const accountA = await getLinuxDoCategories({ linuxDoAccess: { categoryCacheScope: 'authenticated:1' }, fetcher });
+    const accountB = await getLinuxDoCategories({ linuxDoAccess: { categoryCacheScope: 'authenticated:2' }, fetcher });
 
     expect(accountA.items[0]?.name).toBe('Account A');
     expect(accountB.items[0]?.name).toBe('Account B');

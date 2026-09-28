@@ -104,6 +104,7 @@ export function useAppLifecycleRuntime() {
 
   useEffect(() => {
     const initialActive = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
+    setAppActive(initialActive);
     recordUserInteraction();
     focusManager.setFocused(initialActive);
     const subscription = AppState.addEventListener('change', (next) => {

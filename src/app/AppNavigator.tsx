@@ -56,7 +56,7 @@ function MainTabsHost({
       screenOptions={({ route }) => {
         const item = tabNavItems.find((entry) => entry.value === route.name) || tabNavItems[0];
         return {
-          freezeOnBlur: true,
+          freezeOnBlur: route.name !== 'feed' && route.name !== 'search',
           headerShown: false,
           tabBarShowLabel: false,
           tabBarStyle: styles.nav,
@@ -95,6 +95,7 @@ export const AppNavigator = memo(function AppNavigator({
   getReadingSettingsRoute,
   getSearchRoute,
   getTopicRoute,
+  getTopicComposerRoute,
   getUserRoute,
   styles,
   theme,
@@ -112,6 +113,7 @@ export const AppNavigator = memo(function AppNavigator({
   getReadingSettingsRoute: () => ComponentType;
   getSearchRoute: () => ComponentType;
   getTopicRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'Topic'>>;
+  getTopicComposerRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'TopicComposer'>>;
   getUserRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'User'>>;
   styles: AppStyles;
   theme: ReaderTheme;
@@ -165,6 +167,7 @@ export const AppNavigator = memo(function AppNavigator({
           )}
         </Stack.Screen>
         <Stack.Screen name="Topic" getComponent={getTopicRoute} />
+        <Stack.Screen name="TopicComposer" getComponent={getTopicComposerRoute} />
         <Stack.Screen
           name="Notifications"
           getComponent={getNotificationsRoute}

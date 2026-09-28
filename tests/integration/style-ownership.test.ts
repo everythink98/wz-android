@@ -10,6 +10,9 @@ import { createMoreStyles } from '@/features/more/styles';
 import { createNotificationStyles } from '@/features/notifications/styles';
 import { createScreenTopBarStyles } from '@/ui/controls/ScreenTopBar';
 
+// These checks exercise style factories; native providers are exercised by the UI suites.
+vi.mock('@/ui/theme/ReaderStyleProvider', () => ({ useReaderThemeStyles: vi.fn() }));
+
 vi.mock('react-native', () => ({
   Platform: {
     OS: 'android',

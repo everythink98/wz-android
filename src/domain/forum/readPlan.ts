@@ -9,6 +9,8 @@ export type ForumReadOperation =
   | 'replies'
   | 'reply'
   | 'emoji'
+  | 'topic-creation-context'
+  | 'topic-edit-context'
   | 'user-profile'
   | 'user-resolution'
   | 'search-tags'

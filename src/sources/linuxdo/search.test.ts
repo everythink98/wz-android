@@ -9,15 +9,18 @@ function searchResponse() {
 }
 
 describe('linux.do search', () => {
-  it('refuses anonymous adapter search without a transport call', async () => {
-    const fetcher = vi.fn();
+  it.each([undefined, {}, { authenticated: false }])(
+    'refuses search without authenticated proof %j before transport',
+    async (linuxDoAccess) => {
+      const fetcher = vi.fn();
 
-    await expect(searchLinuxDo('performance', { fetcher })).rejects.toMatchObject({
-      kind: 'login-required',
-      source: 'linuxdo'
-    });
-    expect(fetcher).not.toHaveBeenCalled();
-  });
+      await expect(searchLinuxDo('performance', { fetcher, linuxDoAccess })).rejects.toMatchObject({
+        kind: 'login-required',
+        source: 'linuxdo'
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not reuse a CSRF token after the authenticated transport changes', async () => {
     const firstFetcher = vi.fn(async (input: string, _init?: RequestInit) =>
@@ -32,8 +35,8 @@ describe('linux.do search', () => {
     );
     const access = { authenticated: true, userAgent: 'LinuxDo WebView UA' };
 
-    await searchLinuxDo('first account', { authenticated: true, fetcher: firstFetcher, linuxDoAccess: access });
-    await searchLinuxDo('second account', { authenticated: true, fetcher: secondFetcher, linuxDoAccess: access });
+    await searchLinuxDo('first account', { fetcher: firstFetcher, linuxDoAccess: access });
+    await searchLinuxDo('second account', { fetcher: secondFetcher, linuxDoAccess: access });
 
     expect(secondFetcher).toHaveBeenCalledTimes(2);
     expect(secondFetcher.mock.calls[0]?.[0]).toBe('https://linux.do/session/csrf.json');
@@ -62,7 +65,6 @@ describe('linux.do search', () => {
     );
 
     const result = await searchLinuxDo('performance', {
-      authenticated: true,
       fetcher,
       limit: 30,
       linuxDoAccess: { authenticated: true, userAgent: 'LinuxDo WebView UA' }

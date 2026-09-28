@@ -11,7 +11,7 @@ import {
 } from '@/domain/session/writableSessionGate';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
-import type { Fetcher } from '@/platform/network/request';
+import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
@@ -24,7 +24,12 @@ export type ComposerEntry = 'reply' | 'floor' | 'edit' | 'message';
 export const COMPOSER_DRAFT = 'Local mock reply; never sent.';
 
 // HTTP/adapter boundary only. The callers, mutation, parser and composer remain production code.
-export function createComposerTransport(outcome: ComposerOutcome = 'success', hold = false, delayMs = 0) {
+export function createComposerTransport(
+  outcome: ComposerOutcome = 'success',
+  hold = false,
+  delayMs = 0,
+  allowUploads = false
+) {
   const requests: { path: string; method: string; body: string }[] = [];
   const waiters = new Set<() => void>();
   let stopped = false;
@@ -34,6 +39,7 @@ export function createComposerTransport(outcome: ComposerOutcome = 'success', ho
     requests,
     confirmations: 0,
     refreshes: 0,
+    uploads: 0,
     delayMs,
     onChange: () => {},
     setObserver(observer: () => void) {
@@ -80,6 +86,25 @@ export function createComposerTransport(outcome: ComposerOutcome = 'success', ho
     fetcher: (async (input, init) => {
       const url = new URL(input);
       const method = init?.method || 'GET';
+      if (
+        allowUploads &&
+        method === 'POST' &&
+        ((url.origin === 'https://api.nodeimage.com' && url.pathname === '/api/upload') ||
+          (url.origin === 'https://linux.do' && url.pathname === '/uploads.json') ||
+          url.href === 'https://file.sang.pub/api/upload')
+      ) {
+        prepareRequestToSend(init);
+        await transport.respond(init?.signal);
+        transport.uploads++;
+        transport.onChange();
+        return new Response(
+          JSON.stringify(
+            url.href === 'https://file.sang.pub/api/upload'
+              ? { code: 200, data: 'https://example.invalid/composer-proof.png' }
+              : { url: 'https://example.invalid/composer-proof.png' }
+          )
+        );
+      }
       if (url.origin === 'https://linux.do' && url.pathname === '/session/csrf' && method === 'GET')
         return new Response(JSON.stringify({ csrf: 'synthetic-csrf' }));
       if (url.origin === 'https://www.yaohuo.me' && url.pathname === '/bbs-42.html' && method === 'GET')
@@ -143,6 +168,7 @@ export function TopicSubmissionFixture({
   topicId = '42',
   epoch = 0,
   active = true,
+  routeActive = active,
   reopenAfterSuccess = false
 }: {
   source?: SessionSite;
@@ -152,6 +178,7 @@ export function TopicSubmissionFixture({
   topicId?: string;
   epoch?: number;
   active?: boolean;
+  routeActive?: boolean;
   reopenAfterSuccess?: boolean;
 }) {
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
@@ -278,6 +305,10 @@ export function TopicSubmissionFixture({
       </View>
       <ReplyComposerSheet
         actionBusy={actions.actionBusy}
+        discourseEmojiUrls={{
+          smile: 'https://linux.do/images/emoji/twitter/smile.png',
+          heart: 'https://linux.do/images/emoji/twitter/heart.png'
+        }}
         intent={state.replyComposerIntent}
         replyContent={state.replyContent}
         replyFace={state.replyFace}
@@ -286,14 +317,16 @@ export function TopicSubmissionFixture({
         styles={styles}
         theme={theme}
         visible={visible}
-        routeActive={active}
+        routeActive={routeActive}
         pendingNodeSeekPolls={state.replyPendingNodeSeekPolls}
         onReplyComposerOpenChange={commands.composer.toggle}
         onReplyContentChange={commands.composer.changeContent}
         onReplyFaceChange={commands.composer.changeFace}
         onReplySnapshot={commands.composer.changeSnapshot}
         onSubmitReply={actions.submitReply}
-        onUploadReplyImage={actions.uploadReplyImage}
+        onUploadReplyImage={
+          source === 'linuxdo' || source === 'nodeseek' ? actions.uploadReplyImageMarkup : actions.uploadReplyImage
+        }
       />
     </View>
   );

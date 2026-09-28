@@ -129,7 +129,7 @@ export function FloatingIconButton({
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
       disabled={disabled}
-      style={[styles.floating, disabled && styles.disabled]}
+      style={styles.floating}
       onPress={() => {
         recordUserInteraction();
         onPress();

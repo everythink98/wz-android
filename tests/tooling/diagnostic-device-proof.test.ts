@@ -4,11 +4,9 @@ import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  diagnosticProofFixture,
-  selectDiagnosticProofSerial,
-  verifyDiagnosticProof
-} from '../../scripts/run-diagnostic-device-proof.mjs';
+import { selectDiagnosticProofSerial, verifyDiagnosticProof } from '../../scripts/run-diagnostic-device-proof.mjs';
+
+import { deviceProofFixture } from '../../scripts/device-proof-build.mjs';
 
 const require = createRequire(import.meta.url);
 const { SourceMapGenerator } = require('source-map');
@@ -108,7 +106,11 @@ describe('isolated diagnostic device proof', () => {
   });
 
   it('confines the alternate entry, debuggable manifest and Java crash activity to a temporary release overlay', () => {
-    const fixture = diagnosticProofFixture('C:/src/wz-android/android', 'C:/src/wz-android/.codex-tmp/proof-123');
+    const fixture = deviceProofFixture('C:/src/wz-android/android', 'C:/src/wz-android/.codex-tmp/proof-123', {
+      entryFile: 'dev/diagnostics-proof/index.tsx',
+      scheme: 'wzdiag',
+      javaFault: true
+    });
     expect(fixture.init).toContain('afterEvaluate');
     expect(fixture.init).toContain('dev/diagnostics-proof/index.tsx');
     expect(fixture.init).toContain("getByName('release')");

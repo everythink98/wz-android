@@ -96,19 +96,20 @@ export function MessageReplyComposerSheet({
   }, [handleClose, routeActive, visible]);
   return (
     <ComposerBottomSheet
+      active={routeActive}
       backgroundStyle={styles.background}
       containerStyle={styles.container}
       contentStyle={styles.content}
       dark={theme.dark}
       fixedContent={structured}
       presentation={presentation}
-      visible={visible && routeActive}
+      visible={visible}
       onOpenChange={(open) => {
         if (!open) handleClose();
       }}
       onPresentationChange={setPresentation}
     >
-      {(focusSignal) =>
+      {(focusSignal, awaitKeyboardSettled) =>
         structured ? (
           <StructuredReplyComposer
             ref={structuredRef}
@@ -140,6 +141,7 @@ export function MessageReplyComposerSheet({
             }}
             onSubmit={onSubmit}
             onUploadImage={onUploadImage}
+            awaitKeyboardSettled={awaitKeyboardSettled}
             onUseLinuxDoTemplate={onUseLinuxDoTemplate}
           />
         ) : source === 'yaohuo' && format === 'plain-text' ? (
@@ -162,6 +164,7 @@ export function MessageReplyComposerSheet({
             }}
             onSubmit={() => onSubmit()}
             onUploadImage={onUploadImage}
+            awaitKeyboardSettled={awaitKeyboardSettled}
           />
         ) : null
       }

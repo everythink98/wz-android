@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import apkSigning from './apk-signing.cjs';
 
 const usage =
-  'Usage: node scripts/run-network-image-instrumented-tests.mjs [--platform-exports | --platform-export-ui | --platform-file-faults | --svg-only]';
+  'Usage: node scripts/run-network-image-instrumented-tests.mjs [--platform-exports | --platform-export-ui | --platform-file-faults | --svg-only | --hardware-pressure]';
 if (process.argv.length === 3 && process.argv[2] === '--help') {
   console.log(usage);
   process.exit(0);
@@ -15,6 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const android = path.join(root, 'android');
 const expectedAvd = 'WZ_ImageRuntime_Test_API35';
 const svgOnly = process.argv.includes('--svg-only');
+const hardwarePressure = process.argv.includes('--hardware-pressure');
 const platformExportUi = process.argv.includes('--platform-export-ui');
 const platformExports = platformExportUi || process.argv.includes('--platform-exports');
 const platformFileFaults = process.argv.includes('--platform-file-faults');
@@ -24,7 +25,14 @@ if (
   process.argv
     .slice(2)
     .some(
-      (arg) => !['--platform-exports', '--platform-export-ui', '--platform-file-faults', '--svg-only'].includes(arg)
+      (arg) =>
+        ![
+          '--platform-exports',
+          '--platform-export-ui',
+          '--platform-file-faults',
+          '--svg-only',
+          '--hardware-pressure'
+        ].includes(arg)
     )
 )
   throw new Error(usage);
@@ -106,7 +114,7 @@ try {
     def fixture = new File(p.rootDir, '${relativeFixture}')
     config.sourceSets.getByName('release').manifest.srcFile(new File(fixture, 'AndroidManifest.xml'))
     config.sourceSets.getByName('release').res.srcDir(new File(fixture, 'res'))
-    ${platformProof ? "p.afterEvaluate { p.extensions.getByName('react').entryFile.set(new File(p.rootDir.parentFile, 'dev/review-remediation-proof/index.tsx')) }" : ''}
+    p.afterEvaluate { p.extensions.getByName('react').entryFile.set(new File(p.rootDir.parentFile, '${platformProof ? 'dev/review-remediation-proof/index.tsx' : 'dev/image-runtime-proof/index.tsx'}')) }
   }
 }
 `
@@ -128,7 +136,7 @@ try {
   )
     throw new Error('Proof build identity override was not applied');
   console.log(
-    `IMAGE_PROOF_APK buildId=${proofBuildId} sha256=${createHash('sha256').update(readFileSync(builtApk)).digest('hex')} mode=${platformFileFaults ? 'platform-file-faults' : platformExports ? 'platform-exports' : svgOnly ? 'svg' : 'network-svg'} avd=${expectedAvd}`
+    `IMAGE_PROOF_APK buildId=${proofBuildId} sha256=${createHash('sha256').update(readFileSync(builtApk)).digest('hex')} mode=${hardwarePressure ? 'hardware-pressure' : platformFileFaults ? 'platform-file-faults' : platformExports ? 'platform-exports' : svgOnly ? 'svg' : 'network-svg'} avd=${expectedAvd}`
   );
   const pkg = 'com.wz.reader';
   const installedAt = () =>
@@ -179,43 +187,57 @@ try {
         'android.permission.READ_MEDIA_IMAGES'
       ]);
   }
-  const result = execFileSync(
-    'adb',
-    [
-      '-s',
-      serial,
-      'shell',
-      'am',
-      'instrument',
-      '-w',
-      '-r',
-      '-e',
-      'proofBuildId',
-      proofBuildId,
-      '-e',
-      'class',
-      platformFileFaults
+  const primaryClasses = hardwarePressure
+    ? 'com.wz.reader.NetworkImageHardwarePressureInstrumentedTest'
+    : platformFileFaults
+      ? [
+          'com.wz.reader.PlatformFileFaultInstrumentedTest#backupWriterRejectsProviderIoAndQuotaErrorsAfterPartialWrites',
+          'com.wz.reader.PlatformFileFaultInstrumentedTest#managedImageDownloadPropagatesProviderEnospcAndRemovesItsPart',
+          'com.wz.reader.PlatformFileFaultInstrumentedTest#backupWriterRejectsAnAlreadyReportedReliableDescriptorErrorAtClose',
+          'com.wz.reader.PlatformExportInstrumentedTest#realBackupBridgeRejectsProviderWriteFailuresAndReleasesItsPendingOperation'
+        ].join(',')
+      : platformExports
         ? [
-            'com.wz.reader.PlatformFileFaultInstrumentedTest#backupWriterRejectsProviderIoAndQuotaErrorsAfterPartialWrites',
-            'com.wz.reader.PlatformFileFaultInstrumentedTest#managedImageDownloadPropagatesProviderEnospcAndRemovesItsPart',
-            'com.wz.reader.PlatformFileFaultInstrumentedTest#backupWriterRejectsAnAlreadyReportedReliableDescriptorErrorAtClose',
+            ...(!platformExportUi ? ['com.wz.reader.ImageDownloadInstrumentedTest'] : []),
             'com.wz.reader.PlatformExportInstrumentedTest#realBackupBridgeRejectsProviderWriteFailuresAndReleasesItsPendingOperation'
           ].join(',')
-        : platformExports
-          ? platformExportUi
-            ? 'com.wz.reader.PlatformExportInstrumentedTest'
-            : 'com.wz.reader.ImageDownloadInstrumentedTest,com.wz.reader.PlatformExportInstrumentedTest'
-          : svgOnly
-            ? 'com.wz.reader.SvgRendererInstrumentedTest'
-            : 'com.wz.reader.NetworkImageRuntimeInstrumentedTest,com.wz.reader.ManagedCookieResponsesInstrumentedTest,com.wz.reader.SvgRendererInstrumentedTest',
-      'com.wz.reader.test/androidx.test.runner.AndroidJUnitRunner'
-    ],
-    { encoding: 'utf8', timeout: platformProof ? 300_000 : 180_000 }
-  );
-  process.stdout.write(result);
-  if (!/OK \([1-9]\d* tests?\)/u.test(result))
-    throw new Error('Image instrumentation did not pass a nonzero test count.');
-  if (!platformProof && !svgOnly) {
+        : svgOnly
+          ? 'com.wz.reader.SvgRendererInstrumentedTest'
+          : 'com.wz.reader.NetworkImageRuntimeInstrumentedTest,com.wz.reader.ManagedCookieResponsesInstrumentedTest,com.wz.reader.SvgRendererInstrumentedTest';
+  const batches = [primaryClasses];
+  // The system-export owner deliberately destroys BackupExport. Give it its own RN module registry.
+  if (platformExports)
+    batches.push(
+      'com.wz.reader.PlatformExportInstrumentedTest#safRoundTripCancellationRecreationAndDelayedSharingUseRealExpoBridges'
+    );
+  for (const classes of batches) {
+    if (platformExports || hardwarePressure)
+      execFileSync('adb', ['-s', serial, 'shell', 'am', 'force-stop', 'com.wz.reader']);
+    const result = execFileSync(
+      'adb',
+      [
+        '-s',
+        serial,
+        'shell',
+        'am',
+        'instrument',
+        '-w',
+        '-r',
+        '-e',
+        'proofBuildId',
+        proofBuildId,
+        '-e',
+        'class',
+        classes,
+        'com.wz.reader.test/androidx.test.runner.AndroidJUnitRunner'
+      ],
+      { encoding: 'utf8', timeout: platformProof || hardwarePressure ? 300_000 : 180_000 }
+    );
+    process.stdout.write(result);
+    if (!(hardwarePressure ? /OK \(1 test\)/u : /OK \([1-9]\d* tests?\)/u).test(result))
+      throw new Error('Image instrumentation did not pass a nonzero test count.');
+  }
+  if (!platformProof && !svgOnly && !hardwarePressure) {
     for (const [stage, method] of [
       ['write', 'persistRenewalBeforeProcessExit'],
       ['read', 'restartedProcessAuthenticatesWithPersistedRenewal']
@@ -277,6 +299,27 @@ try {
       }
     }
     if (webViewFailures.length) throw new Error(`WebView cookie restart proof failed: ${webViewFailures.join(', ')}.`);
+    // Isolate real decode pressure from the identity owner's late-registered decoder and cached Glide LoadPaths.
+    execFileSync('adb', ['-s', serial, 'shell', 'am', 'force-stop', 'com.wz.reader']);
+    const pressure = execFileSync(
+      'adb',
+      [
+        '-s',
+        serial,
+        'shell',
+        'am',
+        'instrument',
+        '-w',
+        '-r',
+        '-e',
+        'class',
+        'com.wz.reader.NetworkImagePressureInstrumentedTest',
+        'com.wz.reader.test/androidx.test.runner.AndroidJUnitRunner'
+      ],
+      { encoding: 'utf8', timeout: 180_000 }
+    );
+    process.stdout.write(pressure);
+    if (!/OK \(1 test\)/u.test(pressure)) throw new Error('Large-image pressure instrumentation failed.');
   }
 } finally {
   if (restoreImagePermission)

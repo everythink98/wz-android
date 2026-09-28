@@ -3,7 +3,7 @@ import { registerRootComponent } from 'expo';
 import { hideAsync } from 'expo-splash-screen';
 import { File, Paths } from 'expo-file-system';
 import { useEffect, useRef, useState } from 'react';
-import { Button, Keyboard, Linking, Text, View } from 'react-native';
+import { AppState, Button, Keyboard, Linking, Text, View } from 'react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -23,6 +23,9 @@ import {
 } from '../../tests/ui/composerSubmissionFixture';
 import type { SessionSite } from '@/domain/session/siteSessionState';
 import { MessageSubmissionFixture } from '../../tests/ui/composerMessageFixture';
+import { TopicCreationFixture, type TopicProofObservation } from '../../tests/ui/topicCreationFixture';
+import { createTopicProofTransport, type TopicProofOutcome } from '../../tests/helpers/topicCreationTransport';
+import { createTopicEditTransport } from '../../tests/helpers/topicEditingTransport';
 
 // Materialize React Native's lazy Fetch polyfill before replacing its network entry.
 void globalThis.Response;
@@ -33,18 +36,42 @@ const Stack = createNativeStackNavigator();
 type Scenario = {
   token: string;
   source: SessionSite;
-  entry: ComposerEntry;
-  outcome: ComposerOutcome;
+  entry: ComposerEntry | 'topic' | 'topic-edit';
+  outcome: ComposerOutcome | 'enqueued';
   dark: boolean;
   stress: string;
 };
 function Proof({ scenario }: { scenario: Scenario }) {
   const [transport] = useState(() =>
-    createComposerTransport(scenario.outcome, false, scenario.stress === 'delay' ? 2000 : 0)
+    createComposerTransport(
+      scenario.outcome === 'enqueued' ? 'success' : scenario.outcome,
+      false,
+      scenario.stress === 'delay' || scenario.stress === 'image-upload' ? 2000 : 0,
+      scenario.stress === 'image-upload'
+    )
   );
+  const [topicTransport] = useState(() =>
+    createTopicProofTransport(scenario.outcome as TopicProofOutcome, scenario.stress === 'upload-ack')
+  );
+  const [topicObservation, observeTopic] = useState<TopicProofObservation>();
+  const [editTransport] = useState(() => {
+    const value = createTopicEditTransport(scenario.source, String(parseInt(scenario.token.slice(0, 8), 16) + 1000));
+    value.state.title = `Local ${scenario.source} topic proof`;
+    value.respond((path) => {
+      if (scenario.outcome === 'network-error') throw new Error('isolated connection lost');
+      if (scenario.outcome === 'unconfirmed') return new Response('{}');
+      if (scenario.outcome === 'rejected' || (scenario.stress === 'partial' && path === '/posts/789.json'))
+        return scenario.source === 'yaohuo'
+          ? new Response('<div class="tip">修改失败</div>')
+          : new Response(JSON.stringify({ success: false, errors: ['修改被拒绝'] }), { status: 422 });
+      return undefined;
+    });
+    return value;
+  });
   const [observation, observe] = useState<ComposerObservation>();
   const [notice, setNotice] = useState('');
   const [keyboardShown, setKeyboardShown] = useState(false);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const [, refresh] = useState(0);
   const settings = {
     ...createEmptyReaderData().settings,
@@ -57,9 +84,11 @@ function Proof({ scenario }: { scenario: Scenario }) {
     transport.setObserver(() => refresh((value) => value + 1));
     const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardShown(true));
     const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardShown(false));
+    const lifecycle = AppState.addEventListener('change', (state) => setAppActive(state === 'active'));
     return () => {
       show.remove();
       hide.remove();
+      lifecycle.remove();
       transport.dispose();
     };
   }, [transport]);
@@ -70,8 +99,16 @@ function Proof({ scenario }: { scenario: Scenario }) {
         notice,
         ...observation,
         keyboardShown,
+        appActive,
+        uploads: transport.uploads,
         requests: transport.requests.length,
         confirmations: transport.confirmations,
+        ...(scenario.stress.startsWith('ime-')
+          ? {
+              submittedContents: transport.requests.map(({ body }) => (JSON.parse(body) as { content: string }).content)
+            }
+          : {}),
+        ...(['topic', 'topic-edit'].includes(scenario.entry) ? { topic: topicObservation } : {}),
         isDev: __DEV__,
         isHermes: 'HermesInternal' in globalThis,
         ...diagnosticBuildContext()
@@ -81,7 +118,17 @@ function Proof({ scenario }: { scenario: Scenario }) {
   return (
     <ReaderStyleProvider value={{ settings, theme }}>
       <AppFrame styles={styles} dark={theme.dark}>
-        {scenario.entry === 'message' ? (
+        {scenario.entry === 'topic' || scenario.entry === 'topic-edit' ? (
+          <TopicCreationFixture
+            token={scenario.token}
+            source={scenario.source}
+            transport={topicTransport}
+            observe={observeTopic}
+            onNotice={setNotice}
+            kind={scenario.stress}
+            editTransport={scenario.entry === 'topic-edit' ? editTransport : undefined}
+          />
+        ) : scenario.entry === 'message' ? (
           <MessageSubmissionFixture source={scenario.source} transport={transport} onNotice={setNotice} />
         ) : (
           <NavigationContainer>
@@ -89,6 +136,8 @@ function Proof({ scenario }: { scenario: Scenario }) {
               <Stack.Screen name="TopicProof">
                 {() => (
                   <TopicSubmissionFixture
+                    active={appActive}
+                    routeActive
                     source={scenario.source}
                     entry={scenario.entry as 'reply' | 'floor' | 'edit'}
                     transport={transport}
@@ -103,14 +152,16 @@ function Proof({ scenario }: { scenario: Scenario }) {
         <Text accessibilityLabel="Mock 隔离环境" style={{ position: 'absolute', bottom: 30 }}>
           {scenario.token}
         </Text>
-        <View style={{ position: 'absolute', bottom: 65 }}>
-          <Button
-            title="下一次成功"
-            onPress={() => {
-              transport.setOutcome('success');
-            }}
-          />
-        </View>
+        {!['topic', 'topic-edit'].includes(scenario.entry) && (
+          <View style={{ position: 'absolute', bottom: 65 }}>
+            <Button
+              title="下一次成功"
+              onPress={() => {
+                transport.setOutcome('success');
+              }}
+            />
+          </View>
+        )}
       </AppFrame>
     </ReaderStyleProvider>
   );
@@ -130,8 +181,8 @@ function App() {
       if (
         !/^[a-f0-9]{32}$/.test(token) ||
         !['nodeseek', 'linuxdo', 'yaohuo'].includes(source) ||
-        !['reply', 'floor', 'edit', 'message'].includes(entry) ||
-        !['success', 'network-error', 'rejected', 'unconfirmed', 'refresh-error'].includes(outcome)
+        !['reply', 'floor', 'edit', 'message', 'topic', 'topic-edit'].includes(entry) ||
+        !['success', 'network-error', 'rejected', 'unconfirmed', 'refresh-error', 'enqueued'].includes(outcome)
       )
         return;
       seen.current = url;
@@ -140,7 +191,7 @@ function App() {
         token,
         source: source as SessionSite,
         entry: entry as Scenario['entry'],
-        outcome: outcome as ComposerOutcome,
+        outcome: outcome as Scenario['outcome'],
         dark: parsed.searchParams.get('theme') === 'dark',
         stress: parsed.searchParams.get('stress') || ''
       });

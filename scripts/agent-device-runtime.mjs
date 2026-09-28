@@ -48,12 +48,13 @@ function agentDeviceCommand() {
 
 export function runAgentDevice(
   args,
-  { capture = false, cwd = process.cwd(), echoCapture = true, env = process.env } = {}
+  { capture = false, cwd = process.cwd(), echoCapture = true, env = process.env, timeout = 0 } = {}
 ) {
   const executable = agentDeviceCommand();
   const result = spawnSync(executable.command, [...executable.prefixArgs, ...args], {
     cwd,
     env,
+    timeout,
     encoding: capture ? 'utf8' : undefined,
     stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit'
   });
@@ -75,10 +76,6 @@ export function runAgentDevice(
     error.stderr = String(result.stderr || '');
     throw error;
   }
-  return capturedAgentDeviceOutput(result);
-}
-
-export function capturedAgentDeviceOutput(result) {
   return String(result.stdout || '');
 }
 

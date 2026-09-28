@@ -228,8 +228,13 @@ export class ReaderTransaction {
     );
   }
 
-  private async put(kind: ReaderCollection, key: string, value: StoredReaderRecord | string, deleted = false) {
-    const old = await this.row(kind, key, deleted);
+  private async put(
+    kind: ReaderCollection,
+    key: string,
+    value: StoredReaderRecord | string,
+    old: RecordRow | null,
+    deleted = false
+  ) {
     const json = JSON.stringify(value);
     if (old?.value === json) return;
     const bytes = utf8Bytes(JSON.stringify(key)) + 1 + utf8Bytes(json);
@@ -359,7 +364,7 @@ export class ReaderTransaction {
       const topic = topicSummary(command.topic);
       for (const kind of ['history', 'favorites'] as const) {
         const existing = await this.row(kind, topicKey(topic));
-        if (existing) await this.put(kind, topicKey(topic), { ...JSON.parse(existing.value), topic });
+        if (existing) await this.put(kind, topicKey(topic), { ...JSON.parse(existing.value), topic }, existing);
       }
       return;
     }
@@ -373,15 +378,20 @@ export class ReaderTransaction {
       const existing = await this.row('history', key);
       const previous: TopicRecord | undefined = existing ? JSON.parse(existing.value) : undefined;
       const limit = Math.max(MAX_HISTORY_RECORDS, this.counts.history.records);
-      await this.put('history', key, {
-        ...previous,
-        topic,
-        savedAt: command.at,
-        visitCount: (previous?.visitCount || 0) + 1
-      });
+      await this.put(
+        'history',
+        key,
+        {
+          ...previous,
+          topic,
+          savedAt: command.at,
+          visitCount: (previous?.visitCount || 0) + 1
+        },
+        existing
+      );
       await this.remove('history', key, true);
       const favorite = await this.row('favorites', key);
-      if (favorite) await this.put('favorites', key, { ...JSON.parse(favorite.value), topic });
+      if (favorite) await this.put('favorites', key, { ...JSON.parse(favorite.value), topic }, favorite);
       await this.trim('history', limit);
       return;
     }
@@ -394,10 +404,11 @@ export class ReaderTransaction {
       const key = 'topic' in record ? topicKey(record.topic) : userKey(record.user);
       const existing = await this.row(kind, key);
       if (command.enabled) {
-        if (!existing) await this.put(kind, key, record);
+        if (!existing) await this.put(kind, key, record, existing);
         await this.remove(kind, key, true);
-      } else if (await this.remove(kind, key)) {
-        await this.put(kind, key, command.at, true);
+      } else if (existing) {
+        await this.removeRows(kind, [existing]);
+        await this.put(kind, key, command.at, await this.row(kind, key, true), true);
         await this.trim(kind, MAX_DELETED_RECORDS, true);
       }
       return;

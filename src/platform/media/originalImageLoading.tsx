@@ -1,4 +1,4 @@
-import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useSyncExternalStore, type ReactNode } from 'react';
 import type { ImageURISource } from 'react-native';
 import { compatibleImageRequestIdentity } from './compatibleImageSources';
 
@@ -54,10 +54,16 @@ export function markOriginalImageDisplayed(source: ImageURISource | null) {
   if (!identity) {
     return;
   }
+  const alreadyOverCapacity = displayRevisions.size > MAX_DISPLAY_REVISIONS;
   const revision = (displayRevisions.get(identity) || 0) + 1;
   displayRevisions.delete(identity);
   displayRevisions.set(identity, revision);
-  pruneDisplayRevisions();
+  // An over-capacity map contains only subscribed identities; only this update can introduce an unprotected one.
+  if (alreadyOverCapacity) {
+    if (!displayListeners.has(identity)) displayRevisions.delete(identity);
+  } else {
+    pruneDisplayRevisions();
+  }
   displayListeners.get(identity)?.forEach((listener) => listener());
 }
 
@@ -67,7 +73,10 @@ export function originalImageDisplayRevision(source: ImageURISource | null) {
 }
 
 export function subscribeOriginalImageDisplay(source: ImageURISource | null, listener: () => void) {
-  const identity = originalImageDisplayIdentity(source);
+  return subscribeOriginalImageIdentity(originalImageDisplayIdentity(source), listener);
+}
+
+function subscribeOriginalImageIdentity(identity: string, listener: () => void) {
   if (!identity) {
     return () => {};
   }
@@ -75,19 +84,24 @@ export function subscribeOriginalImageDisplay(source: ImageURISource | null, lis
   const listeners = displayListeners.get(identity) || new Set<() => void>();
   listeners.add(listener);
   displayListeners.set(identity, listeners);
+  let released = false;
   return () => {
+    if (released) return;
+    released = true;
     listeners.delete(listener);
     if (!listeners.size) {
       displayListeners.delete(identity);
-      pruneDisplayRevisions();
+      if (displayRevisions.size > MAX_DISPLAY_REVISIONS) displayRevisions.delete(identity);
     }
   };
 }
 
 export function useOriginalImageDisplayRevision(source: ImageURISource | null) {
-  return useSyncExternalStore(
-    (listener) => subscribeOriginalImageDisplay(source, listener),
-    () => originalImageDisplayRevision(source),
-    () => 0
+  const identity = originalImageDisplayIdentity(source);
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeOriginalImageIdentity(identity, listener),
+    [identity]
   );
+  const snapshot = useCallback(() => (identity ? displayRevisions.get(identity) || 0 : 0), [identity]);
+  return useSyncExternalStore(subscribe, snapshot, () => 0);
 }

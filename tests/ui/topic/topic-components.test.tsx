@@ -47,8 +47,6 @@ import {
 
 const mockAnimatedKeyboardStateSet = jest.fn();
 const mockComposerBottomSheetClose = jest.fn();
-let mockComposerBottomSheetOnClose: (() => void) | undefined;
-let mockComposerBottomSheetProps: { index: number; snapPoints?: number[] } | undefined;
 
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({
@@ -71,11 +69,9 @@ jest.mock('@gorhom/bottom-sheet', () => {
       children,
       enableContentPanningGesture,
       enablePanDownToClose,
-      index,
       keyboardBehavior,
       onChange,
-      onClose,
-      snapPoints
+      onClose
     }: {
       android_keyboardInputMode?: string;
       backdropComponent?: (props: Record<string, unknown>) => React.ReactNode;
@@ -91,8 +87,6 @@ jest.mock('@gorhom/bottom-sheet', () => {
     },
     ref
   ) {
-    mockComposerBottomSheetOnClose = onClose;
-    mockComposerBottomSheetProps = { index, snapPoints };
     ReactModule.useImperativeHandle(ref, () => ({ close: mockComposerBottomSheetClose }));
     return ReactModule.createElement(
       NativeView,
@@ -129,6 +123,8 @@ jest.mock('@gorhom/bottom-sheet', () => {
     useBottomSheetInternal: () => ({
       animatedIndex: { get: () => -1 },
       animatedAnimationState: { get: () => ({ nextIndex: undefined }) },
+      animatedPosition: { get: () => 0 },
+      animatedDetentsState: { get: () => ({ detents: [] }) },
       animatedKeyboardState: { set: mockAnimatedKeyboardStateSet },
       animatedLayoutState: { get: () => ({ rawContainerHeight: 800, containerHeight: 800 }), modify: jest.fn() }
     })
@@ -136,6 +132,7 @@ jest.mock('@gorhom/bottom-sheet', () => {
 });
 
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ bottom: 24, left: 0, right: 0, top: 0 })
 }));
 
@@ -1926,10 +1923,7 @@ describe('Topic real child components', () => {
 
     expect(view.getByText('回复')).toBeTruthy();
     const sheetProps = view.getByTestId('composer-bottom-sheet').props;
-    expect(sheetProps.android_keyboardInputMode).toBe('adjustResize');
-    expect(sheetProps.bottomInset).toBe(0);
-    expect(sheetProps.enableContentPanningGesture).toBe(false);
-    expect(sheetProps.keyboardBehavior).toBe('interactive');
+    expect(sheetProps.pointerEvents).toBe('auto');
     expect(mockAnimatedKeyboardStateSet).not.toHaveBeenCalled();
     expect(view.getByLabelText('富文本').props.accessibilityState.selected).toBe(true);
     expect(view.getByLabelText('全屏')).toBeTruthy();
@@ -1942,7 +1936,7 @@ describe('Topic real child components', () => {
     await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
     await fireEvent.press(view.getByLabelText('全屏'));
     expect(StyleSheet.flatten(view.getByTestId('composer-bottom-sheet-content').props.style)).toEqual(
-      expect.objectContaining({ flex: 1, paddingBottom: 24 })
+      expect.objectContaining({ flex: 1 })
     );
     await fireEvent.press(view.getByLabelText('退出全屏'));
     await view.rerender(<ReplyComposerSheet {...props} actionBusy />);
@@ -1975,7 +1969,13 @@ describe('Topic real child components', () => {
       }
     });
     await waitFor(() => expect(onReplySnapshot).toHaveBeenCalledTimes(1));
+    const focusRequests = () =>
+      webView.props.postMessageMock.mock.calls
+        .map(([raw]: [string]) => JSON.parse(raw))
+        .filter((message: { payload?: { name?: string } }) => message.payload?.name === 'focus').length;
+    const beforeResume = focusRequests();
     await view.rerender(<ReplyComposerSheet {...props} />);
+    expect(focusRequests()).toBe(beforeResume);
 
     await view.rerender(
       <ReplyComposerSheet {...props} intent={{ kind: 'floor', target: { author: '@bob', floor: 3 } }} />
@@ -2064,26 +2064,6 @@ describe('Topic real child components', () => {
     expect(onReplySnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it('focuses once per opening rather than refocusing after keyboard layout changes', async () => {
-    const { ComposerBottomSheet } =
-      require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
-    const onOpenChange = jest.fn();
-    const host = (visible: boolean) => (
-      <ComposerBottomSheet dark={false} fixedContent visible={visible} onOpenChange={onOpenChange}>
-        {(signal) => <Text testID="focus-signal">{signal}</Text>}
-      </ComposerBottomSheet>
-    );
-    const view = await render(host(true));
-    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
-    expect(view.getByTestId('focus-signal').props.children).toBe(1);
-    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
-    expect(view.getByTestId('focus-signal').props.children).toBe(1);
-    await view.rerender(host(false));
-    await view.rerender(host(true));
-    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
-    expect(view.getByTestId('focus-signal').props.children).toBe(2);
-  });
-
   it('releases the backdrop hit target while closed across content layout changes', async () => {
     const { ComposerBottomSheet } =
       require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
@@ -2102,7 +2082,7 @@ describe('Topic real child components', () => {
     expect(backdrop()).toHaveProp('pointerEvents', 'auto');
     await view.rerender(host(false, true));
     expect(backdrop()).toHaveProp('pointerEvents', 'none');
-    expect(view.getByText('保留的草稿')).toBeTruthy();
+    expect(view.getByText('保留的草稿', { includeHiddenElements: true })).toBeTruthy();
   });
 
   it('keeps one controlled close path while fullscreen closes', async () => {
@@ -2110,7 +2090,6 @@ describe('Topic real child components', () => {
       require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
     const onOpenChange = jest.fn();
     const onPresentationChange = jest.fn();
-    mockComposerBottomSheetClose.mockClear();
     const view = await render(
       <ComposerBottomSheet
         dark={false}
@@ -2125,10 +2104,8 @@ describe('Topic real child components', () => {
     );
     expect(onPresentationChange).toHaveBeenCalledWith('sheet');
     onPresentationChange.mockClear();
-    const sheetSnapPoints = mockComposerBottomSheetProps?.snapPoints;
-    expect(mockComposerBottomSheetProps?.index).toBe(0);
-    expect(sheetSnapPoints).toHaveLength(1);
-    expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('enablePanDownToClose', false);
+    const editor = view.getByText('编辑器');
+    expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('pointerEvents', 'auto');
     const backdrop = view.getByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true });
     expect(backdrop).toHaveProp('pointerEvents', 'auto');
     expect(backdrop.props.onTouchEnd).toBeUndefined();
@@ -2145,10 +2122,8 @@ describe('Topic real child components', () => {
         {() => <Text>编辑器</Text>}
       </ComposerBottomSheet>
     );
-    const openSnapPoints = mockComposerBottomSheetProps?.snapPoints;
-    expect(mockComposerBottomSheetProps?.index).toBe(0);
-    expect(openSnapPoints).toHaveLength(1);
-    expect(openSnapPoints![0]).toBeGreaterThan(sheetSnapPoints![0]!);
+    expect(view.getByText('编辑器')).toBe(editor);
+    expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('pointerEvents', 'auto');
 
     await view.rerender(
       <ComposerBottomSheet
@@ -2162,11 +2137,11 @@ describe('Topic real child components', () => {
         {() => <Text>编辑器</Text>}
       </ComposerBottomSheet>
     );
-    expect(mockComposerBottomSheetProps).toEqual({ index: -1, snapPoints: openSnapPoints });
+    expect(view.getByTestId('composer-bottom-sheet', { includeHiddenElements: true })).toHaveProp(
+      'pointerEvents',
+      'none'
+    );
     expect(onPresentationChange).not.toHaveBeenCalled();
-    expect(mockComposerBottomSheetClose).toHaveBeenCalledTimes(1);
-
-    await act(async () => mockComposerBottomSheetOnClose?.());
     expect(onPresentationChange).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalled();
 
@@ -2183,21 +2158,5 @@ describe('Topic real child components', () => {
       </ComposerBottomSheet>
     );
     expect(onPresentationChange).toHaveBeenCalledWith('sheet');
-  });
-
-  it('requests editor focus only after the sheet reaches its open position', async () => {
-    const { ComposerBottomSheet } =
-      require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
-    const view = await render(
-      <ComposerBottomSheet dark={false} fixedContent visible onOpenChange={jest.fn()}>
-        {(focusSignal) => <Text>焦点信号 {focusSignal}</Text>}
-      </ComposerBottomSheet>
-    );
-
-    expect(view.getByText('焦点信号 0')).toBeTruthy();
-    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
-    await waitFor(() => expect(view.getByText('焦点信号 1')).toBeTruthy());
-    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', -1);
-    expect(view.getByText('焦点信号 1')).toBeTruthy();
   });
 });

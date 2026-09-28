@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/ui/theme/ReaderStyleProvider', () => ({ useReaderThemeStyles: vi.fn() }));
+
 vi.mock('react-native', () => ({
   StyleSheet: {
     absoluteFillObject: {}

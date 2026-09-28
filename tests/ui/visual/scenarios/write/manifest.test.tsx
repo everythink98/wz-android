@@ -28,7 +28,7 @@ jest.mock('@/ui/sheets/ComposerBottomSheet', () => {
   };
 });
 
-import { render } from '../../../render';
+import { act, render } from '../../../render';
 import { writeVisualScenarios } from './manifest';
 
 function renderScenario(id: string) {
@@ -38,10 +38,16 @@ function renderScenario(id: string) {
 }
 
 describe('write visual scenarios', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(async () => {
+    await act(() => jest.runOnlyPendingTimersAsync());
+    jest.useRealTimers();
+  });
+
   it('classifies all WRITE capabilities with stable unique IDs', () => {
     expect(new Set(writeVisualScenarios.map(({ id }) => id)).size).toBe(writeVisualScenarios.length);
     expect(new Set(writeVisualScenarios.flatMap(({ capabilityIds }) => capabilityIds))).toEqual(
-      new Set(['WRITE-01', 'WRITE-02', 'WRITE-03', 'WRITE-04', 'WRITE-05', 'WRITE-06'])
+      new Set(['WRITE-01', 'WRITE-02', 'WRITE-03', 'WRITE-04', 'WRITE-05', 'WRITE-06', 'WRITE-07'])
     );
   });
 

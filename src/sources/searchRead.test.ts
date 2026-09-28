@@ -65,7 +65,6 @@ describe('search read', () => {
           limit: 2,
           page,
           fetcher,
-          linuxDoAuthenticated: true,
           discourseAuth: { authenticated: true, userAgent: 'fixture' }
         });
         ids.push(...result.items.map((item) => item.id));
@@ -128,7 +127,6 @@ describe('search read', () => {
         authenticated: true,
         userAgent: 'LinuxDo WebView UA'
       },
-      linuxDoAuthenticated: true,
       signal: controller.signal
     });
     await nodeSeekBodyRead.promise;
@@ -222,7 +220,6 @@ describe('search read', () => {
         authenticated: true,
         userAgent: 'LinuxDo WebView UA'
       },
-      linuxDoAuthenticated: true,
       nodeSeekAuthenticated: true
     });
 
@@ -310,7 +307,6 @@ describe('search read', () => {
         authenticated: true,
         userAgent: 'LinuxDo WebView UA'
       },
-      linuxDoAuthenticated: true,
       nodeSeekAuthenticated: true
     });
 

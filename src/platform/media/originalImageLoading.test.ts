@@ -79,4 +79,56 @@ describe('original image progressive loading', () => {
     })).forEach(markOriginalImageDisplayed);
     expect(originalImageDisplayRevision(activeSource)).toBe(0);
   });
+
+  it('bounds eviction work while active originals exceed capacity and preserves their release order', () => {
+    const prefix = 'https://img.example.com/bounded-revision-work/';
+    const sources = Array.from({ length: 2_048 }, (_, index) => ({ uri: `${prefix}${index}.png` }));
+    const active = sources.slice(0, 1_024);
+    let notifications = 0;
+    const releases = active.map((source) => subscribeOriginalImageDisplay(source, () => notifications++));
+    const originalHas = Map.prototype.has;
+    let membershipProbes = 0;
+    const has = vi.spyOn(Map.prototype, 'has').mockImplementation(function (this: Map<unknown, unknown>, key) {
+      if (typeof key === 'string' && key.startsWith(prefix)) membershipProbes++;
+      return originalHas.call(this, key);
+    });
+    try {
+      active.forEach(markOriginalImageDisplayed);
+      markOriginalImageDisplayed(active[0]);
+      sources.slice(active.length).forEach(markOriginalImageDisplayed);
+      expect(active.map(originalImageDisplayRevision)).toEqual([2, ...Array(1_023).fill(1)]);
+      expect(sources.slice(active.length).map(originalImageDisplayRevision)).toEqual(Array(1_024).fill(0));
+      expect(notifications).toBe(1_025);
+    } finally {
+      releases.reverse().forEach((release) => release());
+      has.mockRestore();
+    }
+    expect(active.map(originalImageDisplayRevision)).toEqual([2, ...Array(511).fill(1), ...Array(512).fill(0)]);
+    markOriginalImageDisplayed({ uri: `${prefix}next.png` });
+    expect(originalImageDisplayRevision(active[1])).toBe(0);
+    expect(originalImageDisplayRevision(active[0])).toBe(2);
+    expect(membershipProbes).toBeLessThanOrEqual(sources.length * 2);
+  });
+
+  it.each([false, true])('keeps a resubscribed callback after repeated cleanup (shared set: %s)', (sharedSet) => {
+    const source = { uri: `https://img.example.com/repeated-original-cleanup-${sharedSet}.png` };
+    const listener = vi.fn();
+    const oldRelease = subscribeOriginalImageDisplay(source, listener);
+    const retainOtherListener = sharedSet ? subscribeOriginalImageDisplay(source, () => {}) : () => {};
+    markOriginalImageDisplayed(source);
+    oldRelease();
+    const release = subscribeOriginalImageDisplay(source, listener);
+    try {
+      oldRelease();
+      markOriginalImageDisplayed(source);
+      Array.from({ length: 512 }, (_, index) => ({
+        uri: `https://img.example.com/repeated-cleanup-pressure-${sharedSet}/${index}.png`
+      })).forEach(markOriginalImageDisplayed);
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(originalImageDisplayRevision(source)).toBe(2);
+    } finally {
+      release();
+      retainOtherListener();
+    }
+  });
 });

@@ -6,6 +6,7 @@ import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnost
 import { Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppComposition } from '@/app/AppComposition';
+import { AppRoutes } from '@/app/AppRoutes';
 import { createAppStyles } from '@/app/styles';
 import { useAppRuntime } from '@/app/useAppRuntime';
 import { createTheme } from '@/ui/theme/tokens';
@@ -14,7 +15,7 @@ import { NavigationContext, NavigationRouteContext } from '@react-navigation/nat
 import { StartupPageLayoutProvider, useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import type { ComponentProps, ReactNode } from 'react';
 
-jest.mock('@/app/AppRoutes', () => ({ AppRoutes: () => null }));
+jest.mock('@/app/AppRoutes', () => ({ AppRoutes: jest.fn(() => null) }));
 jest.mock('@/app/useAppRuntime', () => ({ useAppRuntime: jest.fn() }));
 jest.mock('expo-splash-screen', () => ({
   preventAutoHideAsync: jest.fn(async () => true),
@@ -23,11 +24,48 @@ jest.mock('expo-splash-screen', () => ({
 }));
 jest.mock('react-native-gesture-handler', () => ({ GestureHandlerRootView: 'GestureHandlerRootView' }));
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   SafeAreaProvider: 'SafeAreaProvider',
   SafeAreaView: 'SafeAreaView'
 }));
 
 describe('App composition bootstrap', () => {
+  it('keeps navigation delivery stable across root updates and uses a replaced handler', async () => {
+    const settings = createEmptyReaderData().settings;
+    const theme = createTheme(settings);
+    const onScreenChange = jest.fn<ComponentProps<typeof AppRoutes>['onScreenChange']>();
+    // AppRoutes is replaced at this boundary; only its navigation callbacks are consumed here.
+    const routes = { onScreenChange, onReady: jest.fn<() => void>() } as unknown as NonNullable<
+      ReturnType<typeof useAppRuntime>['routes']
+    >;
+    const runtime: ReturnType<typeof useAppRuntime> = {
+      onUserInteraction: jest.fn(),
+      accountHost: (<Text>账号</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
+      appStyles: createAppStyles(theme),
+      mediaTransportIdentity: 'disabled',
+      readerStyleContext: { settings, theme },
+      routes,
+      sessionEpochs: { linuxdo: 0, nodeseek: 0, yaohuo: 0 },
+      theme
+    };
+    jest.mocked(useAppRuntime).mockReturnValue(runtime);
+    const view = await render(<AppComposition />);
+    const initial = jest.mocked(AppRoutes).mock.calls.at(-1)![0].onScreenChange;
+    for (let index = 0; index < 10; index++) {
+      jest.mocked(useAppRuntime).mockReturnValue({ ...runtime, routes: { ...routes } });
+      await view.rerender(<AppComposition />);
+      expect(jest.mocked(AppRoutes).mock.calls.at(-1)![0].onScreenChange).toBe(initial);
+    }
+    await act(async () => initial('search', 'search-route'));
+    expect(onScreenChange).toHaveBeenCalledWith('search', 'search-route');
+    const next = jest.fn<ComponentProps<typeof AppRoutes>['onScreenChange']>();
+    jest.mocked(useAppRuntime).mockReturnValue({ ...runtime, routes: { ...routes, onScreenChange: next } });
+    await view.rerender(<AppComposition />);
+    await act(async () => jest.mocked(AppRoutes).mock.calls.at(-1)![0].onScreenChange('feed', 'feed-route'));
+    expect(next).toHaveBeenCalledWith('feed', 'feed-route');
+    expect(onScreenChange).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts layout only from a currently focused page with its own route key', async () => {
     const report = jest.fn();
     let focused = false;

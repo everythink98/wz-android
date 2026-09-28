@@ -10,6 +10,7 @@ import {
 } from '@/platform/network/readNetworkRuntime';
 import { proveForumReadResponse, runForumSourceReadAttempt } from '@/sources/forumSourceReadAttempt';
 import { withLinuxDoConnectSessionRecoveryIntent } from '@/sources/linuxdo/browserFallback';
+import { withBrowserFetchIntent, type BrowserFetchPriority } from '@/platform/network/browserFetchIntent';
 
 jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(async () => undefined),
@@ -62,6 +63,114 @@ describe('session controller browser flow', () => {
     mockRecoverReadNetworkRuntime.mockReset();
     if (originalNetworkProxy) Object.defineProperty(NativeModules, 'NetworkProxyModule', originalNetworkProxy);
     else delete NativeModules.NetworkProxyModule;
+  });
+
+  it('drains repeated two-site browser bursts by priority without timing out queued or canceled work', async () => {
+    jest.useFakeTimers();
+    const defaultFetcher = jest.fn<typeof fetch>(
+      async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } })
+    );
+    const hook = await renderSessionController(defaultFetcher);
+    const sources = ['nodeseek', 'linuxdo'] as const;
+    const controllers: AbortController[] = [];
+    let requests: Promise<string | Error>[] = [];
+    const active = (source: (typeof sources)[number]) =>
+      hook.result.current.hiddenBrowserFetchRequests[source === 'nodeseek' ? 'nodeSeek' : 'linuxDo'];
+    const complete = async (source: (typeof sources)[number], request: { id: number; url: string }) => {
+      if (source === 'nodeseek') {
+        await hook.result.current.completeNodeSeekBrowserFetch({ ...request, html: `done:${request.url}` });
+      } else {
+        await hook.result.current.completeLinuxDoBrowserFetch({ ...request, body: `done:${request.url}` });
+      }
+    };
+    await act(async () => jest.advanceTimersByTimeAsync(0));
+    const initialTimers = jest.getTimerCount();
+    try {
+      for (let round = 0; round < 3; round++) {
+        const work = sources.flatMap((source) =>
+          [
+            { label: 'held', priority: 'background' as BrowserFetchPriority, canceled: false },
+            ...(['background', 'foreground', 'write'] as const).flatMap((priority) =>
+              Array.from({ length: 8 }, (_, index) => ({
+                label: `${priority}-${index}`,
+                priority,
+                canceled: index === 3
+              }))
+            )
+          ].map((entry) => {
+            const controller = new AbortController();
+            controllers.push(controller);
+            return {
+              ...entry,
+              source,
+              controller,
+              url: `${source === 'nodeseek' ? 'https://www.nodeseek.com' : 'https://linux.do'}/?pressure=${round}-${entry.label}`
+            };
+          })
+        );
+        await act(async () => {
+          requests = work.map(({ url, controller, priority }) =>
+            hook.result.current
+              .forumFetchWithWebViewFallback(
+                url,
+                withBrowserFetchIntent(
+                  { signal: controller.signal },
+                  { owner: priority === 'write' ? 'write' : 'topic', priority }
+                )
+              )
+              .then((response) => response.text())
+              .catch((error: Error) => error)
+          );
+        });
+        await waitFor(() => {
+          sources.forEach((source) =>
+            expect(active(source)?.url).toBe(work.find((entry) => entry.source === source)!.url)
+          );
+        });
+        await act(async () => jest.advanceTimersByTimeAsync(0));
+        const first = sources.map((source) => ({ ...active(source)! }));
+        expect(jest.getTimerCount()).toBe(initialTimers + 2);
+        await act(async () => {
+          jest.advanceTimersByTime(14_000);
+          work.filter(({ canceled }) => canceled).forEach(({ controller }) => controller.abort());
+        });
+        sources.forEach((source, index) => expect(active(source)?.id).toBe(first[index].id));
+        await act(async () => {
+          for (const [index, source] of sources.entries()) await complete(source, first[index]);
+          jest.advanceTimersByTime(1_001);
+        });
+        // The first queued request gets its own 15-second deadline, not the first request's age.
+        await act(async () => jest.advanceTimersByTimeAsync(0));
+        expect(jest.getTimerCount()).toBe(initialTimers + 2);
+        for (const priority of ['write', 'foreground', 'background'] as const) {
+          for (let index = 0; index < 8; index++) {
+            if (index === 3) continue;
+            for (const source of sources) {
+              const expected = work.find((entry) => entry.source === source && entry.label === `${priority}-${index}`)!;
+              expect(active(source)?.url).toBe(expected.url);
+            }
+            await act(async () => {
+              for (const [siteIndex, source] of sources.entries()) {
+                await complete(source, first[siteIndex]);
+                await complete(source, active(source)!);
+              }
+            });
+          }
+        }
+        expect(hook.result.current.hiddenBrowserFetchRequests).toEqual({ linuxDo: null, nodeSeek: null });
+        expect(await Promise.all(requests)).toEqual(
+          work.map(({ canceled, url }) => (canceled ? expect.any(Error) : `done:${url}`))
+        );
+        expect(defaultFetcher).toHaveBeenCalledTimes((round + 1) * 50);
+        await act(async () => jest.advanceTimersByTimeAsync(0));
+        expect(jest.getTimerCount()).toBe(initialTimers);
+      }
+    } finally {
+      await act(async () => controllers.forEach((controller) => controller.abort()));
+      await Promise.all(requests);
+      await hook.unmount();
+      jest.useRealTimers();
+    }
   });
 
   it('cancels active and queued Connect work at handoff without changing account identity', async () => {

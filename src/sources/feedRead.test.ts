@@ -171,21 +171,56 @@ describe('feed read', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('keeps only yaohuo categories and user profiles on the shared forum facade', async () => {
-    const fetcher = vi.fn(async () => {
-      throw new Error('unexpected fetch');
+  it('routes Yaohuo reads through the shared entry points while preserving its page size and search semantics', async () => {
+    const list = Array.from(
+      { length: 31 },
+      (_, index) =>
+        `<div class="listdata"><a href="/bbs-${index + 1}.html">excluded ${index}</a>/alice/阅1/05-20 10:00</div>`
+    ).join('');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('book_list.aspx')) return new Response(list);
+      if (input.includes('favlist.aspx')) return new Response('');
+      if (input.includes('book_re.aspx'))
+        return new Response('<title>查看回复</title><div>您查看的楼层不存在。</div><a href="/bbs-1.html">返回主题</a>');
+      if (input.endsWith('/bbs-1.html'))
+        return new Response(
+          '<div class="content">[标题] topic</div><div class="bbscontent">正文</div><div class="view-no-reply-tip"><span class="view-no-reply-text">暂无回复，快抢沙发哦</span></div>'
+        );
+      throw new Error(`unexpected ${input}`);
     });
-
     const categories = await getCategories({ source: 'yaohuo', fetcher });
-
-    await expect(getFeed({ source: 'yaohuo', fetcher })).rejects.toThrow('来源不支持');
-    expect(() => getTopic({ source: 'yaohuo', id: '1', fetcher })).toThrow('来源不支持');
-    expect(() =>
-      getReplies({ source: 'yaohuo', id: '1', order: 'oldest', position: { kind: 'start' }, fetcher })
-    ).toThrow('来源不支持');
-    await expect(searchTopics({ source: 'yaohuo', query: 'test', fetcher })).rejects.toThrow('来源不支持');
     expect(categories.items[0]).toMatchObject({ source: 'yaohuo' });
     expect(fetcher).not.toHaveBeenCalled();
+    expect(() => getTopic({ source: 'yaohuo', id: '1', fetcher })).toThrow('妖火详情需要主题上下文');
+    const feed = await getFeed({ source: 'yaohuo', fetcher });
+    expect(feed.items).toHaveLength(30);
+    const search = await searchTopics({
+      source: 'yaohuo',
+      query: 'test -excluded',
+      filter: { source: 'yaohuo', category: '177' },
+      fetcher
+    });
+    expect(search.items).toHaveLength(30);
+    expect(new URL(fetcher.mock.calls[1][0]).searchParams.get('key')).toBe('test -excluded');
+    expect(search.items[0]).toMatchObject({ categoryId: '177', title: 'excluded 0' });
+    await expect(getTopic({ source: 'yaohuo', id: '1', topic: feed.items[0], fetcher })).resolves.toMatchObject({
+      id: '1',
+      contentHtml: expect.stringContaining('正文')
+    });
+    await expect(
+      getReplies({
+        source: 'yaohuo',
+        id: '1',
+        categoryId: '177',
+        order: 'oldest',
+        position: { kind: 'start' },
+        replyCount: 0,
+        fetcher
+      })
+    ).resolves.toMatchObject({ items: [], hasMore: false });
+    const replyUrl = new URL(fetcher.mock.calls.at(-1)![0]);
+    expect(replyUrl.searchParams.get('id')).toBe('1');
+    expect(replyUrl.searchParams.get('classid')).toBe('177');
   });
 
   it('keeps overflow items available when paginating the aggregated Android feed', async () => {

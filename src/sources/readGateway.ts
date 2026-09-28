@@ -9,25 +9,16 @@ import {
 } from './sourceRead';
 import { searchTopics as searchForumTopics } from './searchRead';
 import {
-  getYaohuoFeedDirect,
-  getYaohuoRepliesDirect,
-  getYaohuoTopicDirect,
-  searchYaohuoDirect
-} from '@/sources/yaohuo/reader';
-import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '@/sources/linuxdo/search';
+  searchLinuxDoSemantic as searchLinuxDoSemanticDirect,
+  searchLinuxDoTags,
+  searchLinuxDoUsers
+} from '@/sources/linuxdo/search';
 import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/sources/nodeseek/reader';
 import {
   getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
   type LinuxDoLevelProfile
 } from '@/sources/linuxdo/level';
-import {
-  getDiscourseEmojiUrls,
-  searchDiscourseTagOptions,
-  searchDiscourseUserOptions,
-  type DiscourseReadAuth,
-  type DiscourseTagOptionReadOptions,
-  type DiscourseUserOptionReadOptions
-} from './discourseRead';
+import { getLinuxDoEmojiUrls, type LinuxDoOptions, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import {
   RequestCanceledError,
   REQUEST_CANCELED_MESSAGE,
@@ -60,7 +51,7 @@ import {
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { copySourceDiagnosticSummary, sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAttempt, withForumSourceReadEligibility } from './forumSourceReadAttempt';
-import type { FeedSource, Source, SourceErrors, Topic, DiscourseTopicReading } from '@/domain/forum/models';
+import type { FeedSource, Source, SourceErrors, DiscourseTopicReading } from '@/domain/forum/models';
 import {
   prepareRepliesContent,
   prepareReplyContent,
@@ -75,6 +66,11 @@ import { isSessionSource, sourceValues, type DiscourseSource, type SessionSource
 
 import type { DiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { getLinuxDoReadingBatch, getLinuxDoTopicReading } from '@/sources/linuxdo/reading';
+import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
+import { loadLinuxDoTopicEditContext } from '@/sources/linuxdo/topicEditing';
+import { loadNodeSeekTopicEditContext } from '@/sources/nodeseek/topicEditing';
+import { loadYaohuoTopicEditContext } from '@/sources/yaohuo/topicEditing';
+import type { TopicCreationSource } from '@/domain/forum/topicComposer';
 
 export { getCurrentUserIdentity } from './sourceRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
@@ -82,53 +78,12 @@ export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/sources/yaohuo/rea
 
 type GetFeedOptions = Parameters<typeof getForumFeed>[0];
 
-export function getFeed(options: GetFeedOptions) {
-  if (options.source !== 'yaohuo') {
-    return getForumFeed(options);
-  }
-  return getYaohuoFeedDirect({
-    category: options.category,
-    page: options.page,
-    limit: options.limit,
-    yaohuoFetcher: options.fetcher,
-    signal: options.signal,
-    timeoutMs: options.timeoutMs
-  });
-}
-
 type SearchTopicsOptions = Parameters<typeof searchForumTopics>[0];
 
-export function searchTopics(options: SearchTopicsOptions) {
-  if (options.source !== 'yaohuo') {
-    return searchForumTopics(options);
-  }
-  return searchYaohuoDirect({
-    query: options.query,
-    page: options.page,
-    limit: options.limit,
-    category: options.filter?.source === 'yaohuo' ? options.filter.category : undefined,
-    yaohuoFetcher: options.fetcher,
-    signal: options.signal,
-    timeoutMs: options.timeoutMs
-  });
-}
-
-type GetTopicOptions = Parameters<typeof getForumTopic>[0] & { topic?: Topic };
+type GetTopicOptions = Parameters<typeof getForumTopic>[0];
 
 export async function getTopic(options: GetTopicOptions, trace?: DiagnosticTrace): Promise<PreparedTopicDetail> {
-  const detail =
-    options.source !== 'yaohuo'
-      ? await getForumTopic({ ...options, diagnosticTrace: trace })
-      : options.topic
-        ? await getYaohuoTopicDirect({
-            topic: options.topic,
-            yaohuoFetcher: options.fetcher,
-            signal: options.signal,
-            timeoutMs: options.timeoutMs
-          })
-        : (() => {
-            throw new Error('妖火详情需要主题上下文');
-          })();
+  const detail = await getForumTopic({ ...options, diagnosticTrace: trace });
   const sourcePreparedAndTraced = options.source === 'nodeseek' && Boolean(detail.preparedContent);
   if (trace && !sourcePreparedAndTraced) {
     markDiagnosticStage(trace, 'parse', { source: options.source, state: 'source-parsed' });
@@ -150,7 +105,6 @@ export async function getTopic(options: GetTopicOptions, trace?: DiagnosticTrace
 }
 
 type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & {
-  categoryId?: string;
   isPrivateMessage?: boolean;
 };
 
@@ -158,20 +112,7 @@ export async function getReplies(
   options: GetRepliesOptions,
   trace?: DiagnosticTrace
 ): Promise<PreparedRepliesResponse> {
-  const response =
-    options.source !== 'yaohuo'
-      ? await getForumReplies(options)
-      : await getYaohuoRepliesDirect({
-          id: options.id,
-          categoryId: options.categoryId,
-          order: options.order,
-          position: options.position,
-          limit: options.limit,
-          replyCount: options.replyCount,
-          yaohuoFetcher: options.fetcher,
-          signal: options.signal,
-          timeoutMs: options.timeoutMs
-        });
+  const response = await getForumReplies(options);
   if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'source-parsed' });
   const preparedResponse = prepareRepliesContent(response, options.source, options.id);
   if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'content-plan-ready' });
@@ -216,7 +157,6 @@ type ManagedReadKeys =
   | 'discourseAuth'
   | 'fetcher'
   | 'fetcherForSource'
-  | 'linuxDoAuthenticated'
   | 'nodeSeekAuthenticated'
   | 'nodeSeekUserAgent'
   | 'includedSources'
@@ -233,15 +173,16 @@ type ManagedResolveNodeSeekUserOptions = {
   signal?: AbortSignal;
   username: string;
 };
-type ManagedGetEmojiUrlsOptions = Omit<NonNullable<Parameters<typeof getDiscourseEmojiUrls>[0]>, 'auth' | 'fetcher'> & {
+type ManagedGetEmojiUrlsOptions = Pick<LinuxDoOptions, 'signal' | 'timeoutMs'> & {
   source: DiscourseSource;
 };
-type ManagedTagOptionSearchOptions = Omit<DiscourseTagOptionReadOptions, 'auth' | 'fetcher'> & {
-  source: DiscourseSource;
-};
-type ManagedUserOptionSearchOptions = Omit<DiscourseUserOptionReadOptions, 'auth' | 'fetcher'> & {
-  source: DiscourseSource;
-};
+type ManagedTagOptionSearchOptions = Pick<
+  NonNullable<Parameters<typeof searchLinuxDoTags>[0]>,
+  'categoryId' | 'limit' | 'query' | 'selectedTags'
+> &
+  ManagedGetEmojiUrlsOptions;
+type ManagedUserOptionSearchOptions = Pick<Parameters<typeof searchLinuxDoUsers>[0], 'categoryId' | 'limit' | 'term'> &
+  ManagedGetEmojiUrlsOptions;
 type ManagedSemanticTopicSearchOptions = Omit<
   NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>,
   'fetcher' | 'linuxDoAccess'
@@ -280,6 +221,8 @@ const browserFetchOwnerByReadOperation: Record<ForumReadOperation, BrowserFetchI
   'search-users': 'search',
   'semantic-search': 'search',
   topic: 'topic',
+  'topic-creation-context': 'topic',
+  'topic-edit-context': 'topic',
   'user-profile': 'user',
   'user-resolution': 'user'
 };
@@ -391,10 +334,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     operationName: DiagnosticOperation,
     readOperation: ForumReadOperation,
     operation: (credentials: {
-      discourseAuth?: DiscourseReadAuth;
+      discourseAuth?: LinuxDoReadAuth;
       fetcher: Fetcher;
       fetcherForSource?: (source: Source) => Fetcher;
-      linuxDoAuthenticated?: boolean;
       nodeSeekAuthenticated?: boolean;
       nodeSeekUserAgent?: string;
       trace: DiagnosticTrace;
@@ -478,7 +420,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       const yaohuoPlan = planFor('yaohuo');
       const linuxDoAuthenticated = linuxDoPlan?.state === 'ready' && linuxDoPlan.lane === 'authenticated';
       const nodeSeekAuthenticated = nodeSeekPlan?.state === 'ready' && nodeSeekPlan.lane === 'authenticated';
-      const discourseAuth: DiscourseReadAuth | undefined =
+      const discourseAuth: LinuxDoReadAuth | undefined =
         linuxDoPlan?.state === 'ready'
           ? {
               authenticated: linuxDoAuthenticated,
@@ -531,7 +473,6 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           ...(source === 'all'
             ? { fetcherForSource: (planSource: Source) => ownFetcher(sourcePlanFetcher(planSource), attempt) }
             : {}),
-          linuxDoAuthenticated,
           nodeSeekAuthenticated,
           nodeSeekUserAgent: nodeSeekPlan?.state === 'ready' ? dependencies.nodeSeekUserAgent() : undefined,
           trace,
@@ -730,6 +671,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       }
       return result;
     } catch (error) {
+      if (signal?.aborted && !(error instanceof RequestTimeoutError)) error = new RequestCanceledError();
       if (error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE) {
         if (ownsTrace) {
           const stale = !readIsCurrent();
@@ -747,11 +689,15 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
       const sourceError = sourceErrorFromUnknown(source, error);
-      if (
-        source !== 'all' &&
-        isSessionSource(source) &&
-        (sourceError.reason === 'http-401' || (source === 'linuxdo' && errorRequiresAccountRecheck(sourceError)))
-      ) {
+      const recheckAccount =
+        source === 'linuxdo' &&
+        (errorRequiresAccountRecheck(sourceError) ||
+          (['topic-creation-context', 'topic-edit-context'].includes(readOperation) &&
+            sourceError.kind !== 'verification-required' &&
+            error instanceof Error &&
+            'status' in error &&
+            error.status === 400));
+      if (source !== 'all' && isSessionSource(source) && (sourceError.reason === 'http-401' || recheckAccount)) {
         const session = sessionSnapshots.get(source);
         const plan = planSnapshot.get(source);
         if (
@@ -760,7 +706,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           plan?.state === 'ready' &&
           plan.lane === 'authenticated'
         ) {
-          if (errorRequiresAccountRecheck(sourceError)) {
+          if (recheckAccount) {
             dependencies.requestAccountRecheck?.(source, session.sessionEpoch, trace.traceId);
           } else {
             dependencies.onSessionExpired?.(source, session.sessionEpoch);
@@ -859,7 +805,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'getFeed',
         'feed',
         ({ trace, ...credentials }) =>
-          getFeed({
+          getForumFeed({
             ...options,
             ...credentials,
             diagnosticTrace: trace
@@ -874,9 +820,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'getEmojiUrls',
         'emoji',
         ({ discourseAuth, fetcher }) =>
-          getDiscourseEmojiUrls({
+          getLinuxDoEmojiUrls({
             ...options,
-            auth: discourseAuth,
+            linuxDoAccess: discourseAuth,
             fetcher
           }),
         context,
@@ -889,7 +835,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'searchTopics',
         'search',
         (credentials) =>
-          searchTopics({
+          searchForumTopics({
             ...options,
             ...credentials
           }),
@@ -904,9 +850,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'searchTagOptions',
         'search-tags',
         ({ discourseAuth, fetcher }) =>
-          searchDiscourseTagOptions({
+          searchLinuxDoTags({
             ...options,
-            auth: discourseAuth,
+            linuxDoAccess: discourseAuth,
             fetcher
           }),
         context,
@@ -920,9 +866,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'searchUserOptions',
         'search-users',
         ({ discourseAuth, fetcher }) =>
-          searchDiscourseUserOptions({
+          searchLinuxDoUsers({
             ...options,
-            auth: discourseAuth,
+            linuxDoAccess: discourseAuth,
             fetcher
           }),
         context,
@@ -943,6 +889,50 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             fetcher,
             linuxDoAccess: discourseAuth
           }),
+        context,
+        options.signal
+      );
+    },
+    getLinuxDoTopicCreationContext(
+      options: { source: 'linuxdo'; signal?: AbortSignal },
+      context?: ReadGatewayReadContext
+    ) {
+      return read(
+        options.source,
+        'getTopicCreationContext',
+        'topic-creation-context',
+        ({ discourseAuth, fetcher }) =>
+          loadLinuxDoTopicCreationContext({
+            fetcher,
+            userAgent: discourseAuth?.userAgent || '',
+            signal: options.signal
+          }),
+        context,
+        options.signal
+      );
+    },
+    getTopicEditContext(
+      options: {
+        source: TopicCreationSource;
+        topicId: string;
+        identityKey: string;
+        userAgent: string;
+        signal?: AbortSignal;
+      },
+      context?: ReadGatewayReadContext
+    ) {
+      return read(
+        options.source,
+        'getTopicEditContext',
+        'topic-edit-context',
+        ({ fetcher }) => {
+          const input = { ...options, fetcher };
+          return options.source === 'linuxdo'
+            ? loadLinuxDoTopicEditContext(input)
+            : options.source === 'nodeseek'
+              ? loadNodeSeekTopicEditContext(input)
+              : loadYaohuoTopicEditContext(input);
+        },
         context,
         options.signal
       );

@@ -8,7 +8,7 @@ import { StartupPageLayoutProvider } from '@/ui/navigation/startupPageLayout';
 import { AppRoutes } from './AppRoutes';
 import { useAppRuntime } from './useAppRuntime';
 import { useAppStartupRuntime } from './useAppStartupRuntime';
-import type { ReactNode } from 'react';
+import { useCallback, type ComponentProps, type ReactNode } from 'react';
 import { PortalProvider } from '@gorhom/portal';
 
 export function AppFrame({
@@ -42,6 +42,15 @@ export function AppFrame({
 export function AppComposition() {
   const runtime = useAppRuntime();
   const startup = useAppStartupRuntime(runtime.routes?.onReady);
+  const publishScreen = runtime.routes?.onScreenChange;
+  const onRouteChange = startup.onRouteChange;
+  const onScreenChange = useCallback<ComponentProps<typeof AppRoutes>['onScreenChange']>(
+    (screen, routeKey) => {
+      publishScreen?.(screen, routeKey);
+      onRouteChange();
+    },
+    [onRouteChange, publishScreen]
+  );
   return (
     <ReaderStyleProvider value={runtime.readerStyleContext}>
       <ForumSessionEpochProvider
@@ -52,14 +61,7 @@ export function AppComposition() {
           {runtime.accountHost}
           {runtime.routes ? (
             <StartupPageLayoutProvider value={startup.onLayout}>
-              <AppRoutes
-                {...runtime.routes}
-                onReady={startup.onReady}
-                onScreenChange={(screen, routeKey) => {
-                  runtime.routes?.onScreenChange(screen, routeKey);
-                  startup.onRouteChange();
-                }}
-              />
+              <AppRoutes {...runtime.routes} onReady={startup.onReady} onScreenChange={onScreenChange} />
             </StartupPageLayoutProvider>
           ) : (
             <View

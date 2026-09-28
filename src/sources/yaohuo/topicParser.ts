@@ -496,6 +496,13 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     createdAt,
     lastReplyAt: createdAt,
     closed,
+    canEdit: root
+      .querySelectorAll('a[href]')
+      .some(
+        (link) =>
+          !link.closest('.bbscontent, .recontent, blockquote') &&
+          (/book_view_mod\.aspx/i.test(link.getAttribute('href') || '') || elementText(link) === '管理')
+      ),
     replyCount: emptyReplies ? 0 : latestReplyFloor || (replyCountMatch ? Number(replyCountMatch[1]) : undefined),
     ...(emptyReplies || latestReplyFloor > 0 ? { replyWatermark: emptyReplies ? 0 : latestReplyFloor } : {}),
     viewCount: parsePositiveInteger(contentText.match(/\(阅\s*(\d+)\)/)?.[1]) || undefined,

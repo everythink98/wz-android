@@ -1,17 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  shouldAllowFeedAutoLoadRequest,
-  shouldLoadMoreFeedFromScroll,
-  shouldShowFeedFloatingActions
-} from './floatingActions';
+import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll } from './floatingActions';
 
 describe('Android feed floating actions', () => {
-  it('shows the back-to-top action after meaningful scrolling', () => {
-    expect(shouldShowFeedFloatingActions(0)).toBe(false);
-    expect(shouldShowFeedFloatingActions(420)).toBe(false);
-    expect(shouldShowFeedFloatingActions(421)).toBe(true);
-  });
-
   it('detects when scrolling is close enough to request the next feed page', () => {
     expect(
       shouldLoadMoreFeedFromScroll({

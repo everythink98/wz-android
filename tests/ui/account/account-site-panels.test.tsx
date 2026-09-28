@@ -19,6 +19,7 @@ let mockLoginWebViewProps: Record<string, any> = {};
 let mockLoginWebViewMountCount = 0;
 
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
 }));
 
@@ -294,6 +295,30 @@ function linuxDoVerifyProps(
 }
 
 describe('Account site panels', () => {
+  it.each(['nodeseek', 'yaohuo'] as const)(
+    'keeps the latest %s error when a failed load ends in the same batch',
+    async (site) => {
+      const onWebViewState = jest.fn();
+      const view = await render(
+        site === 'nodeseek' ? (
+          <NodeSeekLoginHost {...nodeSeekProps({ visible: true, onWebViewState })} />
+        ) : (
+          <YaohuoLoginHost {...yaohuoProps({ onWebViewState })} />
+        )
+      );
+      const events = mockLoginWebViewProps;
+      await act(() => {
+        events.onError({ nativeEvent: { description: '本次连接失败' } });
+        events.onLoadEnd({ nativeEvent: { code: -2 } });
+      });
+      expect(view.getByText(`${site === 'nodeseek' ? 'NodeSeek ' : '妖火'}页面加载失败：本次连接失败`)).toBeTruthy();
+      expect(onWebViewState.mock.calls.map(([state]) => state)).toEqual(['error']);
+      await act(() => mockLoginWebViewProps.onLoadEnd({ nativeEvent: {} }));
+      expect(view.queryByText(/本次连接失败/)).toBeNull();
+      expect(onWebViewState.mock.calls.map(([state]) => state)).toEqual(['error', 'ready']);
+    }
+  );
+
   it('shows the shared login modal loading, error, actions and close behavior', async () => {
     const onClose = jest.fn();
     const onRetry = jest.fn();

@@ -6,6 +6,7 @@ import { discourseReadingQueryKey } from '@/platform/query/discourseReadingRunti
 import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
+import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import type { Fetcher } from '@/platform/network/request';
 import type { Source } from '@/domain/forum/models';
@@ -13,6 +14,7 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import { fireEvent, render } from '../render';
 
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 })
 }));
 
@@ -769,76 +771,94 @@ it.each(['loading', 'ready'] as const)(
 );
 
 it.each(['anonymous', 'same', 'changed', 'unknown'] as const)(
-  'settles concurrent login contradictions through one account probe: %s',
+  'settles a category HTTP 400 through one concurrent account probe: %s',
   async (outcome) => {
     let complete!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {
       complete = resolve;
     });
-    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (input) => {
-      if (input.includes('/session/current.json')) return pending;
-      if (input.includes('/session/csrf')) return new Response(JSON.stringify({ csrf: 'token' }));
-      return new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 });
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (input, init) => {
+      if (input.endsWith('/site.json'))
+        return new Response(JSON.stringify({ errors: ['分类读取失败'] }), { status: 400 });
+      if (input.endsWith('/session/current.json'))
+        return browserFetchIntentFromInit(init)?.owner === 'account'
+          ? pending
+          : new Response(JSON.stringify({ current_user: { username: 'alice' } }));
+      if (input.endsWith('/latest')) return new Response('<html></html>');
+      throw new Error(`Unexpected test request: ${input}`);
     });
+    const probes = () =>
+      fetcher.mock.calls.filter(
+        ([url, init]) => url.endsWith('/session/current.json') && browserFetchIntentFromInit(init)?.owner === 'account'
+      );
     const hook = await renderRuntime(fetcher);
     const epoch = hook.result.current.read.forumSessionEpochs.linuxdo;
-    await act(async () => {
-      await expect(
-        hook.result.current.read.readGateway.searchTopics({ source: 'linuxdo', query: 'AI' })
-      ).rejects.toMatchObject({ reason: 'account-recheck-required' });
-      hook.result.current.write.requestAccountRecheck('linuxdo', epoch, 'trace-987');
-    });
-    await waitFor(() =>
-      expect(fetcher.mock.calls.filter(([url]) => url.includes('/session/current.json'))).toHaveLength(1)
-    );
-    await waitFor(() =>
-      expect(hook.result.current.read.accountSessionViewModels.linuxdo).toMatchObject({
-        isLoggedIn: true,
-        isVerifying: true
-      })
-    );
-    expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'search')).toMatchObject({
-      lane: 'authenticated'
-    });
-    await act(async () => {
-      complete(
-        outcome === 'unknown'
-          ? new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 })
-          : new Response(
-              JSON.stringify({
-                current_user: outcome === 'anonymous' ? null : { username: outcome === 'changed' ? 'bob' : 'alice' }
-              })
-            )
+    try {
+      await act(async () => {
+        await expect(
+          hook.result.current.read.readGateway.getLinuxDoTopicCreationContext({ source: 'linuxdo' })
+        ).rejects.toMatchObject({ status: 400 });
+      });
+      await waitFor(() => expect(probes()).toHaveLength(1));
+      await act(async () => {
+        hook.result.current.write.requestAccountRecheck('linuxdo', epoch, 'trace-987');
+      });
+      expect(probes()).toHaveLength(1);
+      await waitFor(() =>
+        expect(hook.result.current.read.accountSessionViewModels.linuxdo).toMatchObject({
+          isLoggedIn: true,
+          isVerifying: true
+        })
       );
-    });
-    await waitFor(() => expect(hook.result.current.read.accountSessionViewModels.linuxdo.isVerifying).toBe(false));
-    expect(hook.result.current.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(outcome !== 'anonymous');
-    expect(hook.result.current.read.forumSessionEpochs.linuxdo).toBe(
-      epoch + (outcome === 'anonymous' || outcome === 'changed' ? 1 : 0)
-    );
-    expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'search')).toMatchObject({
-      lane: outcome === 'anonymous' ? 'public' : 'authenticated'
-    });
-    if (outcome === 'changed')
-      expect(hook.result.current.read.accountSessionViewModels.linuxdo.currentUser?.username).toBe('bob');
-    if (outcome === 'unknown') expect(hook.result.current.read.accountSessionViewModels.linuxdo.lastError).toBeTruthy();
-    expect(fetcher.mock.calls.filter(([url]) => url.includes('/session/current.json'))).toHaveLength(1);
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          operation: 'account-reconcile',
-          phase: 'intent',
-          parentTraceId: expect.stringMatching(/^trace-/)
-        }),
-        expect.objectContaining({
-          operation: 'account-reconcile',
-          phase: 'guard',
-          reason: 'duplicate',
-          parentTraceId: 'trace-987'
-        }),
-        expect.objectContaining({ operation: 'account-reconcile', phase: 'finish' })
-      ])
-    );
+      expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'topic-creation-context')).toMatchObject({
+        lane: 'authenticated'
+      });
+      await act(async () => {
+        complete(
+          outcome === 'unknown'
+            ? new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 })
+            : new Response(
+                JSON.stringify({
+                  current_user: outcome === 'anonymous' ? null : { username: outcome === 'changed' ? 'bob' : 'alice' }
+                })
+              )
+        );
+      });
+      await waitFor(() => expect(hook.result.current.read.accountSessionViewModels.linuxdo.isVerifying).toBe(false));
+      expect(hook.result.current.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(outcome !== 'anonymous');
+      expect(hook.result.current.read.forumSessionEpochs.linuxdo).toBe(
+        epoch + (outcome === 'anonymous' || outcome === 'changed' ? 1 : 0)
+      );
+      expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'topic-creation-context')).toMatchObject(
+        outcome === 'anonymous' ? { state: 'blocked', reason: 'login-required' } : { lane: 'authenticated' }
+      );
+      expect(hook.result.current.read.accountSessionViewModels.linuxdo.currentUser?.username).toBe(
+        outcome === 'anonymous' ? undefined : outcome === 'changed' ? 'bob' : 'alice'
+      );
+      if (outcome === 'unknown')
+        expect(hook.result.current.read.accountSessionViewModels.linuxdo.lastError).toBeTruthy();
+      expect(probes()).toHaveLength(1);
+      expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/site.json'))).toHaveLength(1);
+      expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/session/current.json'))).toHaveLength(2);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: 'account-reconcile',
+            phase: 'intent',
+            parentTraceId: expect.stringMatching(/^trace-/)
+          }),
+          expect.objectContaining({
+            operation: 'account-reconcile',
+            phase: 'guard',
+            reason: 'duplicate',
+            parentTraceId: 'trace-987'
+          }),
+          expect.objectContaining({ operation: 'account-reconcile', phase: 'finish' })
+        ])
+      );
+    } finally {
+      await act(async () => complete(new Response(JSON.stringify({ current_user: { username: 'alice' } }))));
+    }
   }
 );
 

@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { deviceProofFixture } from './device-proof-build.mjs';
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -27,43 +28,6 @@ export function selectDiagnosticProofSerial(devices, avdName) {
     );
   if (matches.length !== 1) throw new Error(`Expected exactly one connected ${expectedAvd}; found ${matches.length}.`);
   return matches[0];
-}
-
-export function diagnosticProofFixture(android, fixture) {
-  const relative = path.relative(android, fixture).replaceAll('\\', '/').replaceAll("'", "\\'");
-  const buildId = randomUUID().replaceAll('-', '');
-  return {
-    buildId,
-    manifest:
-      '<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">' +
-      '<application android:debuggable="true" tools:replace="android:debuggable" tools:ignore="HardcodedDebugMode">' +
-      '<activity android:name="com.wz.reader.DiagnosticsProofFaultActivity" android:exported="true"/>' +
-      '<activity android:name="com.wz.reader.MainActivity"><intent-filter>' +
-      '<action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/>' +
-      '<category android:name="android.intent.category.BROWSABLE"/><data android:scheme="wzdiag"/>' +
-      '</intent-filter></activity></application></manifest>',
-    java: `package com.wz.reader;
-public final class DiagnosticsProofFaultActivity extends android.app.Activity {
-  @Override public void onCreate(android.os.Bundle state) {
-    super.onCreate(state);
-    throw new IllegalStateException("PRIVATE_TEST_PAYLOAD");
-  }
-}
-`,
-    init: `beforeProject { p ->
-  p.plugins.withId('com.android.application') {
-    def config = p.extensions.getByName('android')
-    def fixture = new File(p.rootDir, '${relative}')
-    config.sourceSets.getByName('release').manifest.srcFile(new File(fixture, 'AndroidManifest.xml'))
-    config.sourceSets.getByName('release').java.srcDir(new File(fixture, 'java'))
-    p.afterEvaluate {
-      p.extensions.getByName('react').entryFile.set(new File(p.rootDir.parentFile, 'dev/diagnostics-proof/index.tsx'))
-      config.defaultConfig.buildConfigField('String', 'DIAGNOSTIC_BUILD_ID', '"${buildId}"')
-    }
-  }
-}
-`
-  };
 }
 
 export function verifyDiagnosticProof({ mode, ready, after, symbolsDirectory }) {
@@ -234,7 +198,11 @@ export async function runDiagnosticDeviceProof() {
   let symbols;
   const results = [];
   try {
-    const contents = diagnosticProofFixture(android, fixture);
+    const contents = deviceProofFixture(android, fixture, {
+      entryFile: 'dev/diagnostics-proof/index.tsx',
+      scheme: 'wzdiag',
+      javaFault: true
+    });
     mkdirSync(path.join(fixture, 'java'), { recursive: true });
     writeFileSync(path.join(fixture, 'java', 'DiagnosticsProofFaultActivity.java'), contents.java);
     writeFileSync(path.join(fixture, 'AndroidManifest.xml'), contents.manifest);

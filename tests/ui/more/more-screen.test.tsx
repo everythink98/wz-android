@@ -59,6 +59,7 @@ jest.mock('react-native', () => {
 });
 
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
 }));
 
@@ -609,7 +610,9 @@ describe('More screen state and actions', () => {
       handle.props.onGestureUpdate({ translationY: 56 });
     });
     expect(mockWithTiming).not.toHaveBeenCalled();
-    const dragTranslation = mockSharedValues[3];
+    const translations = mockSharedValues.filter((sharedValue) => sharedValue.value === 56);
+    expect(translations).toHaveLength(1);
+    const [dragTranslation] = translations;
     expect(dragTranslation?.value).toBe(56);
 
     mockDeferScheduleOnRN = true;

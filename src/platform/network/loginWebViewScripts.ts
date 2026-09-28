@@ -102,11 +102,8 @@ export type NodeImageAuthPayload = {
   sign: unknown;
 };
 
-export function nodeImageSessionScript(nonce: string) {
-  const safeNonce = requiredNodeImageAuthNonce(nonce);
+function nodeImageDocumentGuardScript(expectedUrl: string) {
   return `
-(() => {
-  const nonce = ${safeInjectedJson(safeNonce)};
   if (window.top !== window) {
     return;
   }
@@ -121,7 +118,7 @@ export function nodeImageSessionScript(nonce: string) {
     || pageUrl.username
     || pageUrl.password
     || pageUrl.port
-    || pageUrl.href !== ${safeInjectedJson(NODEIMAGE_URL)}
+    || pageUrl.href !== ${safeInjectedJson(expectedUrl)}
   ) {
     return;
   }
@@ -136,6 +133,15 @@ export function nodeImageSessionScript(nonce: string) {
       nonce
     }));
   };
+`;
+}
+
+export function nodeImageSessionScript(nonce: string) {
+  const safeNonce = requiredNodeImageAuthNonce(nonce);
+  return `
+(() => {
+  const nonce = ${safeInjectedJson(safeNonce)};
+${nodeImageDocumentGuardScript(NODEIMAGE_URL)}
   const readInputKey = () => String(document.querySelector("#apiKeyInput")?.value || "").trim();
   const readResponseKey = (data) => {
     if (!data || typeof data !== "object") {
@@ -189,35 +195,7 @@ export function nodeSeekNodeImageAuthScript(nonce: string) {
   return `
 (() => {
   const nonce = ${safeInjectedJson(safeNonce)};
-  if (window.top !== window) {
-    return;
-  }
-  let pageUrl;
-  try {
-    pageUrl = new URL(String(location.href || ""));
-  } catch {
-    return;
-  }
-  if (
-    pageUrl.protocol !== "https:"
-    || pageUrl.username
-    || pageUrl.password
-    || pageUrl.port
-    || pageUrl.href !== ${safeInjectedJson(NODEIMAGE_AUTH_URL)}
-  ) {
-    return;
-  }
-  const post = (payload) => {
-    const documentUrl = String(location.href || "");
-    if (documentUrl !== pageUrl.href) {
-      return;
-    }
-    window.ReactNativeWebView.postMessage(JSON.stringify({
-      ...payload,
-      documentUrl,
-      nonce
-    }));
-  };
+${nodeImageDocumentGuardScript(NODEIMAGE_AUTH_URL)}
   let requested = false;
   const removeStartListeners = () => {
     window.removeEventListener("message", handleStart);
@@ -293,35 +271,7 @@ export function nodeImageAuthPayloadScript(nonce: string, authPayload: NodeImage
   const nonce = ${safeInjectedJson(safeNonce)};
   const authPayload = ${safeInjectedJson(authPayload)};
   const nodeImageApiBaseUrl = "${NODEIMAGE_API_BASE_URL}";
-  if (window.top !== window) {
-    return;
-  }
-  let pageUrl;
-  try {
-    pageUrl = new URL(String(location.href || ""));
-  } catch {
-    return;
-  }
-  if (
-    pageUrl.protocol !== "https:"
-    || pageUrl.username
-    || pageUrl.password
-    || pageUrl.port
-    || pageUrl.href !== ${safeInjectedJson(NODEIMAGE_URL)}
-  ) {
-    return;
-  }
-  const post = (payload) => {
-    const documentUrl = String(location.href || "");
-    if (documentUrl !== pageUrl.href) {
-      return;
-    }
-    window.ReactNativeWebView.postMessage(JSON.stringify({
-      ...payload,
-      documentUrl,
-      nonce
-    }));
-  };
+${nodeImageDocumentGuardScript(NODEIMAGE_URL)}
   const readInputKey = () => String(document.querySelector("#apiKeyInput")?.value || "").trim();
   let verified = false;
   const verifyNodeImageAuth = async () => {

@@ -127,7 +127,7 @@ export function MessageSubmissionFixture({
       openAccountSurface: async () => {},
       reconcileAccountStatus: async () => ({ status: 'same', session: account.sessions[source] }),
       composer: {
-        ensureNodeImageApiKey: async () => null,
+        ensureNodeImageApiKey: async () => 'synthetic-api-key',
         getDiscourseEmojiUrls: async () => ({}),
         ensureWritableSession: () =>
           ensureWritableSessionTicket(

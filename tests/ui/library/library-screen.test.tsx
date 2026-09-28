@@ -248,9 +248,65 @@ afterEach(() => {
 beforeEach(() => {
   jest.spyOn(global, 'requestAnimationFrame').mockImplementation(() => 1);
   jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
+  jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => callback(40, 200, 180, 44));
 });
 
 describe('Library presentation', () => {
+  it('shows the category menu only after its current anchor has been measured', async () => {
+    const measurements: Parameters<View['measureInWindow']>[0][] = [];
+    jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => measurements.push(callback));
+    const view = await render(<LibraryHarness />);
+    await fireEvent.press(view.getByTestId('library-source-v2ex'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+
+    expect(measurements).toHaveLength(1);
+    expect(view.queryByLabelText('关闭分类菜单')).toBeNull();
+    expect(view.getByTestId('library-category-menu-button').props.accessibilityState.expanded).toBe(false);
+    await act(async () => measurements[0](40, 200, 180, 44));
+
+    expect(view.getByRole('menuitem', { name: '问与答' })).toBeTruthy();
+    expect(view.getByLabelText('关闭分类菜单').parent?.children[1]).toHaveStyle({ left: 40, top: 248 });
+    expect(view.getByTestId('library-category-menu-button').props.accessibilityState.expanded).toBe(true);
+  });
+
+  it.each(['source', 'tab', 'inactive'] as const)(
+    'ignores a delayed category measurement after the %s changes',
+    async (change) => {
+      const measurements: Parameters<View['measureInWindow']>[0][] = [];
+      jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => measurements.push(callback));
+      const view = await render(<LibraryHarness />);
+      await fireEvent.press(view.getByTestId('library-source-v2ex'));
+      await fireEvent.press(view.getByTestId('library-category-menu-button'));
+
+      if (change === 'source') await fireEvent.press(view.getByTestId('library-source-linuxdo'));
+      else if (change === 'tab') await fireEvent.press(view.getByTestId('library-tab-history'));
+      else await view.rerender(<LibraryHarness active={false} />);
+      await act(async () => measurements[0](40, 200, 180, 44));
+      if (change === 'inactive') await view.rerender(<LibraryHarness />);
+
+      expect(view.queryByLabelText('关闭分类菜单')).toBeNull();
+      expect(view.getByTestId('library-category-menu-button').props.accessibilityState.expanded).toBe(false);
+    }
+  );
+
+  it('keeps the current menu placement when an earlier measurement finishes last', async () => {
+    const measurements: Parameters<View['measureInWindow']>[0][] = [];
+    jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => measurements.push(callback));
+    const view = await render(<LibraryHarness />);
+    await fireEvent.press(view.getByTestId('library-source-v2ex'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByTestId('library-source-linuxdo'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    expect(measurements).toHaveLength(2);
+
+    await act(async () => measurements[1](70, 250, 180, 44));
+    await act(async () => measurements[0](40, 200, 180, 44));
+
+    expect(view.getByRole('menuitem', { name: '开发调优' })).toBeTruthy();
+    expect(view.queryByRole('menuitem', { name: '问与答' })).toBeNull();
+    expect(view.getByLabelText('关闭分类菜单').parent?.children[1]).toHaveStyle({ left: 70, top: 298 });
+  });
+
   it('renders supplied collection pages and source rails in user order', async () => {
     const view = await render(<LibraryHarness enabledSources={['linuxdo']} favoriteRecords={[records[2]]} />);
 

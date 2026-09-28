@@ -271,6 +271,7 @@ function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: Feed
           moreBadgeState="none"
           navigationTheme={DefaultTheme}
           FeedRouteComponent={FeedTab}
+          getTopicComposerRoute={() => EmptyRoute}
           getLibraryRoute={() => LibraryTab}
           getMoreRoute={() => MoreTab}
           getNotificationDetailRoute={() => EmptyRoute}

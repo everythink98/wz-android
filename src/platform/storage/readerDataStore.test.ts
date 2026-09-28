@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEmptyReaderData, MAX_HISTORY_RECORDS, topicKey, type ReaderData } from '@/domain/reader/readerData';
 import type { Topic, UserDetails } from '@/domain/forum/models';
+import type { ReaderCommand } from '@/domain/reader/readerRecordState';
 
 const harness = vi.hoisted(() => ({
   directory: '',
@@ -538,6 +539,42 @@ describe('reader data storage authority', () => {
     snapshot = JSON.parse(await store.exportReaderDataBackup());
     expect(snapshot.history['nodeseek:1'].visitCount).toBe(1);
     expect(snapshot.favorites['nodeseek:1'].topic.replyCount).toBe(10);
+  });
+
+  it('reads each prior record once per mutation, including records confirmed missing', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    const user: UserDetails = {
+      source: 'nodeseek',
+      id: '1',
+      username: 'alice',
+      url: 'https://www.nodeseek.com/space/1'
+    };
+    const commands: { command: ReaderCommand; reads: number }[] = [
+      { command: { type: 'favorite', topic, enabled: true, at }, reads: 2 },
+      { command: { type: 'follow', user, enabled: true, at }, reads: 2 },
+      { command: { type: 'visit', topic, at }, reads: 3 },
+      { command: { type: 'topic-summary', topic: { ...topic, replyCount: 10 } }, reads: 2 },
+      { command: { type: 'favorite', topic, enabled: false, at }, reads: 2 },
+      { command: { type: 'follow', user, enabled: false, at }, reads: 2 },
+      { command: { type: 'favorite', topic, enabled: false, at }, reads: 1 },
+      { command: { type: 'follow', user, enabled: false, at }, reads: 1 },
+      { command: { type: 'favorite', topic, enabled: true, at }, reads: 2 },
+      { command: { type: 'follow', user, enabled: true, at }, reads: 2 },
+      { command: { type: 'visit', topic, at }, reads: 3 }
+    ];
+    for (const { command, reads } of commands) {
+      harness.queries = [];
+      await store.commitReaderCommand(command);
+      expect(harness.queries.filter((sql) => sql.startsWith('SELECT * FROM reader_'))).toHaveLength(reads);
+      const snapshot = await store.exportReaderDataBackup();
+      expect(inspect<{ bytes: number }>('SELECT bytes FROM reader_meta').bytes).toBe(Buffer.byteLength(snapshot));
+    }
+    const saved: ReaderData = JSON.parse(await (await reopen()).exportReaderDataBackup());
+    expect(saved.history[topicKey(topic)]).toMatchObject({ topic, savedAt: at, visitCount: 2 });
+    expect(saved.favorites[topicKey(topic)]).toMatchObject({ topic, savedAt: at });
+    expect(saved.followedUsers['nodeseek:1'].user.id).toBe('1');
+    expect(saved.deletedRecords).toEqual(createEmptyReaderData().deletedRecords);
   });
 
   it('queues export and import among writes without overwriting later commands', async () => {

@@ -1,17 +1,23 @@
 diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt
-index 53e300b..30cbd30 100644
+index 53e300b4..077a51fe 100644
 --- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt
 +++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt
-@@ -17,6 +17,8 @@ class Keyboard {
+@@ -17,6 +17,14 @@ class Keyboard {
  
      fun getHeight(): Int = mHeight
  
 +    fun isAnimating(): Boolean = mActiveTransitionCounter > 0
 +
++    fun reset() {
++        mActiveTransitionCounter = 0
++        mHeight = 0
++        mState = KeyboardState.UNKNOWN
++    }
++
      fun updateHeight(
          insets: WindowInsetsCompat,
          isNavigationBarTranslucent: Boolean,
-@@ -26,15 +28,10 @@ class Keyboard {
+@@ -26,15 +34,10 @@ class Keyboard {
              if (isNavigationBarTranslucent) 0 else insets.getInsets(SYSTEM_BAR_TYPE_MASK).bottom
          val keyboardHeightDip = contentBottomInset - systemBarBottomInset
          val keyboardHeight = PixelUtil.toDIPFromPixel(Math.max(0, keyboardHeightDip).toFloat()).toInt()
@@ -31,10 +37,10 @@ index 53e300b..30cbd30 100644
  
      fun onAnimationStart() {
 diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt
-index a47d33b..374913d 100644
+index a47d33b7..197e9ea2 100644
 --- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt
 +++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt
-@@ -7,23 +7,18 @@ class KeyboardAnimationCallback(
+@@ -7,38 +7,56 @@ class KeyboardAnimationCallback(
      private val mKeyboard: Keyboard,
      private val mNotifyAboutKeyboardChange: NotifyAboutKeyboardChangeFunction,
      private val mIsNavigationBarTranslucent: Boolean,
@@ -45,15 +51,32 @@ index a47d33b..374913d 100644
      }
  
 -    private var mPendingStartDispatch = false
--
++    private var mIsObserving = true
++    private val mRunningAnimations = mutableSetOf<WindowInsetsAnimationCompat>()
+ 
 -    override fun onStart(
 -        animation: WindowInsetsAnimationCompat,
 -        bounds: WindowInsetsAnimationCompat.BoundsCompat,
 -    ): WindowInsetsAnimationCompat.BoundsCompat {
 -        if (!isKeyboardAnimation(animation)) {
 -            return bounds
++    fun startObserving() {
++        mIsObserving = true
++        mRunningAnimations.clear()
++        mKeyboard.reset()
++        mGetRootWindowInsets()?.let { mKeyboard.updateHeight(it, mIsNavigationBarTranslucent) }
++        mNotifyAboutKeyboardChange.call()
++    }
++
++    fun stopObserving() {
++        mIsObserving = false
++        mRunningAnimations.clear()
++        // Detaching the last observer need not deliver onEnd.
++        mKeyboard.reset()
++    }
++
 +    override fun onPrepare(animation: WindowInsetsAnimationCompat) {
-+        if (isKeyboardAnimation(animation)) {
++        if (mIsObserving && isKeyboardAnimation(animation) && mRunningAnimations.add(animation)) {
 +            // onApplyWindowInsets receives the target before onStart. Do not
 +            // publish that target as a frame of the running keyboard animation.
 +            mKeyboard.onAnimationStart()
@@ -64,7 +87,21 @@ index a47d33b..374913d 100644
      }
  
      override fun onProgress(
-@@ -38,7 +33,6 @@ class KeyboardAnimationCallback(
+         insets: WindowInsetsCompat,
+         runningAnimations: List<WindowInsetsAnimationCompat>,
+     ): WindowInsetsCompat {
++        if (!mIsObserving) {
++            return insets
++        }
+         var isAnyKeyboardAnimationRunning = false
+         for (animation in runningAnimations) {
+             if (isKeyboardAnimation(animation)) {
+                 isAnyKeyboardAnimationRunning = true
+-                break
++                // A new observer can attach after this animation's prepare.
++                if (mRunningAnimations.add(animation)) {
++                    mKeyboard.onAnimationStart()
++                }
              }
          }
          if (isAnyKeyboardAnimationRunning) {
@@ -72,14 +109,16 @@ index a47d33b..374913d 100644
              mKeyboard.updateHeight(insets, mIsNavigationBarTranslucent)
              mNotifyAboutKeyboardChange.call()
          }
-@@ -47,11 +41,12 @@ class KeyboardAnimationCallback(
+@@ -46,12 +64,13 @@ class KeyboardAnimationCallback(
+     }
  
      override fun onEnd(animation: WindowInsetsAnimationCompat) {
-         if (isKeyboardAnimation(animation)) {
+-        if (isKeyboardAnimation(animation)) {
 -            if (mPendingStartDispatch) {
 -                mNotifyAboutKeyboardChange.call()
 -            }
 -            mPendingStartDispatch = false
++        if (mIsObserving && isKeyboardAnimation(animation) && mRunningAnimations.remove(animation)) {
              mKeyboard.onAnimationEnd()
 +            if (!mKeyboard.isAnimating()) {
 +                // Opening another activity can cancel IME at an intermediate
@@ -90,23 +129,45 @@ index a47d33b..374913d 100644
          }
      }
 diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt
-index bd9c2d1..ae751fe 100644
+index bd9c2d19..24150119 100644
 --- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt
 +++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt
-@@ -25,7 +25,7 @@ class KeyboardAnimationManager(
+@@ -23,12 +23,13 @@ class KeyboardAnimationManager(
+         isNavigationBarTranslucent: Boolean,
+     ): Int {
          val listenerId = mNextListenerId++
-         if (mListeners.isEmpty()) {
+-        if (mListeners.isEmpty()) {
++        val shouldStartObserving = mListeners.isEmpty()
++        mListeners[listenerId] = callback
++        if (shouldStartObserving) {
              val keyboardAnimationCallback =
 -                KeyboardAnimationCallback(mKeyboard, ::notifyAboutKeyboardChange, isNavigationBarTranslucent)
 +                KeyboardAnimationCallback(mKeyboard, ::notifyAboutKeyboardChange, isNavigationBarTranslucent, mWindowsInsetsManager::getRootWindowInsets)
              mWindowsInsetsManager.startObservingChanges(keyboardAnimationCallback, isStatusBarTranslucent, isNavigationBarTranslucent)
          }
-         mListeners[listenerId] = callback
+-        mListeners[listenerId] = callback
+         return listenerId
+     }
+ 
 diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt
-index b0b8cfb..2e12d8b 100644
+index b0b8cfb8..b8a4c2ee 100644
 --- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt
 +++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt
-@@ -24,6 +24,8 @@ class WindowsInsetsManager(
+@@ -10,6 +10,7 @@ import androidx.core.view.ViewCompat
+ import androidx.core.view.WindowCompat
+ import androidx.core.view.WindowInsetsCompat
+ import com.facebook.react.bridge.ReactApplicationContext
++import com.facebook.react.bridge.UiThreadUtil
+ import java.lang.ref.WeakReference
+ 
+ class WindowsInsetsManager(
+@@ -19,39 +20,53 @@ class WindowsInsetsManager(
+ ) {
+     private var mIsStatusBarTranslucent = false
+     private var mIsNavigationBarTranslucent = false
++    private var mKeyboardAnimationCallback: KeyboardAnimationCallback? = null
+ 
+     private val missingContextErrorMsg = "Unable to get reference to react activity"
  
      private fun getCurrentActivity(): Activity? = mReactContext.get()?.currentActivity
  
@@ -115,7 +176,51 @@ index b0b8cfb..2e12d8b 100644
      fun startObservingChanges(
          keyboardAnimationCallback: KeyboardAnimationCallback,
          isStatusBarTranslucent: Boolean,
-@@ -75,7 +77,7 @@ class WindowsInsetsManager(
+         isNavigationBarTranslucent: Boolean,
+-    ) {
++    ) = UiThreadUtil.runOnUiThread {
++        mKeyboardAnimationCallback?.stopObserving()
++        mKeyboardAnimationCallback = keyboardAnimationCallback
+         mIsStatusBarTranslucent = isStatusBarTranslucent
+         mIsNavigationBarTranslucent = isNavigationBarTranslucent
++        keyboardAnimationCallback.startObserving()
+         updateWindowDecor(false)
+ 
+         val currentActivity = getCurrentActivity()
+         if (currentActivity == null) {
+             Log.e("Reanimated", missingContextErrorMsg)
+-            return
++            return@runOnUiThread
+         }
+ 
+         val rootView = currentActivity.window.decorView
+-        ViewCompat.setOnApplyWindowInsetsListener(rootView, ::onApplyWindowInsetsListener)
++        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, insets ->
++            if (mKeyboardAnimationCallback === keyboardAnimationCallback) {
++                onApplyWindowInsetsListener(view, insets)
++            } else {
++                insets
++            }
++        }
+         ViewCompat.setWindowInsetsAnimationCallback(rootView, keyboardAnimationCallback)
+     }
+ 
+-    fun stopObservingChanges() {
++    fun stopObservingChanges() = UiThreadUtil.runOnUiThread {
++        mKeyboardAnimationCallback?.stopObserving()
++        mKeyboardAnimationCallback = null
+         updateWindowDecor(!mIsStatusBarTranslucent && !mIsNavigationBarTranslucent)
+         updateInsets(0, 0)
+ 
+         val currentActivity = getCurrentActivity()
+         if (currentActivity == null) {
+             Log.e("Reanimated", missingContextErrorMsg)
+-            return
++            return@runOnUiThread
+         }
+ 
+         val rootView = currentActivity.window.decorView
+@@ -75,7 +90,7 @@ class WindowsInsetsManager(
          insets: WindowInsetsCompat,
      ): WindowInsetsCompat {
          val defaultInsets = ViewCompat.onApplyWindowInsets(view, insets)

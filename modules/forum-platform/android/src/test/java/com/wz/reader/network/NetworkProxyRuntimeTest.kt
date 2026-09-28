@@ -16,6 +16,7 @@ import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -57,6 +58,125 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkProxyRuntimeTest {
+  @Test
+  fun defaultWebViewUserAgentWaitsForMainThreadRead() {
+    val mainThread = Thread.currentThread()
+    val entered = CountDownLatch(1)
+    val queued = AtomicReference<Runnable?>()
+    val executor = Executors.newSingleThreadExecutor()
+    try {
+      val result = executor.submit<String> {
+        readDefaultWebViewUserAgentOnMainThread(
+          isMainThread = false,
+          postToMainThread = { action -> queued.set(action); entered.countDown(); true },
+          readUserAgent = {
+            entered.countDown()
+            assertSame(mainThread, Thread.currentThread())
+            "provider-user-agent"
+          }
+        )
+      }
+      assertTrue(entered.await(2, TimeUnit.SECONDS))
+      assertNotNull(queued.get())
+      assertFalse(result.isDone)
+      queued.get()!!.run()
+      assertEquals("provider-user-agent", result.get(2, TimeUnit.SECONDS))
+    } finally {
+      queued.get()?.run()
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun defaultWebViewUserAgentReadsInlineOnMainThread() {
+    val mainThread = Thread.currentThread()
+    assertEquals("provider-user-agent", readDefaultWebViewUserAgentOnMainThread(
+      isMainThread = true,
+      postToMainThread = { throw AssertionError("Main thread must not post and wait on itself") },
+      readUserAgent = { assertSame(mainThread, Thread.currentThread()); "provider-user-agent" }
+    ))
+  }
+
+  @Test
+  fun defaultWebViewUserAgentPropagatesReadFailure() {
+    val failure = IllegalStateException("Provider unavailable")
+    assertSame(failure, assertThrows(IllegalStateException::class.java) {
+      readDefaultWebViewUserAgentOnMainThread(
+        isMainThread = false,
+        postToMainThread = { action -> action.run(); true },
+        readUserAgent = { throw failure }
+      )
+    })
+  }
+
+  @Test
+  fun defaultWebViewUserAgentRejectsFailedMainThreadDispatch() {
+    val reads = AtomicInteger()
+    assertThrows(IllegalStateException::class.java) {
+      readDefaultWebViewUserAgentOnMainThread(
+        isMainThread = false,
+        postToMainThread = { false },
+        readUserAgent = { reads.incrementAndGet(); "must-not-read" }
+      )
+    }
+    assertEquals(0, reads.get())
+  }
+
+  @Test
+  fun defaultWebViewUserAgentTimeoutCancelsQueuedRead() {
+    val queued = AtomicReference<Runnable?>()
+    val reads = AtomicInteger()
+    assertThrows(TimeoutException::class.java) {
+      readDefaultWebViewUserAgentOnMainThread(
+        isMainThread = false,
+        postToMainThread = { action -> queued.set(action); true },
+        timeoutMs = 1,
+        readUserAgent = { reads.incrementAndGet(); "must-not-read" }
+      )
+    }
+    assertNotNull(queued.get())
+    queued.get()!!.run()
+    assertEquals(0, reads.get())
+  }
+
+  @Test
+  fun defaultWebViewUserAgentInterruptionPreservesFlagAndCancelsQueuedRead() {
+    val entered = CountDownLatch(1)
+    val finished = CountDownLatch(1)
+    val queued = AtomicReference<Runnable?>()
+    val failure = AtomicReference<Throwable?>()
+    val interrupted = AtomicBoolean()
+    val reads = AtomicInteger()
+    val caller = Thread {
+      try {
+        readDefaultWebViewUserAgentOnMainThread(
+          isMainThread = false,
+          postToMainThread = { action -> queued.set(action); entered.countDown(); true },
+          readUserAgent = { entered.countDown(); reads.incrementAndGet(); "must-not-read" }
+        )
+      } catch (error: Throwable) {
+        failure.set(error)
+        interrupted.set(Thread.currentThread().isInterrupted)
+      } finally {
+        finished.countDown()
+      }
+    }
+    try {
+      caller.start()
+      assertTrue(entered.await(2, TimeUnit.SECONDS))
+      assertNotNull(queued.get())
+      caller.interrupt()
+      assertTrue(finished.await(2, TimeUnit.SECONDS))
+      assertTrue(failure.get() is InterruptedException)
+      assertTrue(interrupted.get())
+      queued.get()!!.run()
+      assertEquals(0, reads.get())
+    } finally {
+      caller.interrupt()
+      caller.join(2_000)
+    }
+  }
+
   @Test
   fun publicReadRetriesUseLatestClearanceWithoutAccountCookies() {
     for (source in listOf("linuxdo", "nodeseek")) {

@@ -8,7 +8,7 @@ import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL } from './protoco
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
-const YAOHUO_ACTION_HEADERS = {
+export const YAOHUO_ACTION_HEADERS = {
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
   origin: YAOHUO_BASE_URL,

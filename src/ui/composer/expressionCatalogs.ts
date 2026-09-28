@@ -1,7 +1,13 @@
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
+
 type YaohuoFaceItem = {
   label: string;
   value: string;
 };
+
+export function yaohuoFaceImageUrl(filename: string) {
+  return new URL(`/bbs/face/${encodeURIComponent(filename)}`, sourceCatalog.yaohuo.baseUrl).href;
+}
 
 export const YAOHUO_FACE_ITEMS: YaohuoFaceItem[] = [
   { label: '无表情', value: '' },

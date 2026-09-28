@@ -1,4 +1,172 @@
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+index 80c6803..01279fc 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+@@ -3,12 +3,16 @@ package com.reactnativecommunity.webview;
+ import android.annotation.SuppressLint;
+ import android.graphics.Rect;
+ import android.net.Uri;
++import android.os.Handler;
++import android.os.Looper;
+ import android.text.TextUtils;
+ import android.view.ActionMode;
+ import android.view.Menu;
+ import android.view.MenuItem;
+ import android.view.MotionEvent;
+ import android.view.View;
++import android.view.ViewTreeObserver;
++import android.webkit.CookieManager;
+ import android.webkit.JavascriptInterface;
+ import android.webkit.ValueCallback;
+ import android.webkit.WebChromeClient;
+@@ -91,6 +95,123 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         progressChangedFilter = new ProgressChangedFilter();
+     }
+ 
++    private boolean androidPrewarmOnWindowVisible;
++    private boolean prewarmHasBeenVisible;
++    private boolean prewarmWindowHidden;
++    private boolean prewarmDestroyed;
++    private boolean prewarmStarted;
++    private boolean prewarmLayerChanged;
++    private int prewarmOriginalLayer;
++    private long prewarmEpoch;
++    private final Handler prewarmHandler = new Handler(Looper.getMainLooper());
++    private View prewarmRoot;
++    private ViewTreeObserver prewarmObserver;
++    private ViewTreeObserver.OnPreDrawListener prewarmGate;
++    private Runnable prewarmDeadline;
++
++    public void setAndroidPrewarmOnWindowVisible(boolean enabled) {
++        androidPrewarmOnWindowVisible = enabled;
++        if (!enabled) releaseWindowPrewarm(prewarmEpoch);
++    }
++
++    private void releaseWindowPrewarm(long epoch) {
++        if (epoch != prewarmEpoch || prewarmGate == null) return;
++        if (prewarmDeadline != null) {
++            prewarmHandler.removeCallbacks(prewarmDeadline);
++            prewarmDeadline = null;
++        }
++        if (prewarmObserver != null && prewarmObserver.isAlive()) {
++            prewarmObserver.removeOnPreDrawListener(prewarmGate);
++        }
++        final View root = prewarmRoot;
++        prewarmGate = null;
++        prewarmObserver = null;
++        prewarmRoot = null;
++        try {
++            if (prewarmLayerChanged) {
++                prewarmLayerChanged = false;
++                setLayerType(prewarmOriginalLayer, null);
++            }
++        } catch (RuntimeException error) {
++            FLog.w("RNCWebView", "Could not restore WebView layer after prewarm", error);
++        } finally {
++            invalidate();
++            if (root != null) root.invalidate();
++        }
++    }
++
++    private void prewarmReturningWindow() {
++        releaseWindowPrewarm(prewarmEpoch);
++        final long epoch = ++prewarmEpoch;
++        prewarmStarted = false;
++        prewarmOriginalLayer = getLayerType();
++        prewarmRoot = getRootView();
++        prewarmObserver = prewarmRoot.getViewTreeObserver();
++        prewarmGate = () -> {
++            if (epoch != prewarmEpoch || prewarmGate == null) return true;
++            if (prewarmStarted) return false;
++            prewarmStarted = true;
++            try {
++                if (prewarmDestroyed || !isAttachedToWindow() ||
++                    getWindowVisibility() != View.VISIBLE || getWidth() <= 0 || getHeight() <= 0 ||
++                    !isHardwareAccelerated() || !isShown() || !getGlobalVisibleRect(new Rect())) {
++                    releaseWindowPrewarm(epoch);
++                    return true;
++                }
++                // A hidden WebView can lose its hardware functor. Rebuild it after the root
++                // renderer initializes, before requesting the visual state of the returning page.
++                prewarmLayerChanged = true;
++                setLayerType(View.LAYER_TYPE_HARDWARE, null);
++                buildLayer();
++                postVisualStateCallback(epoch, new WebView.VisualStateCallback() {
++                    @Override
++                    public void onComplete(long id) {
++                        releaseWindowPrewarm(id);
++                    }
++                });
++            } catch (RuntimeException error) {
++                FLog.w("RNCWebView", "WebView return prewarm failed", error);
++                releaseWindowPrewarm(epoch);
++            }
++            return prewarmGate == null;
++        };
++        try {
++            prewarmObserver.addOnPreDrawListener(prewarmGate);
++            // Failure recovery only; successful returns release on the visual callback.
++            prewarmDeadline = () -> {
++                if (epoch != prewarmEpoch || prewarmGate == null) return;
++                FLog.w("RNCWebView", "WebView return prewarm timed out");
++                releaseWindowPrewarm(epoch);
++            };
++            prewarmHandler.postDelayed(prewarmDeadline, 2000);
++            invalidate();
++            prewarmRoot.invalidate();
++        } catch (RuntimeException error) {
++            FLog.w("RNCWebView", "Could not prepare returning WebView", error);
++            releaseWindowPrewarm(epoch);
++        }
++    }
++
++    @Override
++    protected void onWindowVisibilityChanged(int visibility) {
++        final boolean returning = visibility == View.VISIBLE && prewarmWindowHidden && prewarmHasBeenVisible;
++        prewarmWindowHidden = visibility != View.VISIBLE;
++        if (visibility == View.VISIBLE) prewarmHasBeenVisible = true;
++        else releaseWindowPrewarm(prewarmEpoch);
++        super.onWindowVisibilityChanged(visibility);
++        if (returning && androidPrewarmOnWindowVisible && !prewarmDestroyed && isAttachedToWindow()) {
++            prewarmReturningWindow();
++        }
++    }
++
++    @Override
++    protected void onDetachedFromWindow() {
++        releaseWindowPrewarm(prewarmEpoch);
++        prewarmHasBeenVisible = false;
++        prewarmWindowHidden = false;
++        super.onDetachedFromWindow();
++    }
++
+     public void setBasicAuthCredential(RNCBasicAuthCredential credential) {
+         mRNCWebViewClient.setBasicAuthCredential(credential);
+     }
+@@ -416,10 +537,14 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+ 
+     @Override
+     public void destroy() {
++        prewarmDestroyed = true;
++        releaseWindowPrewarm(prewarmEpoch);
+         if (mWebChromeClient != null) {
+             mWebChromeClient.onHideCustomView();
+         }
+         super.destroy();
++        // Cancellation can destroy a page before onPageFinished persists its response cookies.
++        CookieManager.getInstance().flush();
+     }
+ 
+   public ThemedReactContext getThemedReactContext() {
+@@ -465,4 +590,4 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+             return waitingForCommandLoadUrl;
+         }
+     }
+-}
+\ No newline at end of file
++}
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
+index f83033b..c60eb23 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 @@ -1,6 +1,7 @@
@@ -9,7 +177,7 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
  import android.content.pm.ActivityInfo
  import android.graphics.Bitmap
  import android.graphics.Color
-@@ -11,6 +12,7 @@
+@@ -11,6 +12,7 @@ import android.util.Log
  import android.view.View
  import android.view.ViewGroup
  import android.view.WindowManager
@@ -17,7 +185,7 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
  import android.webkit.CookieManager
  import android.webkit.DownloadListener
  import android.webkit.WebSettings
-@@ -344,7 +346,14 @@
+@@ -344,7 +346,14 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
            webView.progressChangedFilter.setWaitingForCommandLoadUrl(false)
            webView.loadUrl(url)
          }
@@ -34,9 +202,10 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
          "clearCache" -> {
            val includeDiskFiles = args != null && args.getBoolean(0)
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
+index 9f9d6f3..1708f85 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
-@@ -5,6 +5,10 @@
+@@ -5,6 +5,10 @@ import android.graphics.Color
  import android.view.View
  import android.webkit.WebView
  import android.widget.FrameLayout
@@ -47,7 +216,7 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
  
  /**
   * A [FrameLayout] container to hold the [RNCWebView].
-@@ -23,6 +27,26 @@
+@@ -23,6 +27,26 @@ class RNCWebViewWrapper(context: Context, webView: RNCWebView) : FrameLayout(con
    val webView: RNCWebView = getChildAt(0) as RNCWebView
  
    companion object {
@@ -75,6 +244,7 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
       * A helper to get react tag id by given WebView
       */
 diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+index fa8efb8..dd98fab 100644
 --- a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 +++ b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 @@ -1,5 +1,7 @@
@@ -85,7 +255,20 @@ diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnati
  import androidx.annotation.NonNull;
  import androidx.annotation.Nullable;
  
-@@ -358,7 +360,9 @@
+@@ -100,6 +102,12 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+         mRNCWebViewManagerImpl.setAndroidLayerType(view, value);
+     }
+ 
++    @Override
++    @ReactProp(name = "androidPrewarmOnWindowVisible", defaultBoolean = false)
++    public void setAndroidPrewarmOnWindowVisible(RNCWebViewWrapper view, boolean value) {
++        view.getWebView().setAndroidPrewarmOnWindowVisible(value);
++    }
++
+     @Override
+     @ReactProp(name = "applicationNameForUserAgent")
+     public void setApplicationNameForUserAgent(RNCWebViewWrapper view, @Nullable String value) {
+@@ -358,7 +366,9 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
      public void setAllowsLinkPreview(RNCWebViewWrapper view, boolean value) {}
  
      @Override
@@ -96,7 +279,7 @@ diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnati
  
      @Override
      public void setAutoManageStatusBarEnabled(RNCWebViewWrapper view, boolean value) {}
-@@ -466,7 +470,13 @@
+@@ -466,7 +476,13 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
  
    @Override
    public void requestFocus(RNCWebViewWrapper view) {
@@ -111,10 +294,41 @@ diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnati
    }
  
    @Override
+@@ -564,4 +580,4 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+         mRNCWebViewManagerImpl.onDropViewInstance(view);
+         super.onDropViewInstance(view);
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+index 974337f..d70f932 100644
+--- a/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
++++ b/node_modules/react-native-webview/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+@@ -77,6 +77,11 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
+         mRNCWebViewManagerImpl.setAndroidLayerType(view, value);
+     }
+ 
++    @ReactProp(name = "androidPrewarmOnWindowVisible", defaultBoolean = false)
++    public void setAndroidPrewarmOnWindowVisible(RNCWebViewWrapper view, boolean value) {
++        view.getWebView().setAndroidPrewarmOnWindowVisible(value);
++    }
++
+     @ReactProp(name = "applicationNameForUserAgent")
+     public void setApplicationNameForUserAgent(RNCWebViewWrapper view, @Nullable String value) {
+         mRNCWebViewManagerImpl.setApplicationNameForUserAgent(view, value);
+@@ -332,4 +337,4 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
+         mRNCWebViewManagerImpl.onDropViewInstance(view);
+         super.onDropViewInstance(view);
+     }
+-}
+\ No newline at end of file
++}
 diff --git a/node_modules/react-native-webview/index.d.ts b/node_modules/react-native-webview/index.d.ts
+index 10b9c14..8487b10 100644
 --- a/node_modules/react-native-webview/index.d.ts
 +++ b/node_modules/react-native-webview/index.d.ts
-@@ -5,7 +5,7 @@
+@@ -5,7 +5,7 @@ export { FileDownload, WebViewMessageEvent, WebViewNavigation } from './lib/WebV
  
  export type WebViewProps = IOSWebViewProps & AndroidWebViewProps & WindowsWebViewProps;
  
@@ -123,23 +337,62 @@ diff --git a/node_modules/react-native-webview/index.d.ts b/node_modules/react-n
    /**
     * Go back one page in the webview's history.
     */
-diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
---- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-+++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-@@ -9,6 +9,7 @@
- import android.view.MenuItem;
- import android.view.MotionEvent;
- import android.view.View;
-+import android.webkit.CookieManager;
- import android.webkit.JavascriptInterface;
- import android.webkit.ValueCallback;
- import android.webkit.WebChromeClient;
-@@ -420,6 +421,8 @@
-             mWebChromeClient.onHideCustomView();
-         }
-         super.destroy();
-+        // Cancellation can destroy a page before onPageFinished persists its response cookies.
-+        CookieManager.getInstance().flush();
-     }
+diff --git a/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts b/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts
+index 6b789f9..24e909a 100644
+--- a/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts
++++ b/node_modules/react-native-webview/lib/RNCWebViewNativeComponent.d.ts
+@@ -117,6 +117,7 @@ export interface NativeProps extends ViewProps {
+     allowsProtectedMedia?: boolean;
+     allowsFullscreenVideo?: boolean;
+     androidLayerType?: WithDefault<'none' | 'software' | 'hardware', 'none'>;
++    androidPrewarmOnWindowVisible?: WithDefault<boolean, false>;
+     cacheMode?: WithDefault<'LOAD_DEFAULT' | 'LOAD_CACHE_ELSE_NETWORK' | 'LOAD_NO_CACHE' | 'LOAD_CACHE_ONLY', 'LOAD_DEFAULT'>;
+     domStorageEnabled?: boolean;
+     downloadingMessage?: string;
+diff --git a/node_modules/react-native-webview/lib/WebViewTypes.d.ts b/node_modules/react-native-webview/lib/WebViewTypes.d.ts
+index f666e81..7b12c0e 100644
+--- a/node_modules/react-native-webview/lib/WebViewTypes.d.ts
++++ b/node_modules/react-native-webview/lib/WebViewTypes.d.ts
+@@ -868,6 +868,12 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
+      * @platform android
+      */
+     androidLayerType?: AndroidLayerType;
++    /**
++     * Prewarm the hardware renderer when a previously visible window returns.
++     * Defaults to false. Opt in for editors; native visibility decides when to warm.
++     * @platform android
++     */
++    androidPrewarmOnWindowVisible?: boolean;
+     /**
+      * Boolean value to enable third party cookies in the `WebView`.
+      * The default value is `true`.
+diff --git a/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts b/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts
+index ca3af15..8862a81 100644
+--- a/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts
++++ b/node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts
+@@ -136,6 +136,7 @@ export interface NativeProps extends ViewProps {
+   allowsProtectedMedia?: boolean;
+   allowsFullscreenVideo?: boolean;
+   androidLayerType?: WithDefault<'none' | 'software' | 'hardware', 'none'>;
++  androidPrewarmOnWindowVisible?: WithDefault<boolean, false>;
+   cacheMode?: WithDefault<
+     'LOAD_DEFAULT' | 'LOAD_CACHE_ELSE_NETWORK' | 'LOAD_NO_CACHE' | 'LOAD_CACHE_ONLY',
+     'LOAD_DEFAULT'
+diff --git a/node_modules/react-native-webview/src/WebViewTypes.ts b/node_modules/react-native-webview/src/WebViewTypes.ts
+index 4e7247f..94cfb47 100644
+--- a/node_modules/react-native-webview/src/WebViewTypes.ts
++++ b/node_modules/react-native-webview/src/WebViewTypes.ts
+@@ -1051,6 +1051,13 @@ export interface AndroidWebViewProps extends WebViewSharedProps {
+    */
+   androidLayerType?: AndroidLayerType;
  
-   public ThemedReactContext getThemedReactContext() {
++  /**
++   * Prewarm the hardware renderer when a previously visible window returns.
++   * Defaults to false. Opt in for editors; native visibility decides when to warm.
++   * @platform android
++   */
++  androidPrewarmOnWindowVisible?: boolean;
++
+   /**
+    * Boolean value to enable third party cookies in the `WebView`.
+    * The default value is `true`.
