@@ -72,11 +72,81 @@ afterEach(() => {
   setDiagnosticWriter(null);
 });
 
+it('preserves bounded verification evidence while rejecting private probe payloads', () => {
+  const fields = {
+    egressProbeTraceId: 'trace-12',
+    egressCheckpoint: 'check',
+    egressProbeState: 'completed',
+    egressProbeAgeMs: 6000,
+    pageObservationAgeMs: 3000,
+    pageStatus: 'unknown',
+    verificationPage: 'alternate-login',
+    verificationAction: 'alternate-auto',
+    webViewKey: 4,
+    hasChallengeMarker: true,
+    probeNativeFailure: 'none',
+    probeWebViewFailure: 'http-status',
+    probeNativeDurationMs: 120,
+    probeWebViewDurationMs: 200,
+    probeWebViewStatus: 403,
+    probeCancelReason: 'navigation'
+  } as const satisfies DiagnosticFields;
+  expect(safeFields(fields)).toEqual(fields);
+  for (const verificationPage of ['challenge', 'alternate', 'alternate-login', 'forum', 'login', 'other']) {
+    expect(safeFields({ verificationPage })).toEqual({ verificationPage });
+  }
+  const events = captureEvents();
+  for (const verificationAction of [
+    'challenge-open',
+    'auto-check',
+    'alternate-auto',
+    'alternate-manual',
+    'load-start',
+    'load-end',
+    'http-error',
+    'load-error',
+    'return-to-forum',
+    'message-ignored',
+    'renderer-gone',
+    'load-timeout'
+  ] as const) {
+    beginDiagnosticTrace('credential', 'check', { verificationAction });
+    expect(events().at(-1)).toMatchObject({ verificationAction });
+  }
+  for (const verificationAction of ['challenge-open?token=PRIVATE_TOKEN', 'auto-check?token=PRIVATE_TOKEN']) {
+    expect(safeFields({ verificationAction })).toEqual({ verificationAction: 'redacted' });
+  }
+  expect(
+    safeFields({
+      egressProbeTraceId: 'https://PRIVATE/',
+      verificationPage: 'https://PRIVATE/?token=PRIVATE_TOKEN',
+      verificationAction: 'PRIVATE_TOKEN',
+      webViewKey: 'PRIVATE_TOKEN',
+      probeNativeFailure: 'PRIVATE_ERROR',
+      probeWebViewFailure: 'PRIVATE_ERROR',
+      probeNativeDurationMs: Infinity,
+      ip: '192.0.2.1',
+      ipHash: 'PRIVATE_HASH',
+      body: 'PRIVATE_BODY',
+      cookie: 'PRIVATE_COOKIE'
+    })
+  ).toEqual({
+    egressProbeTraceId: 'redacted',
+    verificationPage: 'redacted',
+    verificationAction: 'redacted',
+    probeNativeFailure: 'redacted',
+    probeWebViewFailure: 'redacted'
+  });
+  for (const webViewKey of [NaN, Infinity, -Infinity]) expect(safeFields({ webViewKey })).toEqual({});
+});
+
 describe('diagnostic traces', () => {
   it('keeps production operations, stages and typed reasons after sanitization', () => {
     expectTypeOf<string>().not.toExtend<DiagnosticOperation>();
     expectTypeOf<string>().not.toExtend<DiagnosticFields['state']>();
     expectTypeOf<string>().not.toExtend<DiagnosticFields['reason']>();
+    expectTypeOf<string>().not.toExtend<DiagnosticFields['verificationPage']>();
+    expectTypeOf<string>().not.toExtend<DiagnosticFields['verificationAction']>();
     const operations = [
       'install',
       'prefetch-post',
@@ -671,6 +741,8 @@ describe('diagnostic traces', () => {
       queueState: 'redacted',
       csrfSource: 'redacted',
       userAgentSource: 'redacted',
+      verificationPage: 'redacted',
+      verificationAction: 'redacted',
       errorName: 'Error',
       message: 'unknown',
       stack: 'redacted',

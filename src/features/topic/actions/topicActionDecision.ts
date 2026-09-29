@@ -11,6 +11,7 @@ export type TopicActionDecisionReason =
   | 'identity-unavailable'
   | 'object-forbidden'
   | 'topic-ended'
+  | 'topic-closed'
   | 'missing-target'
   | 'already-complete'
   | 'pending';
@@ -49,6 +50,8 @@ export function topicActionDecisionMessage(decision: TopicActionDecision) {
       return '当前内容不允许此操作';
     case 'topic-ended':
       return '本帖已结束，无法回复';
+    case 'topic-closed':
+      return '本帖已关闭，无法回复';
     case 'missing-target':
       return '当前操作目标不完整，请刷新后重试';
     case 'already-complete':
@@ -66,6 +69,7 @@ export function decideTopicAction({
   alreadyComplete = false,
   objectAllowed = true,
   pending = false,
+  reply,
   targetPresent = true,
   topic
 }: {
@@ -74,13 +78,17 @@ export function decideTopicAction({
   alreadyComplete?: boolean;
   objectAllowed?: boolean;
   pending?: boolean;
+  reply?: Reply;
   targetPresent?: boolean;
   topic: TopicDetail | null;
 }): TopicActionDecision {
   if (!topic?.id) return { allowed: false, reason: 'missing-target' };
   if (!sourceSupportsTopicAction(topic.source, action)) return { allowed: false, reason: 'unsupported' };
-  if (topic.source === 'yaohuo' && topic.closed && (action === 'reply' || action === 'upload')) {
-    return { allowed: false, reason: 'topic-ended' };
+  if (
+    topic.closed &&
+    (action === 'reply' || (action === 'upload' && !(topic.source === 'linuxdo' && reply?.canEdit === true)))
+  ) {
+    return { allowed: false, reason: topic.source === 'yaohuo' ? 'topic-ended' : 'topic-closed' };
   }
   if (account?.identityTrust === 'unknown') return { allowed: false, reason: 'identity-unavailable' };
   if (!account?.canWrite) return { allowed: false, reason: 'login-required' };

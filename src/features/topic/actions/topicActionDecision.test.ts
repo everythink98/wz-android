@@ -16,12 +16,15 @@ const loggedIn = createSiteSessionViewModel({
 });
 
 describe('topic action decision', () => {
-  it('forbids replies and uploads on ended Yaohuo topics while preserving bookmarks', () => {
-    const ended: TopicDetail = { ...topic, source: 'yaohuo', closed: true };
+  it.each([
+    ['yaohuo', '本帖已结束，无法回复'],
+    ['linuxdo', '本帖已关闭，无法回复']
+  ] as const)('forbids replies and uploads on closed %s topics while preserving bookmarks', (source, message) => {
+    const ended: TopicDetail = { ...topic, source, closed: true };
     for (const action of ['reply', 'upload'] as const) {
       const decision = decideTopicAction({ account: loggedIn, action, topic: ended, objectAllowed: true });
       expect(decision.allowed).toBe(false);
-      expect(topicActionDecisionMessage(decision)).toBe('本帖已结束，无法回复');
+      expect(topicActionDecisionMessage(decision)).toBe(message);
     }
     expect(decideTopicAction({ account: loggedIn, action: 'bookmark', topic: ended }).allowed).toBe(true);
   });

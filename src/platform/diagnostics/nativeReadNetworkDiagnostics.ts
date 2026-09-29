@@ -81,6 +81,12 @@ const countKeys = [
   'cookieCount',
   'loginCookieCount',
   'storedLoginCookieCount',
+  'cfClearanceCount',
+  'storedCfClearanceCount',
+  'cfClearanceDistinctCount',
+  'storedCfClearanceDistinctCount',
+  'cfClearancePartitionedCount',
+  'cfClearanceUnpartitionedCount',
   'cookieRevision',
   'generation',
   'previousGeneration',
@@ -218,6 +224,7 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
       output.mediaRef = input.mediaRef;
     for (const [key, allowed] of Object.entries({
       cookieKind: new Set(['login', 'session', 'clearance', 'bot-management', 'connect', 'other']),
+      cfClearanceInfoResult: new Set(['success', 'unsupported', 'failed']),
       cookieAction: new Set(['set', 'delete', 'unknown']),
       cookieLifetime: new Set(['session', 'persistent', 'expired', 'unknown']),
       cookieAccepted: new Set(['accepted', 'rejected', 'not_submitted', 'pending']),

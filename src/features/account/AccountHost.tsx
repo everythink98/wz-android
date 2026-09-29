@@ -9,6 +9,9 @@ import type { NodeImageAuthDocument } from './useNodeImageAuthController';
 import type { AccountHostStyles } from './accountHostStyles';
 
 export function AccountHost({
+  onLinuxDoChallengeReturned,
+  onLinuxDoDocumentNavigation,
+  onLinuxDoVerificationPageEvent,
   recoveryPanel,
   retryLinuxDoRecovery,
   checking,
@@ -46,6 +49,12 @@ export function AccountHost({
   styles,
   webViewBlockMessage
 }: {
+  onLinuxDoChallengeReturned?: (webViewKey: number) => void;
+  onLinuxDoDocumentNavigation?: (webViewKey: number) => void;
+  onLinuxDoVerificationPageEvent?: (
+    event: import('./useVerificationController').LinuxDoVerificationPageEvent,
+    webViewKey: number
+  ) => void;
   recoveryPanel?: import('./useVerificationController').LinuxDoRecoveryPanel;
   retryLinuxDoRecovery?: () => void;
   checking: boolean;
@@ -86,6 +95,9 @@ export function AccountHost({
   return (
     <>
       <MemoizedLinuxDoVerifyModal
+        onChallengeReturned={onLinuxDoChallengeReturned}
+        onDocumentNavigation={onLinuxDoDocumentNavigation}
+        onVerificationPageEvent={onLinuxDoVerificationPageEvent}
         recoveryPanel={recoveryPanel}
         onRetryRecovery={retryLinuxDoRecovery}
         checking={checking}

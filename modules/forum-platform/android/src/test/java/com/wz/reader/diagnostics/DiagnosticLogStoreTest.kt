@@ -20,16 +20,38 @@ class DiagnosticLogStoreTest {
       "cookieKind" to "bot-management", "hasCfClearance" to true, "hasStoredCfClearance" to true,
       "isCfClearanceCurrent" to false, "didCfClearanceChange" to true, "userAgentHash" to "0123abcd",
       "cookieEndpoint" to "site-config", "loginCookieCount" to 2, "storedLoginCookieCount" to 1, "isLoginCookieCurrent" to false,
-      "cookie" to "PRIVATE_COOKIE", "cookieHash" to "PRIVATE_HASH", "userAgent" to "PRIVATE_UA"
+      "cfClearanceCount" to 3, "storedCfClearanceCount" to 2,
+      "cfClearanceDistinctCount" to 2, "storedCfClearanceDistinctCount" to 1,
+      "cfClearancePartitionedCount" to 1, "cfClearanceUnpartitionedCount" to 2, "cfClearanceInfoResult" to "success",
+      "cookie" to "PRIVATE_COOKIE", "cookieHash" to "PRIVATE_HASH", "userAgent" to "PRIVATE_UA",
+      "cfClearanceHash" to "1234abcd", "cfClearanceValues" to listOf("PRIVATE_CLEARANCE")
     ))
-    assertEquals(10, fields.size)
+    assertEquals(17, fields.size)
     assertEquals("site-config", fields["cookieEndpoint"])
     assertEquals(2, fields["loginCookieCount"])
     assertEquals(1, fields["storedLoginCookieCount"])
     assertEquals(false, fields["isLoginCookieCurrent"])
     assertEquals("0123abcd", fields["userAgentHash"])
     assertEquals(false, fields["isCfClearanceCurrent"])
+    assertEquals(3, fields["cfClearanceCount"])
+    assertEquals(2, fields["storedCfClearanceCount"])
+    assertEquals(2, fields["cfClearanceDistinctCount"])
+    assertEquals(1, fields["storedCfClearanceDistinctCount"])
+    assertEquals(1, fields["cfClearancePartitionedCount"])
+    assertEquals(2, fields["cfClearanceUnpartitionedCount"])
+    assertEquals("success", fields["cfClearanceInfoResult"])
+    for (result in listOf("unsupported", "failed")) {
+      assertEquals(result, DiagnosticJournal.safeNetworkFields(mapOf("cfClearanceInfoResult" to result))["cfClearanceInfoResult"])
+    }
+    assertTrue(DiagnosticJournal.safeNetworkFields(mapOf("cfClearanceInfoResult" to "PRIVATE_RESULT")).isEmpty())
+    assertFalse(fields.containsKey("cfClearanceHash"))
     assertFalse(fields.toString().contains("PRIVATE"))
+    for (key in listOf("cfClearanceCount", "storedCfClearanceCount", "cfClearanceDistinctCount", "storedCfClearanceDistinctCount",
+      "cfClearancePartitionedCount", "cfClearanceUnpartitionedCount")) {
+      for (value in listOf(-1, Double.NaN, 1_000_000_001L, "PRIVATE_COUNT")) {
+        assertTrue(DiagnosticJournal.safeNetworkFields(mapOf(key to value)).isEmpty())
+      }
+    }
   }
 
   @get:Rule val temporary = TemporaryFolder()

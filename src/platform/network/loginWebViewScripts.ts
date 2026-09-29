@@ -1,75 +1,57 @@
 import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '@/domain/forum/sourceUrls';
 
-export const NODESEEK_LOGIN_PROBE_SCRIPT = `
+export const NODESEEK_LOGIN_PROBE_SCRIPT = String.raw`
 (() => {
-  const probeId = Number(window.__WZ_NODESEEK_LOGIN_PROBE_ID__);
-  delete window.__WZ_NODESEEK_LOGIN_PROBE_ID__;
+  if (window.top !== window || !window.ReactNativeWebView || !document.documentElement) return;
+  const type = 'nodeseek-login';
   const documentKey = String(location.href || "") + ":" + String(performance.timeOrigin || 0);
-  const numberFromValue = (value) => {
-    const number = Number(value);
-    return Number.isInteger(number) && number > 0 ? number : null;
+  const current = window.__WZ_ACCOUNT_PAGE_OBSERVER__;
+  if (current && current.documentKey === documentKey && current.type === type) {
+    current.report();
+    return;
+  }
+  current?.observer.disconnect();
+  let previousState = '';
+  const report = () => {
+    if (String(location.href || "") + ":" + String(performance.timeOrigin || 0) !== documentKey) return;
+    const configUser = window.__config__ && typeof window.__config__ === 'object'
+      && window.__config__.user && typeof window.__config__.user === 'object'
+      ? window.__config__.user : null;
+    const configId = Number(configUser && (configUser.member_id || configUser.uid || configUser.id || configUser.userId || configUser.user_id));
+    const configName = String(configUser && (configUser.member_name || configUser.username || configUser.name || configUser.displayName) || '').trim();
+    const hasConfigUser = Number.isInteger(configId) && configId > 0 && Boolean(configName);
+    const usernameLink = document.querySelector('a.Username[href*="/space/"], .Username a[href*="/space/"]');
+    const hasAccountMarker = /\/space\/\d+/i.test(String(usernameLink?.getAttribute('href') || ''))
+      || Boolean(document.querySelector('a[href*="/api/account/signOut"]'));
+    const guestKinds = new Set(Array.from(document.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]')).flatMap((link) => {
+      try {
+        const target = new URL(String(link.getAttribute('href') || ''), location.href);
+        const host = target.hostname.toLowerCase();
+        if (target.protocol !== 'https:' || (host !== 'nodeseek.com' && !host.endsWith('.nodeseek.com'))) return [];
+        const label = String(link.textContent || '').trim();
+        if (/^\/(login|signin|sign-in)(?:\.html?)?\/?$/i.test(target.pathname) && /^(登录|sign in|log in)$/i.test(label)) return ['login'];
+        if (/^\/(register|signup|sign-up)(?:\.html?)?\/?$/i.test(target.pathname) && /^(注册|sign up|register)$/i.test(label)) return ['register'];
+        return [];
+      } catch { return []; }
+    }));
+    const pageStatus = hasConfigUser ? 'logged-in' : guestKinds.has('login') && guestKinds.has('register') ? 'logged-out' : hasAccountMarker ? 'logged-in' : 'unknown';
+    const hasChallengeMarker = Boolean(document.querySelector('#challenge-form, #cf-challenge-running, .cf-turnstile, iframe[src^="https://challenges.cloudflare.com/"]'));
+    const status = hasChallengeMarker ? 'unknown' : pageStatus;
+    const state = status + ':' + hasChallengeMarker;
+    if (state === previousState) return;
+    previousState = state;
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type,
+      documentKey,
+      status,
+      hasChallengeMarker,
+      userAgent: navigator.userAgent || ''
+    }));
   };
-  const stringFromValue = (value) => String(value || "").trim();
-  const body = document.body ? document.body.innerText : "";
-  const uidMatch = body.match(/UID\\s*[:：]\\s*(\\d+)/i);
-  const configUser = window.__config__ && typeof window.__config__ === "object"
-    && window.__config__.user && typeof window.__config__.user === "object"
-    ? window.__config__.user
-    : null;
-  const configUserId = numberFromValue(configUser && (
-    configUser.member_id || configUser.uid || configUser.id || configUser.userId || configUser.user_id
-  ));
-  const configUsername = stringFromValue(configUser && (
-    configUser.member_name || configUser.username || configUser.name || configUser.displayName
-  ));
-  const hasConfigUser = Boolean(configUserId && configUsername);
-  const usernameLink = document.querySelector('a.Username[href*="/space/"], .Username a[href*="/space/"]');
-  const usernameLinkId = stringFromValue(usernameLink?.getAttribute("href")).match(/\\/space\\/(\\d+)/i);
-  const signOutLink = document.querySelector('a[href*="/api/account/signOut"]');
-  const hasAccountMarker = hasConfigUser || Boolean(usernameLinkId) || Boolean(signOutLink);
-  const userId = configUserId
-    || numberFromValue(usernameLinkId && usernameLinkId[1])
-    || (hasAccountMarker ? numberFromValue(uidMatch && uidMatch[1]) : null);
-  const csrfToken = stringFromValue(document.querySelector('meta[name="csrf-token"]')?.getAttribute("content"));
-  const guestKinds = new Set(Array.from(document.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]')).flatMap((link) => {
-    try {
-      const href = String(link.getAttribute("href") || "").trim();
-      let pathname = "";
-      if (href.startsWith("/")) {
-        pathname = href.split(/[?#]/, 1)[0];
-      } else {
-        const target = new URL(href, location.href);
-        const host = String(target.hostname || "").toLowerCase();
-        if (target.protocol !== "https:" || (host !== "nodeseek.com" && !host.endsWith(".nodeseek.com"))) {
-          return [];
-        }
-        pathname = target.pathname || "";
-      }
-      const label = String(link.textContent || "").trim();
-      if (/^\\/(login|signin|sign-in)(?:\\.html?)?\\/?$/i.test(pathname) && /^(登录|sign in|log in)$/i.test(label)) {
-        return ["login"];
-      }
-      if (/^\\/(register|signup|sign-up)(?:\\.html?)?\\/?$/i.test(pathname) && /^(注册|sign up|register)$/i.test(label)) {
-        return ["register"];
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  }));
-  const hasGuestControls = guestKinds.has("login") && guestKinds.has("register");
-  const status = hasConfigUser ? "logged-in" : hasGuestControls ? "logged-out" : hasAccountMarker ? "logged-in" : "unknown";
-  window.ReactNativeWebView.postMessage(JSON.stringify({
-    type: "nodeseek-login",
-    probeId: Number.isInteger(probeId) && probeId > 0 ? probeId : undefined,
-    documentKey,
-    status,
-    loggedIn: status === "logged-in" ? true : status === "logged-out" ? false : undefined,
-    userId: status === "logged-in" ? userId : null,
-    username: "",
-    csrfToken,
-    userAgent: navigator.userAgent || ""
-  }));
+  const observer = new MutationObserver(report);
+  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'id', 'src', 'href', 'name', 'method'] });
+  window.__WZ_ACCOUNT_PAGE_OBSERVER__ = { documentKey, type, observer, report };
+  report();
 })();
 true;
 `;
@@ -78,17 +60,30 @@ export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
 (() => {
   const probeId = Number(window.__WZ_LINUXDO_LOGIN_PROBE_ID__);
   delete window.__WZ_LINUXDO_LOGIN_PROBE_ID__;
+  window.__WZ_LINUXDO_PAGE_OBSERVER__?.disconnect();
+  let previousState = '';
+  const report = () => {
   const hasLoggedInMarker = Boolean(document.querySelector('.d-header .current-user, header .current-user, #current-user'));
   const hasLoggedOutMarker = Boolean(document.querySelector('.d-header .login-button, header .login-button, button.login-button'));
   const status = hasLoggedInMarker ? "logged-in" : hasLoggedOutMarker ? "logged-out" : "unknown";
+  const hasChallengeMarker = Boolean(document.querySelector('#challenge-form, #cf-challenge-running, .cf-turnstile, iframe[src^="https://challenges.cloudflare.com/"]'));
+  const state = status + ':' + hasChallengeMarker;
+  if (state === previousState) return;
+  previousState = state;
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "linuxdo-webview",
     probeId: Number.isInteger(probeId) && probeId > 0 ? probeId : undefined,
     documentKey: String(location.href || "") + ":" + String(performance.timeOrigin || 0),
     status,
+    hasChallengeMarker,
     loggedIn: status === "logged-in" ? true : status === "logged-out" ? false : undefined,
     userAgent: navigator.userAgent || ""
   }));
+  };
+  const observer = new MutationObserver(report);
+  observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'id', 'src'] });
+  window.__WZ_LINUXDO_PAGE_OBSERVER__ = observer;
+  report();
 })();
 true;
 `;

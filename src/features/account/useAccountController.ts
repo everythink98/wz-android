@@ -23,7 +23,7 @@ import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
 
 type Ref<T> = RefObject<T>;
-export type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout';
+export type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout' | 'auto-check';
 type AccountSource = 'nodeseek' | 'yaohuo';
 
 type LoginTraceState = {
@@ -337,6 +337,10 @@ export function useAccountController({
         return;
       }
       const trace = currentLoginTrace(source, 'open');
+      if (state === 'auto-check') {
+        markDiagnosticStage(trace, 'parse', { source, channel: 'webview', verificationAction: 'auto-check' });
+        return;
+      }
       if (state === 'error' || state === 'renderer-gone' || state === 'timeout') {
         terminalRef.current = requestId;
         const reason = webViewFailureReason(state);
@@ -458,10 +462,6 @@ export function useAccountController({
     [checkingRequestIdRef, currentLoginTrace, finishLoginTrace, notify, reconcileAccountStatus, setChecking]
   );
 
-  const checkLogin = useCallback(async () => {
-    const result = await checkAccount('nodeseek');
-    return result.status === 'same' || result.status === 'changed';
-  }, [checkAccount]);
   const checkNodeSeekAccount = useCallback(
     (allowAnonymous = false) => checkAccount('nodeseek', allowAnonymous),
     [checkAccount]
@@ -527,7 +527,6 @@ export function useAccountController({
   }, [linuxDoIdentityPending, linuxDoLevelQueryKey, queryClient]);
 
   return {
-    checkLogin,
     checkNodeSeekAccount,
     checkYaohuoCookie,
     clearLinuxDoCookie,

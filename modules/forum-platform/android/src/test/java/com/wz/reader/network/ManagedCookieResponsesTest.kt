@@ -145,34 +145,89 @@ class ManagedCookieResponsesTest {
   private val url = "https://linux.do/session/current.json"
   @Test fun observesClearanceHandoffAndActualRequestWithoutExportingCookieValues() {
     val events = mutableListOf<Map<String, Any>>()
-    var current = "_t=private-login; cf_clearance=private-before"
+    var current = "_t=private-login; cf_clearance=private-stable; cf_clearance=private-before"
     val store = ManagedCookieResponses({ current }, { _, values ->
       CookieResponseBatch(values.size).also { batch -> values.forEach { batch.complete(true) } }
     }, report = { events.add(it) })
     store.setBarrier(true, "surface-open")
-    current = "_t=private-login; cf_clearance=private-after"
+    current = "_t=private-login; cf_clearance=private-stable; cf_clearance=private-after"
     store.setBarrier(false, "surface-close")
     store.within {
       store.observed(url, "linuxdo", null)
-      store.sending(Request.Builder().url(url).header("Cookie", "_t=private-login; cf_clearance=private-before")
+      store.sending(Request.Builder().url(url).header("Cookie", "_t=private-login; cf_clearance=private-stable; cf_clearance=private-before")
         .header("User-Agent", "fixture-agent").build(), null)
       store.sending(Request.Builder().url(url).header("Cookie", current).build(), null)
+      store.sending(Request.Builder().url(url).header("Cookie", "_t=private-login; cf_clearance=private-stable").build(), null)
+      store.sending(Request.Builder().url(url).header("Cookie", "_t=private-login; cf_clearance=private-after; cf_clearance=private-stable").build(), null)
+      store.sending(Request.Builder().url(url).header("Cookie", "$current; cf_clearance=private-after").build(), null)
       store.sending(Request.Builder().url(url).build(), null)
       store.sending(Request.Builder().url("https://linux.do/site.json")
         .header("Cookie", "_t=private-login; _t=private-duplicate").build(), null)
+      current = ""
+      store.sending(Request.Builder().url(url).build(), null)
     }
     assertTrue(events.any { it["cookieBarrierReason"] == "surface-close" && it["didCfClearanceChange"] == true })
     val sent = events.filter { it["operation"] == "cookie-request" }
-    assertEquals(listOf(false, true, false, false), sent.map { it["isCfClearanceCurrent"] })
-    assertEquals(listOf(true, true, false, false), sent.map { it["hasCfClearance"] })
-    assertEquals(listOf(1, 1, 0, 2), sent.map { it["loginCookieCount"] })
-    assertEquals(listOf(1, 1, 1, 1), sent.map { it["storedLoginCookieCount"] })
-    assertEquals(listOf(true, true, false, false), sent.map { it["isLoginCookieCurrent"] })
-    assertEquals("site-config", sent.last()["cookieEndpoint"])
+    assertEquals(listOf(false, true, false, false, false, false, false, true), sent.map { it["isCfClearanceCurrent"] })
+    assertEquals(listOf(true, true, true, true, true, false, false, false), sent.map { it["hasCfClearance"] })
+    assertEquals(listOf(2, 2, 1, 2, 3, 0, 0, 0), sent.map { it["cfClearanceCount"] })
+    assertEquals(listOf(2, 2, 1, 2, 2, 0, 0, 0), sent.map { it["cfClearanceDistinctCount"] })
+    assertEquals(listOf(2, 2, 2, 2, 2, 2, 2, 0), sent.map { it["storedCfClearanceCount"] })
+    assertEquals(listOf(2, 2, 2, 2, 2, 2, 2, 0), sent.map { it["storedCfClearanceDistinctCount"] })
+    assertEquals(listOf(1, 1, 1, 1, 1, 0, 2, 0), sent.map { it["loginCookieCount"] })
+    assertEquals(listOf(1, 1, 1, 1, 1, 1, 1, 0), sent.map { it["storedLoginCookieCount"] })
+    assertEquals(listOf(true, true, true, true, true, false, false, true), sent.map { it["isLoginCookieCurrent"] })
+    assertEquals("site-config", sent[6]["cookieEndpoint"])
     assertEquals("%08x".format("fixture-agent".hashCode()), sent[0]["userAgentHash"])
     assertFalse(events.toString().contains("private-"))
     assertEquals("clearance", cookieResponseItem(Request.Builder().url(url).build(), "cf_clearance=x", 0)["cookieKind"])
     assertEquals("bot-management", cookieResponseItem(Request.Builder().url(url).build(), "__cf_bm=x", 0)["cookieKind"])
+  }
+
+  @Test fun cookieInfoObservationsRemainSafeAndDoNotBlockSurfaceHandoff() {
+    for (result in listOf("success", "unsupported", "failed")) {
+      val events = mutableListOf<Map<String, Any>>()
+      var reads = 0
+      var writes = 0
+      val store = ManagedCookieResponses({ "_t=private-login" }, { _, values ->
+        writes++
+        CookieResponseBatch(values.size).also { batch -> values.forEach { batch.complete(true) } }
+      }, report = { events.add(it) }, cookieInfoReader = {
+        reads++
+        when (result) {
+          "unsupported" -> null
+          "failed" -> throw IllegalStateException("private-platform-failure")
+          else -> listOf(
+            "cf_clearance=private-partition; Secure; HttpOnly; Partitioned; Path=/private-path",
+            "cf_clearance=private-partition; Secure; partitioned; Domain=private-domain.invalid",
+            "cf_clearance=private-ordinary; Secure; Path=/",
+            "cf_clearance=private-other; Path=/Partitioned",
+            "other=private-ignored; Partitioned",
+            "other_cf_clearance=private-ignored; Partitioned"
+          )
+        }
+      })
+      store.setBarrier(false, "startup")
+      assertEquals(0, reads)
+      store.setBarrier(true, "surface-open")
+      store.setBarrier(false, "surface-close")
+      assertEquals(2, reads)
+      val info = events.filter { it["operation"] == "cookie-barrier" && it["cfClearanceInfoResult"] != null }
+      assertEquals(4, info.size)
+      info.forEach { event ->
+        assertEquals(result, event["cfClearanceInfoResult"])
+        if (result == "success") {
+          assertEquals(2, event["cfClearancePartitionedCount"])
+          assertEquals(2, event["cfClearanceUnpartitionedCount"])
+        } else {
+          assertFalse(event.containsKey("cfClearancePartitionedCount"))
+          assertFalse(event.containsKey("cfClearanceUnpartitionedCount"))
+        }
+      }
+      store.within { store.observed(url, "linuxdo", null); store.receive(response("_t=private-new")) }
+      assertEquals("observation failure must not keep the barrier closed", 1, writes)
+      assertFalse(events.toString().contains("private-"))
+    }
   }
 
   private fun response(vararg values: String, status: Int = 200): Response = Response.Builder()

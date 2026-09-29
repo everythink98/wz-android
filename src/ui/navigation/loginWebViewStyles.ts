@@ -47,8 +47,9 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
       paddingBottom: 4
     },
     action: {
-      minHeight: 32,
-      minWidth: 32,
+      minHeight: 48,
+      minWidth: 48,
+      maxWidth: '100%',
       paddingHorizontal: 8,
       paddingVertical: 5,
       flexDirection: 'row',
@@ -66,7 +67,13 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
     actionDimmed: {
       opacity: 0.5
     },
+    actionIndicator: {
+      width: 16,
+      height: 16
+    },
     actionText: {
+      flexShrink: 1,
+      textAlign: 'center',
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * settings.fontScale),
       fontWeight: '600'
@@ -75,11 +82,28 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
       flex: 1,
       backgroundColor: theme.surface
     },
+    loginWebViewFooter: {
+      flexShrink: 0,
+      padding: 16,
+      gap: 12,
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.surface
+    },
+    footerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8
+    },
+    primaryAction: {
+      flex: 1
+    },
     loading: {
       position: 'absolute',
       zIndex: 1,
       top: 14,
       alignSelf: 'center',
+      maxWidth: '90%',
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
@@ -92,9 +116,10 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
       paddingVertical: 8
     },
     loadingText: {
+      flexShrink: 1,
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12
+      fontSize: Math.round(12 * settings.fontScale)
     },
     errorBox: {
       gap: 8,
@@ -107,18 +132,14 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
     errorText: {
       color: theme.danger,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
+      fontSize: Math.round(13 * settings.fontScale),
+      lineHeight: Math.round(19 * settings.fontScale)
     },
     actions: {
       alignItems: 'center',
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
-    },
-    webViewErrorPlaceholder: {
-      flex: 1,
-      backgroundColor: theme.surface
+      flexWrap: 'nowrap',
+      gap: 4
     }
   });
 }

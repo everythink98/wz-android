@@ -110,6 +110,7 @@ const specialStringFieldKeys = closedValues(
   'requestId',
   'parentRequestId',
   'parentTraceId',
+  'egressProbeTraceId',
   'navigationHost',
   'navigationPath',
   'navigationParamKeys'
@@ -122,6 +123,7 @@ function closedValues<const T extends readonly string[]>(...values: T) {
 type ClosedValue<T> = T extends { values(): IterableIterator<infer Value> } ? Value : never;
 
 const operationValues = closedValues(
+  'egress-probe',
   'reading-recovery',
   'account-reconcile',
   'account-restore',
@@ -533,6 +535,57 @@ const mediaFailureValues = closedValues(
 );
 
 const categoricalFieldValues = {
+  egressProbeState: closedValues('not-started', 'pending', 'completed'),
+  egressCheckpoint: closedValues('check', 'close', 'navigation', 'refresh', 'background', 'webview-error', 'unmount'),
+  probeCancelReason: closedValues('check', 'close', 'navigation', 'refresh', 'background', 'webview-error', 'unmount'),
+  pageStatus: closedValues('logged-in', 'logged-out', 'unknown'),
+  verificationPage: closedValues('challenge', 'alternate', 'alternate-login', 'forum', 'login', 'other'),
+  verificationAction: closedValues(
+    'challenge-open',
+    'auto-check',
+    'alternate-auto',
+    'alternate-manual',
+    'load-start',
+    'load-end',
+    'http-error',
+    'load-error',
+    'return-to-forum',
+    'message-ignored',
+    'renderer-gone',
+    'load-timeout'
+  ),
+  probeNativeFailure: closedValues(
+    'none',
+    'document-mismatch',
+    'bridge-unavailable',
+    'redirect',
+    'oversize',
+    'trace-format',
+    'transport',
+    'body-read',
+    'http-status',
+    'deadline',
+    'canceled'
+  ),
+  probeWebViewFailure: closedValues(
+    'none',
+    'document-mismatch',
+    'bridge-unavailable',
+    'redirect',
+    'oversize',
+    'trace-format',
+    'transport',
+    'body-read',
+    'http-status',
+    'deadline',
+    'canceled'
+  ),
+  probeNativeResult: closedValues('success', 'http-error', 'network-error', 'invalid-response', 'timeout', 'canceled'),
+  probeWebViewResult: closedValues('success', 'http-error', 'network-error', 'invalid-response', 'timeout', 'canceled'),
+  probeNativeProtocol: closedValues('http/1.0', 'http/1.1', 'h2', 'h3', 'unknown'),
+  probeWebViewProtocol: closedValues('http/1.0', 'http/1.1', 'h2', 'h3', 'unknown'),
+  probeNativeAddressFamily: closedValues('ipv4', 'ipv6', 'unknown'),
+  probeWebViewAddressFamily: closedValues('ipv4', 'ipv6', 'unknown'),
   exceptionKind: closedValues(
     'fetch-wrapper',
     'fetch-request-canceled',
@@ -755,12 +808,19 @@ const contentTypeValues = closedValues(
 );
 
 const numberFieldKeys = closedValues(
+  'pageObservationAgeMs',
+  'egressProbeAgeMs',
+  'probeNativeDurationMs',
+  'probeWebViewDurationMs',
+  'probeNativeStatus',
+  'probeWebViewStatus',
   'batchId',
   'batchAgeMs',
   'retryAfterMs',
   'topicTimeMs',
   'postTimeMs',
   'surfaceGeneration',
+  'webViewKey',
   'elapsedMs',
   'filteredCount',
   'failedSources',
@@ -1107,7 +1167,8 @@ function safeStringField(key: string, value: string) {
   if (key === 'mediaRef') return safeReference(value, 'media');
   if (key === 'requestId' || key === 'parentRequestId')
     return /^request-[1-9][0-9]{0,9}$/.test(value) ? value : 'redacted';
-  if (key === 'parentTraceId') return /^trace-[1-9][0-9]{0,9}$/.test(value) ? value : 'redacted';
+  if (key === 'parentTraceId' || key === 'egressProbeTraceId')
+    return /^trace-[1-9][0-9]{0,9}$/.test(value) ? value : 'redacted';
   if (key === 'navigationHost') {
     return closedValues('www.google.com', 'consent.google.com', 'accounts.google.com').has(value) ? value : 'redacted';
   }

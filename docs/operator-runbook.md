@@ -293,6 +293,20 @@ L 站 CSRF 请求经隐藏 WebView 接力失败时，保留原始 CF 响应的�
 
 出现原生请求要求挑战、验证页却不出现挑战或验证后仍失败时，先按以下顺序排查。历史反例见[回归语料库的代理出口案例](regression-corpus.md#环境反例2026-09-20-cf-验证与上报出口不一致)。这是环境诊断步骤，不授权修改用户网络，也不把普通 403 一律归为 CF。
 
+包含出口诊断的新构建会在 L 站验证文档就绪时自动采样，用户无需另开浏览器：复现后从“更多”导出诊断，查找 `operation=egress-probe`，通过 `parentTraceId` 关联本次验证。`probeNativeResult` 与 `probeWebViewResult` 均为 `success` 时，`isSameEgress=false` 表示该次采样出口不同，`true` 仅排除该次 trace 采样的差异；两端协议和出口地址族分别由 `probeNativeProtocol/probeWebViewProtocol`、`probeNativeAddressFamily/probeWebViewAddressFamily` 记录。任一侧 timeout、canceled、http-error、network-error 或 invalid-response 时不输出相等结论，不能当作出口不同或相同。手动检测不等待探测，过早检测可能只有取消记录；CDK 返回后的自动检测等待当前主域探针结算，最多沿用其五秒窗口，失败、超时或出口不同也继续检测。旧构建没有该事件，无法从已有 Cookie、UA 或 socket `addressFamily` 反推公网出口。采样不保存 IP 或正文，不改变代理设置与登录态。
+
+详细证据按以下顺序读取：
+
+- 验证页面事件与检测共用 trace，以 `webViewKey` 关联 WebView 会话；同一 key 可先后加载 CDK 和主域文档，须结合页面分类及加载事件区分，不能作为唯一文档标识。重新验证的 trace 在 `intent.parentTraceId` 接续上一轮检测。`verificationPage` 仅有 `challenge/alternate/alternate-login/forum/login/other`，`verificationAction` 仅有 `challenge-open/auto-check/alternate-auto/alternate-manual/load-start/load-end/http-error/load-error/return-to-forum/message-ignored/renderer-gone/load-timeout`。`challenge-open → return-to-forum → auto-check` 串起直接 CDK 入口、可信返回与自动检测；历史 `alternate-*` 分类保留用于旧日志。仅合格 CDK 文档消息用于返回，其余 CDK 消息每文档至多记录一次 `message-ignored`，不保存原始 URL 或消息内容。
+- `http-error` 保留平台 HTTP 错误回调的实际 `status`；`isDocumentUrlMatch` 表示其 URL 是否等于最后一次加载开始的 URL。先记录再按既有 UI 归属条件过滤，因此被 UI 忽略的回调仍保留错误事实；匹配为 false 不等于请求成功，也不能把该状态强归给当前主文档。`load-end` 只记录 `hasLoadError`，false 不能排除被过滤的 HTTP 错误，更不能推断 HTTP 200 或业务通过。候选包 `17224373ade94a22a77e446ad41a0327` 因漏记 404 被拒绝；补修构建 `b185ae5eb4e1465082cd4712357efd50` 的模拟器实际分享导出已获 `LIVE_PASS`，记录了先于对应加载开始、匹配为 false 的 404。详细证据与未验范围见 `REG-ACCOUNT-054`。
+- 在验证 trace 中找 `egressCheckpoint=check`：`egressProbeTraceId` 指向出口采样，`egressProbeState` 区分未开始、进行中与已完成；`egressProbeAgeMs` 是距采样启动的时间。用户长时间停留或中途换网后，旧的出口一致结果不能当作检测当刻的结论。`pageStatus` 与 `hasChallengeMarker` 仅描述页面结构，`pageObservationAgeMs` 表示距最后一次观察的时间，不代表 CF 已签发有效凭据。
+- 页面消息已识别、UA 已取得，但检查点一直为 `not-started` 且没有 `egress-probe` 时，先查诊断启动链，不把它归为探测超时或出口不同。Android 现代 WebMessageListener 的 `event.url` 只有 origin，旧桥接才给完整页面 URL；它不能直接用作完整 `documentKey` 的前缀。当前构建会把未通过文档校验的消息记为同一验证 trace 下的 `channel=webview`、`phase=guard`、`reason=invalid_response`；无需导出原始 URL 或文档标识。用匹配构建确认页面就绪后实际出现双通道采样终态，再继续代理归因；历史逃逸见 `REG-MORE-008`。
+- 两侧 `probeNativeFailure/probeWebViewFailure` 区分 HTTP 拒绝、传输失败、正文读取失败、可观察的重定向、超长/无效 trace、文档不匹配、桥接注入失败与超时；`probeNativeDurationMs/probeWebViewDurationMs` 记录从本轮启动到该侧结果被宿主收到的耗时。浏览器仅抛通用网络异常时保留 `transport`，不猜测具体 TLS/DNS 或重定向原因。取消的 `probeCancelReason` 说明是检测、关闭、导航、刷新、后台、页面错误还是卸载触发。
+- 探测已启动但正常停留仍变成 `canceled`，或返回主域后不再自动检测时，核对 `probeCancelReason=navigation` 前是否只有重复的 `load-start`。Android `doUpdateVisitedHistory` 也发送该事件，`loading` 按 `progress != 100` 计算，true 与 false 均不能证明新文档；不应仅凭此布尔值取消。允许的顶层导航回调或真实 `documentKey` 变化才使旧文档证据失效。验收须同时取得双侧有效采样、检测检查点持有该完整样本，以及关联 Cookie 交接和检测终态，并重复打开验证窗口；不能以首轮成功或手动兜底完成替代自动检测通过。导出健康计数是跨进程累计值，应与本轮基线比较新增量，不能把历史非零写失败或丢弃计数说成本轮失败，也不能称累计值全零。
+- 检测的 Cookie 交接 `cookie-barrier` 用 `parentTraceId` 关联验证，原生 Cookie 日志沿该 barrier 的 `traceId` 读取。`surfaceGeneration` 仅是已有窗口状态旁证，专用阅读验证可能复用该值，不能作唯一关联键。再按验证中的 `batchId` 对齐同一 App session 的阅读上报和补发，检查原生请求的 Cookie/UA 一致性、CF Ray 与业务终态。诊断请求成功不能代替原业务成功。
+- Cookie 对照必须覆盖全部同名 `cf_clearance`：`cfClearanceCount/storedCfClearanceCount` 记录发送与平台按请求 URL 读取的数量，`cfClearanceDistinctCount/storedCfClearanceDistinctCount` 记录不同值数量，`isCfClearanceCurrent` 比较完整有序集合，`didCfClearanceChange` 比较窗口打开与交接时根 URL 的完整集合。缺少这些计数字段的旧构建只比较首枚，不能排除第二枚遗漏或变化。窗口打开/交接时，`cfClearanceInfoResult=success` 才提供 `cfClearancePartitionedCount/cfClearanceUnpartitionedCount`；`unsupported/failed` 表示属性未知，不能当作零枚。属性采样限于 `https://linux.do/` 对应视角，不枚举整个 Cookie 库；同一次交接的 intent/finish/persist 复用该快照，不是独立采样。分区数量不代表 WebView 已通过挑战，也不自动决定哪枚 Cookie 有效；日志不保存 Cookie 值或摘要。
+- 出口对照同时核对原请求、原生探针、恢复请求的 Native `connection-acquired`：同一进程下比较 `lane/generation/poolId/connectionId`。实际复用同一连接可排除“探针另建连接、业务滞留旧连接”的解释；跨进程不能按相同对象 ID 字符串认作同一连接。Cookie 集合一致和同出口仍不证明 CF 接受原生请求，不能据此自动清除登录或更换请求通道。
+
 1. 留存原请求的状态与识别依据；`cf-mitigated: challenge` 是明确挑战证据。核对实际发送的 Cookie 是否与当前共享存储一致、UA 是否一致，不能只看存储中存在 Cookie。
 2. 在同一时间窗口，分别经真实原生通道与验证 WebView 对同源 `/cdn-cgi/trace` 做不带凭据的只读探测，比较 CF 实际看到的公网 IP、地址族与协议。只保留地址族、协议和本轮出口是否相同的布尔值；若需跨进程比较，使用只驻内存的随机盐，不持久化公网 IP、盐或 Cookie。trace 的 200 只证明出口可观测，不证明业务上报成功。
 3. Android 系统代理为空、App 标记 direct、处于同一模拟器、使用同一代理节点，都不证明公网出口相同。宿主 TUN、远端 DNS、双栈选址及 TCP/UDP 转发仍可能造成不同出口。先排除这一层，再试 TLS 指纹、Cookie 格式或替换网络库；H3 成功而 H2 失败时尤其要同时核对出口，不能直接归因为协议。
@@ -309,6 +323,18 @@ Mihomo 客户端可试验以下定向规则，插在已有规则之前并保留�
 ```
 
 按[官方规则说明](https://wiki.metacubex.one/config/rules/)从上到下匹配；域名条件依赖 DNS 映射或嗅探提供域名，不能仅凭规则存在判断命中。使用客户端的持久覆写入口，不直接编辑自动生成的配置。验收新连接的规则命中、协议回退、实际出口和业务终态；若效果不符，移除这两条即可，不清登录态。
+
+### L 站 CF 验证与自动检测验收
+
+读取恢复新建的验证网页直接进入 [CDK](https://cdk.linux.do/)，不再先访问主站 `/challenge`。账号页可点击“网站验证”，普通登录或已经复用的登录网页保留原入口。当前文档须精确为 CDK `/login`、无已知加载错误，且收到既有原生注入探针的合格消息、无挑战标记，才返回主域 `/latest`；无需登录 CDK。CDK 阶段不在 `onLoadEnd` 手动补注入，避免把 Android 网络错误前的普通 finish 当成成功。其他 CDK 最终页保留手动检测；不清 Cookie 或登录态，不修改代理或业务传输。
+
+可信返回后，等待同一主域文档的已知页面状态、无挑战标记，以及既有五秒出口探针结算，再自动执行一次当前检测；探针质量不作为业务准入条件。读取恢复只恢复本轮 exact Query / 阅读 batchId，账号页“网站验证”只走既有账号检测。保留手动“检测并继续”，手动检测会消耗本轮自动机会。重复消息不重复检测；关闭、刷新、真实导航、后台、身份变化或页面错误撤销待执行动作。失败结果留屏，用户点击“重新验证”才再次进入 CDK，不自动循环。
+
+验收确认直接入口、可信返回、新主域 probe、单次自动检测、Cookie barrier 及原请求终态，并核对手动检测仍可用、失败不循环。CDK 消息不作为主域登录、UA 或出口证据；普通 finish 后收到网络错误、旧 key 或旧文档消息均不得误触发返回或自动检测。主站 404、CDK 200、Cookie 更新和同出口不能替代实际 API 成功。阅读恢复仍使用原 batchId 和原始 100 秒期限；过期、取消或结果不明不得重放，主动产生真实阅读上报仍须逐项授权。页面及原生事件顺序由 `tests/ui/account/account-site-panels.test.tsx` 承接，自动检测、撤销及交接由 `src/features/account/useVerificationController.test.ts` 承接，真实 reading 接线由 `tests/ui/account/account-runtime.test.tsx` 承接。
+
+`REG-ACCOUNT-054` 保留此前真实 CF → CDK 挑战 → 原生恢复对照，以及旧手动入口构建 `b129345cd5cd4cf3977a7b0cffa3bf3e` 的按钮链路 `LIVE_PASS`。后者保留数据覆盖安装，三站登录保留；实际进入 CDK 后回主域，取得新 probe，检测交接完成，后续两个自然阅读 POST 200，分享导出与 Native journal 匹配且健康计数零新增。该 UI 验收沿用此前已恢复的 clearance，未重新制造 CF，不能将两次证据合称新包完整 CF 恢复。
+
+此前一次性备用引导版本已获 `UI_PASS`，该模拟器包的手动备用、回主域采样、检测交接、自然阅读和日志导出已获 `LIVE_PASS`，但未自然重现受阻业务。历史摘要见 `.codex-tmp/cf-auto-verification-logs/acceptance.md`；其分享曾触及 128 MB 上限，仅将本任务旧失败候选导出校验哈希归档后移除设备冗余副本，再完成导出和分享，未清 Cookie 或登录态，不据此授权清理其他导出。本轮首个候选因第二轮 history 误取消被拒绝交付；最终修复构建在已登录主 AVD、深色/140% 下连续两次自动完成账号“网站验证”，无手动检测，双侧采样及交接完整，后续两次自然阅读 POST 200。实际 UI 分享导出与关键 journal 匹配，健康计数零新增，获此范围 `LIVE_PASS`；回执为 `.codex-tmp/cf-verification-polish/emulator-receipt.json`，安装与打包核验见同目录 `.codex-tmp/cf-verification-polish/install-after.txt`、`.codex-tmp/cf-verification-polish/emulator-sanity.json`。新受阻原批次恢复、新 CF 挑战、实体机及小屏原生结果态仍为 `NOT_VERIFIED`；完整证据边界见 `REG-ACCOUNT-054`。
 
 ### L 站访问与等级入账验收
 

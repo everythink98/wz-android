@@ -25,6 +25,24 @@ const serverStateMocks = vi.hoisted(() => ({
   recoveryActive: vi.fn(() => true)
 }));
 
+const egressMocks = vi.hoisted(() => ({
+  start: vi.fn((_options: unknown) => ({
+    settled: Promise.resolve(),
+    receive: vi.fn(() => true),
+    cancel: vi.fn(),
+    snapshot: vi.fn(() => ({
+      traceId: 'trace-997',
+      startedAt: Date.now(),
+      completedAt: undefined as number | undefined,
+      fields: {} as DiagnosticFields
+    }))
+  }))
+}));
+
+vi.mock('@/platform/network/cloudflareEgressDiagnostics', () => ({
+  startCloudflareEgressProbe: egressMocks.start
+}));
+
 vi.mock('@/platform/query/serverState', () => ({
   appQueryClient: {
     cancelQueries: vi.fn(async () => undefined),
@@ -36,6 +54,9 @@ vi.mock('@/platform/query/serverState', () => ({
 
 import type { SiteSessionEvent, SiteSessionState } from '@/domain/session/siteSessionState';
 import type { AccountReconcileResult, LinuxDoReadingRecovery } from '@/domain/session/sessionContracts';
+import type { Fetcher } from '@/platform/network/request';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent, DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { useVerificationController } from './useVerificationController';
 
 const ref = <T>(current: T) => ({ current });
@@ -63,6 +84,8 @@ const anonymousSession: SiteSessionState = {
 
 function createController(
   options: {
+    fetcher?: Fetcher;
+    getLinuxDoSurfaceGeneration?: () => number | undefined;
     onBeforeLinuxDoSurfaceOpened?: () => void;
     prepareLinuxDoCookieResponseBarrier?: () => Promise<void>;
     reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
@@ -76,7 +99,8 @@ function createController(
   const linuxDoWebViewSessionRef = ref(0);
   const linuxDoWebViewUserAgentRef = ref('');
   const linuxDoWebViewRef = ref({
-    stopLoading: vi.fn()
+    stopLoading: vi.fn(),
+    injectJavaScript: vi.fn()
   });
   const onLoginWebViewFailure = vi.fn();
   const onLinuxDoSurfaceClosed = vi.fn(() => {
@@ -99,6 +123,8 @@ function createController(
   });
   const updateLinuxDoSession = vi.fn<(event: SiteSessionEvent) => void>();
   const controller = useVerificationController({
+    fetcher: options.fetcher,
+    getLinuxDoSurfaceGeneration: options.getLinuxDoSurfaceGeneration,
     awaitLinuxDoCookieHandoff: options.awaitLinuxDoCookieHandoff,
     awaitLinuxDoWebViewUnmount: options.awaitLinuxDoWebViewUnmount,
     canOpenLinuxDoPanel: options.canOpenLinuxDoPanel,
@@ -163,12 +189,500 @@ function createController(
 
 afterEach(() => {
   effectCleanups.splice(0).forEach((cleanup) => cleanup());
+  setDiagnosticWriter(null);
   vi.clearAllMocks();
   serverStateMocks.recoveryActive.mockReset().mockReturnValue(true);
   vi.useRealTimers();
 });
 
 describe('linux.do visible verification coordinator', () => {
+  it.each(['return-first', 'document-first'] as const)(
+    'checks once after an authorized challenge return and settled main document in %s order',
+    async (order) => {
+      vi.useFakeTimers();
+      let settleProbe!: () => void;
+      const probe = egressMocks.start.getMockImplementation()!(undefined);
+      probe.settled = new Promise<void>((resolve) => (settleProbe = resolve));
+      egressMocks.start.mockReturnValueOnce(probe);
+      let finishHandoff!: () => void;
+      const handoff = new Promise<void>((resolve) => (finishHandoff = resolve));
+      const resume = vi.fn(async () => 'verification-required' as const);
+      const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
+        fetcher: vi.fn<Fetcher>(),
+        awaitLinuxDoCookieHandoff: () => handoff
+      });
+      await controller.showLinuxDoVerification('验证', { queryKey: recoveryQueryKeyFor('return'), resume });
+      const key = linuxDoWebViewSessionRef.current;
+      const ready = () =>
+        controller.handleLinuxDoMessage(
+          {
+            nativeEvent: {
+              url: 'https://linux.do',
+              data: JSON.stringify({
+                type: 'linuxdo-webview',
+                documentKey: 'https://linux.do/latest:1',
+                status: 'logged-out',
+                hasChallengeMarker: false,
+                userAgent: 'agent'
+              })
+            }
+          } as never,
+          key
+        );
+      if (order === 'return-first') {
+        controller.armLinuxDoPostChallengeCheck(key);
+        controller.beginLinuxDoDocumentNavigation(key);
+        controller.setLoadingLinuxDoPageForSession(true, key);
+        ready();
+      } else {
+        ready();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(resume).not.toHaveBeenCalled();
+        controller.armLinuxDoPostChallengeCheck(key);
+      }
+      controller.armLinuxDoPostChallengeCheck(key);
+      ready();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(resume).not.toHaveBeenCalled();
+      settleProbe();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(resume).not.toHaveBeenCalled();
+      finishHandoff();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(resume).toHaveBeenCalledOnce();
+      expect(reconcileAccountStatus).not.toHaveBeenCalled();
+      controller.armLinuxDoPostChallengeCheck(key);
+      ready();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(resume).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(['unknown', 'logged-in'] as const)(
+    'preserves the returned document across Android history loading callbacks while initially %s',
+    async (initialStatus) => {
+      vi.useFakeTimers();
+      let settleProbe!: () => void;
+      const probe = egressMocks.start.getMockImplementation()!(undefined);
+      probe.settled = new Promise<void>((resolve) => (settleProbe = resolve));
+      egressMocks.start.mockReturnValueOnce(probe);
+      const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
+        fetcher: vi.fn<Fetcher>()
+      });
+      await controller.showLinuxDoVerification();
+      const key = linuxDoWebViewSessionRef.current;
+      controller.armLinuxDoPostChallengeCheck(key);
+      const ready = (status: string) =>
+        controller.handleLinuxDoMessage(
+          {
+            nativeEvent: {
+              url: 'https://linux.do',
+              data: JSON.stringify({
+                type: 'linuxdo-webview',
+                documentKey: 'https://linux.do/latest:1',
+                status,
+                hasChallengeMarker: false,
+                userAgent: 'agent'
+              })
+            }
+          } as never,
+          key
+        );
+      ready(initialStatus);
+      controller.beginLinuxDoDocumentNavigation(key - 1);
+      controller.setLoadingLinuxDoPageForSession(true, key);
+      controller.setLoadingLinuxDoPageForSession(false, key);
+      expect(probe.cancel).not.toHaveBeenCalled();
+      ready('logged-in');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconcileAccountStatus).not.toHaveBeenCalled();
+      settleProbe();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconcileAccountStatus).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(['unknown', 'challenge', 'missing-marker'] as const)(
+    'does not automatically check an authorized document with %s evidence',
+    async (evidence) => {
+      vi.useFakeTimers();
+      const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
+        fetcher: vi.fn<Fetcher>()
+      });
+      await controller.showLinuxDoVerification();
+      const key = linuxDoWebViewSessionRef.current;
+      controller.armLinuxDoPostChallengeCheck(key);
+      const ready = (trusted: boolean) =>
+        controller.handleLinuxDoMessage(
+          {
+            nativeEvent: {
+              url: 'https://linux.do',
+              data: JSON.stringify({
+                type: 'linuxdo-webview',
+                documentKey: 'https://linux.do/latest:1',
+                userAgent: 'agent',
+                status: !trusted && evidence === 'unknown' ? 'unknown' : 'logged-in',
+                hasChallengeMarker:
+                  !trusted && evidence === 'missing-marker' ? undefined : !trusted && evidence === 'challenge'
+              })
+            }
+          } as never,
+          key
+        );
+      ready(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconcileAccountStatus).not.toHaveBeenCalled();
+      ready(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconcileAccountStatus).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each([
+    'close',
+    'refresh',
+    'background',
+    'error',
+    'navigation',
+    'unknown-navigation',
+    'document',
+    'unknown-document',
+    'manual',
+    'identity',
+    'expired'
+  ] as const)('revokes pending automatic detection on %s without a late or duplicate resume', async (exit) => {
+    vi.useFakeTimers();
+    let settleProbe!: () => void;
+    const probe = egressMocks.start.getMockImplementation()!(undefined);
+    probe.settled = new Promise<void>((resolve) => (settleProbe = resolve));
+    egressMocks.start.mockReturnValueOnce(probe);
+    let scope = 'current';
+    let expired = false;
+    const resume = vi.fn(async () => 'verification-required' as const);
+    const { controller, linuxDoWebViewSessionRef } = createController({
+      fetcher: vi.fn<Fetcher>(),
+      getRecoveryScope: () => scope
+    });
+    await controller.showLinuxDoVerification('验证', {
+      kind: 'reading',
+      batchId: 1,
+      isCurrent: () => true,
+      isExpired: () => expired,
+      cancel: vi.fn(),
+      resume
+    });
+    const key = linuxDoWebViewSessionRef.current;
+    controller.armLinuxDoPostChallengeCheck(key);
+    const ready = (documentKey: string, status: string) =>
+      controller.handleLinuxDoMessage(
+        {
+          nativeEvent: {
+            url: 'https://linux.do',
+            data: JSON.stringify({
+              type: 'linuxdo-webview',
+              documentKey,
+              status,
+              hasChallengeMarker: false,
+              userAgent: 'agent'
+            })
+          }
+        } as never,
+        key
+      );
+    ready('https://linux.do/latest:1', exit.startsWith('unknown-') ? 'unknown' : 'logged-in');
+    if (exit === 'close') controller.closeLinuxDoPanel();
+    if (exit === 'refresh') controller.resetLinuxDoWebView();
+    if (exit === 'background') controller.cancelLinuxDoCheckForInactiveApp();
+    if (exit === 'error') controller.setLinuxDoWebViewErrorForSession('页面错误', key);
+    if (exit === 'navigation' || exit === 'unknown-navigation') controller.beginLinuxDoDocumentNavigation(key);
+    if (exit === 'document' || exit === 'unknown-document') ready('https://linux.do/latest:2', 'logged-in');
+    if (exit === 'manual') await controller.checkLinuxDoCookie();
+    if (exit === 'identity') scope = 'changed';
+    if (exit === 'expired') expired = true;
+    settleProbe();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.armLinuxDoPostChallengeCheck(key);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resume).toHaveBeenCalledTimes(exit === 'manual' ? 1 : 0);
+  });
+
+  it('does not refresh page evidence or user agent from a stopped document after navigation begins', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line) as DiagnosticEvent);
+    });
+    const { controller, linuxDoWebViewSessionRef, commitLinuxDoWebViewUserAgent } = createController({
+      fetcher: vi.fn<Fetcher>()
+    });
+    await controller.showLinuxDoVerification();
+    const send = (status: string, userAgent: string) =>
+      controller.handleLinuxDoMessage(
+        {
+          nativeEvent: {
+            url: 'https://linux.do/latest',
+            data: JSON.stringify({
+              type: 'linuxdo-webview',
+              documentKey: 'https://linux.do/latest:1',
+              status,
+              userAgent,
+              hasChallengeMarker: true
+            })
+          }
+        } as never,
+        linuxDoWebViewSessionRef.current
+      );
+    send('logged-out', 'current-agent');
+    controller.beginLinuxDoDocumentNavigation(linuxDoWebViewSessionRef.current);
+    const parseCount = events.filter((event) => event.phase === 'parse').length;
+    send('logged-in', 'late-agent');
+    expect(events.filter((event) => event.phase === 'parse')).toHaveLength(parseCount);
+    expect(commitLinuxDoWebViewUserAgent).toHaveBeenCalledTimes(1);
+    await controller.checkLinuxDoCookie();
+    const checkpoint = events.find((event) => event.egressCheckpoint === 'check');
+    expect(checkpoint?.pageStatus).toBeUndefined();
+    expect(checkpoint?.hasChallengeMarker).toBeUndefined();
+    expect(checkpoint?.pageObservationAgeMs).toBeUndefined();
+  });
+
+  it.each(['completed', 'verification-required', 'failed', 'stale'] as const)(
+    'links a reading batch to its verification attempt and %s result without an identity probe',
+    async (outcome) => {
+      const events: DiagnosticEvent[] = [];
+      setDiagnosticWriter((line) => {
+        events.push(JSON.parse(line) as DiagnosticEvent);
+      });
+      const { controller, reconcileAccountStatus, onLinuxDoSurfaceClosed } = createController({
+        getLinuxDoSurfaceGeneration: () => 23
+      });
+      const resume = vi.fn(async () => outcome);
+      const recovery: LinuxDoReadingRecovery = {
+        kind: 'reading',
+        batchId: 31,
+        isCurrent: () => true,
+        resume,
+        cancel: vi.fn()
+      };
+      await controller.showLinuxDoVerification('阅读需要验证', recovery);
+      await controller.showLinuxDoVerification('重复通知', recovery);
+      await controller.checkLinuxDoCookie();
+      expect(resume).toHaveBeenCalledOnce();
+      expect(reconcileAccountStatus).not.toHaveBeenCalled();
+      const records = events.filter((event) => event.batchId === 31);
+      expect(records.map((event) => event.readingRecoveryState)).toEqual([
+        'paused',
+        'resuming',
+        outcome === 'verification-required' ? 'blocked' : outcome
+      ]);
+      expect(new Set(records.map((event) => event.traceId)).size).toBe(1);
+      expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
+        authoritativeResult: true,
+        reason: 'authoritative-recovery',
+        parentTraceId: records[0].traceId
+      });
+      expect(events.find((event) => event.egressCheckpoint === 'check')).toMatchObject({
+        traceId: records[0].traceId,
+        surfaceGeneration: 23,
+        egressProbeState: 'not-started'
+      });
+    }
+  );
+
+  it.each(['not-started', 'pending', 'completed'] as const)(
+    'records the %s egress evidence available when checking without waiting for a new sample',
+    async (state) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(5000);
+      const events: DiagnosticEvent[] = [];
+      setDiagnosticWriter((line) => {
+        events.push(JSON.parse(line) as DiagnosticEvent);
+      });
+      const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
+        fetcher: vi.fn<Fetcher>()
+      });
+      await controller.showLinuxDoVerification();
+      if (state !== 'not-started') {
+        controller.handleLinuxDoMessage(
+          {
+            nativeEvent: {
+              url: 'https://linux.do/latest',
+              data: JSON.stringify({
+                type: 'linuxdo-webview',
+                userAgent: 'agent',
+                documentKey: 'https://linux.do/latest:1',
+                status: 'logged-out',
+                hasChallengeMarker: true,
+                body: 'PRIVATE_PAGE_TEXT',
+                ip: '192.0.2.70'
+              })
+            }
+          } as never,
+          linuxDoWebViewSessionRef.current
+        );
+        egressMocks.start.mock.results[0].value.snapshot.mockReturnValue({
+          traceId: 'trace-997',
+          startedAt: 1000,
+          completedAt: state === 'completed' ? 2000 : undefined,
+          fields:
+            state === 'completed'
+              ? { nativeProbeResult: 'success', webViewProbeResult: 'success', isSameEgress: false }
+              : {}
+        });
+      }
+      await controller.checkLinuxDoCookie();
+      expect(reconcileAccountStatus).toHaveBeenCalledOnce();
+      const checkpoint = events.find((event) => event.egressCheckpoint === 'check');
+      expect(checkpoint).toMatchObject({ egressProbeState: state });
+      if (state === 'not-started') expect(checkpoint?.egressProbeTraceId).toBeUndefined();
+      else
+        expect(checkpoint).toMatchObject({
+          egressProbeTraceId: 'trace-997',
+          egressProbeAgeMs: 4000,
+          pageStatus: 'logged-out',
+          hasChallengeMarker: true,
+          pageObservationAgeMs: 0
+        });
+      expect(checkpoint?.isSameEgress).toBe(state === 'completed' ? false : undefined);
+      expect(JSON.stringify(events)).not.toMatch(/PRIVATE_PAGE_TEXT|192\.0\.2\.70|https:\/\/linux\.do/);
+    }
+  );
+
+  it.each(['https://linux.do', 'https://linux.do/', 'https://linux.do/latest'])(
+    'starts one egress comparison per trusted document using the Android bridge URL %s',
+    async (nativeUrl) => {
+      const fetcher = vi.fn<Fetcher>();
+      const { controller, linuxDoWebViewRef, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
+        fetcher
+      });
+      await controller.showLinuxDoVerification();
+      const send = (documentKey: string, url = nativeUrl) =>
+        controller.handleLinuxDoMessage(
+          {
+            nativeEvent: { url, data: JSON.stringify({ type: 'linuxdo-webview', userAgent: 'agent', documentKey }) }
+          } as never,
+          linuxDoWebViewSessionRef.current
+        );
+      send('https://linux.do/latest:1', 'https://sub.linux.do/latest');
+      send('https://other.invalid/latest:1');
+      expect(egressMocks.start).not.toHaveBeenCalled();
+      send('https://linux.do/latest:1');
+      send('https://linux.do/latest:1');
+      expect(egressMocks.start).toHaveBeenCalledOnce();
+      const options = egressMocks.start.mock.calls[0][0] as {
+        fetcher: Fetcher;
+        documentKey: string;
+        injectJavaScript: (script: string) => void;
+        parentTraceId: string;
+      };
+      expect(options).toMatchObject({
+        fetcher,
+        userAgent: 'agent',
+        documentKey: 'https://linux.do/latest:1',
+        parentTraceId: expect.any(String)
+      });
+      options.injectJavaScript('probe-script');
+      expect(linuxDoWebViewRef.current.injectJavaScript).toHaveBeenCalledWith('probe-script');
+      expect(reconcileAccountStatus).not.toHaveBeenCalled();
+      controller.beginLinuxDoDocumentNavigation(linuxDoWebViewSessionRef.current);
+      expect(egressMocks.start.mock.results[0].value.cancel).toHaveBeenCalledOnce();
+      send('https://linux.do/latest:1');
+      expect(egressMocks.start).toHaveBeenCalledOnce();
+      send('https://linux.do/latest:2');
+      expect(egressMocks.start).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each([
+    ['https://linux.do', 'https://user@linux.do/latest:1'],
+    ['https://linux.do', 'https://linux.do:443/latest:1'],
+    ['https://linux.do', 'https://linux.do.evil.invalid/latest:1'],
+    ['https://linux.do', 'https://linux.do/latest:NaN'],
+    ['https://linux.do', `https://linux.do/latest:${'9'.repeat(309)}`],
+    ['https://linux.do/latest', 'https://linux.do/challenge:1'],
+    ['https://user@linux.do/latest', 'https://linux.do/latest:1'],
+    ['https://linux.do:443/latest', 'https://linux.do/latest:1']
+  ])('rejects untrusted document authority and clock values through %s', async (url, documentKey) => {
+    const { controller, linuxDoWebViewSessionRef } = createController({ fetcher: vi.fn<Fetcher>() });
+    await controller.showLinuxDoVerification();
+    controller.handleLinuxDoMessage(
+      {
+        nativeEvent: {
+          url,
+          data: JSON.stringify({
+            type: 'linuxdo-webview',
+            userAgent: 'agent',
+            documentKey
+          })
+        }
+      } as never,
+      linuxDoWebViewSessionRef.current
+    );
+    expect(egressMocks.start).not.toHaveBeenCalled();
+  });
+
+  it.each(['check', 'close', 'refresh', 'background', 'renderer-error', 'unmount'] as const)(
+    'cancels egress diagnostics on %s without waiting for the probe or accepting late results',
+    async (exit) => {
+      const events: DiagnosticEvent[] = [];
+      setDiagnosticWriter((line) => {
+        events.push(JSON.parse(line) as DiagnosticEvent);
+      });
+      let active = true;
+      const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
+        fetcher: vi.fn<Fetcher>(),
+        canOpenLinuxDoPanel: () => active
+      });
+      await controller.showLinuxDoVerification();
+      const key = linuxDoWebViewSessionRef.current;
+      const send = (type: string) =>
+        controller.handleLinuxDoMessage(
+          {
+            nativeEvent: {
+              url: 'https://linux.do/latest',
+              data: JSON.stringify({ type, userAgent: 'agent', documentKey: 'https://linux.do/latest:1' })
+            }
+          } as never,
+          key
+        );
+      send('linuxdo-webview');
+      expect(egressMocks.start).toHaveBeenCalledOnce();
+      const probe = egressMocks.start.mock.results[0].value;
+      send('linuxdo-egress-probe');
+      expect(probe.receive).toHaveBeenCalledOnce();
+      if (exit === 'check') await controller.checkLinuxDoCookie();
+      if (exit === 'close') controller.closeLinuxDoPanel();
+      if (exit === 'refresh') controller.resetLinuxDoWebView();
+      if (exit === 'renderer-error') controller.setLinuxDoWebViewErrorForSession('页面已停止', key);
+      if (exit === 'background') {
+        active = false;
+        controller.cancelLinuxDoCheckForInactiveApp();
+      }
+      if (exit === 'unmount') effectCleanups.splice(0).forEach((cleanup) => cleanup());
+      expect(probe.cancel).toHaveBeenCalledOnce();
+      const reason = exit === 'renderer-error' ? 'webview-error' : exit;
+      expect(probe.cancel).toHaveBeenCalledWith(reason);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            egressCheckpoint: reason,
+            egressProbeState: 'pending',
+            egressProbeTraceId: 'trace-997'
+          })
+        ])
+      );
+      send('linuxdo-egress-probe');
+      expect(probe.receive).toHaveBeenCalledOnce();
+      expect(reconcileAccountStatus).toHaveBeenCalledTimes(exit === 'check' ? 1 : 0);
+      if (exit === 'background') {
+        send('linuxdo-webview');
+        expect(egressMocks.start).toHaveBeenCalledOnce();
+        active = true;
+        send('linuxdo-webview');
+        send('linuxdo-webview');
+        expect(egressMocks.start).toHaveBeenCalledTimes(2);
+      }
+    }
+  );
+
   it('settles a cancelled local read without resuming it or changing account identity', async () => {
     const { controller, onRecoveryStateChanged, reconcileAccountStatus } = createController();
     const cancel = vi.fn();
@@ -439,7 +953,8 @@ describe('linux.do visible verification coordinator', () => {
     expect(updateLinuxDoSession).not.toHaveBeenCalled();
     expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
       authoritativeResult: true,
-      reason: 'authoritative-recovery'
+      reason: 'authoritative-recovery',
+      parentTraceId: expect.stringMatching(/^trace-\d+$/)
     });
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
@@ -513,7 +1028,8 @@ describe('linux.do visible verification coordinator', () => {
 
     expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
       authoritativeResult: true,
-      reason: 'authoritative-recovery'
+      reason: 'authoritative-recovery',
+      parentTraceId: expect.stringMatching(/^trace-\d+$/)
     });
     expect(onRecoveryStateChanged).toHaveBeenLastCalledWith(
       expect.objectContaining({

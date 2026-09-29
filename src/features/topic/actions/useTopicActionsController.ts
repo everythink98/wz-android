@@ -339,12 +339,6 @@ export function useTopicActionsController({
   const detachReplyEdit = topicComposer.detachEdit;
   const openReplyEditor = topicComposer.editReply;
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-  useEffect(() => {
-    if (active && detail?.source === 'yaohuo' && detail.closed && replyComposerIntent.kind !== 'closed') {
-      detachReplyEdit();
-      notify('本帖已结束，无法回复');
-    }
-  }, [active, detail?.source, detail?.closed, detachReplyEdit, notify, replyComposerIntent.kind]);
   const mutationSource = detail?.source || 'nodeseek';
   const mutationTopicId = detail?.id || 'global';
   const mutationKey = useMemo(
@@ -397,6 +391,7 @@ export function useTopicActionsController({
         alreadyComplete,
         objectAllowed,
         pending: request.pending,
+        reply: request.reply,
         targetPresent,
         topic: actionTopic
       });
@@ -551,9 +546,15 @@ export function useTopicActionsController({
     [baseDecisionFor, pendingVariables, selectedTopic, topicDetail]
   );
   const decisionForRef = useCommittedRef(decisionFor);
+  useEffect(() => {
+    if (active && detail?.closed && replyComposerIntent.kind !== 'closed' && replyComposerIntent.kind !== 'edit') {
+      detachReplyEdit();
+      notify(topicActionDecisionMessage(decisionFor({ action: 'reply' })));
+    }
+  }, [active, detail?.closed, decisionFor, detachReplyEdit, notify, replyComposerIntent.kind]);
   const assertReplyNotEnded = useCallback(() => {
     const decision = decisionForRef.current({ action: 'reply' });
-    if (decision.reason === 'topic-ended') {
+    if (decision.reason === 'topic-ended' || decision.reason === 'topic-closed') {
       throw new HandledMutationError(topicActionDecisionMessage(decision), 'blocked', 'permission_denied');
     }
   }, [decisionForRef]);
@@ -1166,7 +1167,8 @@ export function useTopicActionsController({
                 replyToPostNumber: target?.floor
               },
               trace,
-              ticket
+              ticket,
+              assertReplyNotEnded
             );
           }
           sentContent = await materializeNodeSeekPolls({
@@ -1216,6 +1218,7 @@ export function useTopicActionsController({
       });
     },
     [
+      assertReplyNotEnded,
       cacheKeys,
       detachReplyEdit,
       executeMutation,
@@ -1403,6 +1406,7 @@ export function useTopicActionsController({
       busy: true,
       decision: {
         action: 'upload',
+        reply: editTarget ? topicReplies.find((reply) => reply.commentId === editTarget.commentId) : undefined,
         objectAllowed: Boolean(editTarget) || canSubmitReplyToTopic(actionTopic)
       },
       ...(editTarget ? { editTarget } : {}),
@@ -1451,7 +1455,7 @@ export function useTopicActionsController({
           multiple: false
         });
         assertWritableTicket(ticket);
-        if (actionTopic.source === 'yaohuo') assertReplyNotEnded();
+        if (!editTarget) assertReplyNotEnded();
         assertCurrentEditTarget();
         if (picked.canceled || !picked.assets?.[0]) {
           throw new HandledMutationError('已取消选择', 'canceled', 'canceled');
@@ -1459,9 +1463,10 @@ export function useTopicActionsController({
         const file = normalizeReplyImageAsset(picked.assets[0]);
         let imageUrl = '';
         if (isDiscourseSource(actionTopic.source)) {
-          const result = await runLinuxDoRequest({ type: 'upload', file }, trace, ticket, () =>
-            assertCurrentEditTarget()
-          );
+          const result = await runLinuxDoRequest({ type: 'upload', file }, trace, ticket, () => {
+            if (!editTarget) assertReplyNotEnded();
+            assertCurrentEditTarget();
+          });
           imageUrl = discourseImageUrlFromUploadResponse(result, LINUXDO_BASE_URL, 'linux.do');
         } else if (isYaohuoActionTopic(actionTopic)) {
           imageUrl = await uploadYaohuoReplyImage({
@@ -1522,7 +1527,8 @@ export function useTopicActionsController({
     replyComposerIntentRef,
     runLinuxDoRequest,
     selectedTopic,
-    topicDetail
+    topicDetail,
+    topicReplies
   ]);
 
   const uploadReplyImage = useCallback(async () => {

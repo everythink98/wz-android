@@ -976,7 +976,7 @@ describe('Android release evidence guards', () => {
     expect(libraryScreen).toContain("'library-history-first'");
     const accountCenter = readProjectFile('src', 'features', 'more', 'components', 'AccountCenterPanel.tsx');
     expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
-    const nodeSeekLoginHost = readProjectFile('src', 'features', 'account', 'components', 'NodeSeekLoginHost.tsx');
+    const nodeSeekLoginHost = readProjectFile('src', 'features', 'account', 'components', 'SiteLoginHost.tsx');
     expect(nodeSeekLoginHost).toContain("'nodeseek-login-webview-settled'");
     expect(nodeSeekLoginHost).not.toContain("'nodeseek-login-webview-ready'");
     expect(nodeSeekLoginHost).not.toContain('NODESEEK_REPLAY_READINESS_SCRIPT');

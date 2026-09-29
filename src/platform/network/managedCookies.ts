@@ -32,9 +32,16 @@ export async function setLinuxDoCookieResponseBarrier(
   blocked: boolean,
   reason: CookieBarrierReason,
   surfaceGeneration = 0,
-  module: ManagedCookieNativeModule | undefined = NativeModules.NetworkProxyModule
+  module: ManagedCookieNativeModule | undefined = NativeModules.NetworkProxyModule,
+  parentTraceId?: string
 ): Promise<void> {
-  const fields = { source: 'linuxdo', cookieBarrierReason: reason, surfaceGeneration, isBlocked: blocked } as const;
+  const fields = {
+    source: 'linuxdo',
+    cookieBarrierReason: reason,
+    surfaceGeneration,
+    isBlocked: blocked,
+    parentTraceId
+  } as const;
   const trace = beginDiagnosticTrace('credential', 'cookie-barrier', fields);
   try {
     if (!module?.setLinuxDoCookieResponseBarrier) throw new Error('登录会话交接不可用，请更新安装包后重试');

@@ -1,15 +1,15 @@
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
 import React, { type ComponentProps } from 'react';
-import { Text, View } from 'react-native';
+import { AppState, Text, View, type AppStateStatus } from 'react-native';
 import { LinuxDoVerifyModal } from '@/features/account/components/LinuxDoVerifyModal';
-import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { ShieldCheck } from 'lucide-react-native';
 import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel';
-import { NodeSeekLoginHost } from '@/features/account/components/NodeSeekLoginHost';
-import { YaohuoLoginHost } from '@/features/account/components/YaohuoLoginHost';
+import { SiteLoginHost } from '@/features/account/components/SiteLoginHost';
 import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
 import { createSiteSessionStates, type SessionSite, type SiteSessionStatus } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
@@ -17,6 +17,15 @@ import { createTestStyles as createStyles } from '../styleFixture';
 
 let mockLoginWebViewProps: Record<string, any> = {};
 let mockLoginWebViewMountCount = 0;
+const initialAppState = AppState.currentState;
+beforeEach(() => {
+  AppState.currentState = 'active';
+  jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
+});
+afterEach(() => {
+  AppState.currentState = initialAppState;
+  jest.restoreAllMocks();
+});
 
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
@@ -207,9 +216,10 @@ const officialRiskProfile: LinuxDoLevelProfile = {
 };
 
 function nodeSeekProps(
-  overrides: Partial<ComponentProps<typeof NodeSeekLoginHost>> = {}
-): ComponentProps<typeof NodeSeekLoginHost> {
+  overrides: Partial<ComponentProps<typeof SiteLoginHost>> = {}
+): ComponentProps<typeof SiteLoginHost> {
   return {
+    site: 'nodeseek',
     checking: false,
     credentialAttempt: 3,
     credentialFillPending: false,
@@ -235,9 +245,10 @@ function nodeSeekProps(
 }
 
 function yaohuoProps(
-  overrides: Partial<ComponentProps<typeof YaohuoLoginHost>> = {}
-): ComponentProps<typeof YaohuoLoginHost> {
+  overrides: Partial<ComponentProps<typeof SiteLoginHost>> = {}
+): ComponentProps<typeof SiteLoginHost> {
   return {
+    site: 'yaohuo',
     checking: false,
     credentialAttempt: 4,
     credentialFillPending: false,
@@ -266,6 +277,7 @@ function linuxDoVerifyProps(
   overrides: Partial<ComponentProps<typeof LinuxDoVerifyModal>> = {}
 ): ComponentProps<typeof LinuxDoVerifyModal> {
   return {
+    onVerificationPageEvent: jest.fn(),
     checking: false,
     credentialAttempt: 5,
     credentialFillPending: false,
@@ -301,9 +313,9 @@ describe('Account site panels', () => {
       const onWebViewState = jest.fn();
       const view = await render(
         site === 'nodeseek' ? (
-          <NodeSeekLoginHost {...nodeSeekProps({ visible: true, onWebViewState })} />
+          <SiteLoginHost {...nodeSeekProps({ visible: true, onWebViewState })} />
         ) : (
-          <YaohuoLoginHost {...yaohuoProps({ onWebViewState })} />
+          <SiteLoginHost {...yaohuoProps({ onWebViewState })} />
         )
       );
       const events = mockLoginWebViewProps;
@@ -319,12 +331,14 @@ describe('Account site panels', () => {
     }
   );
 
-  it('shows the shared login modal loading, error, actions and close behavior', async () => {
+  it('keeps shared login controls available with an optional busy footer action', async () => {
     const onClose = jest.fn();
     const onRetry = jest.fn();
-    const view = await render(
+    const onContinue = jest.fn();
+    const modal = (footer?: React.ReactNode) => (
       <LoginWebViewModal
         actions={<Text onPress={onRetry}>重试登录页</Text>}
+        footer={footer}
         error="页面加载失败"
         loading
         loadingText="正在打开登录页"
@@ -338,6 +352,10 @@ describe('Account site panels', () => {
         </View>
       </LoginWebViewModal>
     );
+    const footer = (loading: boolean) => (
+      <LoginWebViewAction icon={ShieldCheck} label="检测并继续" primary loading={loading} onPress={onContinue} />
+    );
+    const view = await render(modal());
 
     expect(view.getByText('正在打开登录页')).toBeTruthy();
     expect(view.getByText('页面加载失败')).toBeTruthy();
@@ -345,6 +363,15 @@ describe('Account site panels', () => {
     await fireEvent.press(view.getByLabelText('关闭'));
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+    await view.rerender(modal(footer(true)));
+    const busyAction = view.getByRole('button', { name: '检测并继续' });
+    expect(busyAction.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+    await fireEvent.press(busyAction);
+    expect(onContinue).not.toHaveBeenCalled();
+    expect(view.getByText('WebView 内容')).toBeTruthy();
+    await view.rerender(modal(footer(false)));
+    await fireEvent.press(view.getByRole('button', { name: '检测并继续' }));
+    expect(onContinue).toHaveBeenCalledTimes(1);
   });
 
   it('guides anonymous linux.do users and switches a loaded profile between progress and activity', async () => {
@@ -511,9 +538,9 @@ describe('Account site panels', () => {
       onWebViewState,
       visible: true
     });
-    const view = await render(<NodeSeekLoginHost {...props} />);
+    const view = await render(<SiteLoginHost {...props} />);
 
-    expect(view.getByText('正在打开 NodeSeek...')).toBeTruthy();
+    expect(view.getByText('正在打开登录页面…')).toBeTruthy();
     expect(view.queryByTestId('nodeseek-login-webview-settled')).toBeNull();
     expect(view.getByLabelText('刷新页面')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载完成'));
@@ -540,7 +567,7 @@ describe('Account site panels', () => {
     expect(onShowLoginPanelChange).toHaveBeenCalledTimes(1);
 
     await view.rerender(
-      <NodeSeekLoginHost
+      <SiteLoginHost
         {...nodeSeekProps({
           visible: true,
           webViewBlockMessage: '当前环境禁止打开登录页'
@@ -550,45 +577,177 @@ describe('Account site panels', () => {
     expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
   });
 
-  it.each(['https://linux.do/challenge', 'https://linux.do/latest'])(
-    'treats main-document 404 at %s as display information only',
-    async (url) => {
-      const props = linuxDoVerifyProps({
-        recoveryPanel: {
-          phase: 'web',
-          dedicated: true,
-          results: [{ kind: 'page', outcome: 'pending' }]
-        }
-      });
-      const view = await render(<LinuxDoVerifyModal {...props} />);
-      expect(mockLoginWebViewProps.source.uri).toBe('https://linux.do/challenge');
-      const mounts = mockLoginWebViewMountCount;
-      await act(async () => {
-        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
-        mockLoginWebViewProps.onHttpError({ nativeEvent: { url, statusCode: 404 } });
-      });
-      await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } }));
-      if (url.endsWith('/challenge')) {
-        expect(view.getByText('验证页面已结束，请检测原请求是否恢复。')).toBeTruthy();
-        expect(view.getByTestId('mock-login-webview')).toBeTruthy();
-      } else {
-        expect(view.queryByText('验证页面已结束，请检测原请求是否恢复。')).toBeNull();
-        expect(props.onSetLinuxDoWebViewError).toHaveBeenLastCalledWith(
-          'linux.do 页面返回 HTTP 404，请刷新或返回。',
-          1
-        );
+  it('opens the working challenge directly and returns only after its document probe', async () => {
+    const props = linuxDoVerifyProps({
+      onChallengeReturned: jest.fn(),
+      recoveryPanel: { phase: 'web', dedicated: true, results: [{ kind: 'reading', outcome: 'pending' }] }
+    });
+    const view = await render(<LinuxDoVerifyModal {...props} />);
+    expect(mockLoginWebViewProps.source.uri).toBe('https://cdk.linux.do/');
+    expect(view.getByLabelText('检测并继续')).toBeTruthy();
+    expect(view.queryByLabelText('清除登录')).toBeNull();
+    const previousMessage = mockLoginWebViewProps.onMessage;
+    await view.rerender(<LinuxDoVerifyModal {...props} linuxDoWebViewKey={2} />);
+    const ready = {
+      nativeEvent: {
+        url: 'https://cdk.linux.do',
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          documentKey: 'https://cdk.linux.do/login:1000',
+          hasChallengeMarker: false
+        })
       }
-      expect(mockLoginWebViewMountCount).toBe(mounts);
-      expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
-      const oldError = mockLoginWebViewProps.onHttpError;
-      await view.rerender(<LinuxDoVerifyModal {...props} linuxDoWebViewKey={2} />);
-      await act(async () => oldError({ nativeEvent: { url: 'https://linux.do/challenge', statusCode: 404 } }));
-      expect(view.queryByText('验证页面已结束，请检测原请求是否恢复。')).toBeNull();
+    };
+    await act(() => previousMessage(ready));
+    expect(props.onChallengeReturned).not.toHaveBeenCalled();
+    await act(() => {
+      mockLoginWebViewProps.onLoadStart({ nativeEvent: { url: 'https://cdk.linux.do/' } });
+      mockLoginWebViewProps.onHttpError({ nativeEvent: { url: 'https://cdk.linux.do/', statusCode: 403 } });
+      mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: 'https://cdk.linux.do/' } });
+    });
+    expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+    expect(mockLoginWebViewProps.source.uri).toBe('https://cdk.linux.do/');
+    await act(() => {
+      mockLoginWebViewProps.onLoadStart({ nativeEvent: { url: 'https://cdk.linux.do/login' } });
+      mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url: 'https://cdk.linux.do/login' } });
+    });
+    expect(props.onChallengeReturned).not.toHaveBeenCalled();
+    await act(() => mockLoginWebViewProps.onMessage(ready));
+    expect(mockLoginWebViewProps.source.uri).toBe('https://linux.do/latest');
+    expect(props.onChallengeReturned).toHaveBeenCalledTimes(1);
+    expect(props.onChallengeReturned).toHaveBeenCalledWith(2);
+    await act(() => mockLoginWebViewProps.onMessage(ready));
+    expect(props.onChallengeReturned).toHaveBeenCalledTimes(1);
+    expect(props.onHandleLinuxDoMessage).not.toHaveBeenCalled();
+    expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
+    expect(props.onClearLinuxDoCookie).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('检测并继续'));
+    expect(props.onCheckLinuxDoCookie).toHaveBeenCalledTimes(1);
+    await view.rerender(<LinuxDoVerifyModal {...props} showLinuxDoPanel={false} />);
+    await view.rerender(<LinuxDoVerifyModal {...props} linuxDoWebViewKey={3} />);
+    expect(mockLoginWebViewProps.source.uri).toBe('https://cdk.linux.do/');
+  });
+
+  it.each(['network', 'early-http'] as const)(
+    'does not return from a failed challenge login document: %s',
+    async (failure) => {
+      const props = linuxDoVerifyProps({
+        onChallengeReturned: jest.fn(),
+        recoveryPanel: { phase: 'web', dedicated: true, results: [{ kind: 'reading', outcome: 'pending' }] }
+      });
+      await render(<LinuxDoVerifyModal {...props} />);
+      const url = 'https://cdk.linux.do/login';
+      await act(() => {
+        if (failure === 'early-http') mockLoginWebViewProps.onHttpError({ nativeEvent: { url, statusCode: 500 } });
+        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+        // Android emits finish before its network error, without a code on that first event.
+        mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
+        if (failure === 'network') mockLoginWebViewProps.onError({ nativeEvent: { url, description: '断网' } });
+        mockLoginWebViewProps.onMessage({
+          nativeEvent: {
+            url,
+            data: JSON.stringify({
+              type: 'linuxdo-webview',
+              documentKey: url + ':1000',
+              hasChallengeMarker: false
+            })
+          }
+        });
+      });
+      expect(mockLoginWebViewProps.source.uri).toBe('https://cdk.linux.do/');
+      expect(props.onChallengeReturned).not.toHaveBeenCalled();
     }
   );
 
+  it('keeps ordinary account login separate and retries a blocked result only on request', async () => {
+    const props = linuxDoVerifyProps({ onRetryRecovery: jest.fn() });
+    const view = await render(<LinuxDoVerifyModal {...props} />);
+    expect(mockLoginWebViewProps.source.uri).toBe('https://linux.do/latest');
+    expect(view.getByLabelText('检测登录')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('网站验证'));
+    expect(props.onResetLinuxDoWebView).toHaveBeenCalledTimes(1);
+    await view.rerender(<LinuxDoVerifyModal {...props} linuxDoWebViewKey={2} />);
+    expect(mockLoginWebViewProps.source.uri).toBe('https://cdk.linux.do/');
+    const blocked = {
+      ...props,
+      recoveryPanel: {
+        phase: 'result' as const,
+        dedicated: false,
+        results: [{ kind: 'reading' as const, outcome: 'verification-required' as const }]
+      }
+    };
+    await view.rerender(<LinuxDoVerifyModal {...blocked} />);
+    expect(props.onRetryRecovery).not.toHaveBeenCalled();
+    expect(view.getByText('还需要一次验证')).toBeTruthy();
+    expect(view.queryByLabelText('检测并继续')).toBeNull();
+    await fireEvent.press(view.getByLabelText('重新验证'));
+    expect(props.onRetryRecovery).toHaveBeenCalledTimes(1);
+    await view.rerender(<LinuxDoVerifyModal {...blocked} showLinuxDoPanel={false} />);
+    await view.rerender(<LinuxDoVerifyModal {...blocked} />);
+    expect(props.onRetryRecovery).toHaveBeenCalledTimes(1);
+    await view.rerender(<LinuxDoVerifyModal {...props} loginFormMode />);
+    expect(view.queryByLabelText('网站验证')).toBeNull();
+  });
+
+  it.each(['pending', 'completed', 'failed', 'stale'] as const)(
+    'does not open another verification for a %s recovery result',
+    async (outcome) => {
+      const props = linuxDoVerifyProps({
+        onRetryRecovery: jest.fn(),
+        recoveryPanel: { phase: 'result', dedicated: true, results: [{ kind: 'reading', outcome }] }
+      });
+      const view = await render(<LinuxDoVerifyModal {...props} />);
+      expect(props.onRetryRecovery).not.toHaveBeenCalled();
+      expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
+      expect(view.getByLabelText(outcome === 'pending' ? '重新验证' : '返回原页面')).toBeTruthy();
+    }
+  );
+
+  it('records a main-document HTTP error even when navigation guards ignore its display update', async () => {
+    const props = linuxDoVerifyProps();
+    await render(<LinuxDoVerifyModal {...props} />);
+    await act(() => mockLoginWebViewProps.onLoadStart({ nativeEvent: { url: 'https://linux.do/latest' } }));
+    jest.mocked(props.onSetLinuxDoWebViewError).mockClear();
+    await act(() =>
+      mockLoginWebViewProps.onHttpError({ nativeEvent: { url: 'https://linux.do/challenge', statusCode: 404 } })
+    );
+    expect(props.onVerificationPageEvent).toHaveBeenCalledWith(
+      {
+        verificationAction: 'http-error',
+        verificationPage: 'challenge',
+        status: 404,
+        hasLoadError: true,
+        isDocumentUrlMatch: false
+      },
+      1
+    );
+    expect(props.onSetLinuxDoWebViewError).not.toHaveBeenCalled();
+  });
+
+  it('separates permitted document navigation from display-only history callbacks', async () => {
+    const onDocumentNavigation = jest.fn();
+    const props = linuxDoVerifyProps({ handleLinuxDoNavigation: jest.fn(() => true) });
+    const view = await render(<LinuxDoVerifyModal {...props} onDocumentNavigation={onDocumentNavigation} />);
+    const navigation = mockLoginWebViewProps.onShouldStartLoadWithRequest;
+    await act(() =>
+      mockLoginWebViewProps.onLoadStart({ nativeEvent: { url: 'https://linux.do/latest', loading: true } })
+    );
+    expect(onDocumentNavigation).not.toHaveBeenCalled();
+    expect(navigation({ url: 'https://linux.do/latest', isTopFrame: false })).toBe(true);
+    expect(onDocumentNavigation).not.toHaveBeenCalled();
+    expect(navigation({ url: 'https://linux.do/latest' })).toBe(true);
+    expect(onDocumentNavigation).toHaveBeenCalledWith(1);
+    jest.mocked(props.handleLinuxDoNavigation).mockReturnValueOnce(false);
+    expect(navigation({ url: 'https://example.com/' })).toBe(false);
+    await view.rerender(
+      <LinuxDoVerifyModal {...props} onDocumentNavigation={onDocumentNavigation} linuxDoWebViewKey={2} />
+    );
+    navigation({ url: 'https://linux.do/latest' });
+    expect(onDocumentNavigation).toHaveBeenCalledTimes(1);
+  });
+
   it('lets Android choose the NodeSeek verification WebView user agent', async () => {
-    await render(<NodeSeekLoginHost {...nodeSeekProps({ visible: true })} />);
+    await render(<SiteLoginHost {...nodeSeekProps({ visible: true })} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
@@ -598,7 +757,7 @@ describe('Account site panels', () => {
     try {
       mockLoginWebViewMountCount = 0;
       const view = await render(
-        <NodeSeekLoginHost
+        <SiteLoginHost
           {...nodeSeekProps({
             loading: true,
             visible: true
@@ -611,7 +770,7 @@ describe('Account site panels', () => {
         jest.advanceTimersByTime(12_000);
       });
 
-      expect(view.getByText('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。')).toBeTruthy();
+      expect(view.getByText('NodeSeek 页面打开超时：请检查网络后重新打开。')).toBeTruthy();
       expect(view.queryByTestId('mock-login-webview')).toBeNull();
       expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
 
@@ -626,7 +785,7 @@ describe('Account site panels', () => {
   it('keeps login WebViews mounted while a new credential fill attempt is injected', async () => {
     mockLoginWebViewMountCount = 0;
     const nodeSeek = await render(
-      <NodeSeekLoginHost
+      <SiteLoginHost
         {...nodeSeekProps({
           credentialAttempt: 1,
           loginFormMode: true,
@@ -639,7 +798,7 @@ describe('Account site panels', () => {
     nodeSeekWebViewMock.mockInjectJavaScript.mockClear();
 
     await nodeSeek.rerender(
-      <NodeSeekLoginHost
+      <SiteLoginHost
         {...nodeSeekProps({
           credentialAttempt: 2,
           loginFormMode: true,
@@ -655,7 +814,7 @@ describe('Account site panels', () => {
 
     mockLoginWebViewMountCount = 0;
     const yaohuo = await render(
-      <YaohuoLoginHost
+      <SiteLoginHost
         {...yaohuoProps({
           credentialAttempt: 1,
           loginFormMode: true
@@ -667,7 +826,7 @@ describe('Account site panels', () => {
     yaohuoWebViewMock.mockInjectJavaScript.mockClear();
 
     await yaohuo.rerender(
-      <YaohuoLoginHost
+      <SiteLoginHost
         {...yaohuoProps({
           credentialAttempt: 2,
           loginFormMode: true
@@ -721,19 +880,249 @@ describe('Account site panels', () => {
     }
   );
 
-  it('invalidates the linux.do document probe on every navigation after the page was ready', async () => {
-    const onSetLoadingLinuxDoPage = jest.fn();
-    const view = await render(<LinuxDoVerifyModal {...linuxDoVerifyProps({ onSetLoadingLinuxDoPage })} />);
+  it.each([true, false, undefined])(
+    'preserves the linux.do loading state reported by a loading-start event with loading=%s',
+    async (loading) => {
+      const onSetLoadingLinuxDoPage = jest.fn();
+      const view = await render(<LinuxDoVerifyModal {...linuxDoVerifyProps({ onSetLoadingLinuxDoPage })} />);
 
-    await fireEvent.press(view.getByLabelText('模拟 WebView 加载完成'));
-    onSetLoadingLinuxDoPage.mockClear();
-    await fireEvent.press(view.getByLabelText('模拟 WebView 开始加载'));
+      await fireEvent.press(view.getByLabelText('模拟 WebView 加载完成'));
+      onSetLoadingLinuxDoPage.mockClear();
+      await act(() => {
+        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url: 'https://linux.do/latest', loading } });
+      });
 
-    expect(onSetLoadingLinuxDoPage).toHaveBeenCalledWith(true, 1);
+      expect(onSetLoadingLinuxDoPage).toHaveBeenCalledTimes(1);
+      expect(onSetLoadingLinuxDoPage).toHaveBeenCalledWith(loading !== false, 1);
+    }
+  );
+
+  it.each(['nodeseek', 'yaohuo'] as const)(
+    'keeps ordinary %s browsing open after a trusted logged-in hint until manual detection',
+    async (site) => {
+      const onCheck = jest.fn();
+      const onClose = jest.fn();
+      const props =
+        site === 'nodeseek' ? nodeSeekProps({ visible: true, onCheck, onClose }) : yaohuoProps({ onCheck, onClose });
+      const view = await render(<SiteLoginHost {...props} />);
+      const url = site === 'nodeseek' ? 'https://www.nodeseek.com/' : 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
+      await act(() => {
+        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } });
+        mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
+        mockLoginWebViewProps.onMessage({
+          nativeEvent: {
+            url: new URL(url).origin,
+            data: JSON.stringify({
+              type: `${site}-login`,
+              documentKey: `${url}:1234`,
+              status: 'logged-in',
+              hasChallengeMarker: false
+            })
+          }
+        });
+      });
+      expect(onCheck).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      expect(view.getByTestId('mock-login-webview').parent?.props.pointerEvents).toBe('auto');
+      await fireEvent.press(view.getByLabelText('检测登录'));
+      expect(onCheck).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([true, false])(
+    'checks a pending NodeSeek recovery once after a trusted account hint, origin-only bridge: %s',
+    async (originOnly) => {
+      const onCheck = jest.fn();
+      const props = nodeSeekProps({ visible: true, onCheck, recoveryPending: true });
+      const view = await render(<SiteLoginHost {...props} />);
+      const url = 'https://www.nodeseek.com/';
+      const message = {
+        nativeEvent: {
+          url: originOnly ? new URL(url).origin : url,
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            documentKey: `${url}:1234`,
+            status: 'logged-in',
+            hasChallengeMarker: false
+          })
+        }
+      };
+      await act(() => {
+        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } });
+        mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
+      });
+      expect(onCheck).not.toHaveBeenCalled();
+      await act(() => mockLoginWebViewProps.onMessage(message));
+      expect(onCheck).toHaveBeenCalledTimes(1);
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      await act(() => mockLoginWebViewProps.onMessage(message));
+      await fireEvent.press(view.getByLabelText('刷新页面'));
+      await act(() => mockLoginWebViewProps.onMessage(message));
+      expect(onCheck).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['timeout', 'renderer-gone'] as const)(
+    'keeps a %s document unmounted when a late start arrives',
+    async (failure) => {
+      jest.useFakeTimers();
+      try {
+        const view = await render(<SiteLoginHost {...yaohuoProps({ loading: true })} />);
+        const old = mockLoginWebViewProps;
+        await act(() => {
+          if (failure === 'timeout') jest.advanceTimersByTime(12_000);
+          else old.onRenderProcessGone();
+        });
+        expect(view.queryByTestId('mock-login-webview')).toBeNull();
+        await act(() => old.onLoadStart({ nativeEvent: { url: 'https://www.yaohuo.me/', loading: true } }));
+        expect(view.queryByTestId('mock-login-webview')).toBeNull();
+        await fireEvent.press(view.getByLabelText('重新打开登录页'));
+        expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it('rejects unsafe NodeSeek recovery hints and gives manual detection priority', async () => {
+    const onCheck = jest.fn();
+    const props = nodeSeekProps({ visible: true, onCheck, recoveryPending: true });
+    const view = await render(<SiteLoginHost {...props} />);
+    const url = 'https://www.nodeseek.com/';
+    const hint = {
+      type: 'nodeseek-login',
+      documentKey: `${url}:1234`,
+      status: 'logged-in',
+      hasChallengeMarker: false
+    };
+    await act(() => mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } }));
+    for (const payload of [
+      { ...hint, documentKey: `${url}:0` },
+      { ...hint, documentKey: 'https://evil.example/:1234' },
+      { ...hint, type: 'yaohuo-login' },
+      { ...hint, status: 'unknown' },
+      { ...hint, hasChallengeMarker: true },
+      { ...hint, hasChallengeMarker: undefined }
+    ]) {
+      await act(() => mockLoginWebViewProps.onMessage({ nativeEvent: { url, data: JSON.stringify(payload) } }));
+    }
+    await act(() =>
+      mockLoginWebViewProps.onMessage({ nativeEvent: { url: 'https://evil.example/', data: JSON.stringify(hint) } })
+    );
+    expect(onCheck).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('检测并继续'));
+    await act(() => mockLoginWebViewProps.onMessage({ nativeEvent: { url, data: JSON.stringify(hint) } }));
+    expect(onCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['nodeseek', 'yaohuo'] as const)(
+    'ignores %s callbacks after closing and reopening the panel',
+    async (site) => {
+      const onCheck = jest.fn();
+      const onWebViewState = jest.fn();
+      const props =
+        site === 'nodeseek'
+          ? nodeSeekProps({ visible: true, onCheck, onWebViewState, recoveryPending: true })
+          : yaohuoProps({ onCheck, onWebViewState });
+      const view = await render(<SiteLoginHost {...props} />);
+      const old = mockLoginWebViewProps;
+      const url = site === 'nodeseek' ? 'https://www.nodeseek.com/' : 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
+      await view.rerender(<SiteLoginHost {...props} visible={false} />);
+      await view.rerender(<SiteLoginHost {...props} />);
+      await act(() => {
+        old.onLoadStart({ nativeEvent: { url } });
+        old.onMessage({
+          nativeEvent: {
+            url,
+            data: JSON.stringify({
+              type: `${site}-login`,
+              documentKey: `${url}:1234`,
+              status: 'logged-in',
+              hasChallengeMarker: false
+            })
+          }
+        });
+        old.onError({ nativeEvent: { description: '旧页面失败' } });
+        old.onLoadEnd({ nativeEvent: { url } });
+      });
+      expect(onCheck).not.toHaveBeenCalled();
+      expect(onWebViewState).not.toHaveBeenCalled();
+      expect(view.queryByText(`${site === 'nodeseek' ? 'NodeSeek ' : '妖火'}页面加载失败：旧页面失败`)).toBeNull();
+    }
+  );
+
+  it('automatically checks an anonymous NodeSeek recovery once without treating load completion as success', async () => {
+    const onCheck = jest.fn();
+    const view = await render(<SiteLoginHost {...nodeSeekProps({ visible: true, onCheck, recoveryPending: true })} />);
+    const url = 'https://www.nodeseek.com/';
+    await act(() => {
+      mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+      mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } });
+    });
+    expect(onCheck).not.toHaveBeenCalled();
+    expect(view.getByLabelText('检测并继续')).toBeTruthy();
+    await act(() =>
+      mockLoginWebViewProps.onMessage({
+        nativeEvent: {
+          url,
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            documentKey: `${url}:1234`,
+            status: 'logged-out',
+            hasChallengeMarker: false
+          })
+        }
+      })
+    );
+    expect(onCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not resume automatic detection after backgrounding or a load error', async () => {
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    const subscription = jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
+      listeners.push(listener);
+      return { remove: jest.fn() };
+    });
+    try {
+      const onCheck = jest.fn();
+      const view = await render(
+        <SiteLoginHost {...nodeSeekProps({ visible: true, onCheck, recoveryPending: true })} />
+      );
+      const url = 'https://www.nodeseek.com/';
+      const hint = {
+        nativeEvent: {
+          url,
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            documentKey: `${url}:1234`,
+            status: 'logged-in',
+            hasChallengeMarker: false
+          })
+        }
+      };
+      await act(() => {
+        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+        mockLoginWebViewProps.onError({ nativeEvent: { description: '断网' } });
+        mockLoginWebViewProps.onMessage(hint);
+      });
+      expect(onCheck).not.toHaveBeenCalled();
+      await act(() => {
+        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+        listeners.forEach((listener) => listener('background'));
+        listeners.forEach((listener) => listener('active'));
+        mockLoginWebViewProps.onMessage(hint);
+      });
+      expect(onCheck).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByLabelText('检测并继续'));
+      expect(onCheck).toHaveBeenCalledTimes(1);
+    } finally {
+      subscription.mockRestore();
+    }
   });
 
   it('lets Android choose the Yaohuo login WebView user agent', async () => {
-    await render(<YaohuoLoginHost {...yaohuoProps()} />);
+    await render(<SiteLoginHost {...yaohuoProps()} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
@@ -741,7 +1130,7 @@ describe('Account site panels', () => {
   it('keeps a confirmed Yaohuo session page open while identity reconciliation runs', async () => {
     const confirmed = session('yaohuo', 'logged-in');
     const view = await render(
-      <YaohuoLoginHost
+      <SiteLoginHost
         {...yaohuoProps({
           session: {
             ...confirmed,
@@ -757,7 +1146,7 @@ describe('Account site panels', () => {
   });
 
   it('settles on an explicit error', async () => {
-    const view = await render(<NodeSeekLoginHost {...nodeSeekProps({ loading: true, visible: true })} />);
+    const view = await render(<SiteLoginHost {...nodeSeekProps({ loading: true, visible: true })} />);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载失败'));
     await fireEvent.press(view.getByLabelText('模拟 WebView 消息'));
@@ -768,7 +1157,7 @@ describe('Account site panels', () => {
   });
 
   it('does not settle from an arbitrary third-party frame message', async () => {
-    const view = await render(<NodeSeekLoginHost {...nodeSeekProps({ loading: true, visible: true })} />);
+    const view = await render(<SiteLoginHost {...nodeSeekProps({ loading: true, visible: true })} />);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 消息'));
 
@@ -781,7 +1170,7 @@ describe('Account site panels', () => {
     const onSetLoadingYaohuoLoginPage = jest.fn();
     const onWebViewState = jest.fn();
     const view = await render(
-      <YaohuoLoginHost
+      <SiteLoginHost
         {...yaohuoProps({
           onCheck: onCheckYaohuoLogin,
           onSetLoading: onSetLoadingYaohuoLoginPage,
@@ -803,7 +1192,7 @@ describe('Account site panels', () => {
     expect(onSetLoadingYaohuoLoginPage).toHaveBeenLastCalledWith(true);
 
     await view.rerender(
-      <YaohuoLoginHost
+      <SiteLoginHost
         {...yaohuoProps({
           onCheck: onCheckYaohuoLogin,
           onSetLoading: onSetLoadingYaohuoLoginPage,
@@ -821,7 +1210,7 @@ describe('Account site panels', () => {
     try {
       mockLoginWebViewMountCount = 0;
       const view = await render(
-        <YaohuoLoginHost
+        <SiteLoginHost
           {...yaohuoProps({
             loading: true
           })}
@@ -833,7 +1222,7 @@ describe('Account site panels', () => {
         jest.advanceTimersByTime(12_000);
       });
 
-      expect(view.getByText('妖火页面打开超时：请检查模拟器网络后刷新页面。')).toBeTruthy();
+      expect(view.getByText('妖火页面打开超时：请检查网络后重新打开。')).toBeTruthy();
       expect(view.queryByTestId('mock-login-webview')).toBeNull();
 
       await fireEvent.press(view.getByLabelText('刷新页面'));
@@ -861,7 +1250,7 @@ describe('Account site panels', () => {
     expect(view.getByText('当前环境禁止打开登录页')).toBeTruthy();
     expect(view.queryByTestId('mock-login-webview')).toBeNull();
     await fireEvent.press(view.getByLabelText('填入已保存登录信息'));
-    await fireEvent.press(view.getByLabelText('检测状态'));
+    await fireEvent.press(view.getByLabelText('检测登录'));
     await fireEvent.press(view.getByLabelText('清除登录'));
     await fireEvent.press(view.getByLabelText('刷新页面'));
     expect(onRequestCredentialFill).toHaveBeenCalledTimes(1);

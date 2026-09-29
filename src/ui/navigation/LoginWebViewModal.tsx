@@ -13,6 +13,7 @@ export function LoginWebViewAction({
   primary = false,
   danger = false,
   disabled = false,
+  loading = false,
   testID,
   onPress
 }: {
@@ -22,6 +23,7 @@ export function LoginWebViewAction({
   primary?: boolean;
   danger?: boolean;
   disabled?: boolean;
+  loading?: boolean;
   testID?: string;
   onPress: () => void;
 }) {
@@ -32,8 +34,8 @@ export function LoginWebViewAction({
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
+      accessibilityState={{ disabled: disabled || loading, busy: loading }}
+      disabled={disabled || loading}
       onPress={() => {
         recordUserInteraction();
         onPress();
@@ -42,15 +44,15 @@ export function LoginWebViewAction({
         styles.action,
         primary && styles.actionPrimary,
         !displayLabel && styles.actionIcon,
-        disabled && styles.actionDimmed
+        (disabled || loading) && styles.actionDimmed
       ]}
     >
-      <Icon size={16} strokeWidth={1.8} color={color} accessible={false} />
-      {displayLabel ? (
-        <Text numberOfLines={1} style={[styles.actionText, { color }]}>
-          {displayLabel}
-        </Text>
-      ) : null}
+      {loading ? (
+        <ActivityIndicator size="small" color={color} accessible={false} style={styles.actionIndicator} />
+      ) : (
+        <Icon size={16} strokeWidth={1.8} color={color} accessible={false} />
+      )}
+      {displayLabel ? <Text style={[styles.actionText, { color }]}>{displayLabel}</Text> : null}
     </Pressable>
   );
 }
@@ -59,8 +61,11 @@ export function LoginWebViewModal({
   actions,
   children,
   error,
+  footer,
   loading,
   loadingText,
+  primaryAction,
+  refreshAction,
   title,
   subtitle,
   visible,
@@ -69,8 +74,11 @@ export function LoginWebViewModal({
   actions?: ReactNode;
   children: ReactNode;
   error?: string;
+  footer?: ReactNode;
   loading: boolean;
   loadingText: string;
+  primaryAction?: ReactNode;
+  refreshAction?: ReactNode;
   title: string;
   subtitle: string;
   visible: boolean;
@@ -100,7 +108,7 @@ export function LoginWebViewModal({
             style={styles.loginWebViewToolbar}
             contentContainerStyle={styles.toolbarContent}
           >
-            {actions}
+            <View style={styles.actions}>{actions}</View>
           </ScrollView>
         ) : null}
         {error ? (
@@ -117,6 +125,17 @@ export function LoginWebViewModal({
           ) : null}
           {children}
         </View>
+        {footer || primaryAction || refreshAction ? (
+          <View style={styles.loginWebViewFooter}>
+            {footer}
+            {primaryAction || refreshAction ? (
+              <View style={styles.footerActions}>
+                {primaryAction ? <View style={styles.primaryAction}>{primaryAction}</View> : null}
+                {refreshAction}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </Modal>
   );

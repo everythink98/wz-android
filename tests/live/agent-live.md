@@ -41,7 +41,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 ### Cloudflare checkbox 自动恢复协议
 
 1. 只在 App 自己打开的目标站 WebView 中操作，并同时确认 Cloudflare challenge 上下文、唯一可用的 checkbox role，以及 `Verify you are human` 或语义等价 label。每次操作前重新获取 snapshot，只按语义 ref 点击一次；禁止坐标、图像猜点、DOM 注入、Cookie 导出或独立浏览器旁路。
-2. 点击后按 UI 状态有界等待，最长 30 秒，不用固定长 sleep。checkbox 消失且目标页开始加载后，调用 App-owned canonical 检测动作：NodeSeek 等待 `nodeseek-login-webview-settled` 后点“检测登录”，linux.do 点“检测状态”；不能以 checkbox 被点击、WebView 空白或页面看似正常代替账号/clearance 结论。
+2. 点击后按 UI 状态有界等待，最长 30 秒，不用固定长 sleep。checkbox 消失且目标页开始加载后，调用 App-owned canonical 检测动作：NodeSeek 等待 `nodeseek-login-webview-settled` 后点“检测登录”，linux.do 在验证页点“检测并继续”；不能以 checkbox 被点击、WebView 空白或页面看似正常代替账号/clearance 结论。
 3. canonical 检测成功后，只恢复触发验证的原始 Query 一次，并等待该请求自己的 `data/empty/partial/error/auth` outcome；不得重跑整套场景或自动重放任何写请求。
 4. checkbox 不唯一、没有语义节点、30 秒内未通过、canonical 检测仍返回 `verification-required`，或页面升级为登录、授权、一次性验证码及其他交互式挑战时，不继续猜测或重复点击。保存不含凭据的最小证据，将对应来源的数据轴记 `BLOCKED_BY_ENV`，跳过该来源后续依赖场景并继续其余场景；只在整轮汇报中说明需要用户恢复会话，不在中途等待回复。
 5. 全程不得清 Cookie、退出账号、卸载、重置设备或自动提交登录表单。远端写操作仍受逐次授权门禁约束，验证恢复不得让既有写请求自动重放。

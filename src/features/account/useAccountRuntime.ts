@@ -35,7 +35,6 @@ import type {
   CredentialSite,
   LinuxDoReadRecovery,
   LinuxDoReadingRecovery,
-  LinuxDoReadResumeOutcome,
   RequestAccountRecheck
 } from '@/domain/session/sessionContracts';
 import type { Screen } from '@/ui/navigation/types';
@@ -101,6 +100,7 @@ export function useAccountRuntime({
   const nodeSeekLoginPanelRequestRef = useRef(0);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const checkingRequestIdRef = useRef(0);
+  const loginPanelCheckRef = useRef<{ source: 'nodeseek' | 'yaohuo'; requestId: number } | null>(null);
   const linuxDoWebViewSessionRef = useRef(0);
   const linuxDoPanelClosingSessionRef = useRef<number | null>(null);
   const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,12 +149,14 @@ export function useAccountRuntime({
   }, [mountLinuxDoWebView]);
   useEffect(
     () => () => {
+      loginPanelCheckRef.current = null;
       linuxDoCookieHandoffRef.current = null;
       linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
     },
     []
   );
   const [checking, setChecking] = useState(false);
+  const [checkingLoginPanel, setCheckingLoginPanel] = useState(false);
   const [yaohuoLoginPrompt, setYaohuoLoginPrompt] = useState('');
   const handleCredentialLoginWebViewFailure = useCallback(
     (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) =>
@@ -178,6 +180,14 @@ export function useAccountRuntime({
     []
   );
   const pendingNodeSeekRecoveryRef = useRef<LinuxDoReadRecovery | null>(null);
+  const [hasPendingNodeSeekRecovery, setHasPendingNodeSeekRecovery] = useState(false);
+  const cancelLoginPanelCheck = useCallback((source?: 'nodeseek' | 'yaohuo') => {
+    if (!loginPanelCheckRef.current || (source && loginPanelCheckRef.current.source !== source)) return;
+    loginPanelCheckRef.current = null;
+    ++checkingRequestIdRef.current;
+    setCheckingLoginPanel(false);
+    setChecking(false);
+  }, []);
   const beginAccountIdentityCheckRef = useRef<(source: SessionSite, surfaceGeneration?: number) => void>(
     () => undefined
   );
@@ -232,35 +242,40 @@ export function useAccountRuntime({
     },
     [readSessionRuntimeSnapshot]
   );
-  const handoffLinuxDoCookies = useCallback((): Promise<void> => {
-    if (linuxDoCookieHandoffRef.current) return linuxDoCookieHandoffRef.current;
-    const generation = authSurfaceRegistryRef.current.generation;
-    const handoff = awaitLinuxDoWebViewUnmount().then(() => {
-      // A refreshed/replaced WebView owns a new handoff; the old one must not unlock it.
-      if (linuxDoCookieHandoffRef.current !== handoff) throw new CancelledError();
-      return setLinuxDoCookieResponseBarrier(
-        !enabledSourcesRef.current.includes('linuxdo'),
-        'surface-close',
-        generation
-      );
-    });
-    linuxDoCookieHandoffRef.current = handoff;
-    void handoff.catch(() => {
-      if (linuxDoCookieHandoffRef.current === handoff) linuxDoCookieHandoffRef.current = null;
-    });
-    return handoff;
-  }, [awaitLinuxDoWebViewUnmount]);
+  const handoffLinuxDoCookies = useCallback(
+    (parentTraceId?: string): Promise<void> => {
+      if (linuxDoCookieHandoffRef.current) return linuxDoCookieHandoffRef.current;
+      const generation = authSurfaceRegistryRef.current.generation;
+      const handoff = awaitLinuxDoWebViewUnmount().then(() => {
+        // A refreshed/replaced WebView owns a new handoff; the old one must not unlock it.
+        if (linuxDoCookieHandoffRef.current !== handoff) throw new CancelledError();
+        return setLinuxDoCookieResponseBarrier(
+          !enabledSourcesRef.current.includes('linuxdo'),
+          'surface-close',
+          generation,
+          undefined,
+          parentTraceId
+        );
+      });
+      linuxDoCookieHandoffRef.current = handoff;
+      void handoff.catch(() => {
+        if (linuxDoCookieHandoffRef.current === handoff) linuxDoCookieHandoffRef.current = null;
+      });
+      return handoff;
+    },
+    [awaitLinuxDoWebViewUnmount]
+  );
   const verificationAppActiveRef = useRef(appActive);
   useCommitRefValue(verificationAppActiveRef, appActive);
   const readingVerificationRef = useRef<(recovery: LinuxDoReadingRecovery) => void>(() => undefined);
   const finishAuthSurfaceTicket = useCallback(
-    (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
+    (surface: AuthSurface, reason: AuthSurfaceCloseReason, parentTraceId?: string) => {
       const wasVisible = isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface);
       const ticket = finishAuthSurface(authSurfaceRegistryRef.current, surface, reason, true);
       if (!ticket && !wasVisible) return null;
       refreshAuthSurfaces((revision) => revision + 1);
       if (!ticket?.shouldReconcile) {
-        const handoff = surface === 'linuxdo-login' ? handoffLinuxDoCookies() : Promise.resolve();
+        const handoff = surface === 'linuxdo-login' ? handoffLinuxDoCookies(parentTraceId) : Promise.resolve();
         void handoff.catch((error) => {
           if (!isCancelledError(error)) notify('登录会话交接未完成，请刷新账号页面重试。');
         });
@@ -489,6 +504,7 @@ export function useAccountRuntime({
   const closeYaohuoLoginPanel = useCallback(
     (reason: AuthSurfaceCloseReason = 'close-button') => {
       if (!authSurfaceVisible('yaohuo-login')) return;
+      cancelLoginPanelCheck('yaohuo');
       handleClearCredentialLoginIntent('yaohuo');
       yaohuoLoginPanelRequestRef.current += 1;
       yaohuoWebViewRef.current?.stopLoading();
@@ -496,7 +512,7 @@ export function useAccountRuntime({
       setLoadingYaohuoLoginPage(false);
       finishAuthSurfaceTicket('yaohuo-login', reason);
     },
-    [authSurfaceVisible, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
+    [authSurfaceVisible, cancelLoginPanelCheck, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
   );
   const changeYaohuoLoginPanel = useCallback(
     (visible: boolean, closeReason: AuthSurfaceCloseReason = 'close-button') => {
@@ -524,7 +540,9 @@ export function useAccountRuntime({
       if (visible) {
         beginAuthSurfaceTicket('nodeseek-login', 'nodeseek');
       } else {
+        cancelLoginPanelCheck('nodeseek');
         pendingNodeSeekRecoveryRef.current = null;
+        setHasPendingNodeSeekRecovery(false);
         handleClearCredentialLoginIntent('nodeseek');
       }
       webViewRef.current?.stopLoading();
@@ -534,12 +552,17 @@ export function useAccountRuntime({
     [
       authSurfaceVisible,
       beginAuthSurfaceTicket,
+      cancelLoginPanelCheck,
       enabledSessionSourceSet,
       finishAuthSurfaceTicket,
       handleClearCredentialLoginIntent
     ]
   );
   const isLinuxDoPanelVisible = useCallback(() => authSurfaceVisible('linuxdo-login'), [authSurfaceVisible]);
+  const getLinuxDoSurfaceGeneration = useCallback(
+    () => authSurfaceRegistryRef.current.active['linuxdo-login']?.generation,
+    []
+  );
   const handleLinuxDoSurfaceOpened = useCallback(
     ({ accountBarrier }: { accountBarrier: boolean }) => {
       if (accountBarrier) {
@@ -557,6 +580,8 @@ export function useAccountRuntime({
     return setLinuxDoCookieResponseBarrier(true, 'surface-open', authSurfaceRegistryRef.current.generation);
   }, [cancelLinuxDoBrowserHandoff]);
   const verification = useVerificationController({
+    fetcher,
+    getLinuxDoSurfaceGeneration,
     onRecoveryStateChanged: setRecoveryPanel,
     getRecoveryScope: () => {
       const snapshot = readSessionRuntimeSnapshot('linuxdo');
@@ -584,8 +609,8 @@ export function useAccountRuntime({
     notify,
     onBeforeLinuxDoSurfaceOpened: () => prepareAuthSurfaceOpenRef.current('linuxdo-login'),
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
-    onLinuxDoSurfaceClosed: ({ authoritativeResult, reason }) => {
-      finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason);
+    onLinuxDoSurfaceClosed: ({ authoritativeResult, reason, parentTraceId }) => {
+      finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason, parentTraceId);
       if (authoritativeResult)
         void linuxDoCookieHandoffRef.current?.then(
           () => reading.verified(),
@@ -638,8 +663,17 @@ export function useAccountRuntime({
     ).catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
   }, [linuxDoSourceEnabled, notify, cancelLinuxDoBrowserHandoff]);
   useEffect(() => {
-    if (!appActive) cancelLinuxDoCheckForInactiveApp();
-  }, [appActive, cancelLinuxDoCheckForInactiveApp]);
+    if (appActive) return;
+    const check = loginPanelCheckRef.current;
+    if (
+      check?.source === 'nodeseek' &&
+      authSurfaceVisible('nodeseek-login') &&
+      !authSurfaceRegistryRef.current.active['nodeseek-login']
+    )
+      beginAuthSurfaceTicket('nodeseek-login', 'nodeseek', false);
+    cancelLoginPanelCheck();
+    cancelLinuxDoCheckForInactiveApp();
+  }, [appActive, authSurfaceVisible, beginAuthSurfaceTicket, cancelLoginPanelCheck, cancelLinuxDoCheckForInactiveApp]);
   const closeNodeImageAuthPanel = nodeImage.panel.close;
   const closeAuthSurface = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
@@ -744,63 +778,130 @@ export function useAccountRuntime({
   useCommitRefValue(credentialClearIntentHandlerRef, credentials.clearCredentialLoginIntent);
   const requestNodeSeekVerification = useCallback(
     (message = 'NodeSeek 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
-      if (recovery) pendingNodeSeekRecoveryRef.current = recovery;
+      if (recovery) {
+        pendingNodeSeekRecoveryRef.current = recovery;
+        setHasPendingNodeSeekRecovery(true);
+      }
       showNodeSeekVerification(message);
     },
     [showNodeSeekVerification]
   );
   const checkNodeSeekLoginAndRetry = useCallback(async () => {
-    const checkRequest = nodeSeekLoginPanelRequestRef.current;
+    if (
+      loginPanelCheckRef.current ||
+      !verificationAppActiveRef.current ||
+      !authSurfaceVisible('nodeseek-login') ||
+      !enabledSourcesRef.current.includes('nodeseek')
+    )
+      return false;
+    const check = { source: 'nodeseek' as const, requestId: nodeSeekLoginPanelRequestRef.current };
+    loginPanelCheckRef.current = check;
+    setCheckingLoginPanel(true);
     const recovery = pendingNodeSeekRecoveryRef.current;
     const identityBeforeCheck = readSessionRuntimeSnapshot('nodeseek').identityKey;
-    const accountResult = await account.checkNodeSeekAccount(Boolean(recovery));
-    if (nodeSeekLoginPanelRequestRef.current !== checkRequest) return false;
-    if (pendingNodeSeekRecoveryRef.current !== recovery) return false;
-    if (
-      accountResult.status === 'changed' ||
-      (recovery && readSessionRuntimeSnapshot('nodeseek').identityKey !== identityBeforeCheck)
-    ) {
-      changeNodeSeekLoginPanel(false, 'authoritative-recovery');
-      return false;
-    }
-    if (accountResult.status !== 'same' && !(recovery && accountResult.status === 'anonymous')) return false;
-
-    pendingNodeSeekRecoveryRef.current = null;
-    changeNodeSeekLoginPanel(false, 'authoritative-recovery');
-    if (!recovery) return true;
-    if (recovery.isCurrent && !recovery.isCurrent()) return false;
-
-    const recoveryRequest = nodeSeekLoginPanelRequestRef.current;
-    setChecking(true);
-    let outcome: LinuxDoReadResumeOutcome = 'failed';
+    const isCurrent = () =>
+      loginPanelCheckRef.current === check &&
+      nodeSeekLoginPanelRequestRef.current === check.requestId &&
+      verificationAppActiveRef.current &&
+      authSurfaceVisible('nodeseek-login') &&
+      enabledSourcesRef.current.includes('nodeseek');
     try {
-      outcome = await recovery.resume();
-    } catch (error) {
-      if (nodeSeekLoginPanelRequestRef.current === recoveryRequest) {
-        notify(`NodeSeek 原页面恢复失败：${errorMessage(error)}`);
+      const accountResult = await account.checkNodeSeekAccount(Boolean(recovery));
+      if (!isCurrent() || pendingNodeSeekRecoveryRef.current !== recovery) return false;
+      if (
+        accountResult.status === 'changed' ||
+        (recovery && readSessionRuntimeSnapshot('nodeseek').identityKey !== identityBeforeCheck)
+      ) {
+        changeNodeSeekLoginPanel(false, 'authoritative-recovery');
+        return false;
       }
-    } finally {
-      if (nodeSeekLoginPanelRequestRef.current === recoveryRequest) setChecking(false);
-    }
-    if (nodeSeekLoginPanelRequestRef.current !== recoveryRequest) return false;
-    if (outcome === 'verification-required') {
-      const queryIsActive =
-        recovery.isCurrent?.() ??
-        appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive() === true;
-      if (queryIsActive && !pendingNodeSeekRecoveryRef.current) {
-        requestNodeSeekVerification('NodeSeek 验证仍未生效，请继续验证后再次检测。', recovery);
+      if (accountResult.status !== 'same' && !(recovery && accountResult.status === 'anonymous')) return false;
+      if (!recovery) {
+        changeNodeSeekLoginPanel(false, 'authoritative-recovery');
+        return true;
       }
-      session.updateNodeSeekSession({
-        type: 'verification-required',
-        message: 'NodeSeek 验证仍未生效，请继续验证后再次检测。'
-      });
+      if (recovery.isCurrent && !recovery.isCurrent()) {
+        changeNodeSeekLoginPanel(false, 'authoritative-recovery');
+        return false;
+      }
+
+      // Release the account read barrier without replacing the visible verification document.
+      finishAuthSurfaceTicket('nodeseek-login', 'authoritative-recovery');
+      showAuthSurface(authSurfaceRegistryRef.current, 'nodeseek-login');
+      refreshAuthSurfaces((revision) => revision + 1);
+      const outcome = await recovery.resume();
+      if (
+        !isCurrent() ||
+        pendingNodeSeekRecoveryRef.current !== recovery ||
+        readSessionRuntimeSnapshot('nodeseek').identityKey !== identityBeforeCheck
+      )
+        return false;
+      if (outcome === 'completed') {
+        changeNodeSeekLoginPanel(false, 'authoritative-recovery');
+        return true;
+      }
+      if (outcome === 'verification-required') {
+        session.updateNodeSeekSession({
+          type: 'verification-required',
+          message: 'NodeSeek 验证仍未生效，请继续验证后再次检测。'
+        });
+        notify('NodeSeek 验证仍未生效，请继续验证后再次检测。');
+      } else if (outcome === 'failed') {
+        notify('NodeSeek 原页面恢复失败，请返回原页面重试。');
+      }
       return false;
+    } catch (error) {
+      if (isCurrent()) notify('NodeSeek 原页面恢复失败：' + errorMessage(error));
+      return false;
+    } finally {
+      if (loginPanelCheckRef.current === check) {
+        if (authSurfaceVisible('nodeseek-login') && !authSurfaceRegistryRef.current.active['nodeseek-login'])
+          beginAuthSurfaceTicket('nodeseek-login', 'nodeseek', false);
+        loginPanelCheckRef.current = null;
+        setCheckingLoginPanel(false);
+      }
     }
-    if (outcome === 'failed') {
-      notify('NodeSeek 原页面恢复失败，请返回原页面重试。');
+  }, [
+    account,
+    authSurfaceVisible,
+    beginAuthSurfaceTicket,
+    changeNodeSeekLoginPanel,
+    finishAuthSurfaceTicket,
+    notify,
+    readSessionRuntimeSnapshot,
+    session
+  ]);
+  const checkYaohuoLoginAndClose = useCallback(async () => {
+    if (
+      loginPanelCheckRef.current ||
+      !verificationAppActiveRef.current ||
+      !authSurfaceVisible('yaohuo-login') ||
+      !enabledSourcesRef.current.includes('yaohuo')
+    )
+      return false;
+    const check = { source: 'yaohuo' as const, requestId: yaohuoLoginPanelRequestRef.current };
+    loginPanelCheckRef.current = check;
+    setCheckingLoginPanel(true);
+    try {
+      const confirmed = await account.checkYaohuoCookie();
+      if (
+        !confirmed ||
+        loginPanelCheckRef.current !== check ||
+        yaohuoLoginPanelRequestRef.current !== check.requestId ||
+        !verificationAppActiveRef.current ||
+        !authSurfaceVisible('yaohuo-login') ||
+        !enabledSourcesRef.current.includes('yaohuo')
+      )
+        return false;
+      closeYaohuoLoginPanel('authoritative-recovery');
+      return true;
+    } finally {
+      if (loginPanelCheckRef.current === check) {
+        loginPanelCheckRef.current = null;
+        setCheckingLoginPanel(false);
+      }
     }
-    return outcome === 'completed';
-  }, [account, changeNodeSeekLoginPanel, notify, readSessionRuntimeSnapshot, requestNodeSeekVerification, session]);
+  }, [account, authSurfaceVisible, closeYaohuoLoginPanel]);
   const closePanels = useCallback(() => {
     changeNodeSeekLoginPanel(false, 'navigation-away');
     closeNodeImageAuthPanel('navigation-away');
@@ -858,8 +959,10 @@ export function useAccountRuntime({
     status,
     verification,
     view: {
-      checking,
+      checking: checking || checkingLoginPanel,
       checkNodeSeekLoginAndRetry,
+      checkYaohuoLoginAndClose,
+      hasPendingNodeSeekRecovery,
       changeNodeSeekLoginPanel,
       changeYaohuoLoginPanel,
       handleLinuxDoBrowserFetchMessage,

@@ -363,16 +363,19 @@ function seedTopicCache(
 }
 
 describe('topic action query mutations', () => {
-  it('updates reply permission in the same render that receives an ended topic', async () => {
-    const opening = detailFor('yaohuo', { closed: false, polls: [] });
-    const hook = await renderActions({ topicDetail: opening });
-    await act(async () => hook.result.current.topicSession.commands.composer.toggle(false));
-    expect(hook.result.current.canReplyAtRender).toBe(true);
-    await act(async () =>
-      hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed: true } })
-    );
-    expect(hook.result.current.canReplyAtRender).toBe(false);
-  });
+  it.each(['yaohuo', 'linuxdo'] as const)(
+    'updates reply permission in the same render that receives a closed %s topic',
+    async (source) => {
+      const opening = detailFor(source, { closed: false, polls: [] });
+      const hook = await renderActions({ topicDetail: opening });
+      await act(async () => hook.result.current.topicSession.commands.composer.toggle(false));
+      expect(hook.result.current.canReplyAtRender).toBe(true);
+      await act(async () =>
+        hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed: true } })
+      );
+      expect(hook.result.current.canReplyAtRender).toBe(false);
+    }
+  );
   it.each(['cookie', 'picker'] as const)(
     'blocks Yaohuo transport when the topic ends during %s preparation',
     async (stage) => {
@@ -418,29 +421,138 @@ describe('topic action query mutations', () => {
       expect(hook.result.current.topicSession.state.replyContent).toBe('仍在等待的草稿');
     }
   );
-  it('closes an ended Yaohuo composer without losing its draft and blocks stale submission and upload', async () => {
-    const opening = detailFor('yaohuo', { closed: false, polls: [] });
-    const notify = jest.fn();
-    const fetcher = jest.fn(async () => new Response(''));
-    const hook = await renderActions({ topicDetail: opening, notify, fetcher });
-    await act(async () => hook.result.current.topicSession.commands.composer.changeContent('结束后保留的草稿'));
-    const staleSubmit = hook.result.current.actions.submitReply;
-    const staleUpload = hook.result.current.actions.uploadReplyImage;
+  it.each([
+    ['yaohuo', '本帖已结束，无法回复'],
+    ['linuxdo', '本帖已关闭，无法回复']
+  ] satisfies [ActionSource, string][])(
+    'closes a closed %s composer without losing its draft and blocks stale submission and upload',
+    async (source, message) => {
+      const opening = detailFor(source, { closed: false, polls: [] });
+      const notify = jest.fn();
+      const fetcher = jest.fn(async () => new Response(''));
+      const hook = await renderActions({ topicDetail: opening, notify, fetcher });
+      await act(async () => hook.result.current.topicSession.commands.composer.changeContent('结束后保留的草稿'));
+      const staleSubmit = hook.result.current.actions.submitReply;
+      const staleUpload = hook.result.current.actions.uploadReplyImage;
+      await act(async () =>
+        hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed: true } })
+      );
+      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
+      expect(hook.result.current.topicSession.state.replyContent).toBe('结束后保留的草稿');
+      expect(notify).toHaveBeenCalledWith(message);
+      await act(async () => {
+        await staleSubmit();
+        await staleUpload();
+        hook.result.current.topicSession.commands.composer.toggle(true);
+      });
+      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
+      expect(mockRunYaohuoAction).not.toHaveBeenCalled();
+      expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
+      expect(mockGetDocument).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  );
+  it.each([
+    ['picker', 'upload', true],
+    ['picker', 'upload', false],
+    ['csrf', 'reply', true],
+    ['csrf', 'reply', false],
+    ['proxy', 'reply', true],
+    ['proxy', 'reply', false],
+    ['csrf', 'upload', true],
+    ['csrf', 'upload', false],
+    ['proxy', 'upload', true],
+    ['proxy', 'upload', false]
+  ] satisfies ['picker' | 'csrf' | 'proxy', 'reply' | 'upload', boolean][])(
+    'rechecks LinuxDo transport after %s preparation (%s, closed: %s)',
+    async (stage, action, closed) => {
+      const gate = Promise.withResolvers<void>();
+      const entered = jest.fn();
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      mockLoadProxy.mockImplementation(async () => {
+        if (stage === 'proxy') {
+          entered();
+          await gate.promise;
+        }
+        return { enabled: false, activeId: null, profiles: [] };
+      });
+      const baseFetcher = jest.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+        const csrf = String(input).endsWith('/session/csrf');
+        if (csrf && stage === 'csrf') {
+          entered();
+          await gate.promise;
+        }
+        return new Response(JSON.stringify(csrf ? { csrf: 'fixture' } : { id: 421, url: '/image.png' }));
+      });
+      const proxy = await renderNativeHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+      mockGetDocument.mockImplementationOnce(async () => {
+        if (stage === 'picker') {
+          entered();
+          await gate.promise;
+        }
+        return {
+          canceled: false,
+          assets: [{ uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png', lastModified: 0 }]
+        };
+      });
+      const opening = detailFor('linuxdo', { closed: false, polls: [] });
+      const hook = await renderActions({
+        topicDetail: opening,
+        fetcher: (input, init) => proxy.result.current.networkProxyFetcher(String(input), init)
+      });
+      await act(async () => hook.result.current.topicSession.commands.composer.changeContent('preserved draft'));
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending =
+          action === 'upload'
+            ? hook.result.current.actions.uploadReplyImage()
+            : hook.result.current.actions.submitReply();
+      });
+      await waitFor(() => expect(entered).toHaveBeenCalled());
+      await act(async () =>
+        hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed } })
+      );
+      await act(async () => {
+        gate.resolve();
+        await pending;
+      });
+      expect(baseFetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(closed ? 0 : 1);
+      if (closed) expect(hook.result.current.topicSession.state.replyContent).toBe('preserved draft');
+    }
+  );
+  it('keeps authorized LinuxDo edits and their uploads available when the topic closes', async () => {
+    const opening = detailFor('linuxdo', { closed: false, polls: [], replies: [editableReply] });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const fetcher = jest.fn(
+      async (input: RequestInfo | URL) =>
+        new Response(
+          JSON.stringify(
+            String(input).endsWith('/session/csrf') ? { csrf: 'fixture' } : { short_url: 'upload://edit.png' }
+          )
+        )
+    );
+    mockGetDocument.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    seedTopicCache(opening, [editableReply]);
+    const hook = await renderActions({ topicDetail: opening, topicReplies: [editableReply], fetcher });
+    await act(async () => hook.result.current.actions.editReply(editableReply));
     await act(async () =>
       hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed: true } })
     );
-    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('结束后保留的草稿');
-    expect(notify).toHaveBeenCalledWith('本帖已结束，无法回复');
-    await act(async () => {
-      await staleSubmit();
-      await staleUpload();
-      hook.result.current.topicSession.commands.composer.toggle(true);
-    });
-    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(mockRunYaohuoAction).not.toHaveBeenCalled();
-    expect(mockGetDocument).not.toHaveBeenCalled();
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('edit');
+    expect(hook.result.current.canReplyAtRender).toBe(false);
+    await act(async () => hook.result.current.actions.uploadReplyImage());
+    expect(mockGetDocument).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.topicSession.state.replyContent).toContain('upload://edit.png');
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('edit');
+    await act(async () => hook.result.current.actions.submitReply());
+    expect(mockRunLinuxDoAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({ method: 'PUT', path: '/posts/101.json' })
+      })
+    );
   });
   beforeEach(async () => {
     mockPollSqlFailure = '';

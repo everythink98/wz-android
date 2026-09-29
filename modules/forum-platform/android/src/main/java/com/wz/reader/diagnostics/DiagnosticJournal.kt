@@ -376,6 +376,7 @@ object DiagnosticJournal {
   private val networkEnums = mapOf(
       "operation" to setOf("install", "request", "rotate-read-runtime", "cookie-response", "cookie-request", "cookie-persist", "cookie-barrier"),
       "cookieKind" to setOf("login", "session", "clearance", "bot-management", "connect", "other"),
+      "cfClearanceInfoResult" to setOf("success", "unsupported", "failed"),
       "cookieAction" to setOf("set", "delete", "unknown"),
       "cookieLifetime" to setOf("session", "persistent", "expired", "unknown"),
       "cookieAccepted" to setOf("accepted", "rejected", "not_submitted", "pending"),
@@ -395,7 +396,7 @@ object DiagnosticJournal {
       "imageFailure" to setOf("executor_rejected", "timeout", "canceled", "http_error", "read_error", "decode_error", "tls_error", "dns_error", "network_error", "unknown"),
       "imageContentType" to setOf("image", "svg", "html", "other", "unknown")
     )
-  private val networkNumbers = setOf("surfaceGeneration", "generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt", "cookieCount", "loginCookieCount", "storedLoginCookieCount", "cookieRevision", "cookieIndex", "cookieEpoch", "requestCookieEpoch", "cookieWriteSequence")
+  private val networkNumbers = setOf("surfaceGeneration", "generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt", "cookieCount", "loginCookieCount", "storedLoginCookieCount", "cfClearanceCount", "storedCfClearanceCount", "cfClearanceDistinctCount", "storedCfClearanceDistinctCount", "cfClearancePartitionedCount", "cfClearanceUnpartitionedCount", "cookieRevision", "cookieIndex", "cookieEpoch", "requestCookieEpoch", "cookieWriteSequence")
   private val networkIdentities = setOf("userAgentHash", "callId", "clientId", "poolId", "dispatcherId", "connectionId", "forumPoolId", "mediaPoolId", "imageClientId")
 
   internal fun safeNetworkFields(fields: Map<String, Any>): Map<String, Any> {

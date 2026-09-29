@@ -42,6 +42,50 @@
 
 教训：先验证两个通道在服务端的实际出口，再做网络库与协议替换实验；不要把系统代理状态当作整条网络链路的证据。[Cloudflare 对不同 IP 解题的限制](https://developers.cloudflare.com/cloudflare-challenges/concepts/how-challenges-work/#limitations)提供机制依据，不能替代本站具体规则证据。
 
+## `REG-ACCOUNT-055` 妖火检测已确认登录但验证窗口不自动关闭
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/02`，共享三站登录页面生命周期 |
+| 历史症状与根因 | 妖火页面完成登录且 App 权威检测已确认账号，窗口仍停留，需要手动关闭；原宿主只调用账号检测，没有消费成功结果完成当前面板。三站页面又分别实现操作区，自动检测和成功收尾缺少一致契约。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx` 承接真实账号检测、当前窗口关闭及关闭/后台后的迟到结果；`tests/ui/account/account-site-panels.test.tsx` 承接可信页面提示、单次自动检测、失败留页和共享操作区。脚本隐私与挑战状态由既有 `src/platform/network/loginWebViewScripts.test.ts` 承接。 |
+| 修复 | 妖火与 NodeSeek 共用 `SiteLoginHost`，妖火仅在本轮手动检测确认登录后关闭。2026-09-29 用户进一步明确普通打开原站用于浏览，不能因已登录而关闭；自动检测门禁因此收窄到 NodeSeek 待恢复的 exact 读取，并删除妖火无消费者的自动探针。普通三站页面保持打开，L 站主动网站验证和恢复流程继续使用既有 CDK 回执。未知、挑战、错误、旧窗口和后台结果不关闭新页面，不清 Cookie，不以页面 200 或 DOM 提示当身份成功。 |
+| 前一轮验收（意图收紧前） | 2026-09-29 主 `WZ_Pixel_API_35`（`emulator-5562`）覆盖安装 build `fa6bb0dabf48428fad582ed6c8a6635c`，APK SHA-256 `ee7ec366de79232c3a8fa55f574cd3dc68e6dd984517c178b5993fa1e2e4c9ee`；firstInstallTime 保持 `2026-07-26 16:51:37`，三站登录保留。仅打开“检测或重新登录”，不点窗口内手动检测：妖火 trace48 于北京时间 22:22:28.748 自动检测、22:22:30.017 成功关闭，trace64 于 22:22:54.656 → 22:22:55.958 再次完成；NodeSeek trace80/97 同样两次自动成功关闭。L 站 trace114 从 CDK 返回后于 22:24:19.846 自动检测、22:24:20.562 成功。当时既有登录会话的自动闭环为 `LIVE_PASS`，证据为 `.codex-tmp/unified-site-verification/automatic-login.mp4` 与 `.codex-tmp/unified-site-verification/live-events.json`；该旧行为不再是普通浏览的当前契约。 |
+| 本轮验收与边界 | 同一主 AVD 覆盖安装 build `3b8d81a4cbbb4fe092165a9061920cec`，firstInstallTime、三站登录和原外观保持。NodeSeek 普通浏览 100.802 秒、妖火 61.564 秒、L 站 39.883 秒，各为零自动检测；NodeSeek/L 站滚动及妖火点击“新帖”站内跳转均保持窗口，随后手动检测确认成功才关闭。L 站另主动选择网站验证，trace102 于北京时间 22:52:32.240 自动回查、22:52:32.728 成功关闭，获该范围 `LIVE_PASS`。本轮 `UI_PASS` 96 项（seed `1983093102`）、`UNIT_PASS` 31 项（seed `1983093002`），相关静态门禁通过；ARM64 包为 `APK_SANITY`，17 个生产输入与冻结源码匹配，两包 Hermes bundle 相同。证据仅存本机 `.codex-tmp/verification-intent/acceptance.md`、两段 browsing-and-checking 录像、三站 browsing 截图及 602 事件的 direct journal，未新增分享导出。新验证码交互、新 exact 受阻请求恢复与实体手机仍为 `NOT_VERIFIED`。 |
+
+## `REG-ACCOUNT-054` 主站验证入口未恢复 CF 上报且缺少备用入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-02`，共享 `TOPIC-01/03` 的 Cookie 交接与阅读恢复 |
+| 历史症状与根因 | 2026-09-29 同一主 AVD 中，主站 `/challenge` 持续返回普通 404；双通道出口采样一致、实际发送 clearance 与共享存储一致后，原生阅读 POST 仍遭明确 CF 403。原站 WebView 的自然 POST 也被拒绝；按用户授权仅删除 CF Cookie 后，主站后续 JavaScript Detection 签发新 clearance 仍未恢复 POST。已确认产品缺少可选验证入口，服务端具体规则仍未知；上述事实不能将原因归为原生网络库，也不能把 404、无挑战标记或新 Cookie 判为验证成功。 |
+| 决定性对照 | 用户授权的同一 App WebView 加载 `https://cdk.linux.do/`，主文档先返回带 `cf-mitigated: challenge` 的 403，随后取得新的 `.linux.do`、同分区 clearance，并到达 `/login` 200；未登录 CDK。检测关闭后，原 App 原生自然阅读 batch3、batch4 连续 POST 200，同进程复用原 Native connection `8e4e24d`，未切传输。安全证据为 `.codex-tmp/cf-cookie-recovery/cdk-challenge-events.jsonl` 与 `.codex-tmp/cf-cookie-recovery/live-cdk-recovered.json`；不保存 Cookie 值于本文。 |
+| 产品缺口与首轮修复 | 验证窗口只提供主站入口，用户无法在窗口内选择已证实可恢复的 CDK 路径。首轮修复保留默认 `/challenge`，增加显式“备用验证”，沿用当前窗口及刷新/重新验证生命周期；手动账号检测页也可主动进入。当前 CDK `/login` 载入后回主域继续 probe 与手动检测，其他最终页不自动判成功。不清登录、不自动换传输、不放宽 CDK 消息为主域身份或探针证据，原 Cookie barrier、取消及阅读 100 秒期限不变。 |
+| 当前 owner | `tests/ui/account/account-site-panels.test.tsx` 最初建立缺少“备用验证”按钮的修前 RED，继续承接当前页面、原生事件顺序及消息边界。自动检测、取消、原请求交接与恢复由 `src/features/account/useVerificationController.test.ts`、`tests/ui/account/account-runtime.test.tsx` 和现有 reading runtime owner 承接，不另建业务重放通道。 |
+| 历史自动引导 | 首轮后曾在同一可见窗口首次出现 `verification-required` 检测结果、且不在检测中或登录表单模式时，自动进入 CDK 并复用既有重新验证；不自动检测或上报。自动引导每窗口至多一次，手动备用仍可再次使用并消耗尚未使用的自动机会；关闭窗口或转入登录表单时重置，返回主域、key 刷新和前后台切换不重置；普通 404、网络失败、未知和过期不触发。`tests/ui/account/account-runtime.test.tsx` 的真实 reading 链在旧实现先 RED（seed `1981982290`）；修复后 `UI_PASS`：76 项、seed `929480414`，controller 与 reading `UNIT_PASS`：90 项、seed `1790683893977`。该模拟器包的手动链路已验，真实 CF 自动恢复未验，不由手动入口证据替代。 |
+| 后续流程重构 | 经用户授权，专用读取恢复改为直接 CDK → 合格 `/login` 文档消息 → 主域 `/latest` → 自动检测一次；账号页“网站验证”同样可自动执行既有账号检测。页面 hook 要求精确当前文档、无已知错误及无挑战标记，CDK 阶段不在 `onLoadEnd` 补注入，避免 Android 网络错误先发普通 finish 导致误返回。controller 等待可信主域状态与既有五秒出口探针结算，但不以采样质量决定业务放行；保留手动检测、失败留屏及用户主动重新验证，不自动循环。闭集日志增加 `challenge-open/auto-check`，历史动作保留；当前行为以 product map 为准，设备证据范围见下列最终复验。 |
+| 后续日志补修 | 候选 buildId `17224373ade94a22a77e446ad41a0327` 的真实 UI 导出缺少已发生的 HTTP 404，日志验收 RED；同包两个自然批次 POST 200 不能证明日志完整，未作为最终日志包交付。补修在 UI URL 过滤前保留 HTTP 错误及匹配布尔值，不记录 URL；原失败 oracle seed `-1230218928`，修后 `UI_PASS` 77/77、seed `-1802990118`，typecheck、ESLint、Prettier 通过。最终 buildId `b185ae5eb4e1465082cd4712357efd50` 的模拟器日志 `LIVE_PASS`：1252 个本构建事件、33 个 Native Cookie 请求中，53 个关键事件与实际分享导出匹配；404 回调先于对应 load-start，`isDocumentUrlMatch=false`，仍完整保留。回主域新 probe、检测交接及两次自然 POST 200 通过，健康计数零新增，未检出原始凭据字段。证据为 `.codex-tmp/cf-auto-verification-logs/emulator-receipt.json`，安装身份、APK 校验、受控导出清理与未验范围见 `.codex-tmp/cf-auto-verification-logs/acceptance.md`。 |
+| 历史手动入口设备证据 | `LIVE_PASS`：buildId `b129345cd5cd4cf3977a7b0cffa3bf3e` 在主 AVD `emulator-5562` 保留数据覆盖安装，`firstInstallTime` 不变，三站登录 UI 保留。北京时间 19:48:41 实际点击备用按钮到 CDK `/login` 200，19:48:42 同一 WebView 回主域 `/latest` 200，19:48:44 新主域 probe 成功且同出口，19:49:03 手动检测的 `surface-close` 成功。随后新自然阅读 `trace-103/request-35` 于 19:49:16 POST 200，离开收尾 `trace-105/request-36` 于 19:49:42 POST 200。实际分享导出含 1280 个新构建事件、35 个 Cookie 请求，39 个关键 journal 事件与导出匹配；健康计数零新增，未检出原始凭据字段。证据为 `.codex-tmp/cf-alternate-verification/emulator-receipt.json`、`.codex-tmp/cf-alternate-verification/verification-navigation.json` 与该目录安装前后记录。 |
+| 本轮设备逃逸与补修 | 候选 buildId `0d7ce4e735fc4c2da6070c0c6b116376` 首轮自动检测成功；深色/140% 第二轮返回主域后，Android `doUpdateVisitedHistory` 的重复 `load-start` 被当作新导航，按 `progress != 100` 计算的 `loading` 误取消出口探针，后续同文档消息被 stopped guard 丢弃，自动检测停住，手动检测仍可完成。北京时间 2026-09-29 21:27:44.669 出现重复加载事件，21:27:44.678 的 `trace-84`（parent `trace-76`）以 native success、WebView canceled、`probeCancelReason=navigation` 结束；证据为 `.codex-tmp/cf-verification-polish/first-live-events.json`。同期模拟器及 arm64 候选拒绝交付，保留为该目录 `rejected-history-race-*`。既有 controller/runtime owner 先建立修前 RED；补修将加载布尔值仅用于 UI，由允许的顶层导航回调或真实文档变化撤销旧证据。最终 `UNIT_PASS` 219 项（seed `1983092901`），相关 `UI_PASS` 96 项（seed `-1813325405`）；catalog 在并行 Gradle 下曾触及五秒超时，无构建干扰时同 seed 重放全部通过，未放宽阈值。 |
+| 最终模拟器复验 | `APK_SANITY`、`LIVE_PASS`：buildId `8334c4bc0cda4d15bd2f3abe29217633` 保留数据覆盖安装主 AVD，`firstInstallTime=2026-07-26 16:51:37` 不变，三站登录保留。深色/140% 下两次账号“网站验证”分别以 `trace-47/key-2`、`trace-69/key-6` 于北京时间 21:38:22.930、21:38:57.250 自动完成，未点击手动检测；均持有双侧 success、同出口采样，并完成两次 Cookie 交接。随后自然阅读 `request-39/40` 两次 POST 200。实际 UI 分享导出含本构建 1370 个事件、38 个 Cookie 请求，与 66 个关键 journal 事件匹配；JS/Native 健康计数相对基线零新增，原始凭据字段检出为零。偏好恢复浅色/100%。回执为 `.codex-tmp/cf-verification-polish/emulator-receipt.json`，打包及安装核验为同目录 `.codex-tmp/cf-verification-polish/emulator-sanity.json`、`.codex-tmp/cf-verification-polish/install-after.txt`。 |
+| 关闭范围与未验范围 | 关闭原验证入口缺口及本轮 history 误取消自动检测缺陷；保留首个候选失败历史。最终模拟器沿用已恢复的 clearance，未删除 Cookie 制造新挑战；新受阻原批次恢复、新 CF 真人挑战、实体机、小屏原生结果态及其他 CF 规则仍为 `NOT_VERIFIED`。此前真实 CF 403 → CDK 挑战 → 原生 200 只由旧构建手动对照证明，不能与最终账号自动检测拼成新包完整受阻批次恢复，也不承诺已登录 CDK 的其他最终页均可自动恢复。 |
+
+## `REG-MORE-008` Android 验证消息导致出口探针未启动或误取消
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-02`、`ACCOUNT-02` 的验证出口诊断；不改变原请求恢复与账号身份 |
+| 历史症状与根因 | 2026-09-29 真机 buildId `ae63c3310e4c4bb89920b09e5e1a29c5` 的页面消息和 UA 已识别，但北京时间 17:23:09.380、17:23:22.436、17:23:41.495、17:23:56.734 四次检测均为 `egressProbeState=not-started`，没有 `egress-probe`。现代 Android WebMessageListener 把 `sourceOrigin` 作为 `event.url`，controller 却要求完整 `documentKey` 以该值加冒号开头；页面 URL 中的路径使校验失败。原测试只构造旧桥接的完整页面 URL，未覆盖实际平台消息形状。 |
+| 修复 | 分别解析完整文档 URL 和末尾时间戳，接受固定 linux.do 来源的 origin-only 或对应完整 URL 消息；注入脚本继续核对当前主文档的完整身份。未通过文档校验时只记录受控原因，不输出原始 URL、IP、Cookie 或页面正文。 |
+| 同链路补修 | Android 源码确认 history 更新也发出 `onLoadStart`，加载完成时携带 `loading=false`，宿主却强置为 true；UI oracle 确认会误取消采样。主模拟器两个修前导出在检测时都只持有 canceled 样本；保留明确的 false 后，同环境复测取得有效样本。原日志未直接记录 loading 布尔，设备归因依据为该平台契约与修前/修后对照；真实加载仍取消旧文档探测。 |
+| 当前 owner | `src/features/account/useVerificationController.test.ts` 固定两种桥接来源、完整文档身份和失效消息；`tests/ui/account/account-runtime.test.tsx` 与 `tests/ui/account/account-site-panels.test.tsx` 固定实际 Account/宿主接线；`src/platform/network/cloudflareEgressDiagnostics.test.ts` 承接实际注入脚本、双通道采样与脱敏。 |
+| 失败 oracle | origin-only 的三个 Account UI 场景修前失败，旧完整 URL 对照通过；history `loading=false` 的 UI oracle 先红后绿。`UNIT_PASS`：controller 70/70；`UI_PASS`：Account runtime 43/43、site panels 26/26。 |
+| 设备闭合证据 | `LIVE_PASS` 仅针对诊断链：2026-09-29 主 AVD `WZ_Pixel_API_35`、API 35、WebView `156.0.8062.0`，修复 buildId `6a2e81e4786043e687fd4f2d8c076d65` 覆盖安装前后 `firstInstallTime=2026-07-26 16:51:37`，三站登录保留且页面 current-user 可见。实际导出含 1 次成功、0 次取消；手动检测持有双侧 success/H2/IPv4、`isSameEgress=true` 的完整采样，Cookie barrier 父 trace 与检测终态关联通过。receipt 为 `.codex-tmp/cf-diagnostics-v2/main-export-history-fixed.receipt.json`；本轮健康计数相对基线零新增，历史累计写失败与丢弃不为零。 |
+| 证据边界 | 本条仅关闭诊断桥接与误取消缺陷；模拟器出口一致只描述该次 trace 采样。原真机 CF 403 的出口差异、服务端触发原因及业务恢复仍为 `NOT_VERIFIED`，不认定用户的 CF 拦截原因，也不声称已修复 CF 循环。 |
+
 ## `REG-PERF-026` 清空历史逐条跨桥读写 SQLite
 
 | 字段 | 内容 |
@@ -1339,7 +1383,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `SEARCH-04`、`ACCOUNT-02`、`RELEASE-02` |
-| 历史症状与根因 | NodeSeek 登录 WebView 已显示“页面打开超时”或加载失败，Replay 仍因 ready testID 可见而通过；根因：`src/features/account/components/NodeSeekLoginHost.tsx` 的 WebView readiness/error 状态和对应 RNTL/Live 等待 oracle。 |
+| 历史症状与根因 | NodeSeek 登录 WebView 已显示“页面打开超时”或加载失败，Replay 仍因 ready testID 可见而通过；根因：当时 `NodeSeekLoginHost` 的 WebView readiness/error 状态和对应 RNTL/Live 等待 oracle。 |
 | 当前 owner | `tests/ui/account/account-site-panels.test.tsx` |
 
 
@@ -2289,7 +2333,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02` |
-| 历史症状与根因 | 账号中心仍显示妖火用户名和已登录状态，点入后却先打开登录页；点击“检测登录状态”后页面立即恢复为“我的地盘”；根因：`src/features/account/components/YaohuoLoginHost.tsx` 用 `canWrite` 选择登录页或会话页，把“身份核对期间禁止写入”误当成“已经退出”。 |
+| 历史症状与根因 | 账号中心仍显示妖火用户名和已登录状态，点入后却先打开登录页；点击“检测登录状态”后页面立即恢复为“我的地盘”；根因：当时 `YaohuoLoginHost` 用 `canWrite` 选择登录页或会话页，把“身份核对期间禁止写入”误当成“已经退出”。 |
 | 当前 owner | `tests/ui/account/account-site-panels.test.tsx` |
 
 
@@ -4908,6 +4952,8 @@
 | 能力 ID | `ACCOUNT-01`、`MORE-02`、`MORE-03`、`MORE-05`、`DATA-03` |
 | 历史症状与根因 | 进入 More，展开账号中心后再点问题诊断、备份/恢复等标题，按钮有时没有反应；页面只在滚动的瞬间能点开，滚动一停又失效。用户没有点击生成、导出或分享动作；根因：`src/features/more/components/ContentSourcesPanel.tsx` 同时拥有内容源排序行的挂载生命周期、稳定 source host 和 Reanimated transform。普通 ExpandablePanel、诊断导出逻辑与备份导出逻辑不是根因。 |
 | 当前 owner | `tests/ui/more/more-screen.test.tsx` |
+| 历史修复与动画恢复 | 2026-07-11 `f43c35f9` 曾以关闭滚动惯性规避，07-12 `ed5879f7` 撤回该设置并删除面板透明度/位移动画；08-23 `869db6dc` 才修正隐藏排序行生命周期，最终 `7ae5a768` 以 `transform: []` 正确清除位移。2026-09-29 用户确认当前未再遇到故障，要求恢复展开动画；共享面板仅恢复透明度淡入，收起直接归零，不恢复位移或布局动画。`tests/ui/shared/expandable-controls.test.tsx` 补充动画未完成时的收起/重开、草稿保留和子动作接线；mock 不证明 Native hit-test。历史 ADB 坐标注入会掩盖症状，匹配 APK 必须另从 Emulator 窗口鼠标验证停止滚动后点击。 |
+| 2026-09-29 验证边界 | `UI_PASS`：相关 29 项通过，新动画 oracle 修前红、修后绿。`DEVICE_REPLAY_PASS`：身份匹配的 `more-readonly.ad` 通过；`LIVE_PASS`：同一 API35 模拟器窗口鼠标验证停滚展开诊断/备份/外观、内容源换位后诊断收起重开，排序最终恢复。原始录屏首次诊断展开的可测文字帧纵向偏移为 0px，像素对比度逐步达到终态；不声明零掉帧。正常入口 x86_64 Release buildId `be1dbab05ca94ebe8586c40c21ca58aa`，SHA-256 `288e32f549f1572e4a19da6cc4b22ef14bb0c1c92f006006bb06f7792a6b2104`，覆盖安装保持首次安装时间与三站登录状态。证据在 ignored `.codex-tmp/more-expand-20260929/`；实体手机触摸与 TalkBack 仍 `NOT_VERIFIED`。 |
 
 
 ## `REG-MORE-002` 内容源连续拖回原位后两行重叠
@@ -6781,3 +6827,14 @@
 | 2026-09-27 新入口与预热对照边界 | 正式 `GET_CONTENT` 分流的 `get-content-docked-keyboard-cancel.mp4`、`get-content-docked-keyboard-success.mp4`，以及临时预热构建的 `build-layer-browse-keyboard-success.mp4` 均以完整停靠 Gboard 开始；三条本次返程原帧未见白帧、底部间距或跳位，Browse 路线停留超过 10 秒。但去程仍有约 83ms 灰色间距（Browse 成功为 83.978ms），见 `REG-WRITE-087`。上述录像同在 ignored `.codex-tmp/image-upload-fix-20260927`；探针返程通过不能替代包含最终持久开关的无探针八路径验收，各共享入口及真机仍须独立验证，本条保持 `OPEN`。 |
 | 2026-09-27 附件面板可见范围逃逸与修复证据 | 旧 `visible` 开关在 Topic 附件面板打开时关闭预热，但面板上方仍露出编辑正文。`prewarm-scope-topic-cancel-baseline.mp4` 返回时原生标题已可见，正文从原帧 #134 / 14.080722s 至 #139 / 14.183767s 才恢复；首个完全返回帧 #138 / 14.164856s 仍无正文，附件面板没有遮住该区域。录制时并行原生 RED 测试，因此这 103.045ms 仅证明功能闪白，不作可比性能耗时。身份标记与原生可见范围修复后，scope 原生回归从 10 项中 2 项失败变为 10 项全过，四个原生 owner 合计 27 项通过；XML/日志见 `.codex-tmp/image-upload-fix-20260927/prewarm-visible-native-red.xml` 与 `native-final-green.log`。相关 tooling 82 项通过，seed `1790482605682`；WebView/DocumentPicker 两个依赖与根 lock 的 integrity 一致，隔离 `npm ci --ignore-scripts` 后正向检查、真实 postinstall 和反向检查通过，见同目录 `clean-patch-install/receipt.json`。最终无探针构建的八路径、修后附件/私信及真机视觉仍待独立验收，本条保持 `OPEN`。 |
 | 2026-09-27 最终无探针返回补验 | sourceHash `8c4bfce994ace5e52ea82ee5650925d65169a15c8fd1c79619a54a76e3b8a193`、buildId `78fc080dce974696b3c25bee19d8f75f` 已完成回复 Photos/Browse × 有/无完整停靠 Gboard × 取消/成功的八条实际路径；检查到的返程编码帧未见正文闪白或旧高位跳动。`final-topic-attachment-cancel.mp4` 在 OPEN_DOCUMENT 长停留后，原帧 #134 开始显露时标题与正文均已出现，#138/139 完全返回时正文完整，并连续到 #166；独立 Topic 正文取消及私信成功也已执行，私信图片和草稿保留。证据在 ignored `.codex-tmp/image-upload-fix-20260927/final-visual-matrix.json`、`.codex-tmp/image-upload-fix-20260927/final-acceptance.md`。本次仅证明这些隔离 mock Replay 样本，未覆盖所有来源/写入入口或真机；去程灰间距仍见 `REG-WRITE-087`，不宣称整体平滑，本条保持 `OPEN`。 |
+
+## `REG-TOPIC-185` LinuxDo 关闭主题仍能打开回复并继续发送
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03`、`WRITE-01` |
+| 历史症状与根因 | 2026-09-29 在正常 App 打开 LinuxDo 2967364，页面显示“已关闭”和“话题已被作者删除”，但仍可点“写回复”进入编辑器。Discourse 已解析 `closed`，共享 action decision、编辑器关闭与异步发送前复核却只覆盖妖火。现场仅打开/收起编辑器，没有发送回复。 |
+| 当前 owner | `src/features/topic/actions/topicActionDecision.test.ts` 维护关闭决策；`tests/ui/topic/topic-actions-controller.test.tsx` 维护同次渲染拒绝、关闭保稿、旧回调与选图/CSRF/真实代理等待后的零 POST，以及开放和合法编辑对照；`tests/ui/topic/topic-reply-filters.test.tsx` 以真实 decision、TopicScreen 与 ReplyItem 维护主/楼层入口和阅读保留。 |
+| 修复 | 共享关闭判断覆盖 LinuxDo，新增回复与上传接入已有请求前 guard；保留已有回复的合法编辑和附件权限；编辑器显示移除错误的点赞权限前置条件，该 UI oracle 修前失败、修后通过（seed `-383859171`）。UNIT 修前 1 项失败（seed `1790696121080`）；controller 修前 5 项失败（seed `-654483801`），包括等待期间关闭后仍产生 POST。 |
+| 验收与边界 | `STATIC_PASS`：类型、相关 lint/格式、架构、文档及 diff 检查；`UNIT_PASS` 33 项（seed `1790696412942`）；`UI_PASS` 299 项（seed `-1455260407`）。主 AVD `emulator-5562` 覆盖安装正常 Release/Hermes build `1c8a11e987e749a9aab0cd0de8c08473`，APK SHA-256 `d43172ddc45748719b79b719730094b5be47fd08a341f0547458b9a3c8d64fdb`，firstInstallTime 保持 `2026-07-26 16:51:37`。`LIVE_PASS`：原帖关闭标记、标题、正文及阅读工具正常，回复按钮消失，点赞/收藏入口保留；该帖零回复，楼层回复入口由真实 ReplyItem UI owner 覆盖。`APK_SANITY`：启动后当前进程无 AndroidRuntime/ReactNativeJS error。未执行真实回复、上传或编辑写入，实体机为 `NOT_VERIFIED`。本机证据保存在 ignored `.codex-tmp/closed-topic-20260929`。 |

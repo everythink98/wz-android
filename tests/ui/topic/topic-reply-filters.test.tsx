@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
 import { PixelRatio, StyleSheet, Text, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -25,7 +26,8 @@ import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import type { InteractionType } from '@/domain/forum/topicActionState';
-import type { TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
+import { decideTopicAction, type TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import type { useTopicController } from '@/features/topic/useTopicController';
 import { topicListReadingFloor, type TopicListItem } from '@/features/topic/model/topicListModel';
@@ -633,6 +635,7 @@ function HtmlRendererIdentityHarness({
 
 function TopicFilterHarness({
   active = true,
+  decisionForOverride,
   canUseLinuxDoActions = false,
   canUseNodeSeekActions = false,
   canUseYaohuoActions = false,
@@ -688,6 +691,7 @@ function TopicFilterHarness({
   yaohuoVisualBookmarked
 }: {
   active?: boolean;
+  decisionForOverride?: TopicActionDecisionFor;
   canUseLinuxDoActions?: boolean;
   canUseNodeSeekActions?: boolean;
   canUseYaohuoActions?: boolean;
@@ -767,23 +771,29 @@ function TopicFilterHarness({
       ),
     [loadedQuotedReplies, prepareContent]
   );
-  const decisionFor = (({ action }) => {
-    const source = topicDetail?.source || selectedTopic?.source;
-    const sourceAllowed = {
-      linuxdo: canUseLinuxDoActions,
-      nodeseek: canUseNodeSeekActions,
-      v2ex: false,
-      yaohuo: canUseYaohuoActions
-    }[source || 'v2ex'];
-    const allowed = sourceAllowed && !(source === 'yaohuo' && action === 'like');
-    return { allowed, reason: allowed ? 'allowed' : 'login-required' };
-  }) satisfies TopicActionDecisionFor;
+  const sourceAllowed = {
+    linuxdo: canUseLinuxDoActions,
+    nodeseek: canUseNodeSeekActions,
+    v2ex: false,
+    yaohuo: canUseYaohuoActions
+  }[contentSource];
+  const accountStates = createSiteSessionStates();
+  if (contentSource !== 'v2ex' && sourceAllowed) {
+    accountStates[contentSource] = {
+      ...accountStates[contentSource],
+      status: 'logged-in',
+      currentUser: testAccountUser(contentSource)
+    };
+  }
+  const account = contentSource === 'v2ex' ? undefined : projectTestAccountSessions(accountStates)[contentSource];
+  const decisionFor = ((request) =>
+    decideTopicAction({ ...request, account, topic: topicDetail })) satisfies TopicActionDecisionFor;
   const actions = {
     actionBusy: false,
     replyImageUploading: false,
     bookmarkOnDiscourseSite: async () => onDiscourseBookmark(),
     collectOnNodeSeekSite: async () => undefined,
-    decisionFor,
+    decisionFor: decisionForOverride || decisionFor,
     deleteReply: async () => undefined,
     editReply: async () => undefined,
     favoriteOnYaohuoSite: async () => onYaohuoFavorite(),
@@ -1068,6 +1078,100 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
     expect(view.queryByLabelText('写回复')).toBeNull();
     expect(view.queryByText('暂无回复')).toBeNull();
+  });
+  it('hides new-reply controls when a LinuxDo topic closes while preserving reading and reopening', async () => {
+    const replies = jest.requireMock<typeof import('@/features/topic/components/ReplyItem')>(
+      '@/features/topic/components/ReplyItem'
+    );
+    const actual = jest.requireActual<typeof import('@/features/topic/components/ReplyItem')>(
+      '@/features/topic/components/ReplyItem'
+    );
+    const renderer = jest.spyOn(replies, 'MemoizedReplyItem').mockImplementation(actual.ReplyItem);
+    try {
+      const opening: TopicDetail = {
+        ...topic,
+        source: 'linuxdo',
+        url: 'https://linux.do/t/topic/42',
+        closed: false,
+        canCreatePost: true,
+        contentHtml: '<p>Still readable opening</p>'
+      };
+      const tree = (closed: boolean) => (
+        <TopicFilterHarness
+          canUseLinuxDoActions
+          selectedTopic={opening}
+          topicDetail={{ ...opening, closed }}
+          topicReplies={sourceReplies}
+        />
+      );
+      const view = await render(tree(false));
+      expect(view.getByLabelText('写回复')).toBeTruthy();
+      expect(view.getAllByLabelText('回复')).toHaveLength(sourceReplies.length);
+
+      await view.rerender(tree(true));
+
+      expect(view.getByText('已关闭')).toBeTruthy();
+      expect(view.queryByLabelText('写回复')).toBeNull();
+      expect(view.queryAllByLabelText('回复')).toHaveLength(0);
+      expect(view.getByText(/Still readable opening/)).toBeTruthy();
+      expect(view.getByText(/second needle/)).toBeTruthy();
+      expect(view.getByLabelText('评论内查找')).toBeTruthy();
+      expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
+
+      await view.rerender(tree(false));
+
+      expect(view.queryByText('已关闭')).toBeNull();
+      expect(view.getByLabelText('写回复')).toBeTruthy();
+      expect(view.getAllByLabelText('回复')).toHaveLength(sourceReplies.length);
+    } finally {
+      renderer.mockRestore();
+    }
+  });
+  it('keeps an authorized LinuxDo edit visible on a closed topic without permission to like its opening', async () => {
+    const closedTopic: TopicDetail = { ...topic, source: 'linuxdo', closed: true, canLike: false, liked: false };
+    const editableReply: Reply = { ...sourceReplies[0], commentId: 101, canEdit: true, contentMarkdown: 'edit draft' };
+    const accountStates = createSiteSessionStates();
+    accountStates.linuxdo = {
+      ...accountStates.linuxdo,
+      status: 'logged-in',
+      currentUser: testAccountUser('linuxdo')
+    };
+    const decisionFor: TopicActionDecisionFor = (request) =>
+      decideTopicAction({
+        ...request,
+        account: projectTestAccountSessions(accountStates).linuxdo,
+        objectAllowed: request.action !== 'like',
+        topic: closedTopic
+      });
+    const ticket = { source: 'linuxdo' as const, identityKey: 'linuxdo:123', sessionEpoch: 0 };
+    const hook = await renderHook(() => useTopicSessionController({ notify: jest.fn(), topic: closedTopic }), {
+      wrapper: QueryTestWrapper
+    });
+    await act(async () =>
+      hook.result.current.commands.composer.editReply({
+        commentId: 101,
+        contentMarkdown: 'edit draft',
+        topicId: closedTopic.id,
+        ticket
+      })
+    );
+    expect(decisionFor({ action: 'reply' }).allowed).toBe(false);
+    expect(decisionFor({ action: 'like', target: closedTopic }).allowed).toBe(false);
+    expect(decisionFor({ action: 'edit', reply: editableReply }).allowed).toBe(true);
+    const view = await render(
+      <TopicFilterHarness
+        decisionForOverride={decisionFor}
+        sessionOverride={hook.result.current}
+        selectedTopic={closedTopic}
+        topicDetail={closedTopic}
+        topicReplies={[editableReply]}
+      />
+    );
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    const composer = mockReplyComposerSheet.mock.lastCall?.[0];
+    expect(composer?.visible).toBe(true);
+    expect(composer?.intent.kind).toBe('edit');
+    expect(composer?.replyContent).toBe('edit draft');
   });
   it('copies the complete accepted answer from any visible accepted content row', async () => {
     const acceptedFloor = 42;

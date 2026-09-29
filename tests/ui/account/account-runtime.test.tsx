@@ -23,7 +23,11 @@ jest.mock('react-native-webview', () => {
   const { View } = require('react-native');
   return {
     WebView: React.forwardRef(function MockWebView(props: Record<string, unknown>, ref: unknown) {
-      React.useImperativeHandle(ref, () => ({ stopLoading: jest.fn(), injectJavaScript: jest.fn() }), []);
+      React.useImperativeHandle(
+        ref,
+        () => ({ stopLoading: jest.fn(), injectJavaScript: mockWebViewInjectJavaScript }),
+        []
+      );
       React.useEffect(() => {
         mockWebViewLoads.push((props.source as { uri?: string })?.uri || '');
       }, []);
@@ -32,6 +36,7 @@ jest.mock('react-native-webview', () => {
   };
 });
 let mockWebViewLoads: string[] = [];
+const mockWebViewInjectJavaScript = jest.fn<void, [string]>();
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
@@ -75,6 +80,7 @@ async function renderRuntime(fetcher: Fetcher) {
 
 beforeEach(() => {
   mockWebViewLoads = [];
+  mockWebViewInjectJavaScript.mockReset();
   events = [];
   setDiagnosticWriter((line) => {
     events.push(JSON.parse(line) as DiagnosticEvent);
@@ -112,6 +118,358 @@ async function renderManualLogin(fetcher: Fetcher) {
     change: (props: { active?: boolean; enabled?: boolean }) => view.rerender(<Harness {...props} />)
   };
 }
+
+function recordCookieBarriers() {
+  const barrier = jest.mocked(setLinuxDoCookieResponseBarrier);
+  const previous = barrier.getMockImplementation()!;
+  const realBarrier = jest.requireActual<typeof import('@/platform/network/managedCookies')>(
+    '@/platform/network/managedCookies'
+  ).setLinuxDoCookieResponseBarrier;
+  barrier.mockImplementation((blocked, reason, generation, _module, parentTraceId) =>
+    realBarrier(blocked, reason, generation, { setLinuxDoCookieResponseBarrier: async () => undefined }, parentTraceId)
+  );
+  return () => barrier.mockImplementation(previous);
+}
+
+async function renderSiteRuntime(source: 'nodeseek' | 'yaohuo', fetcher: Fetcher) {
+  let runtime!: ReturnType<typeof useAccountRuntime>;
+  const notify = jest.fn();
+  function Harness({ active = true }: { active?: boolean }) {
+    runtime = useAccountRuntime({
+      appActive: active,
+      enabledSources: [source],
+      fetcher,
+      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+      notify,
+      nodeSeekRecoveryThreshold: 1,
+      openUser: async () => undefined,
+      ready: false,
+      screen: 'topic',
+      webViewBlockMessage: ''
+    });
+    return runtime.hosts.element;
+  }
+  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  return { view, runtime: () => runtime, active: (active: boolean) => view.rerender(<Harness active={active} />) };
+}
+
+function seedNodeSeekAccount() {
+  appQueryClient.setQueryData(
+    accountQueryKeys.snapshot('nodeseek'),
+    accountSessionSnapshotFromEvent(createAccountSessionSnapshot('nodeseek'), {
+      type: 'session-updated',
+      loggedIn: true,
+      currentUser: { source: 'nodeseek', id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' }
+    })
+  );
+}
+
+it.each(['nodeseek', 'yaohuo'] as const)(
+  'keeps ordinary %s browsing open after a logged-in page hint until the user checks',
+  async (site) => {
+    const fetcher = jest.fn(
+      async () =>
+        new Response(
+          site === 'nodeseek'
+            ? '<html><a class="Username" href="/space/42">alice</a></html>'
+            : '<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=7">火友</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>'
+        )
+    );
+    const { view, runtime } = await renderSiteRuntime(site, fetcher);
+    try {
+      await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
+      const webView = view.getByTestId('login-webview');
+      const url = site === 'nodeseek' ? 'https://www.nodeseek.com/' : 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
+      await fireEvent(webView, 'loadStart', { nativeEvent: { url, loading: true } });
+      await fireEvent(webView, 'loadEnd', { nativeEvent: { url } });
+      await fireEvent(webView, 'message', {
+        nativeEvent: {
+          url: new URL(url).origin,
+          data: JSON.stringify({
+            type: `${site}-login`,
+            documentKey: `${url}:1234`,
+            status: 'logged-in',
+            hasChallengeMarker: false,
+            userAgent: 'WebView fixture agent'
+          })
+        }
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(runtime().hosts.surfaces[site]).toBe(true);
+      expect(view.getByTestId('login-webview')).toBeTruthy();
+      expect(mockWebViewLoads).toHaveLength(1);
+      await fireEvent.press(view.getByText('检测登录'));
+      await waitFor(() => expect(runtime().hosts.surfaces[site]).toBe(false));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(runtime().read.accountSessionViewModels[site].currentUser?.id).toBe(site === 'nodeseek' ? '42' : '7');
+    } finally {
+      await view.unmount();
+    }
+  }
+);
+
+it('keeps the same NodeSeek window through a rejected exact recovery and closes only after its explicit retry succeeds', async () => {
+  seedNodeSeekAccount();
+  const fetcher: Fetcher = async () => new Response('<html><a class="Username" href="/space/42">alice</a></html>');
+  const { view, runtime } = await renderSiteRuntime('nodeseek', fetcher);
+  const pending = Promise.withResolvers<'verification-required'>();
+  const resume = jest
+    .fn()
+    .mockImplementationOnce(() => pending.promise)
+    .mockResolvedValue('completed');
+  await act(async () =>
+    runtime().hosts.requestNodeSeekVerification('需要验证', {
+      queryKey: ['blocked-topic'],
+      isCurrent: () => true,
+      resume
+    })
+  );
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+  await fireEvent.press(view.getByText('检测并继续'));
+  expect(resume).toHaveBeenCalledTimes(1);
+  expect(runtime().hosts.surfaces.nodeseek).toBe(true);
+  expect(view.getByTestId('login-webview')).toBeTruthy();
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(true);
+  expect(view.getByLabelText('正在检测…').props.accessibilityState.disabled).toBe(true);
+  await act(async () => pending.resolve('verification-required'));
+  expect(runtime().hosts.surfaces.nodeseek).toBe(true);
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+  expect(runtime().read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(true);
+  expect(mockWebViewLoads).toEqual(['https://www.nodeseek.com']);
+  await fireEvent.press(view.getByText('检测并继续'));
+  expect(resume).toHaveBeenCalledTimes(2);
+  expect(runtime().hosts.surfaces.nodeseek).toBe(false);
+  await view.unmount();
+});
+
+it.each(['reopened', 'background'] as const)('does not let a late NodeSeek recovery close a %s panel', async (exit) => {
+  seedNodeSeekAccount();
+  const { view, runtime, active } = await renderSiteRuntime(
+    'nodeseek',
+    async () => new Response('<html><a class="Username" href="/space/42">alice</a></html>')
+  );
+  const pending = Promise.withResolvers<'completed'>();
+  const resume = jest.fn(() => pending.promise);
+  await act(async () =>
+    runtime().hosts.requestNodeSeekVerification('需要验证', { queryKey: ['old-topic'], isCurrent: () => true, resume })
+  );
+  await fireEvent.press(view.getByText('检测并继续'));
+  expect(resume).toHaveBeenCalledTimes(1);
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(true);
+  if (exit === 'reopened') {
+    await fireEvent.press(view.getByLabelText('关闭'));
+    await act(async () => runtime().hosts.requestNodeSeekVerification());
+  } else {
+    await active(false);
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    await active(true);
+  }
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+  await act(async () => pending.resolve('completed'));
+  expect(runtime().hosts.surfaces.nodeseek).toBe(true);
+  expect(view.getByTestId('login-webview')).toBeTruthy();
+  expect(view.queryByLabelText('正在检测…')).toBeNull();
+  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+  await view.unmount();
+});
+
+it.each(['complete', 'reopened', 'background'] as const)(
+  'closes only the current Yaohuo panel after authoritative identity on %s',
+  async (exit) => {
+    const pending = Promise.withResolvers<void>();
+    const next = Promise.withResolvers<void>();
+    let requests = 0;
+    const fetcher = jest.fn(async () => {
+      await (++requests === 1 ? pending.promise : next.promise);
+      return new Response(
+        '<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=7">火友</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>'
+      );
+    });
+    const { view, runtime, active } = await renderSiteRuntime('yaohuo', fetcher);
+    await act(async () => runtime().hosts.showYaohuoLogin());
+    const onCheck = runtime().hosts.element.props.view.checkYaohuoLoginAndClose;
+    await act(async () => {
+      onCheck();
+      onCheck();
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(
+      events.filter((event) => event.source === 'yaohuo' && event.operation === 'check' && event.phase === 'intent')
+    ).toHaveLength(1);
+    if (exit === 'reopened') {
+      await fireEvent.press(view.getByLabelText('关闭'));
+      await act(async () => runtime().hosts.showYaohuoLogin());
+      await fireEvent.press(view.getByText('检测登录'));
+    }
+    if (exit === 'background') {
+      await active(false);
+      await active(true);
+    }
+    await act(async () => pending.resolve());
+    expect(runtime().hosts.surfaces.yaohuo).toBe(exit !== 'complete');
+    if (exit === 'reopened') {
+      expect(view.getByLabelText('正在检测…').props.accessibilityState.disabled).toBe(true);
+      await act(async () => next.resolve());
+      expect(runtime().hosts.surfaces.yaohuo).toBe(false);
+    }
+    if (exit === 'complete') {
+      expect(runtime().read.accountSessionViewModels.yaohuo.currentUser?.id).toBe('7');
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+    await view.unmount();
+  }
+);
+
+it.each([
+  ['origin', 'complete'],
+  ['origin', 'detect'],
+  ['origin', 'close'],
+  ['origin', 'navigate'],
+  ['full-url', 'complete']
+] as const)('records the visible verification egress through the %s bridge and permits %s', async (bridge, action) => {
+  const traceUrl = 'https://linux.do/cdn-cgi/trace';
+  const documentUrl = 'https://linux.do/latest';
+  // Android WebMessageListener supplies sourceOrigin; the legacy bridge supplies the full document URL.
+  const messageUrl = bridge === 'origin' ? 'https://linux.do' : documentUrl;
+  const restoreBarrier = recordCookieBarriers();
+  const now = jest.spyOn(Date, 'now');
+  const pending = Promise.withResolvers<Response>();
+  const traceResponse = () => {
+    const response = new Response('ip=192.0.2.17\nhttp=h2\n', { headers: { 'content-type': 'text/plain' } });
+    Object.defineProperty(response, 'url', { value: traceUrl });
+    return response;
+  };
+  const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url, init) => {
+    if (url === traceUrl) {
+      init?.signal?.addEventListener('abort', () => pending.reject(new Error('aborted')), { once: true });
+      return pending.promise;
+    }
+    if (url.endsWith('/session/current.json'))
+      return new Response(JSON.stringify({ current_user: { id: 'alice', username: 'alice' } }));
+    throw new Error(`Unexpected test request: ${url}`);
+  });
+  let login: Awaited<ReturnType<typeof renderManualLogin>> | undefined;
+  try {
+    const { view, runtime } = (login = await renderManualLogin(fetcher));
+    const webView = view.getByTestId('login-webview');
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        url: messageUrl,
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          userAgent: 'WebView fixture agent',
+          documentKey: `${documentUrl}:1`,
+          status: 'logged-in',
+          hasChallengeMarker: false
+        })
+      }
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    expect(fetcher).toHaveBeenCalledWith(traceUrl, expect.objectContaining({ method: 'GET', credentials: 'omit' }));
+    expect(browserFetchIntentFromInit(fetcher.mock.calls[0][1])).toBeUndefined();
+    const probe = events.find((event) => event.operation === 'egress-probe' && event.phase === 'intent');
+    expect(probe).toMatchObject({ source: 'linuxdo', parentTraceId: expect.stringMatching(/^trace-/) });
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ traceId: probe!.parentTraceId, area: 'credential', operation: 'check' })
+      ])
+    );
+    if (action === 'complete') {
+      await fireEvent(webView, 'loadStart', { nativeEvent: { url: documentUrl, loading: false } });
+      await fireEvent(webView, 'loadStart', { nativeEvent: { url: documentUrl, loading: true } });
+      expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
+      expect(events.some((event) => event.traceId === probe!.traceId && event.phase === 'finish')).toBe(false);
+      const browserFetch = jest.fn(async () => traceResponse());
+      await act(async () => {
+        new Function('window', 'location', 'performance', 'fetch', mockWebViewInjectJavaScript.mock.calls[0][0])(
+          {
+            get top(): unknown {
+              return this;
+            },
+            ReactNativeWebView: {
+              postMessage: (data: string) => webView.props.onMessage({ nativeEvent: { url: messageUrl, data } })
+            }
+          },
+          { origin: 'https://linux.do', href: documentUrl },
+          { timeOrigin: 1 },
+          browserFetch
+        );
+        pending.resolve(traceResponse());
+      });
+      expect(browserFetch).toHaveBeenCalledWith(
+        traceUrl,
+        expect.objectContaining({ method: 'GET', credentials: 'omit' })
+      );
+      expect(runtime().hosts.linuxDoVerificationVisible).toBe(true);
+      await waitFor(() =>
+        expect(events.some((event) => event.traceId === probe!.traceId && event.phase === 'finish')).toBe(true)
+      );
+      expect(runtime().hosts.linuxDoVerificationVisible).toBe(true);
+      expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/session/current.json'))).toHaveLength(0);
+      expect(events.some((event) => event.verificationAction === 'auto-check')).toBe(false);
+      now.mockReturnValue(Date.now() + 1500);
+      await fireEvent.press(view.getByText('检测登录'));
+      await waitFor(() => expect(runtime().hosts.linuxDoVerificationVisible).toBe(false));
+    } else {
+      if (action === 'navigate') {
+        await act(async () => {
+          expect(webView.props.onShouldStartLoadWithRequest({ url: 'https://linux.do/categories' })).toBe(true);
+        });
+        expect(runtime().hosts.linuxDoVerificationVisible).toBe(true);
+        expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      }
+      await fireEvent.press(action === 'close' ? view.getByLabelText('关闭') : view.getByText('检测登录'));
+      await waitFor(() => expect(runtime().hosts.linuxDoVerificationVisible).toBe(false));
+      expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/session/current.json'))).toHaveLength(1);
+    }
+    await waitFor(() =>
+      expect(events.filter((event) => event.operation === 'egress-probe' && event.phase === 'finish')).toEqual([
+        expect.objectContaining({
+          traceId: probe!.traceId,
+          parentTraceId: probe!.parentTraceId,
+          outcome: action === 'complete' ? 'success' : 'canceled',
+          ...(action === 'complete'
+            ? { isSameEgress: true, probeNativeProtocol: 'h2', probeWebViewProtocol: 'h2' }
+            : { probeNativeResult: 'canceled', probeWebViewResult: 'canceled' }),
+          ...(action === 'navigate' ? { probeCancelReason: 'navigation' } : {})
+        })
+      ])
+    );
+    const checkpoint = events.find(
+      (event) =>
+        event.traceId === probe!.parentTraceId &&
+        event.egressCheckpoint === (action === 'close' ? 'close' : action === 'navigate' ? 'navigation' : 'check')
+    );
+    expect(checkpoint).toMatchObject({
+      egressProbeTraceId: probe!.traceId,
+      egressProbeState: action === 'complete' ? 'completed' : 'pending',
+      ...(action === 'complete'
+        ? { isSameEgress: true, probeNativeResult: 'success', probeWebViewResult: 'success' }
+        : {})
+    });
+    expect(checkpoint!.egressProbeAgeMs).toEqual(expect.any(Number));
+    if (action === 'complete') expect(checkpoint!.egressProbeAgeMs).toBeGreaterThanOrEqual(1500);
+    const handoff = events.find(
+      (event) =>
+        event.operation === 'cookie-barrier' &&
+        event.cookieBarrierReason === 'surface-close' &&
+        event.phase === 'finish'
+    );
+    expect(handoff).toMatchObject({
+      outcome: 'success',
+      surfaceGeneration: expect.any(Number),
+      ...(action === 'close' ? {} : { parentTraceId: probe!.parentTraceId })
+    });
+    expect(checkpoint!.surfaceGeneration).toBe(handoff!.surfaceGeneration);
+    expect(JSON.stringify(events)).not.toContain('192.0.2.17');
+  } finally {
+    pending.resolve(traceResponse());
+    await login?.view.unmount();
+    restoreBarrier();
+    now.mockRestore();
+  }
+});
 
 it.each(['current', 'stale', 'identity-changed'] as const)(
   'settles %s NodeSeek verification without requiring public readers to log in',
@@ -159,7 +517,7 @@ it.each(['current', 'stale', 'identity-changed'] as const)(
       })
     );
     expect(runtime.read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(state === 'identity-changed');
-    await fireEvent.press(view.getByText('检测登录'));
+    await fireEvent.press(view.getByText('检测并继续'));
     await waitFor(() => expect(runtime.hosts.surfaces.nodeseek).toBe(false));
     expect(resume).toHaveBeenCalledTimes(state === 'current' ? 1 : 0);
     expect(runtime.read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(false);
@@ -168,99 +526,222 @@ it.each(['current', 'stale', 'identity-changed'] as const)(
   }
 );
 
-it('keeps a blocked reading recovery in one panel until explicit retry, then waits for cookie handoff', async () => {
-  jest.useFakeTimers({ doNotFake: ['performance'] });
-  let clock = 0;
-  const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
-  let challenged = true;
-  const bodies: string[] = [];
-  const fetcher: Fetcher = async (url, init) => {
-    if (url.endsWith('/session/csrf')) return new Response(JSON.stringify({ csrf: 'fixture' }));
-    bodies.push(String(init?.body));
-    return challenged
-      ? new Response('<title>Just a moment...</title>', {
-          status: 403,
-          headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
-        })
-      : new Response('');
-  };
-  seedAccount();
-  let runtime!: ReturnType<typeof useAccountRuntime>;
-  const notify = jest.fn();
-  function Harness({ appActive = true }: { appActive?: boolean }) {
-    runtime = useAccountRuntime({
-      appActive,
-      enabledSources: ['linuxdo'],
-      fetcher,
-      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
-      notify,
-      nodeSeekRecoveryThreshold: 1,
-      openUser: async () => undefined,
-      ready: false,
-      screen: 'search',
-      webViewBlockMessage: ''
+it.each(['automatic', 'manual'] as const)(
+  'returns directly from CDK and retries the original reading body through %s detection and cookie handoff',
+  async (detection) => {
+    const restoreBarrier = recordCookieBarriers();
+    jest.useFakeTimers({ doNotFake: ['performance'] });
+    let clock = 0;
+    const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+    const traceUrl = 'https://linux.do/cdn-cgi/trace';
+    const nativeProbe = Promise.withResolvers<Response>();
+    const traceResponse = () => {
+      const response = new Response('ip=192.0.2.17\nhttp=h2\n', { headers: { 'content-type': 'text/plain' } });
+      Object.defineProperty(response, 'url', { value: traceUrl });
+      return response;
+    };
+    let challenged = true;
+    const bodies: string[] = [];
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url, init) => {
+      if (url === traceUrl) return nativeProbe.promise;
+      if (url.endsWith('/session/csrf')) return new Response(JSON.stringify({ csrf: 'fixture' }));
+      if (!url.endsWith('/topics/timings')) throw new Error('Unexpected test request');
+      bodies.push(String(init?.body));
+      return challenged
+        ? new Response('<title>Just a moment...</title>', {
+            status: 403,
+            headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+          })
+        : new Response('');
     });
-    return runtime.hosts.element;
-  }
-  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
-  const advance = async (milliseconds: number) =>
-    act(async () => {
-      for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
-        clock += 1000;
-        await jest.advanceTimersByTimeAsync(1000);
+    seedAccount();
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    const notify = jest.fn();
+    function Harness() {
+      runtime = useAccountRuntime({
+        appActive: true,
+        enabledSources: ['linuxdo'],
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: false,
+        screen: 'search',
+        webViewBlockMessage: ''
+      });
+      return runtime.hosts.element;
+    }
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    const advance = async (milliseconds: number) =>
+      act(async () => {
+        for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
+          clock += 1000;
+          await jest.advanceTimersByTimeAsync(1000);
+        }
+      });
+    const releaseHandoff = Promise.withResolvers<void>();
+    try {
+      const reading = runtime.read.readGateway.reading!;
+      const scope = reading.scope();
+      const session = reading.begin('12');
+      session.visible([1]);
+      session.active(true);
+      await advance(1000);
+      expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
+      expect(reading.scope()).toBe(scope);
+      session.visible([2]);
+      await advance(10000);
+      expect(mockWebViewLoads).toEqual(['https://cdk.linux.do/']);
+      expect(bodies).toHaveLength(1);
+      expect(reading.state()['12'].readPosts[2]).toBeUndefined();
+      const original = events.find((event) => event.operation === 'reading-timings' && event.phase === 'intent')!;
+      const accepted = events.find(
+        (event) =>
+          event.operation === 'check' && event.batchId === original.batchId && event.readingRecoveryState === 'paused'
+      )!;
+      expect(accepted).toMatchObject({ phase: 'apply', batchId: expect.any(Number) });
+      const challenge = view.getByTestId('login-webview');
+      await fireEvent(challenge, 'loadStart', {
+        nativeEvent: { url: 'https://cdk.linux.do/login', loading: false }
+      });
+      for (let index = 0; index < 2; index++) {
+        await fireEvent(challenge, 'message', {
+          nativeEvent: { url: 'https://cdk.linux.do/login?token=secret-fixture', data: 'secret-fixture' }
+        });
       }
-    });
-  try {
-    const reading = runtime.read.readGateway.reading!;
-    const scope = reading.scope();
-    const session = reading.begin('12');
-    session.visible([1]);
-    session.active(true);
-    await advance(1000);
-    expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
-    expect(reading.scope()).toBe(scope);
-    session.visible([2]);
-    await advance(10000);
-    expect(mockWebViewLoads).toEqual(['https://linux.do/challenge']);
-    expect(bodies).toHaveLength(1);
-    expect(reading.state()['12'].readPosts[2]).toBeUndefined();
-    await fireEvent.press(view.getByText('检测状态'));
-    expect(bodies).toHaveLength(2);
-    expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
-    expect(view.queryByTestId('login-webview')).toBeNull();
-    expect(view.getByText('请求仍被站点拦截，尚未恢复。')).toBeTruthy();
-    await view.rerender(<Harness appActive={false} />);
-    await view.rerender(<Harness appActive />);
-    await advance(10000);
-    expect(bodies).toHaveLength(2);
-    expect(view.queryByTestId('login-webview')).toBeNull();
-    expect(mockWebViewLoads).toEqual(['https://linux.do/challenge']);
-    await fireEvent.press(view.getByText('重新验证'));
-    await advance(1000);
-    let release!: () => void;
-    jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
+      await fireEvent(challenge, 'loadEnd', { nativeEvent: { url: 'https://cdk.linux.do/login' } });
+      expect(view.getByTestId('login-webview').props.source.uri).toBe('https://cdk.linux.do/');
+      await fireEvent(challenge, 'message', {
+        nativeEvent: {
+          url: 'https://cdk.linux.do',
+          data: JSON.stringify({
+            type: 'linuxdo-webview',
+            documentKey: 'https://cdk.linux.do/login:1',
+            status: 'logged-out',
+            hasChallengeMarker: false
+          })
+        }
+      });
+      const forum = view.getByTestId('login-webview');
+      expect(forum.props.source.uri).toBe('https://linux.do/latest');
+      expect(bodies).toHaveLength(1);
+      expect(events.filter((event) => event.verificationAction === 'message-ignored')).toHaveLength(1);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          traceId: accepted.traceId,
+          verificationAction: 'return-to-forum',
+          verificationPage: 'alternate-login'
         })
-    );
-    challenged = false;
-    await fireEvent.press(view.getByText('检测状态'));
-    expect(bodies).toHaveLength(2);
-    expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
-    await act(async () => release());
-    expect(bodies).toHaveLength(3);
-    expect(bodies[2]).toBe(bodies[0]);
-    expect(reading.scope()).toBe(scope);
-    expect(reading.state()['12'].server.lastReadPostNumber).toBe(1);
-    expect(runtime.hosts.linuxDoVerificationVisible).toBe(false);
-    expect(notify).toHaveBeenCalledWith('linux.do 阅读记录已同步。');
-  } finally {
-    await view.unmount();
-    monotonic.mockRestore();
-    jest.useRealTimers();
+      );
+      await fireEvent(forum, 'loadStart', { nativeEvent: { url: 'https://linux.do/latest', loading: true } });
+      const pageMessage = (status: string) =>
+        fireEvent(forum, 'message', {
+          nativeEvent: {
+            url: 'https://linux.do',
+            data: JSON.stringify({
+              type: 'linuxdo-webview',
+              documentKey: 'https://linux.do/latest:1',
+              userAgent: 'fixture-agent',
+              status,
+              hasChallengeMarker: false
+            })
+          }
+        });
+      await pageMessage('unknown');
+      expect(bodies).toHaveLength(1);
+      await fireEvent(forum, 'loadStart', { nativeEvent: { url: 'https://linux.do/latest', loading: true } });
+      await fireEvent(forum, 'loadEnd', { nativeEvent: { url: 'https://linux.do/latest' } });
+      await pageMessage('logged-in');
+      await fireEvent(forum, 'loadStart', { nativeEvent: { url: 'https://linux.do/latest', loading: true } });
+      await fireEvent(forum, 'loadEnd', { nativeEvent: { url: 'https://linux.do/latest' } });
+      const script = mockWebViewInjectJavaScript.mock.calls.find(([value]) =>
+        value.includes('__WZ_EGRESS_PROBE__')
+      )![0];
+      const browserFetch = jest.fn(async () => traceResponse());
+      await act(async () => {
+        new Function('window', 'location', 'performance', 'fetch', script)(
+          {
+            get top(): unknown {
+              return this;
+            },
+            ReactNativeWebView: {
+              postMessage: (data: string) => forum.props.onMessage({ nativeEvent: { url: 'https://linux.do', data } })
+            }
+          },
+          { origin: 'https://linux.do', href: 'https://linux.do/latest' },
+          { timeOrigin: 1 },
+          browserFetch
+        );
+      });
+      expect(browserFetch).toHaveBeenCalledWith(traceUrl, expect.objectContaining({ credentials: 'omit' }));
+      expect(fetcher).toHaveBeenCalledWith(traceUrl, expect.objectContaining({ credentials: 'omit' }));
+      expect(bodies).toHaveLength(1);
+      const handoff = jest.mocked(setLinuxDoCookieResponseBarrier).getMockImplementation()!;
+      jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(async (...args) => {
+        expect(view.queryByTestId('login-webview')).toBeNull();
+        await releaseHandoff.promise;
+        await handoff(...args);
+      });
+      challenged = false;
+      if (detection === 'manual') await fireEvent.press(view.getByText('检测并继续'));
+      await act(async () => nativeProbe.resolve(traceResponse()));
+      expect(view.queryByTestId('login-webview')).toBeNull();
+      expect(bodies).toHaveLength(1);
+      expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
+      expect(events.filter((event) => event.verificationAction === 'auto-check')).toHaveLength(
+        detection === 'automatic' ? 1 : 0
+      );
+      await act(async () => releaseHandoff.resolve());
+      expect(bodies).toHaveLength(2);
+      expect(bodies[1]).toBe(bodies[0]);
+      expect(reading.scope()).toBe(scope);
+      expect(reading.state()['12'].server.lastReadPostNumber).toBe(1);
+      expect(runtime.hosts.linuxDoVerificationVisible).toBe(false);
+      expect(notify).toHaveBeenCalledWith('linux.do 阅读记录已同步。');
+      expect(events.filter((event) => event.operation === 'reading-timings' && event.phase === 'intent')).toEqual([
+        expect.objectContaining({ batchId: original.batchId, attempt: 1, isRecovery: false }),
+        expect.objectContaining({ batchId: original.batchId, attempt: 2, isRecovery: true })
+      ]);
+      const completed = events.find(
+        (event) =>
+          event.operation === 'check' &&
+          event.batchId === original.batchId &&
+          event.readingRecoveryState === 'completed'
+      )!;
+      expect(completed).toMatchObject({ phase: 'apply', traceId: accepted.traceId });
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            traceId: completed.traceId,
+            batchId: original.batchId,
+            readingRecoveryState: 'resuming'
+          }),
+          expect.objectContaining({
+            operation: 'cookie-barrier',
+            phase: 'finish',
+            parentTraceId: completed.traceId,
+            outcome: 'success'
+          }),
+          expect.objectContaining({
+            operation: 'egress-probe',
+            phase: 'finish',
+            parentTraceId: completed.traceId,
+            outcome: detection === 'automatic' ? 'success' : 'canceled'
+          })
+        ])
+      );
+      expect(JSON.stringify(events)).not.toMatch(/secret-fixture|192\.0\.2\.17/);
+    } finally {
+      nativeProbe.resolve(traceResponse());
+      releaseHandoff.resolve();
+      await view.unmount();
+      monotonic.mockRestore();
+      jest.useRealTimers();
+      restoreBarrier();
+    }
   }
-});
+);
 
 it.each([
   ['handoff', 'close'],
@@ -324,8 +805,8 @@ it.each([
       await jest.advanceTimersByTimeAsync(10000);
     });
     if (stage === 'handoff') jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => pending);
-    await fireEvent.press(view.getByText('检测状态'));
-    expect(view.getByText('正在检测原请求是否恢复，可以随时返回。')).toBeTruthy();
+    await fireEvent.press(view.getByText('检测并继续'));
+    expect(view.getByText('可以随时关闭并返回原页面。')).toBeTruthy();
     if (exit === 'close') await fireEvent.press(view.getByLabelText('关闭'));
     if (exit === 'back')
       await act(async () => {
@@ -351,7 +832,7 @@ it.each([
     });
     expect(posts).toBe(stage === 'timings' ? 2 : 1);
     expect(runtime.hosts.linuxDoVerificationVisible).toBe(false);
-    expect(mockWebViewLoads).toEqual(['https://linux.do/challenge']);
+    expect(mockWebViewLoads).toEqual(['https://cdk.linux.do/']);
   } finally {
     release();
     await view.unmount();
@@ -934,7 +1415,11 @@ it('awaits the native cookie handoff before probing after login closes', async (
   await act(async () => {
     hook.result.current.hosts.closePanels();
   });
-  expect(setLinuxDoCookieResponseBarrier).toHaveBeenLastCalledWith(false, 'surface-close', expect.any(Number));
+  expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.at(-1)?.slice(0, 3)).toEqual([
+    false,
+    'surface-close',
+    expect.any(Number)
+  ]);
   expect(fetcher).not.toHaveBeenCalled();
   const callsBeforeDuplicateClose = jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.length;
   await act(async () => {
@@ -1006,15 +1491,16 @@ it.each(['alice', 'bob'])(
           .mockImplementationOnce(() => identityHandoff.promise)
           .mockImplementationOnce(() => identityHandoff.promise);
       }
-      await fireEvent.press(view.getByText('检测状态'));
+      await fireEvent.press(view.getByText('检测登录'));
       await waitFor(() => expect(view.queryByTestId('login-webview')).toBeNull());
-      expect(view.getByText('检测中')).toBeTruthy();
+      expect(view.getByText('正在检测…')).toBeTruthy();
+      expect(view.getByLabelText('刷新页面').props.accessibilityState.disabled).toBe(true);
       expect(fetcher).not.toHaveBeenCalled();
       await act(async () => {
         release();
       });
       if (username === 'bob') {
-        expect(view.getByText('检测中')).toBeTruthy();
+        expect(view.getByText('正在检测…')).toBeTruthy();
         await act(async () => {
           identityHandoff.resolve();
         });
@@ -1032,7 +1518,7 @@ it.each(['alice', 'bob'])(
   }
 );
 
-it.each(['refresh', 'background', 'disabled', 'close', 'failure'] as const)(
+it.each(['background', 'disabled', 'close', 'failure'] as const)(
   'settles a pending manual cookie handoff on %s without an obsolete identity request',
   async (exit) => {
     jest.useFakeTimers();
@@ -1046,10 +1532,9 @@ it.each(['refresh', 'background', 'disabled', 'close', 'failure'] as const)(
       if (exit === 'failure') throw new Error('disk unavailable');
     });
     try {
-      await fireEvent.press(view.getByText('检测状态'));
-      await fireEvent.press(view.getByText('检测中'));
+      await fireEvent.press(view.getByText('检测登录'));
+      await fireEvent.press(view.getByText('正在检测…'));
       expect(fetcher).not.toHaveBeenCalled();
-      if (exit === 'refresh') await fireEvent.press(view.getByLabelText('刷新页面'));
       if (exit === 'background') await change({ active: false });
       if (exit === 'disabled') await change({ enabled: false });
       if (exit === 'close') await fireEvent.press(view.getByLabelText('关闭'));
@@ -1057,13 +1542,14 @@ it.each(['refresh', 'background', 'disabled', 'close', 'failure'] as const)(
         gate.resolve();
       });
       expect(fetcher).toHaveBeenCalledTimes(exit === 'close' ? 1 : 0);
-      if (exit === 'refresh') {
-        await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
-        expect(setLinuxDoCookieResponseBarrier).toHaveBeenLastCalledWith(true, 'surface-open', expect.any(Number));
-      } else if (exit === 'background' || exit === 'failure') {
+      if (exit === 'background' || exit === 'failure') {
         if (exit === 'background') await change({ active: true });
-        if (exit === 'failure') expect(view.getByText(/disk unavailable/)).toBeTruthy();
-        await fireEvent.press(view.getByText('检测状态'));
+        if (exit === 'failure') {
+          expect(view.getByText(/disk unavailable/)).toBeTruthy();
+          await fireEvent.press(view.getByText('重新打开登录页'));
+          await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+        }
+        await fireEvent.press(view.getByText('检测登录'));
         await waitFor(() => expect(runtime().hosts.linuxDoVerificationVisible).toBe(false));
         expect(fetcher).toHaveBeenCalledTimes(1);
       } else expect(runtime().hosts.linuxDoVerificationVisible).toBe(false);

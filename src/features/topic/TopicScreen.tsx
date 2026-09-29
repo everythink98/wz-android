@@ -150,15 +150,10 @@ export const TopicScreen = memo(function TopicScreen({
   }
 
   const canWrite = Boolean(topic && decisionFor({ action: 'reply' }).allowed);
-  const canUseDiscourseInteractions = Boolean(
-    topic &&
-    isDiscourseSource(topic.source) &&
-    decisionFor({ action: 'like', interaction: 'like', target: topic }).allowed
-  );
   const canOpenReplyComposer =
     canWrite ||
     Boolean(
-      canUseDiscourseInteractions &&
+      isDiscourseSource(topic?.source) &&
       replyComposerIntent.kind === 'edit' &&
       decisionFor({ action: 'edit', objectAllowed: true, targetPresent: true }).allowed
     );

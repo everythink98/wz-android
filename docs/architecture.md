@@ -187,7 +187,7 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 - 读取 CF 恢复继续由 `useVerificationController` 单一拥有会话、目标和结果，`useAccountRuntime` 只投影渲染状态并提供身份 scope、WebView 卸载提交及 Cookie barrier 交接。UI 占用与 auth surface 分开：结果/检测页参与返回和阅读遮挡，只有网页阶段持有认证 WebView；Query 的取消仍交给 exact Query owner，阅读取消仍交给原 batch owner。
 
 
-- `src/features/account/useNodeImageAuthController.ts` 统一拥有 NodeImage Key 与授权 panel 两组状态/动作；`useAccountRuntime` 统一提供 auth-surface 协调、canonical Account 对账和同步 session runtime，并由两个稳定 callback 在同一 tick 先提交 NodeSeek/linux.do User-Agent ref、再提交 React state，child controller 不持有成对 writer。`AccountHosts` 在 Account 内组合 `AccountHost`、`HiddenBrowserHost`、`NodeSeekLoginHost` 与 `YaohuoLoginHost`，App 只挂载生成节点；route 导航与 Topic 返回优先级分别归 `appNavigation` 和对应 route。
+- `src/features/account/useNodeImageAuthController.ts` 统一拥有 NodeImage Key 与授权 panel 两组状态/动作；`useAccountRuntime` 统一提供 auth-surface 协调、canonical Account 对账和同步 session runtime，并由两个稳定 callback 在同一 tick 先提交 NodeSeek/linux.do User-Agent ref、再提交 React state，child controller 不持有成对 writer。`AccountHosts` 在 Account 内组合 `AccountHost`、`HiddenBrowserHost` 与 NodeSeek/妖火共用的 `SiteLoginHost`，App 只挂载生成节点；route 导航与 Topic 返回优先级分别归 `appNavigation` 和对应 route。
 
 
 ### 账号动作与凭据

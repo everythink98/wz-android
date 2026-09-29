@@ -5,8 +5,7 @@ import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AccountHost } from './AccountHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { createAccountHostStyles } from './accountHostStyles';
-import { NodeSeekLoginHost } from './components/NodeSeekLoginHost';
-import { YaohuoLoginHost } from './components/YaohuoLoginHost';
+import { SiteLoginHost } from './components/SiteLoginHost';
 import type { useAccountController } from './useAccountController';
 import type { useAccountCredentialController } from './useAccountCredentialController';
 import type { useAccountStatusController } from './useAccountStatusController';
@@ -18,6 +17,8 @@ type AccountHostsView = {
   recoveryPanel: import('./useVerificationController').LinuxDoRecoveryPanel;
   checking: boolean;
   checkNodeSeekLoginAndRetry: () => unknown;
+  checkYaohuoLoginAndClose: () => unknown;
+  hasPendingNodeSeekRecovery: boolean;
   changeNodeSeekLoginPanel: (visible: boolean) => void;
   changeYaohuoLoginPanel: (visible: boolean) => void;
   handleLinuxDoBrowserFetchMessage: (event: WebViewMessageEvent) => void;
@@ -97,6 +98,9 @@ export function AccountHosts({
         onNodeSeekHttpErrorStatus={session.markNodeSeekBrowserFetchHttpError}
       />
       <AccountHost
+        onLinuxDoChallengeReturned={verification.armLinuxDoPostChallengeCheck}
+        onLinuxDoDocumentNavigation={verification.beginLinuxDoDocumentNavigation}
+        onLinuxDoVerificationPageEvent={verification.recordLinuxDoVerificationPageEvent}
         recoveryPanel={view.recoveryPanel}
         retryLinuxDoRecovery={verification.retryLinuxDoRecovery}
         checking={view.checking}
@@ -138,7 +142,9 @@ export function AccountHosts({
         requestLinuxDoCredentialFill={() => credentials.openAccountLogin('linuxdo', true)}
         closeNodeImageAuthPanel={nodeImage.panel.close}
       />
-      <NodeSeekLoginHost
+      <SiteLoginHost
+        site="nodeseek"
+        recoveryPending={view.hasPendingNodeSeekRecovery}
         checking={view.checking}
         credentialAttempt={
           credentials.credentialFillAttempt?.site === 'nodeseek' ? credentials.credentialFillAttempt.attempt : 0
@@ -166,7 +172,8 @@ export function AccountHosts({
         onSetLoading={view.setLoadingLoginPage}
         onWebViewState={account.recordNodeSeekLoginWebViewState}
       />
-      <YaohuoLoginHost
+      <SiteLoginHost
+        site="yaohuo"
         checking={view.checking}
         credentialAttempt={
           credentials.credentialFillAttempt?.site === 'yaohuo' ? credentials.credentialFillAttempt.attempt : 0
@@ -182,7 +189,7 @@ export function AccountHosts({
         webViewBlockMessage={blockedMessage}
         webViewRef={view.yaohuoWebViewRef}
         onCheck={() => {
-          void account.checkYaohuoCookie();
+          void view.checkYaohuoLoginAndClose();
         }}
         onClear={() => {
           void account.clearYaohuoLogin();

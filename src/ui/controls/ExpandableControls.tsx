@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
+import Animated, { ReduceMotion, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
@@ -114,6 +115,11 @@ export function ExpandablePanel({
   const { styles, theme } = useReaderThemeStyles(createExpandableStyles);
   const Icon = icon;
   const StateIcon = expanded ? ChevronUp : ChevronDown;
+  // Keep layout and hit regions in React; only the visible content fades in.
+  const bodyStyle = useAnimatedStyle(
+    () => ({ opacity: expanded ? withTiming(1, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }),
+    [expanded]
+  );
 
   return (
     <View style={quiet ? styles.groupList : styles.group}>
@@ -141,9 +147,12 @@ export function ExpandablePanel({
           <StateIcon size={18} color={theme.primary} strokeWidth={1.9} />
         </View>
       </Pressable>
-      <View pointerEvents={expanded ? 'auto' : 'none'} style={[styles.body, { display: expanded ? 'flex' : 'none' }]}>
+      <Animated.View
+        pointerEvents={expanded ? 'auto' : 'none'}
+        style={[styles.body, { display: expanded ? 'flex' : 'none' }, bodyStyle]}
+      >
         {children}
-      </View>
+      </Animated.View>
     </View>
   );
 }

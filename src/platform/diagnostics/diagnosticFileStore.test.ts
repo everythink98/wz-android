@@ -171,7 +171,13 @@ import {
   initializeDiagnosticFileLogging,
   type DiagnosticExportMetadata
 } from './diagnosticFileStore';
-import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError, setDiagnosticWriter } from './diagnostics';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  recordDiagnosticError,
+  setDiagnosticWriter
+} from './diagnostics';
 import { diagnosticRef, type DiagnosticFields } from './diagnosticPolicy';
 import { createDiagnosticExport, pruneDiagnosticExports } from './diagnosticExportFiles';
 import { readNativeReadNetworkDiagnosticLines } from './nativeReadNetworkDiagnostics';
@@ -558,6 +564,21 @@ describe('diagnostic file store', () => {
       payload: { secret }
     } as unknown as DiagnosticFields);
     finishDiagnosticTrace(trace, 'failure', { reason: 'invalid_response' });
+    const verification = beginDiagnosticTrace('credential', 'check', {
+      source: 'linuxdo',
+      verificationPage: 'alternate',
+      verificationAction: 'alternate-manual',
+      webViewKey: 4,
+      surfaceGeneration: 9
+    });
+    for (const verificationAction of ['challenge-open', 'auto-check'] as const) {
+      markDiagnosticStage(verification, 'apply', { verificationAction });
+    }
+    finishDiagnosticTrace(verification, 'blocked', {
+      verificationPage: url,
+      verificationAction: `challenge-open?token=${secret}`,
+      webViewKey: secret
+    } as unknown as DiagnosticFields);
     recordDiagnosticError('app', 'js-error', new Error(`${title} ${body} ${url} ${filePath}`));
 
     await exportDiagnosticLog(metadata);
@@ -567,6 +588,26 @@ describe('diagnostic file store', () => {
       expect(exported).not.toContain(privateValue);
     }
     expect(exported).toContain('"topicRef":"topic-');
+    const verificationEvents = exported
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((event) => event.traceId === verification.traceId);
+    expect(verificationEvents).toMatchObject([
+      {
+        area: 'credential',
+        operation: 'check',
+        phase: 'intent',
+        verificationPage: 'alternate',
+        verificationAction: 'alternate-manual',
+        webViewKey: 4,
+        surfaceGeneration: 9
+      },
+      { phase: 'apply', verificationAction: 'challenge-open' },
+      { phase: 'apply', verificationAction: 'auto-check' },
+      { phase: 'finish', verificationPage: 'redacted', verificationAction: 'redacted' }
+    ]);
+    expect(verificationEvents.at(-1)).not.toHaveProperty('webViewKey');
   });
 
   it('exports allowlisted native runtime phases without network secrets', async () => {
@@ -679,6 +720,8 @@ describe('diagnostic file store', () => {
       hasLoginCookie: false,
       cookie: secret,
       cookieHash: secret,
+      cfClearanceHash: '1234abcd',
+      cfClearanceValues: [secret],
       cookieEndpoint: 'site-config',
       loginCookieCount: 2,
       storedLoginCookieCount: 1,
@@ -687,6 +730,13 @@ describe('diagnostic file store', () => {
       hasDiscoursePresent: false,
       hasStoredCfClearance: true,
       isCfClearanceCurrent: false,
+      cfClearanceCount: 3,
+      storedCfClearanceCount: 2,
+      cfClearanceDistinctCount: 2,
+      storedCfClearanceDistinctCount: 1,
+      cfClearancePartitionedCount: 1,
+      cfClearanceUnpartitionedCount: 2,
+      cfClearanceInfoResult: 'success',
       didCfClearanceChange: true,
       userAgentHash: '0123abcd',
       headers: { 'Set-Cookie': secret },
@@ -715,6 +765,7 @@ describe('diagnostic file store', () => {
     expect(exported).toContain('"requestCookieEpoch":2');
     expect(exported).toContain('"checkedInCurrentProcess":false');
     expect(exported).not.toContain('cookieHash');
+    expect(exported).not.toContain('cfClearanceHash');
     expect(exported).toContain('"cookieEndpoint":"site-config"');
     expect(exported).toContain('"loginCookieCount":2');
     expect(exported).toContain('"storedLoginCookieCount":1');
@@ -723,6 +774,13 @@ describe('diagnostic file store', () => {
     expect(exported).toContain('"hasDiscoursePresent":false');
     expect(exported).toContain('"hasStoredCfClearance":true');
     expect(exported).toContain('"isCfClearanceCurrent":false');
+    expect(exported).toContain('"cfClearanceCount":3');
+    expect(exported).toContain('"storedCfClearanceCount":2');
+    expect(exported).toContain('"cfClearanceDistinctCount":2');
+    expect(exported).toContain('"storedCfClearanceDistinctCount":1');
+    expect(exported).toContain('"cfClearancePartitionedCount":1');
+    expect(exported).toContain('"cfClearanceUnpartitionedCount":2');
+    expect(exported).toContain('"cfClearanceInfoResult":"success"');
     expect(exported).toContain('"didCfClearanceChange":true');
     expect(exported).toContain('"userAgentHash":"0123abcd"');
     expect(exported).toContain('"traceId":"trace-43"');

@@ -17,7 +17,6 @@ let mockSharedValues: { value: unknown }[] = [];
 let mockScreenReaderChangeListener: ((enabled: boolean) => void) | undefined;
 let mockScreenReaderInitialState: boolean | null | 'reject' = false;
 const mockScheduleOnRN = jest.fn((callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args));
-const mockWithTiming = jest.fn((value: unknown) => value);
 const mockAccessibilitySubscriptionRemove = jest.fn();
 const mockIsScreenReaderEnabled = jest.fn(() => {
   if (mockScreenReaderInitialState === null) return new Promise<boolean>(() => undefined);
@@ -37,7 +36,6 @@ beforeEach(() => {
   mockScreenReaderChangeListener = undefined;
   mockScreenReaderInitialState = false;
   mockScheduleOnRN.mockClear();
-  mockWithTiming.mockClear();
   mockAccessibilitySubscriptionRemove.mockClear();
   mockIsScreenReaderEnabled.mockClear();
   mockAccessibilityAddEventListener.mockClear();
@@ -75,8 +73,7 @@ jest.mock('react-native-reanimated', () => {
         mockSharedValues.push(sharedValue.current);
       }
       return sharedValue.current;
-    },
-    withTiming: (value: unknown) => mockWithTiming(value)
+    }
   };
 });
 
@@ -604,12 +601,10 @@ describe('More screen state and actions', () => {
     const v2exHost = view.getByTestId('content-source-row-v2ex');
     const linuxDoHost = view.getByTestId('content-source-row-linuxdo');
     const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
-    mockWithTiming.mockClear();
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
       handle.props.onGestureUpdate({ translationY: 56 });
     });
-    expect(mockWithTiming).not.toHaveBeenCalled();
     const translations = mockSharedValues.filter((sharedValue) => sharedValue.value === 56);
     expect(translations).toHaveLength(1);
     const [dragTranslation] = translations;

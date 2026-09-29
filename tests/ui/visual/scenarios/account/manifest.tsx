@@ -1,6 +1,12 @@
+import { useRef, useState } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import type { WebView } from 'react-native-webview';
 import { projectTestAccountSessions } from '../../../../helpers/accountSessions';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
+import { createAccountHostStyles } from '@/features/account/accountHostStyles';
+import { LinuxDoVerifyModal } from '@/features/account/components/LinuxDoVerifyModal';
+import { SiteLoginHost } from '@/features/account/components/SiteLoginHost';
 import { AccountCenterPanel } from '@/features/more/components/AccountCenterPanel';
 import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel';
 import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
@@ -243,6 +249,95 @@ function LinuxDoLevelScenario() {
   );
 }
 
+function LinuxDoVerificationScenario({ state }: { state: 'checking' | 'result' }) {
+  const { styles } = useReaderThemeStyles(createAccountHostStyles);
+  const webViewRef = useRef<WebView | null>(null);
+  const [visible, setVisible] = useState(true);
+  return (
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { x: 0, y: 0, width: 390, height: 844 },
+        insets: { top: 0, right: 0, bottom: 0, left: 0 }
+      }}
+    >
+      <LinuxDoVerifyModal
+        recoveryPanel={{
+          phase: state,
+          dedicated: true,
+          results:
+            state === 'checking'
+              ? [{ kind: 'reading', outcome: 'pending' }]
+              : [
+                  { kind: 'page', outcome: 'completed' },
+                  { kind: 'reading', outcome: 'stale' }
+                ]
+        }}
+        checking={state === 'checking'}
+        credentialAttempt={0}
+        credentialFillPending={false}
+        credentialSaved={false}
+        loginFormMode={false}
+        linuxDoSession={createLoggedInSessions().linuxdo}
+        linuxDoWebViewError=""
+        linuxDoWebViewKey={0}
+        linuxDoWebViewRef={webViewRef}
+        loadingLinuxDoPage={false}
+        mountLinuxDoWebView={false}
+        showLinuxDoPanel={visible}
+        styles={styles}
+        webViewBlockMessage=""
+        handleLinuxDoNavigation={() => false}
+        onCheckLinuxDoCookie={noop}
+        onClearLinuxDoCookie={noop}
+        onHandleLinuxDoMessage={noop}
+        onLoginFormMessage={() => false}
+        onRequestCredentialFill={noop}
+        onResetLinuxDoWebView={noop}
+        onSetLinuxDoWebViewError={noop}
+        onSetLoadingLinuxDoPage={noop}
+        onShowLinuxDoPanelChange={setVisible}
+      />
+    </SafeAreaProvider>
+  );
+}
+
+function LoginBlockedScenario({ site }: { site: 'nodeseek' | 'yaohuo' }) {
+  const { styles } = useReaderThemeStyles(createAccountHostStyles);
+  const webViewRef = useRef<WebView | null>(null);
+  const [visible, setVisible] = useState(true);
+  const props = {
+    checking: false,
+    credentialAttempt: 0,
+    credentialFillPending: false,
+    credentialSaved: true,
+    loginFormMode: false,
+    loading: false,
+    session: createAnonymousSessions()[site],
+    styles,
+    visible,
+    webViewBlockMessage: '代理设置正在应用，请稍候再试。',
+    webViewRef,
+    onCheck: noop,
+    onClear: noop,
+    onClose: () => setVisible(false),
+    onLoginFormMessage: () => false,
+    onNavigation: () => false,
+    onRequestCredentialFill: noop,
+    onSetLoading: noop,
+    onWebViewState: noop
+  };
+  return (
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { x: 0, y: 0, width: 390, height: 844 },
+        insets: { top: 0, right: 0, bottom: 0, left: 0 }
+      }}
+    >
+      <SiteLoginHost {...props} site={site} prompt="登录完成后，点击下方检测登录状态。" />
+    </SafeAreaProvider>
+  );
+}
+
 export const accountVisualScenarios: readonly VisualScenarioDefinition[] = [
   {
     capabilityIds: ['ACCOUNT-01'],
@@ -289,6 +384,42 @@ export const accountVisualScenarios: readonly VisualScenarioDefinition[] = [
     tags: ['account', 'linuxdo', 'level', 'official-requirements'],
     title: 'linux.do 等级·官方要求',
     render: () => <LinuxDoLevelScenario />
+  },
+  {
+    capabilityIds: ['ACCOUNT-02'],
+    id: 'account.verification.checking',
+    kind: 'rendered',
+    tags: ['account', 'linuxdo', 'verification', 'checking', 'large-text'],
+    title: '安全验证·正在检测',
+    note: '仅渲染 App 检测状态与可取消主操作；不挂载 WebView，也不交接 Cookie。',
+    render: () => <LinuxDoVerificationScenario state="checking" />
+  },
+  {
+    capabilityIds: ['ACCOUNT-02'],
+    id: 'account.verification.result',
+    kind: 'rendered',
+    tags: ['account', 'linuxdo', 'verification', 'result', 'large-text'],
+    title: '安全验证·部分恢复与过期',
+    note: '仅渲染页面已恢复、阅读请求过期的 App 结果；不连接网站或恢复真实请求。',
+    render: () => <LinuxDoVerificationScenario state="result" />
+  },
+  {
+    capabilityIds: ['ACCOUNT-02', 'ACCOUNT-03'],
+    id: 'account.login.nodeseek.blocked',
+    kind: 'rendered',
+    tags: ['account', 'nodeseek', 'login', 'blocked', 'large-text'],
+    title: 'NodeSeek 登录·页面暂不可用',
+    note: '仅渲染 App 登录工具与底部操作，不挂载 WebView，不读取保存的登录信息。',
+    render: () => <LoginBlockedScenario site="nodeseek" />
+  },
+  {
+    capabilityIds: ['ACCOUNT-02', 'ACCOUNT-03'],
+    id: 'account.login.yaohuo.blocked',
+    kind: 'rendered',
+    tags: ['account', 'yaohuo', 'login', 'blocked', 'large-text'],
+    title: '妖火登录·页面暂不可用',
+    note: '仅渲染 App 登录工具、操作说明与底部操作，不挂载 WebView，不读取保存的登录信息。',
+    render: () => <LoginBlockedScenario site="yaohuo" />
   },
   {
     capabilityIds: ['ACCOUNT-02'],

@@ -3,6 +3,8 @@ package com.wz.reader
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
+import androidx.webkit.CookieManagerCompat
+import androidx.webkit.WebViewFeature
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -21,6 +23,9 @@ import okhttp3.Response
 internal fun cfClearanceValue(header: String?): String? = header?.split(';')
   ?.map { it.trim() }?.firstOrNull { it.startsWith("cf_clearance=") }
   ?.substringAfter('=')?.takeIf { it.isNotEmpty() }
+
+private fun cfClearanceValues(header: String?): List<String> = header.orEmpty().split(';')
+  .map { it.trim() }.filter { it.startsWith("cf_clearance=") }.map { it.substringAfter('=') }
 
 internal class CookieResponseScope(val epoch: Long) {
   var downgraded = false
@@ -99,7 +104,8 @@ internal class ManagedCookieResponses(
   private val report: (Map<String, Any>) -> Unit = {},
   private val timeoutMs: Long = 5000L,
   private val flusher: () -> Unit = {},
-  private val background: (() -> Unit) -> Unit = {}
+  private val background: (() -> Unit) -> Unit = {},
+  private val cookieInfoReader: () -> List<String>? = { null }
 ) {
   // ponytail: serialize platform writes only; network requests remain concurrent.
   private val lock = Any()
@@ -107,7 +113,7 @@ internal class ManagedCookieResponses(
   private var writeSequence = 0L
   private var blocked = false
   private var pending: PendingCookieWrite? = null
-  private var surfaceClearance: String? = null
+  private var surfaceClearance: List<String>? = null
   private var hasSurfaceClearanceBaseline = false
   private var dirty: Map<String, Any>? = null
   private val local = ThreadLocal<CookieResponseScope?>()
@@ -135,18 +141,23 @@ internal class ManagedCookieResponses(
   fun sending(request: Request, call: Call?, transport: String = "okhttp") {
     val scope = local.get() ?: return
     if (request.url.host != "linux.do" && !request.url.host.endsWith(".linux.do")) return
-    val clearance = cfClearanceValue(request.header("Cookie"))
+    val clearance = cfClearanceValues(request.header("Cookie"))
     val login = loginCookieValues(request.header("Cookie"))
     val stored = runCatching { reader(request.url.toString()) }
     emit(requestFields(request, call) + mapOf("operation" to "cookie-request", "cookieTransport" to transport,
       "requestCookieEpoch" to scope.epoch, "cookieEpoch" to epoch,
-      "hasCfClearance" to (clearance != null),
+      "hasCfClearance" to clearance.any { it.isNotEmpty() },
+      "cfClearanceCount" to clearance.size,
+      "cfClearanceDistinctCount" to clearance.distinct().size,
       "loginCookieCount" to login.size,
       "hasLoginCookie" to (loginCookieValue(request.header("Cookie")) != null)) +
-      (if (stored.isSuccess) mapOf("hasStoredCfClearance" to (cfClearanceValue(stored.getOrNull()) != null),
-        "isCfClearanceCurrent" to (clearance == cfClearanceValue(stored.getOrNull())),
+      (if (stored.isSuccess) cfClearanceValues(stored.getOrNull()).let { storedClearance -> mapOf(
+        "hasStoredCfClearance" to storedClearance.any { it.isNotEmpty() },
+        "isCfClearanceCurrent" to (clearance == storedClearance),
+        "storedCfClearanceCount" to storedClearance.size,
+        "storedCfClearanceDistinctCount" to storedClearance.distinct().size,
         "storedLoginCookieCount" to loginCookieValues(stored.getOrNull()).size,
-        "isLoginCookieCurrent" to (login == loginCookieValues(stored.getOrNull()))) else emptyMap()) +
+        "isLoginCookieCurrent" to (login == loginCookieValues(stored.getOrNull()))) } else emptyMap()) +
       (request.header("User-Agent")?.let { mapOf("userAgentHash" to "%08x".format(it.hashCode())) } ?: emptyMap()))
   }
 
@@ -204,7 +215,7 @@ internal class ManagedCookieResponses(
     require(reason in setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"))
     if (reason != "startup" || blocked != value) epoch++
     blocked = true
-    val clearance = runCatching { cfClearanceValue(reader("https://linux.do/")) }
+    val clearance = runCatching { cfClearanceValues(reader("https://linux.do/")) }
     if (reason == "surface-open") {
       surfaceClearance = clearance.getOrNull()
       hasSurfaceClearanceBaseline = clearance.isSuccess
@@ -214,7 +225,8 @@ internal class ManagedCookieResponses(
       (try { mapOf("hasLoginCookie" to (loginCookieValue(reader("https://linux.do/")) != null)) }
         catch (_: Exception) { emptyMap() }) +
       (if (reason == "surface-open" || reason == "surface-close") mapOf("cookieTransport" to "webview") else emptyMap()) +
-      (if (clearance.isSuccess) mapOf("hasCfClearance" to (clearance.getOrNull() != null)) else emptyMap()) +
+      (if (clearance.isSuccess) mapOf("hasCfClearance" to clearance.getOrThrow().any { it.isNotEmpty() }) else emptyMap()) +
+      (if (reason == "surface-open" || reason == "surface-close") cookieInfoFields() else emptyMap()) +
       (if (reason == "surface-close" && hasSurfaceClearanceBaseline && clearance.isSuccess)
         mapOf("didCfClearanceChange" to (surfaceClearance != clearance.getOrNull())) else emptyMap())
     if (reason == "surface-close" || reason == "identity-change" || reason == "explicit-clear") {
@@ -232,6 +244,19 @@ internal class ManagedCookieResponses(
     blocked = value
     emit(fields + mapOf("cookieBarrierBlocked" to value))
   }
+
+  private fun cookieInfoFields(): Map<String, Any> = try {
+    val info = cookieInfoReader()
+    if (info == null) mapOf("cfClearanceInfoResult" to "unsupported")
+    else {
+      val clearance = info.filter { it.substringBefore(';').trim().startsWith("cf_clearance=") }
+      val partitioned = clearance.count { value ->
+        value.split(';').drop(1).any { it.trim().equals("Partitioned", ignoreCase = true) }
+      }
+      mapOf("cfClearanceInfoResult" to "success", "cfClearancePartitionedCount" to partitioned,
+        "cfClearanceUnpartitionedCount" to clearance.size - partitioned)
+    }
+  } catch (_: Exception) { mapOf("cfClearanceInfoResult" to "failed") }
 
   fun receive(response: Response, call: Call? = null) {
     val scope = local.get() ?: return
@@ -295,7 +320,12 @@ internal object LinuxDoCookieResponses {
     writer = ::writePlatformCookieResponses,
     report = { ReadNetworkDiagnostics.record(it) },
     flusher = { CookieManager.getInstance().flush() },
-    background = { completionWorker.execute(it) }
+    background = { completionWorker.execute(it) },
+    cookieInfoReader = {
+      if (WebViewFeature.isFeatureSupported(WebViewFeature.GET_COOKIE_INFO))
+        CookieManagerCompat.getCookieInfo(CookieManager.getInstance(), "https://linux.do/")
+      else null
+    }
   )
 }
 

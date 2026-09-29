@@ -375,8 +375,8 @@ describe('account workflows with canonical identity reconciliation', () => {
     const { hook } = await renderAccountController({ reconcileAccountStatus });
 
     await act(async () => {
-      await expect(hook.result.current.checkLogin()).resolves.toBe(true);
-      await expect(hook.result.current.checkLogin()).resolves.toBe(true);
+      await expect(hook.result.current.checkNodeSeekAccount()).resolves.toMatchObject({ status: 'same' });
+      await expect(hook.result.current.checkNodeSeekAccount()).resolves.toMatchObject({ status: 'same' });
     });
 
     expect(reconcileAccountStatus).toHaveBeenNthCalledWith(1, 'nodeseek');
@@ -435,7 +435,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     });
 
     await act(async () => {
-      await expect(hook.result.current.checkLogin()).resolves.toBe(false);
+      await expect(hook.result.current.checkNodeSeekAccount()).resolves.toMatchObject({ status: 'unknown' });
     });
 
     expect(notify).toHaveBeenCalledWith('network unavailable');
@@ -481,17 +481,17 @@ describe('account workflows with canonical identity reconciliation', () => {
       reconcileAccountStatus
     });
 
-    let oldCheck!: Promise<boolean>;
+    let oldCheck!: ReturnType<typeof hook.result.current.checkNodeSeekAccount>;
     await act(async () => {
-      oldCheck = hook.result.current.checkLogin();
+      oldCheck = hook.result.current.checkNodeSeekAccount();
       await Promise.resolve();
     });
     await act(async () => {
-      await expect(hook.result.current.checkLogin()).resolves.toBe(true);
+      await expect(hook.result.current.checkNodeSeekAccount()).resolves.toMatchObject({ status: 'same' });
     });
     first.resolve({ status: 'changed', session: loggedInSession });
     await act(async () => {
-      await expect(oldCheck).resolves.toBe(false);
+      await expect(oldCheck).resolves.toMatchObject({ status: 'stale' });
     });
 
     expect(notify.mock.calls.filter(([message]) => message === '已确认 NodeSeek当前账号。')).toHaveLength(1);
