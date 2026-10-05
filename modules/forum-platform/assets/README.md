@@ -1,8 +1,8 @@
 # Search history icons
 
-These SVG sources preserve the Lucide 1.39.0 History and X paths and the existing search row stroke widths. Their license is in `../lucide.LICENSE`.
+These SVG sources preserve the Lucide 1.39.0 History and X paths and the existing search row stroke widths. Their license is in `modules/forum-platform/lucide.LICENSE`.
 
-Export transparent PNGs at the SVG's declared size into `../android/src/main/res/drawable-xxxhdpi/`:
+Export transparent PNGs at the SVG's declared size into `modules/forum-platform/android/src/main/res/drawable-xxxhdpi/`:
 
 | Source | PNG size | Display size |
 | --- | --- | --- |

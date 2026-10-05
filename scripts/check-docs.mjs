@@ -87,7 +87,8 @@ function isRepositoryPath(root, value) {
 
 function addMissingReference(errors, root, markdownFile, text, index, reference, targetPath) {
   const relativeTarget = repositoryRelativePath(root, targetPath);
-  if (relativeTarget && optionalRepositoryPaths.has(relativeTarget)) return;
+  if (relativeTarget && (optionalRepositoryPaths.has(relativeTarget) || relativeTarget.startsWith('.codex-tmp/')))
+    return;
   if (!relativeTarget || !existsSync(targetPath)) {
     errors.push(`${markdownFile.replaceAll('\\', '/')}:${lineNumberAt(text, index)} 引用不存在：${reference}`);
   }

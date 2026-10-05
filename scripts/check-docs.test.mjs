@@ -71,10 +71,13 @@ test('reports broken backticked repository paths without requiring local-only fi
       'Existing: `src/existing.ts`.',
       'Missing: `src/missing.ts`.',
       'Local-only baseline: `docs/emulator-baseline.md`.',
+      'Local-only evidence: `.codex-tmp/previous-run/receipt.log`.',
+      '[Local-only evidence](../.codex-tmp/previous-run/receipt.log)',
       'Command: `npm run typecheck`.'
     ].join('\n')
   );
 
+  await mkdir(path.join(rootDir, '.codex-tmp'));
   const errors = findBrokenDocReferences(rootDir, ['docs/guide.md']);
 
   assert.equal(errors.length, 1);
