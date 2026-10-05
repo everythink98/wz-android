@@ -121,6 +121,121 @@ describe('Network proxy modal', () => {
     expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
   });
 
+  it.each(['success', 'failure'] as const)(
+    'ignores an old save %s after route blur closes the proxy modal and a new draft opens',
+    async (outcome) => {
+      const saving = Promise.withResolvers<void>();
+      const onUpsertProfile = jest.fn<(_profile: NetworkProxyProfile) => Promise<void>>(() => saving.promise);
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const view = await render(proxyModal({ onUpsertProfile }));
+
+      await fireEvent.press(view.getByText('添加代理'));
+      await fireEvent.changeText(view.getByPlaceholderText('名称'), '旧表单');
+      await fireEvent.changeText(view.getByPlaceholderText('服务器'), '127.0.0.1');
+      await fireEvent.changeText(view.getByPlaceholderText('端口'), '1080');
+      await fireEvent.press(view.getByLabelText('确定'));
+      expect(onUpsertProfile).toHaveBeenCalledTimes(1);
+
+      await view.rerender(proxyModal({ visible: false, onUpsertProfile }));
+      await view.rerender(proxyModal({ visible: true, onUpsertProfile }));
+      await fireEvent.press(view.getByText('添加代理'));
+      await fireEvent.changeText(view.getByPlaceholderText('名称'), '新表单草稿');
+      await act(async () => {
+        if (outcome === 'success') saving.resolve();
+        else saving.reject(new Error('旧保存失败'));
+        await Promise.resolve();
+      });
+
+      expect(view.getByPlaceholderText('名称').props.value).toBe('新表单草稿');
+      expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
+      expect(alert).not.toHaveBeenCalled();
+      expect(onUpsertProfile).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('keeps a reopened proxy save busy when the previous route session finishes saving', async () => {
+    const oldSave = Promise.withResolvers<void>();
+    const currentSave = Promise.withResolvers<void>();
+    const onUpsertProfile = jest
+      .fn<(_profile: NetworkProxyProfile) => Promise<void>>()
+      .mockImplementationOnce(() => oldSave.promise)
+      .mockImplementation(() => currentSave.promise);
+    const view = await render(proxyModal({ onUpsertProfile }));
+    try {
+      await fireEvent.press(view.getByText('添加代理'));
+      await fireEvent.changeText(view.getByPlaceholderText('名称'), '旧表单');
+      await fireEvent.changeText(view.getByPlaceholderText('服务器'), '127.0.0.1');
+      await fireEvent.changeText(view.getByPlaceholderText('端口'), '1080');
+      await fireEvent.press(view.getByLabelText('确定'));
+
+      await view.rerender(proxyModal({ visible: false, onUpsertProfile }));
+      await view.rerender(proxyModal({ visible: true, onUpsertProfile }));
+      await fireEvent.press(view.getByText('添加代理'));
+      await fireEvent.changeText(view.getByPlaceholderText('名称'), '本次表单');
+      await fireEvent.changeText(view.getByPlaceholderText('服务器'), '127.0.0.2');
+      await fireEvent.changeText(view.getByPlaceholderText('端口'), '8080');
+      await fireEvent.press(view.getByLabelText('确定'));
+      expect(onUpsertProfile).toHaveBeenCalledTimes(2);
+
+      await act(async () => oldSave.resolve());
+      expect(view.getByPlaceholderText('名称').props.value).toBe('本次表单');
+      expect(view.getByLabelText('保存中').props.accessibilityState.disabled).toBe(true);
+      await fireEvent.press(view.getByLabelText('保存中'));
+      expect(onUpsertProfile).toHaveBeenCalledTimes(2);
+
+      await act(async () => currentSave.resolve());
+      expect(view.queryByPlaceholderText('名称')).toBeNull();
+      await fireEvent.press(view.getByText('添加代理'));
+      expect(view.getByPlaceholderText('名称').props.value).toBe('');
+      expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
+    } finally {
+      await act(async () => {
+        oldSave.resolve();
+        currentSave.resolve();
+      });
+    }
+  });
+
+  it.each(['test', 'enable'] as const)(
+    'keeps rejected same-commit %s actions from displaying an operation that never started',
+    async (action) => {
+      const selection = Promise.withResolvers<void>();
+      const onSelectProfile = jest.fn<(_id: string) => Promise<void>>(() => selection.promise);
+      const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
+      const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
+      const view = await render(
+        proxyModal({
+          activeProfile: primaryProfile,
+          proxyState: { activeId: primaryProfile.id, enabled: false, profiles: [primaryProfile, backupProfile] },
+          onSelectProfile,
+          onTestProfile,
+          onSetEnabled
+        })
+      );
+      try {
+        await act(async () => {
+          await fireEvent.press(view.getByText('备用代理'));
+          if (action === 'test') await fireEvent.press(view.getAllByLabelText('测试代理连通性')[0]);
+          else await fireEvent(view.getByRole('switch'), 'change', { nativeEvent: { value: true } });
+        });
+        expect(onSelectProfile).toHaveBeenCalledTimes(1);
+        expect(onTestProfile).not.toHaveBeenCalled();
+        expect(onSetEnabled).not.toHaveBeenCalled();
+        await act(async () => selection.resolve());
+
+        expect(view.queryByText(/正在测试连通性/)).toBeNull();
+        expect(view.queryByText(/正在开启代理/)).toBeNull();
+        expect(view.getByRole('switch').props.value).toBe(false);
+        expect(view.getAllByLabelText('测试代理连通性')).toHaveLength(2);
+        await fireEvent.press(view.getAllByLabelText('测试代理连通性')[0]);
+        expect(onTestProfile).toHaveBeenCalledTimes(1);
+        await waitFor(() => expect(view.getByText(/连通性: 42 ms/)).toBeTruthy());
+      } finally {
+        await act(async () => selection.resolve());
+      }
+    }
+  );
+
   it('gives proxy passwords secure input semantics', async () => {
     const view = await render(proxyModal());
 

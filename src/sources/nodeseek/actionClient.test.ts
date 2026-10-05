@@ -312,6 +312,42 @@ describe('runNodeSeekAction', () => {
     ).rejects.toMatchObject({ status: 503, serverRejected: false });
   });
 
+  it.each([408, 409, 503])('requires an explicit attendance rejection for HTTP %s to be retry-safe', async (status) => {
+    for (const random of [false, true]) {
+      await expect(
+        runNodeSeekAction({
+          request: buildNodeSeekAttendanceRequest({ random }),
+          fetcher: async () => jsonResponse({}, status)
+        })
+      ).rejects.toMatchObject({ status, serverRejected: false });
+      await expect(
+        runNodeSeekAction({
+          request: buildNodeSeekAttendanceRequest({ random }),
+          fetcher: async () => jsonResponse({ success: false, message: '签到被拒绝' }, status)
+        })
+      ).rejects.toMatchObject({ status, serverRejected: true });
+    }
+  });
+
+  it.each([408, 409])('requires an explicit private reply rejection for HTTP %s to be retry-safe', async (status) => {
+    const request = {
+      path: '/api/notification/message/send',
+      method: 'POST' as const,
+      headers: {},
+      body: JSON.stringify({ receiverUid: 9, content: '收到', markdown: true })
+    };
+    await expect(runNodeSeekAction({ request, fetcher: async () => jsonResponse({}, status) })).rejects.toMatchObject({
+      status,
+      serverRejected: false
+    });
+    await expect(
+      runNodeSeekAction({
+        request,
+        fetcher: async () => jsonResponse({ success: false, message: '发送被拒绝' }, status)
+      })
+    ).rejects.toMatchObject({ status, serverRejected: true });
+  });
+
   it('extracts a created poll id from supported NodeSeek response envelopes', () => {
     expect(nodeSeekCreatedPollId({ data: { id: 3023 } })).toBe('3023');
     expect(() => nodeSeekCreatedPollId({ success: true })).toThrow('结果未知');

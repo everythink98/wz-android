@@ -1,5 +1,5 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pressable, ScrollView, Text, TextInput, type ViewStyle, View } from 'react-native';
 import { X } from 'lucide-react-native';
@@ -50,37 +50,46 @@ export function useSearchCandidateQueries({
   userRequest: SearchUserCandidatesRequest | null;
 }) {
   const queryClient = useQueryClient();
+  const tagQueryKey = forumQueryKeys.searchTags({
+    categoryId: tagRequest?.categoryId,
+    query: tagRequest?.query || '',
+    readPlanScope: readPlanScopes.tags,
+    scope: sessionEpochs,
+    selectedTags: tagRequest?.selectedTags || [],
+    source: tagRequest?.source || 'linuxdo'
+  });
+  const userQueryKey = forumQueryKeys.searchUsers({
+    categoryId: userRequest?.categoryId,
+    readPlanScope: readPlanScopes.users,
+    scope: sessionEpochs,
+    source: userRequest?.source || 'linuxdo',
+    term: userRequest?.term || ''
+  });
+  const activeTagKey = useRef<typeof tagQueryKey | null>(null);
+  const activeUserKey = useRef<typeof userQueryKey | null>(null);
   const tagCandidatesQuery = useQuery<DiscourseTagOption[]>({
-    queryKey: forumQueryKeys.searchTags({
-      categoryId: tagRequest?.categoryId,
-      query: tagRequest?.query || '',
-      readPlanScope: readPlanScopes.tags,
-      scope: sessionEpochs,
-      selectedTags: tagRequest?.selectedTags || [],
-      source: tagRequest?.source || 'linuxdo'
-    }),
+    queryKey: tagQueryKey,
     enabled: Boolean(enabled && tagRequest),
     queryFn: ({ signal }) => (tagRequest ? searchDiscourseTags({ ...tagRequest, signal }) : Promise.resolve([]))
   });
   const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
-    queryKey: forumQueryKeys.searchUsers({
-      categoryId: userRequest?.categoryId,
-      readPlanScope: readPlanScopes.users,
-      scope: sessionEpochs,
-      source: userRequest?.source || 'linuxdo',
-      term: userRequest?.term || ''
-    }),
+    queryKey: userQueryKey,
     enabled: Boolean(enabled && userRequest),
     queryFn: ({ signal }) => (userRequest ? searchDiscourseUsers({ ...userRequest, signal }) : Promise.resolve([]))
   });
 
   useEffect(() => {
-    if (enabled) return;
-    void queryClient.cancelQueries({
-      predicate: ({ queryKey }) =>
-        queryKey[0] === 'forum' && (queryKey[2] === 'search-tags' || queryKey[2] === 'search-users')
-    });
-  }, [enabled, queryClient]);
+    const previousTagKey = activeTagKey.current;
+    const previousUserKey = activeUserKey.current;
+    activeTagKey.current = enabled && tagRequest ? tagQueryKey : null;
+    activeUserKey.current = enabled && userRequest ? userQueryKey : null;
+    if (previousTagKey && !activeTagKey.current) {
+      void queryClient.cancelQueries({ queryKey: previousTagKey, exact: true });
+    }
+    if (previousUserKey && !activeUserKey.current) {
+      void queryClient.cancelQueries({ queryKey: previousUserKey, exact: true });
+    }
+  }, [enabled, queryClient, tagQueryKey, tagRequest, userQueryKey, userRequest]);
 
   return {
     tags: {
@@ -264,6 +273,7 @@ export function DiscourseFilterPickers({
   updateDraft: (partial: Partial<SourceSearchFilter>) => void;
 }) {
   const { category, tags, users } = controller;
+  const candidateBodyStyle = { ...filterBodyStyle, height: filterBodyStyle.maxHeight, flexShrink: 1 };
   return (
     <>
       <ModalSheetFrame backdropLabel="关闭标签选择" visible={tags.visible} onRequestClose={tags.close}>
@@ -293,7 +303,7 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
-          style={[styles.searchFilterBody, filterBodyStyle]}
+          style={[styles.searchFilterBody, candidateBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
         >
@@ -428,7 +438,7 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
-          style={[styles.searchFilterBody, filterBodyStyle]}
+          style={[styles.searchFilterBody, candidateBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
         >

@@ -5,7 +5,7 @@ import type { AppUpdatePhase } from '@/platform/update/useAppUpdateRuntime';
 import { CURRENT_APP_VERSION, formatAppUpdateDownloadProgress, sameAppUpdate } from '@/platform/update/appUpdate';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { Activity } from 'lucide-react-native';
+import { Info } from 'lucide-react-native';
 import { createMoreScreenStyles } from '../styles';
 
 export type MoreUpdateCapabilities = {
@@ -77,70 +77,81 @@ export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }
     progress?.percent !== null && progress?.percent !== undefined ? (`${progress.percent}%` as `${number}%`) : null;
   const versionMeta = runtime.info
     ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${runtime.info.version}`
-    : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
+    : `版本 ${CURRENT_APP_VERSION}`;
 
   return (
-    <View style={styles.groupList}>
-      <View style={styles.menuButton}>
-        <View style={styles.menuIcon}>
-          <Activity size={19} color={theme.primary} strokeWidth={1.8} />
-        </View>
-        <View style={styles.flex}>
-          <View style={styles.actions}>
-            <Text style={styles.menuLabel}>关于阅坛</Text>
-            {runtime.info ? <Text style={styles.updateBadge}>有新版本</Text> : null}
+    <View style={styles.updatePanel}>
+      <View style={styles.updateHeader}>
+        <View style={styles.updateIdentity}>
+          <View style={styles.menuIcon}>
+            <Info size={19} color={theme.primary} strokeWidth={1.8} />
           </View>
-          <Text style={styles.meta}>{versionMeta}</Text>
+          <View style={styles.flex}>
+            <View style={styles.updateHeader}>
+              <Text style={styles.menuLabel}>关于阅坛</Text>
+              {runtime.info ? <Text style={styles.updateBadge}>有新版本</Text> : null}
+            </View>
+            <Text style={styles.meta}>{versionMeta}</Text>
+          </View>
         </View>
-      </View>
-      {runtime.artifact ? (
-        <Text style={styles.meta}>
-          本地安装包 {runtime.artifact.update.version}
-          {runtime.artifact.ready ? ' · 已就绪' : ''}
-        </Text>
-      ) : null}
-      <View style={styles.actions}>
-        {target ? <AppButton variant="primary" label={label} disabled={busy} onPress={mainAction} /> : null}
-        {runtime.phase === 'downloading' ? <AppButton tiny label="暂停下载" onPress={runtime.pause} /> : null}
-        {differentUpdate ? (
-          <AppButton tiny label={`下载新版 ${runtime.info!.version}`} disabled={busy} onPress={runtime.start} />
-        ) : null}
         <AppButton
           tiny
+          variant="ghost"
           label={runtime.phase === 'checking' ? '检查中' : '检查更新'}
           disabled={busy}
           onPress={runtime.check}
         />
       </View>
-      {differentUpdate ? (
-        <Text style={styles.meta}>下载新版将替换本地 {runtime.artifact!.update.version} 的下载任务。</Text>
-      ) : null}
-      {progress ? (
-        <View
-          accessible
-          accessibilityRole="progressbar"
-          accessibilityLabel={progressTitle}
-          accessibilityValue={{ min: 0, max: 100, now: progress.percent ?? undefined, text: progress.sizeLabel }}
-          style={styles.updateProgressBox}
-        >
-          <View style={styles.updateProgressHeader}>
-            <Text style={styles.updateProgressTitle}>{progressTitle}</Text>
-            {progress.percentLabel ? <Text style={styles.updateProgressPercent}>{progress.percentLabel}</Text> : null}
-          </View>
-          {progressWidth ? (
-            <View style={styles.updateProgressTrack}>
-              <View style={[styles.updateProgressFill, { width: progressWidth }]} />
+      {target || status || progress ? (
+        <View style={styles.updateDetails}>
+          {runtime.artifact ? (
+            <Text style={styles.meta}>
+              本地安装包 {runtime.artifact.update.version}
+              {runtime.artifact.ready ? ' · 已就绪' : ''}
+            </Text>
+          ) : null}
+          {target ? (
+            <View style={styles.updateHeader}>
+              <AppButton variant="primary" label={label} disabled={busy} onPress={mainAction} />
+              {runtime.phase === 'downloading' ? <AppButton tiny label="暂停下载" onPress={runtime.pause} /> : null}
+              {differentUpdate ? (
+                <AppButton tiny label={`下载新版 ${runtime.info!.version}`} disabled={busy} onPress={runtime.start} />
+              ) : null}
             </View>
           ) : null}
-          <Text style={styles.updateProgressMeta}>{progress.sizeLabel}</Text>
+          {differentUpdate ? (
+            <Text style={styles.meta}>下载新版将替换本地 {runtime.artifact!.update.version} 的下载任务。</Text>
+          ) : null}
+          {progress ? (
+            <View
+              accessible
+              accessibilityRole="progressbar"
+              accessibilityLabel={progressTitle}
+              accessibilityValue={{ min: 0, max: 100, now: progress.percent ?? undefined, text: progress.sizeLabel }}
+              style={styles.updateProgressBox}
+            >
+              <View style={styles.updateProgressHeader}>
+                <Text style={styles.updateProgressTitle}>{progressTitle}</Text>
+                {progress.percentLabel ? (
+                  <Text style={styles.updateProgressPercent}>{progress.percentLabel}</Text>
+                ) : null}
+              </View>
+              {progressWidth ? (
+                <View style={styles.updateProgressTrack}>
+                  <View style={[styles.updateProgressFill, { width: progressWidth }]} />
+                </View>
+              ) : null}
+              <Text style={styles.updateProgressMeta}>{progress.sizeLabel}</Text>
+            </View>
+          ) : null}
+          {status && (!progress || status !== progressTitle) ? (
+            <Text accessibilityLiveRegion="polite" style={styles.meta}>
+              {status}
+            </Text>
+          ) : null}
+          {notes ? <Text style={styles.meta}>{notes}</Text> : null}
         </View>
       ) : null}
-      {status && (!progress || status !== progressTitle) ? (
-        <Text accessibilityLiveRegion="polite" style={styles.meta}>
-          {status}
-        </Text>
-      ) : null}
-      {notes ? <Text style={styles.meta}>{notes}</Text> : null}
     </View>
   );
 }

@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import type { Category } from '@/domain/forum/models';
 import { sourceValues } from '@/domain/forum/sourceCatalog';
 import {
   createEmptyReaderData,
@@ -117,6 +118,27 @@ export interface ReaderPage {
   total: number;
   visibleTotal: number;
   next?: { time: number; ordinal: number };
+}
+
+export async function readReaderCategories(
+  sql: ReaderSql,
+  request: Pick<ReaderPageRequest, 'collection' | 'sources'>
+): Promise<Category[]> {
+  if (request.collection === 'followedUsers' || !request.sources.length) return [];
+  const rows = await sql.getAllAsync<{
+    source: Category['source'];
+    categoryKey: string;
+    categoryLabel: string;
+  }>(
+    `SELECT source, categoryKey, MAX(categoryLabel) AS categoryLabel FROM reader_records
+    WHERE kind = ? AND source IN (${request.sources.map(() => '?').join(',')}) AND categoryKey <> (source || ':')
+    GROUP BY source, categoryKey ORDER BY source, categoryKey`,
+    [request.collection, ...request.sources]
+  );
+  return rows.map((row) => {
+    const id = row.categoryKey.slice(row.source.length + 1);
+    return { source: row.source, id, name: row.categoryLabel || id };
+  });
 }
 
 export async function readReaderPage(sql: ReaderSql, request: ReaderPageRequest): Promise<ReaderPage> {

@@ -65,9 +65,10 @@ describe('创建主题附件边界', () => {
   });
   it('妖火正文图片复用已验证的图床协议并返回 UBB，不触发文件帖发布', async () => {
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe('https://file.sang.pub/api/upload');
-      expect(init?.body).toEqual({ uri: 'file:///private/draft/photo.png' });
-      return new Response(JSON.stringify({ code: 200, data: 'https://cdn.example.com/topic.png' }));
+      expect(url).toBe('https://aapi.helioho.st/upload.php');
+      expect(init?.body).toBeInstanceOf(FormData);
+      expect(init?.headers).toEqual({ Origin: 'https://www.yaohuo.me' });
+      return new Response(JSON.stringify({ code: 200, data: { url: 'https://cdn.example.com/topic.png' } }));
     });
     await expect(
       uploadTopicAttachment({

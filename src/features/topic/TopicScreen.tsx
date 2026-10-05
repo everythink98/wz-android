@@ -6,7 +6,7 @@ import Animated from 'react-native-reanimated';
 import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
 import type { FlashListRef } from '@shopify/flash-list';
 import { ChevronLeft, MoreHorizontal, SquarePen, Star } from 'lucide-react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
@@ -17,6 +17,7 @@ import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
+import { retryEmojiCatalog } from '@/sources/discourse/retryEmojiCatalog';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
@@ -93,6 +94,7 @@ export const TopicScreen = memo(function TopicScreen({
   locationRequestId?: number;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
+  const queryClient = useQueryClient();
   const onPageLayout = useStartupPageLayout();
   const { state, commands } = session;
   const { actionBusy, decisionFor } = actions;
@@ -121,7 +123,7 @@ export const TopicScreen = memo(function TopicScreen({
     enabled: Boolean(discourseEmojiSource),
     queryFn: ({ signal }) =>
       discourseEmojiSource
-        ? chrome.getDiscourseEmojiUrls({ source: discourseEmojiSource, signal })
+        ? retryEmojiCatalog(() => chrome.getDiscourseEmojiUrls({ source: discourseEmojiSource, signal }), signal)
         : Promise.resolve(EMPTY_DISCOURSE_EMOJI_URLS)
   });
   const discourseEmojiUrls = discourseEmojiSource
@@ -130,7 +132,7 @@ export const TopicScreen = memo(function TopicScreen({
 
   useEffect(() => {
     setTopicMenuOpen(false);
-  }, [item?.id, item?.source]);
+  }, [active, item?.id, item?.source]);
 
   const runTopicMenuAction = useCallback((action: () => void) => {
     setTopicMenuOpen(false);
@@ -138,8 +140,11 @@ export const TopicScreen = memo(function TopicScreen({
   }, []);
   const refreshWholeTopic = useCallback(() => {
     chrome.refreshTopic();
-    if (discourseEmojiSource) void refetchDiscourseEmojiUrls();
-  }, [chrome.refreshTopic, discourseEmojiSource, refetchDiscourseEmojiUrls]);
+    if (discourseEmojiSource) {
+      void queryClient.cancelQueries({ queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource), exact: true });
+      void refetchDiscourseEmojiUrls();
+    }
+  }, [chrome.refreshTopic, discourseEmojiSource, queryClient, refetchDiscourseEmojiUrls]);
 
   if (!item) {
     return (
@@ -273,7 +278,7 @@ export const TopicScreen = memo(function TopicScreen({
         runTopicMenuAction={runTopicMenuAction}
         styles={styles}
         topicUrl={item.url}
-        visible={topicMenuOpen}
+        visible={active && topicMenuOpen}
       />
       <ReplyComposerSheet
         actionBusy={actionBusy}

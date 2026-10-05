@@ -70,19 +70,14 @@ describe('navigation commands', () => {
   });
 
   it('leaves hardware back to every native stack route', () => {
-    for (const name of [
-      'Topic',
-      'User',
-      'Notifications',
-      'NotificationDetail',
-      'NotificationSettings',
-      'ReadingSettings'
-    ]) {
+    for (const name of ['Topic', 'User', 'Library', 'NotificationDetail', 'NotificationSettings', 'ReadingSettings']) {
       navigation.getCurrentRoute.mockReturnValue({ key: name, name });
       expect(isNativeStackScreen()).toBe(true);
     }
 
     navigation.getCurrentRoute.mockReturnValue({ key: 'more', name: 'more' });
+    expect(isNativeStackScreen()).toBe(false);
+    navigation.getCurrentRoute.mockReturnValue({ key: 'notifications', name: 'notifications' });
     expect(isNativeStackScreen()).toBe(false);
   });
 

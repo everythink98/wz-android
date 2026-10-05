@@ -74,12 +74,12 @@ describe('Android HTML rendering styles', () => {
   it('[MORE-03] orders the three reading line-height choices from compact to loose', () => {
     const compact = htmlRenderingStyles.buildHtmlRenderingStyles({
       settings: { ...settings, lineHeight: 'compact' },
-      theme: createTheme({ ...settings, lineHeight: 'compact' })
+      theme: createTheme(settings)
     });
     const standard = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme: createTheme(settings) });
     const loose = htmlRenderingStyles.buildHtmlRenderingStyles({
       settings: { ...settings, lineHeight: 'loose' },
-      theme: createTheme({ ...settings, lineHeight: 'loose' })
+      theme: createTheme(settings)
     });
 
     const baseHeights = [

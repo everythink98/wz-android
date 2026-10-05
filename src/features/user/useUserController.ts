@@ -171,22 +171,16 @@ export function useUserController({
   const canonicalUser = selectedNeedsResolution ? resolutionQuery.data || null : selectedUser;
   const identity = canonicalUser?.id || '';
   const profileReadPlan = readGateway.getReadPlan(selectedSource, 'user-profile');
+  const profileSessionEpoch = isSessionSource(selectedSource) ? sessionEpochs[selectedSource] : 0;
   const profileKey = useMemo(
     () =>
       forumQueryKeys.user({
         readPlanScope: profileReadPlan.cacheScope,
         source: selectedSource,
         userId: identity,
-        scope: sessionEpochs
+        scope: { ...initialForumSessionEpochs, [selectedSource]: profileSessionEpoch }
       }),
-    [
-      sessionEpochs.linuxdo,
-      sessionEpochs.nodeseek,
-      sessionEpochs.yaohuo,
-      identity,
-      profileReadPlan.cacheScope,
-      selectedSource
-    ]
+    [profileSessionEpoch, identity, profileReadPlan.cacheScope, selectedSource]
   );
   const topicKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'topics'), [profileKey]);
   const replyKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'replies'), [profileKey]);
@@ -550,7 +544,7 @@ export function useUserController({
   useEffect(() => {
     if (active || !selectedUser) return;
     void queryClient.cancelQueries({ queryKey: resolutionKey, exact: true });
-    void queryClient.cancelQueries({ queryKey: profileKey, exact: true });
+    void queryClient.cancelQueries({ queryKey: profileKey, exact: true, predicate: (query) => !query.isActive() });
     void queryClient.cancelQueries({ queryKey: topicKey, exact: true });
     void queryClient.cancelQueries({ queryKey: replyKey, exact: true });
   }, [active, profileKey, queryClient, replyKey, resolutionKey, selectedUser, topicKey]);
@@ -558,7 +552,7 @@ export function useUserController({
   useEffect(
     () => () => {
       void queryClient.cancelQueries({ queryKey: resolutionKey, exact: true });
-      void queryClient.cancelQueries({ queryKey: profileKey, exact: true });
+      void queryClient.cancelQueries({ queryKey: profileKey, exact: true, predicate: (query) => !query.isActive() });
       void queryClient.cancelQueries({ queryKey: topicKey, exact: true });
       void queryClient.cancelQueries({ queryKey: replyKey, exact: true });
     },

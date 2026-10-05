@@ -171,10 +171,11 @@ export function hasDiscourseAdvancedFilters(filter: SourceSearchFilter) {
 
 export function SearchFilterForm({
   categoryNames,
-  discourseMoreInitiallyVisible = false,
   draftFilter,
   filterSheetVisible,
+  moreVisible,
   nodeSeekCategoryItems,
+  onMoreVisibleChange,
   openCategoryPicker,
   openTagPicker,
   openUserPicker,
@@ -187,10 +188,11 @@ export function SearchFilterForm({
   yaohuoCategoryItems
 }: {
   categoryNames: ReadonlyMap<string, string>;
-  discourseMoreInitiallyVisible?: boolean;
   draftFilter: SourceSearchFilter;
   filterSheetVisible: boolean;
+  moreVisible: boolean;
   nodeSeekCategoryItems: { value: string; label: string }[];
+  onMoreVisibleChange: (visible: boolean) => void;
   openCategoryPicker: () => void;
   openTagPicker: () => void;
   openUserPicker: () => void;
@@ -203,13 +205,9 @@ export function SearchFilterForm({
   yaohuoCategoryItems: { value: string; label: string }[];
 }) {
   const [datePickerVisible, setDatePickerVisible] = useState(false);
-  const [discourseMoreVisible, setDiscourseMoreVisible] = useState(discourseMoreInitiallyVisible);
-  const [v2exMoreVisible, setV2exMoreVisible] = useState(false);
   useEffect(() => {
     setDatePickerVisible(false);
-    setDiscourseMoreVisible(discourseMoreInitiallyVisible);
-    setV2exMoreVisible(false);
-  }, [discourseMoreInitiallyVisible, draftFilter.source, filterSheetVisible]);
+  }, [draftFilter.source, filterSheetVisible]);
   useEffect(() => {
     if (!('date' in draftFilter) || !draftFilter.date) {
       setDatePickerVisible(false);
@@ -223,8 +221,7 @@ export function SearchFilterForm({
     [updateDraft]
   );
   const discourseAdvancedFiltersSet = hasDiscourseAdvancedFilters(draftFilter);
-  const DiscourseMoreChevron = discourseMoreVisible ? ChevronUp : ChevronDown;
-  const V2exMoreChevron = v2exMoreVisible ? ChevronUp : ChevronDown;
+  const MoreChevron = moreVisible ? ChevronUp : ChevronDown;
   return (
     <>
       {draftFilter.source === 'v2ex' ? (
@@ -256,15 +253,15 @@ export function SearchFilterForm({
           />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={v2exMoreVisible ? '收起 V2EX 更多筛选' : '展开 V2EX 更多筛选'}
-            accessibilityState={{ expanded: v2exMoreVisible }}
+            accessibilityLabel={moreVisible ? '收起 V2EX 更多筛选' : '展开 V2EX 更多筛选'}
+            accessibilityState={{ expanded: moreVisible }}
             style={styles.searchFilterMoreButton}
-            onPress={() => setV2exMoreVisible((current) => !current)}
+            onPress={() => onMoreVisibleChange(!moreVisible)}
           >
             <Text style={styles.searchFilterMoreText}>更多筛选</Text>
-            <V2exMoreChevron size={16} color={theme.muted} strokeWidth={1.8} />
+            <MoreChevron size={16} color={theme.muted} strokeWidth={1.8} />
           </Pressable>
-          {v2exMoreVisible ? (
+          {moreVisible ? (
             <>
               <FilterTextField
                 label="作者"
@@ -375,20 +372,20 @@ export function SearchFilterForm({
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${discourseMoreVisible ? '收起' : '展开'}更多筛选${
+            accessibilityLabel={`${moreVisible ? '收起' : '展开'}更多筛选${
               discourseAdvancedFiltersSet ? '，已设置' : ''
             }`}
-            accessibilityState={{ expanded: discourseMoreVisible }}
+            accessibilityState={{ expanded: moreVisible }}
             style={styles.searchFilterMoreButton}
             onPress={() => {
               setDatePickerVisible(false);
-              setDiscourseMoreVisible((current) => !current);
+              onMoreVisibleChange(!moreVisible);
             }}
           >
             <Text style={styles.searchFilterMoreText}>更多筛选{discourseAdvancedFiltersSet ? ' · 已设置' : ''}</Text>
-            <DiscourseMoreChevron size={16} color={theme.muted} strokeWidth={1.8} />
+            <MoreChevron size={16} color={theme.muted} strokeWidth={1.8} />
           </Pressable>
-          {discourseMoreVisible ? (
+          {moreVisible ? (
             <>
               <View style={styles.searchFilterField}>
                 <Text style={styles.searchFilterLabel}>回访范围</Text>

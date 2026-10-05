@@ -1,8 +1,7 @@
 import { StyleSheet } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
 
-export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const levelRiskSafe = theme.dark ? '#78D69C' : '#2F7D4C';
   const radiusMd = 14;
@@ -68,7 +67,7 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderSett
       gap: 22
     },
     levelTab: {
-      minHeight: 40,
+      minHeight: 48,
       justifyContent: 'center',
       borderBottomColor: 'transparent',
       borderBottomWidth: 2,

@@ -1,10 +1,9 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
 import { createMoreAccountStyles } from './accountStyles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
-export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const radiusSm = 10;
   const radiusMd = 14;
@@ -36,13 +35,12 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
       flex: 1
     },
     groupList: {
-      gap: 7,
       backgroundColor: 'transparent',
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderRadius: 0,
       paddingHorizontal: 0,
-      paddingVertical: 12
+      paddingVertical: 8
     },
     input: {
       minHeight: 42,
@@ -94,25 +92,6 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
       fontSize: 15,
       fontWeight: '600'
     },
-    menuRowDivider: {
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingBottom: 7
-    },
-    notificationMenuRow: {
-      position: 'relative'
-    },
-    notificationUnreadDot: {
-      position: 'absolute',
-      left: 22,
-      top: 8,
-      width: 8,
-      height: 8,
-      backgroundColor: theme.danger,
-      borderColor: theme.background,
-      borderRadius: 999,
-      borderWidth: StyleSheet.hairlineWidth
-    },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,
@@ -157,7 +136,8 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 17,
-      fontWeight: '600'
+      fontWeight: '600',
+      paddingVertical: 8
     },
     stack: {
       gap: 10,
@@ -168,6 +148,28 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
       padding: 16,
       paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
       paddingBottom: 124
+    },
+    updatePanel: {
+      gap: 12,
+      paddingVertical: 16
+    },
+    updateHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8
+    },
+    updateIdentity: {
+      alignItems: 'center',
+      flex: 1,
+      flexDirection: 'row',
+      gap: 10,
+      minHeight: 48,
+      minWidth: 0
+    },
+    updateDetails: {
+      gap: 10,
+      marginLeft: 40
     },
     updateBadge: {
       alignSelf: 'flex-start',
@@ -387,7 +389,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
 
 export type MoreStyles = ReturnType<typeof createMoreStyles>;
 
-export function createMoreScreenStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createMoreScreenStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return Object.assign(
     {},
     createMoreStyles(theme, settings),

@@ -266,7 +266,7 @@ describe('disabled content source route gates', () => {
     expect(view.getByLabelText('展开内容源').props.accessibilityState.expanded).toBe(false);
   });
 
-  it('closes global account surfaces only after More really loses focus', async () => {
+  it('closes global account surfaces on blur while preserving inline appearance', async () => {
     const data = createEmptyReaderData();
     const firstCloseAll = jest.fn();
     const secondCloseAll = jest.fn();
@@ -327,7 +327,7 @@ describe('disabled content source route gates', () => {
     await view.rerender(tree());
     expect(latestCloseAll).toHaveBeenCalledTimes(1);
     expect(mockMoreUtilities?.proxy.visible).toBe(false);
-    expect(mockMoreUtilities?.settings.visible).toBe(false);
+    expect(mockMoreUtilities?.settings.visible).toBe(true);
   });
 
   it('remounts Topic media and sequences same-topic targets', async () => {

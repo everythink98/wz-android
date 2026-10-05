@@ -1,10 +1,10 @@
-import type { UserIdentity } from '@/domain/forum/models';
+import type { UserActivityTab, UserIdentity } from '@/domain/forum/models';
 import type { CredentialSite } from './sessionContracts';
 import type { SessionSite } from './siteSessionState';
 
 export type AccountCenterCommand =
   | { type: 'refresh' }
-  | { type: 'open-user'; user: UserIdentity }
+  | { type: 'open-user'; user: UserIdentity; initialTab?: UserActivityTab }
   | { type: 'open-login'; site: SessionSite }
   | { type: 'open-login-with-fill'; site: SessionSite }
   | { type: 'save-credential'; site: CredentialSite; account: string; password: string; allowUnprotected?: boolean }

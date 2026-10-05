@@ -1,67 +1,14 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within } from '../render';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { FlatList, StyleSheet, type FlatListProps } from 'react-native';
 import type { Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { UserScreen } from '@/features/user/UserScreen';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
-const mockListRender = jest.fn<(props: { data: unknown[]; header: React.ReactNode }) => void>();
+const mockListRender = jest.fn<(props: Pick<FlatListProps<unknown>, 'data' | 'ListHeaderComponent'>) => void>();
 let mockListOffset = 0;
-const mockListScrollToOffset = jest.fn(({ offset }: { offset: number; animated: boolean }) => {
-  mockListOffset = offset;
-});
-
-jest.mock('@shopify/flash-list', () => {
-  const ReactModule = require('react') as typeof React;
-  const { View: NativeView } = require('react-native') as typeof import('react-native');
-  return {
-    FlashList: ReactModule.forwardRef(function FlashList(
-      {
-        data = [],
-        keyExtractor,
-        ListHeaderComponent,
-        ListFooterComponent,
-        onContentSizeChange,
-        onMomentumScrollBegin,
-        onScrollBeginDrag,
-        renderItem,
-        testID
-      }: {
-        data?: unknown[];
-        keyExtractor?: (item: unknown, index: number) => string;
-        ListHeaderComponent?: React.ReactNode;
-        ListFooterComponent?: React.ReactNode;
-        onContentSizeChange?: () => void;
-        onMomentumScrollBegin?: () => void;
-        onScrollBeginDrag?: () => void;
-        renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
-        testID?: string;
-      },
-      ref: React.ForwardedRef<{ scrollToOffset: typeof mockListScrollToOffset }>
-    ) {
-      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockListScrollToOffset }));
-      mockListRender({ data, header: ListHeaderComponent });
-      return ReactModule.createElement(
-        NativeView,
-        { testID, onContentSizeChange, onMomentumScrollBegin, onScrollBeginDrag } as React.ComponentProps<
-          typeof NativeView
-        >,
-        ListHeaderComponent,
-        ...data.map((item, index) =>
-          ReactModule.createElement(
-            NativeView,
-            { key: keyExtractor?.(item, index) ?? index },
-            renderItem?.({ item, index })
-          )
-        ),
-        ListFooterComponent
-      );
-    })
-  };
-});
-
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return { ChevronLeft: Icon, ExternalLink: Icon, RefreshCw: Icon, Star: Icon };
@@ -160,6 +107,22 @@ function userScreen(overrides: Partial<React.ComponentProps<typeof UserScreen>> 
 }
 
 describe('User screen behavior', () => {
+  beforeEach(() => {
+    mockListRender.mockClear();
+    const renderList = FlatList.prototype.render;
+    jest.spyOn(FlatList.prototype, 'render').mockImplementation(function (this: FlatList<unknown>) {
+      mockListRender(this.props);
+      return renderList.call(this);
+    });
+    jest.spyOn(FlatList.prototype, 'scrollToOffset').mockImplementation(({ offset }) => {
+      mockListOffset = offset;
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it.each(['scrollBeginDrag', 'momentumScrollBegin'])(
     'preserves a new %s after switching activity and completing the initial scroll reset',
     async (event) => {
@@ -242,7 +205,7 @@ describe('User screen behavior', () => {
     const topicInputs = mockListRender.mock.calls.at(-1)![0];
     await fireEvent.press(view.getByLabelText('回复'));
     const replyInputs = mockListRender.mock.calls.at(-1)![0];
-    expect(replyInputs.header === topicInputs.header).toBe(true);
+    expect(replyInputs.ListHeaderComponent).toBe(topicInputs.ListHeaderComponent);
     await fireEvent.press(view.getByLabelText('主题'));
     expect(mockListRender.mock.calls.at(-1)![0].data).toBe(topicInputs.data);
     await fireEvent.press(view.getByLabelText('回复'));
@@ -283,6 +246,27 @@ describe('User screen behavior', () => {
     expect(view.getByText('回复所在主题')).toBeTruthy();
   });
 
+  it('opens the requested activity and restores it only when the user identity changes', async () => {
+    const onRefresh = jest.fn<() => void>();
+    const view = await render(userScreen({ initialTab: 'replies', onRefresh }));
+    expect(view.getByText('回复摘要')).toBeTruthy();
+    expect(view.queryByText('用户主题')).toBeNull();
+
+    await fireEvent.press(view.getByLabelText('主题'));
+    await fireEvent.press(view.getByLabelText('刷新'));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    await view.rerender(userScreen({ initialTab: 'replies', busy: true, onRefresh }));
+    expect(view.getByText('用户主题')).toBeTruthy();
+    expect(view.queryByText('回复摘要')).toBeNull();
+    await view.rerender(userScreen({ initialTab: 'replies', profile: { ...profile }, onRefresh }));
+    expect(view.getByText('用户主题')).toBeTruthy();
+
+    const nextUser = { ...profile, id: 'bob', username: 'bob', displayName: 'Bob' };
+    await view.rerender(userScreen({ initialTab: 'replies', profile: nextUser, requestedUser: nextUser, onRefresh }));
+    expect(view.getByText('回复摘要')).toBeTruthy();
+    expect(view.queryByText('用户主题')).toBeNull();
+  });
+
   it('keeps topic and reply pagination busy states independent', async () => {
     const onLoadMoreReplies = jest.fn<() => void>();
     const view = await render(userScreen({ loadingMoreTopics: true, onLoadMoreReplies }));
@@ -297,6 +281,39 @@ describe('User screen behavior', () => {
     await view.rerender(userScreen({ loadingMoreReplies: true, onLoadMoreReplies }));
     expect(view.getByLabelText('正在加载...').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText('正在加载...'));
+    expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads the selected activity once when a user scroll reaches the end', async () => {
+    const onLoadMoreTopics = jest.fn<() => void>();
+    const onLoadMoreReplies = jest.fn<() => void>();
+    const view = await render(userScreen({ onLoadMoreTopics, onLoadMoreReplies }));
+    const list = view.getByTestId('user-screen-loaded');
+    const scrollTo = (y: number) =>
+      fireEvent.scroll(list, {
+        nativeEvent: {
+          contentOffset: { x: 0, y },
+          contentSize: { width: 360, height: 1800 },
+          layoutMeasurement: { width: 360, height: 640 }
+        }
+      });
+    await fireEvent(list, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 640 } } });
+    await fireEvent(list, 'contentSizeChange', 360, 1800);
+    expect(onLoadMoreTopics).not.toHaveBeenCalled();
+    expect(onLoadMoreReplies).not.toHaveBeenCalled();
+
+    await fireEvent(list, 'scrollBeginDrag');
+    await scrollTo(1200);
+    await scrollTo(1200);
+    expect(onLoadMoreTopics).toHaveBeenCalledTimes(1);
+    expect(onLoadMoreReplies).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByLabelText('回复'));
+    await scrollTo(0);
+    expect(onLoadMoreReplies).not.toHaveBeenCalled();
+    await fireEvent(list, 'scrollBeginDrag');
+    await scrollTo(1200);
+    expect(onLoadMoreTopics).toHaveBeenCalledTimes(1);
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
   });
 

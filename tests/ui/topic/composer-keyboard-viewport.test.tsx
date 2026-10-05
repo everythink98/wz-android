@@ -1,7 +1,8 @@
 import React from 'react';
+import * as ReactNative from 'react-native';
 import { AppState, BackHandler, DeviceEventEmitter, Dimensions, Keyboard, StyleSheet, Text } from 'react-native';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '../render';
+import { act, fireEvent, render, within } from '../render';
 import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 
 const mockKeyboard = { height: { value: 0 }, state: { value: 0 } };
@@ -17,7 +18,8 @@ jest.mock('react-native-reanimated', () => ({
   __esModule: true,
   default: {
     ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated').default,
-    View: require('react-native').View
+    View: require('react-native').View,
+    createAnimatedComponent: (component: unknown) => component
   },
   useSharedValue: (value: unknown) =>
     (require('react') as typeof React).useRef({
@@ -89,6 +91,10 @@ jest.mock('react-native-reanimated', () => ({
     }, [prepare, react]);
   }
 }));
+jest.mock('react-native/Libraries/ReactNative/requireNativeComponent', () => ({
+  __esModule: true,
+  default: (name: string) => name
+}));
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 24, left: 0, right: 0 })
@@ -96,6 +102,7 @@ jest.mock('react-native-safe-area-context', () => ({
 
 function fixedGeometry() {
   return [...mockAnimatedStyles].map((style) => style()).findLast((style) => Array.isArray(style.transform)) as {
+    display: 'flex' | 'none';
     height: number;
     maxHeight?: number;
     transform: { translateY: number }[];
@@ -118,6 +125,119 @@ describe('Composer native keyboard viewport', () => {
     mockHoldAnimations = false;
     mockAnimations.length = 0;
     mockAnimatedStyles.clear();
+  });
+  it.each([
+    { fixedContent: true, presentation: 'sheet', measuredHeight: 0 },
+    { fixedContent: true, presentation: 'fullscreen', measuredHeight: 0 },
+    { fixedContent: false, presentation: 'sheet', measuredHeight: 208 },
+    { fixedContent: false, presentation: 'sheet', measuredHeight: 1000 },
+    { fixedContent: false, presentation: 'fullscreen', measuredHeight: 1000 }
+  ] as const)(
+    'acknowledges the actual $presentation panel at its no-IME height (fixed=$fixedContent, content=$measuredHeight)',
+    async ({ fixedContent, presentation, measuredHeight }) => {
+      const platform = jest.replaceProperty(ReactNative.Platform, 'OS', 'android');
+      const native = require('react-native') as typeof ReactNative;
+      const handle = jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+      const dispatch = jest.spyOn(native.UIManager, 'dispatchViewManagerCommand').mockImplementation(() => undefined);
+      let mounts = 0;
+      let settle!: () => Promise<void>;
+      function Editor() {
+        const [instance] = React.useState(() => ++mounts);
+        return <Text>{`editor ${instance}`}</Text>;
+      }
+      const sheet = (visible = true) => (
+        <ComposerBottomSheet
+          dark={false}
+          fixedContent={fixedContent}
+          presentation={presentation}
+          visible={visible}
+          onOpenChange={() => {}}
+        >
+          {(_focus, wait) => {
+            settle = wait;
+            return <Editor />;
+          }}
+        </ComposerBottomSheet>
+      );
+      try {
+        mockKeyboard.height.value = 336;
+        mockKeyboard.state.value = mockKeyboardState.OPEN;
+        const view = await render(sheet());
+        if (!fixedContent) {
+          await fireEvent(view.getByTestId('composer-bottom-sheet-content'), 'layout', {
+            nativeEvent: { layout: { width: 400, height: measuredHeight, x: 0, y: 0 } }
+          });
+        }
+        const windowHeight = Dimensions.get('window').height;
+        const availableHeight = Math.max(320, windowHeight - 24);
+        const sheetHeight =
+          Math.min(
+            Math.round(availableHeight * 0.75),
+            Math.max(360, Math.min(480, Math.round(availableHeight * 0.52)))
+          ) + 24;
+        const expectedHeight = fixedContent
+          ? presentation === 'fullscreen'
+            ? windowHeight
+            : Math.min(windowHeight, sheetHeight)
+          : Math.min(measuredHeight, Math.round(availableHeight * (presentation === 'fullscreen' ? 1 : 0.75))) + 24;
+        const panel = view.getByTestId('composer-bottom-sheet');
+        expect(panel).toHaveProp('onKeyboardHidden', expect.any(Function));
+        expect(panel).toHaveProp('enabled', true);
+        expect(panel).toHaveProp('hiddenLayoutHeight', expectedHeight);
+        expect(
+          within(panel).queryByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true })
+        ).toBeNull();
+        for (const height of [160, 21, 0]) {
+          mockKeyboard.height.value = height;
+          mockKeyboard.state.value = height ? mockKeyboardState.CLOSING : mockKeyboardState.CLOSED;
+          await view.rerender(sheet());
+          expect(view.getByTestId('composer-bottom-sheet')).toBe(panel);
+          expect(panel).toHaveProp('hiddenLayoutHeight', expectedHeight);
+          expect(fixedBottom() - fixedGeometry().paddingBottom).toBe(windowHeight - Math.max(height, 24));
+        }
+        expect(mounts).toBe(1);
+        const waiting = settle();
+        const rejected = expect(waiting).rejects.toThrow('键盘尚未收起');
+        expect(dispatch).toHaveBeenCalledWith(73, 'hideKeyboard', [1]);
+        await fireEvent(panel, 'keyboardHidden', { nativeEvent: { requestId: 1, success: false } });
+        await rejected;
+        await view.rerender(sheet(false));
+        expect(view.getByTestId('composer-bottom-sheet', { includeHiddenElements: true })).toHaveProp('enabled', false);
+        expect(view.getByTestId('composer-bottom-sheet', { includeHiddenElements: true })).toHaveProp(
+          'importantForAccessibility',
+          'no-hide-descendants'
+        );
+        expect(mounts).toBe(1);
+      } finally {
+        dispatch.mockRestore();
+        handle.mockRestore();
+        platform.restore();
+      }
+    }
+  );
+  it('creates the editor only on its first visible presentation and retains it through close and route changes', async () => {
+    let mounts = 0;
+    function Editor() {
+      const [instance] = React.useState(() => ++mounts);
+      return <Text>编辑器实例 {instance}</Text>;
+    }
+    const sheet = (visible: boolean, active = true) => (
+      <ComposerBottomSheet active={active} dark={false} fixedContent visible={visible} onOpenChange={() => {}}>
+        {() => <Editor />}
+      </ComposerBottomSheet>
+    );
+    const view = await render(sheet(false));
+    expect(view.queryByText(/编辑器实例/, { includeHiddenElements: true })).toBeNull();
+    await view.rerender(sheet(true, false));
+    expect(view.queryByText(/编辑器实例/, { includeHiddenElements: true })).toBeNull();
+    await view.rerender(sheet(true));
+    expect(view.getByText('编辑器实例 1')).toBeTruthy();
+    await view.rerender(sheet(false));
+    expect(view.getByText('编辑器实例 1', { includeHiddenElements: true })).toBeTruthy();
+    await view.rerender(sheet(true, false));
+    await view.rerender(sheet(true));
+    expect(view.getByText('编辑器实例 1')).toBeTruthy();
+    expect(mounts).toBe(1);
   });
   it('positions the fixed editor from the current IME frame before any reaction or layout callback runs', async () => {
     await render(
@@ -199,18 +319,19 @@ describe('Composer native keyboard viewport', () => {
       expect(fixedBottom() - frame.paddingBottom).toBe(bottom - Math.max(height, 24));
     }
   });
-  it('retains the editor while subscribing only from opening through completed closing', async () => {
+  it('retains the editor and suspends drawing and keyboard subscription only after closing completes', async () => {
     const host = (visible: boolean) => (
       <ComposerBottomSheet dark={false} fixedContent visible={visible} onOpenChange={() => {}}>
         {(focus) => <Text testID="retained-editor">{`focus=${focus}`}</Text>}
       </ComposerBottomSheet>
     );
     const view = await render(host(false));
-    const editor = view.getByTestId('retained-editor', { includeHiddenElements: true });
     expect(mockKeyboardSubscriptions).toBe(0);
     mockHoldAnimations = true;
     await view.rerender(host(true));
+    const editor = view.getByTestId('retained-editor');
     expect(mockKeyboardSubscriptions).toBe(1);
+    expect(fixedGeometry().display ?? 'flex').toBe('flex');
     expect(view.getByText('focus=0')).toBeTruthy();
     await act(() => mockAnimations.splice(0).forEach((animation) => animation.finish()));
     expect(view.getByText('focus=1')).toBeTruthy();
@@ -223,10 +344,13 @@ describe('Composer native keyboard viewport', () => {
     expect(view.getByText('focus=1')).toBeTruthy();
     await view.rerender(host(false));
     expect(mockKeyboardSubscriptions).toBe(1);
+    expect(fixedGeometry().display ?? 'flex').toBe('flex');
     await act(() => mockAnimations.splice(0).forEach((animation) => animation.finish()));
     expect(mockKeyboardSubscriptions).toBe(0);
+    expect(fixedGeometry().display).toBe('none');
     expect(view.getByTestId('retained-editor', { includeHiddenElements: true })).toBe(editor);
     await view.rerender(host(true));
+    expect(fixedGeometry().display ?? 'flex').toBe('flex');
     await act(() => mockAnimations.splice(0).forEach((animation) => animation.finish()));
     expect(view.getByTestId('retained-editor')).toBe(editor);
     expect(view.getByText('focus=2')).toBeTruthy();
@@ -249,6 +373,7 @@ describe('Composer native keyboard viewport', () => {
     expect(view.getByText('focus=2')).toBeTruthy();
     expect(mockKeyboardSubscriptions).toBe(1);
     expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('pointerEvents', 'auto');
+    expect(fixedGeometry().display ?? 'flex').toBe('flex');
   });
   it('keeps fullscreen and return geometry on the same editor without repeating initial focus', async () => {
     const host = (presentation: 'sheet' | 'fullscreen', active = true) => (

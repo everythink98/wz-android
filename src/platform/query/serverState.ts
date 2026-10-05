@@ -19,6 +19,19 @@ export const accountQueryKeys = {
 export const forumQueryKeys = {
   all: ['forum'] as const,
   source: (source: FeedSource) => ['forum', source] as const,
+  accountData: ({
+    source,
+    kind,
+    userId,
+    sessionEpoch,
+    readPlanScope
+  }: {
+    source: import('@/domain/session/siteSessionState').SessionSite;
+    kind: 'overview' | 'attendance' | 'credits' | 'stardust-credits';
+    userId: string;
+    sessionEpoch: number;
+    readPlanScope: string;
+  }) => ['forum', source, 'account-data', kind, { userId, sessionEpoch, readPlanScope }] as const,
   categories: (
     source: FeedSource,
     scope: ForumSessionEpochs = initialForumSessionEpochs,

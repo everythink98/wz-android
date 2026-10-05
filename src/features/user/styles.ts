@@ -1,8 +1,7 @@
 import { StyleSheet } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
 
-export function createUserStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
   const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;

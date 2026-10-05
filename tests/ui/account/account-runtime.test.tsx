@@ -164,6 +164,75 @@ function seedNodeSeekAccount() {
   );
 }
 
+it.each(['pending', 'failed', 'unknown', 'reopened'] as const)(
+  'reconciles a closed Yaohuo page before issuing write access after a %s account check',
+  async (previousCheck) => {
+    appQueryClient.setQueryData(
+      accountQueryKeys.snapshot('yaohuo'),
+      accountSessionSnapshotFromEvent(createAccountSessionSnapshot('yaohuo'), {
+        type: 'session-updated',
+        loggedIn: true,
+        currentUser: {
+          source: 'yaohuo',
+          id: '7',
+          username: '火友',
+          url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7'
+        }
+      })
+    );
+    const page =
+      '<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=7">火友</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>';
+    const pending = Promise.withResolvers<Response>();
+    const fetcher = jest
+      .fn<ReturnType<Fetcher>, Parameters<Fetcher>>()
+      .mockImplementationOnce(() =>
+        previousCheck === 'pending' || previousCheck === 'reopened'
+          ? pending.promise
+          : Promise.reject(new Error('网络暂时不可用'))
+      )
+      .mockImplementation(async () => {
+        if (previousCheck === 'unknown') throw new Error('网络暂时不可用');
+        return new Response(page);
+      });
+    const { view, runtime } = await renderSiteRuntime('yaohuo', fetcher);
+    try {
+      await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'yaohuo' }));
+      await fireEvent.press(view.getByLabelText('关闭'));
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      expect(runtime().hosts.surfaces.yaohuo).toBe(false);
+      expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7')).toBe(false);
+      if (previousCheck === 'failed' || previousCheck === 'unknown')
+        await waitFor(() =>
+          expect(
+            events.some(
+              (event) =>
+                event.operation === 'account-reconcile' && event.phase === 'finish' && event.outcome === 'failure'
+            )
+          ).toBe(true)
+        );
+      let access!: ReturnType<ReturnType<typeof useAccountRuntime>['write']['ensureWritableSession']>;
+      await act(async () => {
+        access = runtime().write.ensureWritableSession('yaohuo');
+        if (previousCheck === 'reopened')
+          await runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'yaohuo' });
+        if (previousCheck === 'pending' || previousCheck === 'reopened') pending.resolve(new Response(page));
+        if (previousCheck === 'unknown' || previousCheck === 'reopened')
+          await expect(access).rejects.toMatchObject({
+            reason: previousCheck === 'unknown' ? 'identity_unavailable' : 'stale'
+          });
+        else await expect(access).resolves.toMatchObject({ source: 'yaohuo', identityKey: 'yaohuo:7' });
+      });
+      expect(fetcher).toHaveBeenCalledTimes(previousCheck === 'pending' || previousCheck === 'reopened' ? 1 : 2);
+      expect(runtime().read.notificationPrivateAccessAllowed('yaohuo', 'yaohuo:7')).toBe(
+        previousCheck !== 'unknown' && previousCheck !== 'reopened'
+      );
+      expect(runtime().read.accountSessionViewModels.yaohuo.isLoggedIn).toBe(true);
+    } finally {
+      await view.unmount();
+    }
+  }
+);
+
 it.each(['nodeseek', 'yaohuo'] as const)(
   'keeps ordinary %s browsing open after a logged-in page hint until the user checks',
   async (site) => {

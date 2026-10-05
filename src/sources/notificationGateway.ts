@@ -1,7 +1,14 @@
 import { resolveLinuxDoUpload } from '@/sources/linuxdo/uploadUrls';
 import type { SourceErrorInfo } from '@/domain/forum/models';
+import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
+import { setLinuxDoPolicyAcceptance } from '@/sources/linuxdo/policy';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
-import type { ForumNotification, NotificationDetail, NotificationPage } from '@/domain/notifications/models';
+import type {
+  ForumNotification,
+  NotificationDetail,
+  NotificationMessagePage,
+  NotificationPage
+} from '@/domain/notifications/models';
 import { notificationPageError } from '@/domain/notifications/notificationQuality';
 import {
   beginDiagnosticTrace,
@@ -32,7 +39,12 @@ import {
   fetchLinuxDoTemplates,
   recordLinuxDoTemplateUse as recordLinuxDoTemplateUsage
 } from '@/sources/linuxdo/templates';
-import { rejectUnauthorizedResponse, withFetchGuard, withRequestBeforeSend } from '@/platform/network/request';
+import {
+  rejectUnauthorizedResponse,
+  withFetchGuard,
+  withRequestBeforeSend,
+  type RequestDispatchState
+} from '@/platform/network/request';
 
 export type NotificationAccessReader = (
   source: NotificationSource
@@ -76,7 +88,9 @@ async function runWithNotificationDiagnostics<T>(
     | 'notification-categories'
     | 'notification-unread'
     | 'notification-detail'
+    | 'notification-history'
     | 'notification-mark-read'
+    | 'notification-policy'
     | 'notification-reply'
     | 'notification-upload'
     | 'notification-mark-all-read'
@@ -366,6 +380,51 @@ export function createNotificationGateway({
       );
     },
 
+    async loadEarlierMessages(
+      item: ForumNotification,
+      cursor: string,
+      expectedIdentityKey: string,
+      signal?: AbortSignal
+    ): Promise<NotificationMessagePage> {
+      return runWithNotificationDiagnostics(
+        item.source,
+        'notification-history',
+        async (trace) =>
+          runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) => {
+            const load = adapters[item.source].loadEarlierMessages;
+            if (!load) throw new Error('该来源暂不支持会话历史分页');
+            if (!cursor) throw new Error('私信历史游标不正确');
+            return load(item, cursor, access);
+          }),
+        (page) => ({ itemCount: page.messages.length, hasMore: Boolean(page.olderCursor) })
+      );
+    },
+
+    async setPolicyAcceptance(
+      item: ForumNotification,
+      policy: DiscoursePostPolicy,
+      accepted: boolean,
+      expectedIdentityKey: string,
+      signal?: AbortSignal
+    ) {
+      return runWithNotificationDiagnostics(
+        item.source,
+        'notification-policy',
+        async (trace) =>
+          runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) => {
+            if (
+              item.source !== 'linuxdo' ||
+              item.target.type !== 'topic-post' ||
+              (item.target.postId && item.target.postId !== policy.postId)
+            ) {
+              throw new Error('公告帖子信息不匹配，请重新打开公告');
+            }
+            return setLinuxDoPolicyAcceptance({ ...access, policy, accepted });
+          }),
+        (result) => ({ isConfirmed: result.confirmed })
+      );
+    },
+
     async markRead(
       item: ForumNotification,
       detail: NotificationDetail,
@@ -387,7 +446,8 @@ export function createNotificationGateway({
       item: ForumNotification,
       content: string,
       expectedIdentityKey: string,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      dispatchState?: RequestDispatchState
     ) {
       return runWithNotificationDiagnostics(
         item.source,
@@ -396,7 +456,12 @@ export function createNotificationGateway({
           runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) => {
             if (!content.trim()) throw new Error('请输入回复内容');
             assertNotAborted(signal);
-            return adapters[item.source].replyToConversation(item, content, access);
+            const fetcher = access.fetcher || fetch;
+            const trackedWrite = withRequestBeforeSend(fetcher, () => assertNotAborted(signal), dispatchState);
+            return adapters[item.source].replyToConversation(item, content, {
+              ...access,
+              fetcher: (url, init) => (init?.method?.toUpperCase() === 'POST' ? trackedWrite : fetcher)(url, init)
+            });
           }),
         (result) => ({ isConfirmed: result.confirmed })
       );

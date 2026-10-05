@@ -1,11 +1,10 @@
 import type { MoreScreenStyles } from '../styles';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import { RefreshCw } from 'lucide-react-native';
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
 
 const LINUXDO_LEVEL_TABS = [
   { value: 'progress', label: '等级要求' },
@@ -65,6 +64,7 @@ export function LinuxDoLevelPanel({
       {error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
+          <AppButton compact variant="ghost" label="重试等级" disabled={busy} onPress={onRefresh} />
         </View>
       ) : null}
       {profile ? (
@@ -78,13 +78,6 @@ export function LinuxDoLevelPanel({
                   {profile.targetLevel !== null ? ` → LV ${profile.targetLevel}` : ''}
                 </Text>
               </View>
-              <IconButton
-                icon={RefreshCw}
-                label={busy ? '读取中' : '刷新等级'}
-                iconOnly
-                disabled={busy}
-                onPress={onRefresh}
-              />
             </View>
             <View style={styles.levelMetaRow}>
               <Text style={styles.levelBadge}>
@@ -105,7 +98,8 @@ export function LinuxDoLevelPanel({
             {LINUXDO_LEVEL_TABS.map((item) => (
               <Pressable
                 key={item.value}
-                accessibilityRole="button"
+                accessibilityRole="tab"
+                accessibilityLabel={item.label}
                 accessibilityState={{ selected: tab === item.value }}
                 style={[styles.levelTab, tab === item.value && styles.levelTabActive]}
                 onPress={() => setTab(item.value)}
@@ -225,7 +219,18 @@ export function LinuxDoLevelPanel({
                           {item.displayCurrent} / {item.displayRequired}
                         </Text>
                       </View>
-                      <View style={styles.levelProgressTrack}>
+                      <View
+                        accessible
+                        accessibilityRole="progressbar"
+                        accessibilityLabel={`${item.label}，当前 ${item.displayCurrent}，要求 ${item.displayRequired}，${status}`}
+                        accessibilityValue={{
+                          min: 0,
+                          max: item.required,
+                          now: Math.min(Math.max(item.current, 0), item.required),
+                          text: `${item.displayCurrent} / ${item.displayRequired}，${status}`
+                        }}
+                        style={styles.levelProgressTrack}
+                      >
                         <View
                           style={[
                             styles.levelProgressFill,
@@ -264,8 +269,7 @@ export function LinuxDoLevelPanel({
       ) : (
         <View style={styles.levelEmptyState}>
           {busy ? <ActivityIndicator color={theme.primary} size="small" /> : null}
-          <Text style={styles.meta}>{busy ? '正在读取当前账号统计。' : '点击刷新后读取当前账号统计。'}</Text>
-          {!busy ? <IconButton icon={RefreshCw} label="刷新等级" compact onPress={onRefresh} /> : null}
+          <Text style={styles.meta}>{busy ? '正在读取当前账号统计。' : '暂无等级资料。'}</Text>
         </View>
       )}
     </View>

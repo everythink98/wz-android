@@ -15,6 +15,13 @@ import {
 } from '@/sources/linuxdo/search';
 import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/sources/nodeseek/reader';
 import {
+  getNodeSeekAccountOverview as getNodeSeekAccountOverviewDirect,
+  getNodeSeekAttendanceBoard as getNodeSeekAttendanceBoardDirect,
+  getNodeSeekCredits as getNodeSeekCreditsDirect,
+  getNodeSeekStardustCredits as getNodeSeekStardustCreditsDirect
+} from '@/sources/nodeseek/accountData';
+import { getYaohuoAccountOverview as getYaohuoAccountOverviewDirect } from '@/sources/yaohuo/accountData';
+import {
   getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
   type LinuxDoLevelProfile
 } from '@/sources/linuxdo/level';
@@ -24,6 +31,7 @@ import {
   REQUEST_CANCELED_MESSAGE,
   RequestTimeoutError,
   rejectUnauthorizedResponse,
+  withRequestBeforeSend,
   type Fetcher
 } from '@/platform/network/request';
 import {
@@ -173,6 +181,11 @@ type ManagedResolveNodeSeekUserOptions = {
   signal?: AbortSignal;
   username: string;
 };
+type ManagedAccountDataOptions = {
+  userId: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
 type ManagedGetEmojiUrlsOptions = Pick<LinuxDoOptions, 'signal' | 'timeoutMs'> & {
   source: DiscourseSource;
 };
@@ -210,6 +223,7 @@ function sameEnabledSources(left: readonly Source[], right: readonly Source[]) {
 }
 
 const browserFetchOwnerByReadOperation: Record<ForumReadOperation, BrowserFetchIntent['owner']> = {
+  'account-data': 'user',
   categories: 'feed',
   emoji: 'topic',
   feed: 'feed',
@@ -410,7 +424,15 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       planSources.every(
         (planSource) => getReadPlan(planSource, readOperation).cacheScope === planSnapshot.get(planSource)?.cacheScope
       );
-    const readIsCurrent = () => enabledSourcesAreCurrent() && readPlansAreCurrent();
+    const readIsCurrent = () =>
+      enabledSourcesAreCurrent() &&
+      readPlansAreCurrent() &&
+      (readOperation !== 'account-data' ||
+        planSources.every(
+          (planSource) =>
+            isSessionSource(planSource) &&
+            readSessionSnapshot(planSource).identityKey === sessionSnapshots.get(planSource)?.identityKey
+        ));
     const recoveryCommitIsEligible = () => readIsCurrent() && signal?.aborted !== true;
     try {
       const planFor = (planSource: Source) => planSnapshot.get(planSource);
@@ -463,7 +485,18 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
       const ownFetcher = (fetcher: Fetcher, attempt: ReadAttempt) =>
         withForumSourceReadEligibility(
-          withManagedReadIntent(withDiagnosticFetcher(trace, fetcher), readOperation, attempt),
+          withManagedReadIntent(
+            withDiagnosticFetcher(
+              trace,
+              readOperation === 'account-data'
+                ? withRequestBeforeSend(fetcher, () => {
+                    if (!recoveryCommitIsEligible()) throw new RequestCanceledError();
+                  })
+                : fetcher
+            ),
+            readOperation,
+            attempt
+          ),
           recoveryCommitIsEligible
         );
       const runOperation = (fetcher: Fetcher, attempt: ReadAttempt) =>
@@ -733,6 +766,26 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     }
   };
 
+  const readAccountData = <T>(
+    source: 'nodeseek' | 'yaohuo',
+    options: ManagedAccountDataOptions,
+    operation: (credentials: { fetcher: Fetcher; nodeSeekUserAgent?: string }) => Promise<T>,
+    context?: ReadGatewayReadContext
+  ) =>
+    read(
+      source,
+      'getUserProfile',
+      'account-data',
+      (credentials) => {
+        if (readSessionSnapshot(source).identityKey !== `${source}:${options.userId}`) {
+          throw new RequestCanceledError();
+        }
+        return operation(credentials);
+      },
+      context,
+      options.signal
+    );
+
   const readingFetches = new Map<string, Promise<DiscourseTopicReading | undefined>>();
   const getReadingBatch = async (ids: readonly string[], signal?: AbortSignal) => {
     const scope = dependencies.reading?.scope();
@@ -767,6 +820,49 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
 
   return {
     reading: dependencies.reading,
+    getNodeSeekAccountOverview(options: ManagedAccountDataOptions, context?: ReadGatewayReadContext) {
+      return readAccountData(
+        'nodeseek',
+        options,
+        (credentials) => getNodeSeekAccountOverviewDirect({ ...options, ...credentials }),
+        context
+      );
+    },
+    getNodeSeekAttendanceBoard(options: ManagedAccountDataOptions, context?: ReadGatewayReadContext) {
+      return readAccountData(
+        'nodeseek',
+        options,
+        (credentials) => getNodeSeekAttendanceBoardDirect({ ...options, ...credentials }),
+        context
+      );
+    },
+    getNodeSeekCredits(options: ManagedAccountDataOptions & { page?: number }, context?: ReadGatewayReadContext) {
+      return readAccountData(
+        'nodeseek',
+        options,
+        (credentials) => getNodeSeekCreditsDirect({ ...options, ...credentials }),
+        context
+      );
+    },
+    getNodeSeekStardustCredits(
+      options: ManagedAccountDataOptions & { beforeId?: number },
+      context?: ReadGatewayReadContext
+    ) {
+      return readAccountData(
+        'nodeseek',
+        options,
+        (credentials) => getNodeSeekStardustCreditsDirect({ ...options, ...credentials }),
+        context
+      );
+    },
+    getYaohuoAccountOverview(options: ManagedAccountDataOptions, context?: ReadGatewayReadContext) {
+      return readAccountData(
+        'yaohuo',
+        options,
+        (credentials) => getYaohuoAccountOverviewDirect({ ...options, ...credentials }),
+        context
+      );
+    },
     getTopicReading(id: string, options: { signal?: AbortSignal; trackVisit?: boolean } = {}) {
       return read(
         'linuxdo',

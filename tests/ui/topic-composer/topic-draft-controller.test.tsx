@@ -623,7 +623,11 @@ describe('topic draft lifecycle', () => {
           prepareRequestToSend(init);
           uploads++;
           return response(
-            JSON.stringify({ url: 'https://img.invalid/picker.png', code: 200, data: 'https://img.invalid/picker.png' })
+            JSON.stringify({
+              url: 'https://img.invalid/picker.png',
+              code: 200,
+              data: { url: 'https://img.invalid/picker.png' }
+            })
           );
         })
       );
@@ -778,6 +782,99 @@ describe('topic draft lifecycle', () => {
     expect(hook.result.current.saveStatus).toBe(status);
   });
 
+  it('automatically retries the optional emoji catalog without losing rules or the draft', async () => {
+    const transport = createTopicProofTransport('success');
+    const first = deferred<Record<string, string>>();
+    const previous = deferred<Record<string, string>>();
+    const getEmojiUrls = jest
+      .fn<TopicComposerRouteRuntimeValue['getEmojiUrls']>()
+      .mockReturnValueOnce(first.promise)
+      .mockRejectedValueOnce(new Error('still offline'))
+      .mockReturnValueOnce(previous.promise)
+      .mockResolvedValue({ heart: 'https://linux.do/recovered-heart.png' });
+    const notify = jest.fn();
+    const owner = { ...runtimeFor('123', transport.fetcher), getEmojiUrls, notify };
+    const saved = { ...emptyTopicDraft('linuxdo', 'linuxdo:123'), revision: 1, body: '保留的草稿' };
+    const hook = await setup(saved, owner);
+    const rules = hook.result.current.context;
+    await waitFor(() => expect(getEmojiUrls).toHaveBeenCalledTimes(1));
+    jest.useFakeTimers();
+    try {
+      await act(async () => first.reject(new Error('offline')));
+      await act(async () => jest.advanceTimersByTimeAsync(1_000));
+      expect(getEmojiUrls).toHaveBeenCalledTimes(2);
+      await act(async () => jest.advanceTimersByTimeAsync(2_000));
+      expect(getEmojiUrls).toHaveBeenCalledTimes(3);
+      const previousSignal = getEmojiUrls.mock.calls[2]![0].signal;
+      await hook.rerender({ owner: { ...owner, appActive: false } });
+      expect(previousSignal?.aborted).toBe(true);
+      await act(async () => previous.resolve({ heart: 'https://linux.do/obsolete-heart.png' }));
+      await act(async () => jest.advanceTimersByTimeAsync(60_000));
+      expect(getEmojiUrls).toHaveBeenCalledTimes(3);
+      expect(hook.result.current.emojiUrls).toEqual({});
+      await hook.rerender({ owner });
+      await act(async () => jest.advanceTimersByTimeAsync(1));
+      expect(hook.result.current.emojiUrls).toEqual({ heart: 'https://linux.do/recovered-heart.png' });
+      await act(async () => jest.advanceTimersByTimeAsync(60_000));
+      expect(getEmojiUrls).toHaveBeenCalledTimes(4);
+      expect(hook.result.current.context).toBe(rules);
+      expect(hook.result.current.contextLoading).toBe(false);
+      expect(hook.result.current.draft?.body).toBe(saved.body);
+      expect(notify).not.toHaveBeenCalled();
+      expect(transport.writes).toEqual([]);
+    } finally {
+      first.resolve({});
+      previous.resolve({});
+      await hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(['identity', 'new document'] as const)('isolates an emoji catalog after a change of %s', async (change) => {
+    const transport = createTopicProofTransport('success');
+    const previous = deferred<Record<string, string>>();
+    const current = deferred<Record<string, string>>();
+    const getEmojiUrls = jest
+      .fn<TopicComposerRouteRuntimeValue['getEmojiUrls']>()
+      .mockReturnValueOnce(previous.promise)
+      .mockReturnValue(current.promise);
+    const owner = { ...runtimeFor('123', transport.fetcher), getEmojiUrls };
+    const saved = { ...emptyTopicDraft('linuxdo', 'linuxdo:123'), revision: 1, body: '旧草稿' };
+    const hook = await setup(saved, owner);
+    await waitFor(() => expect(getEmojiUrls).toHaveBeenCalledTimes(1));
+    const previousSignal = getEmojiUrls.mock.calls[0]![0].signal;
+    if (change === 'identity') {
+      await hook.rerender({ owner: { ...runtimeFor('456', transport.fetcher), getEmojiUrls } });
+    } else {
+      jest
+        .spyOn(Alert, 'alert')
+        .mockImplementation((_title, _message, buttons) =>
+          buttons?.find((button) => button.text === '丢弃')?.onPress?.()
+        );
+      await act(async () => hook.result.current.discard());
+    }
+    await waitFor(() => expect(getEmojiUrls).toHaveBeenCalledTimes(2));
+    expect(previousSignal?.aborted).toBe(true);
+    const draft = hook.result.current.draft;
+    expect(draft?.id).not.toBe(saved.id);
+    jest.useFakeTimers();
+    try {
+      await act(async () => previous.resolve({ heart: 'https://linux.do/obsolete-heart.png' }));
+      await act(async () => jest.advanceTimersByTimeAsync(60_000));
+      expect(getEmojiUrls).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.emojiUrls).toEqual({});
+      await act(async () => current.resolve({ heart: 'https://linux.do/current-heart.png' }));
+      expect(hook.result.current.emojiUrls).toEqual({ heart: 'https://linux.do/current-heart.png' });
+      expect(hook.result.current.draft).toEqual(draft);
+      expect(transport.writes).toEqual([]);
+    } finally {
+      previous.resolve({});
+      current.resolve({});
+      await hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps loaded linux.do rules usable when the optional emoji read requires verification', async () => {
     const transport = createTopicProofTransport('success');
     const emojis = deferred<Record<string, string>>();
@@ -803,7 +900,7 @@ describe('topic draft lifecycle', () => {
     expect(hook.result.current.context).toEqual(loaded);
     expect(hook.result.current.contextError).toBe('');
     expect(hook.result.current.contextNeedsVerification).toBe(false);
-    expect(notify).toHaveBeenCalledWith('表情加载失败，仍可继续编辑和发帖');
+    expect(notify).not.toHaveBeenCalled();
     expect(transport.writes).toEqual([]);
   });
 

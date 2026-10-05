@@ -141,17 +141,14 @@ function AccountCenterScenario({
 
 function NodeSeekServicesScenario() {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
-  const sessions = createLoggedInSessions();
   return (
     <NodeSeekServicesPanel
       apiKeyBusy={false}
       apiKeySaved={false}
       recoveryThreshold={2}
-      session={sessions.nodeseek}
       styles={styles}
       theme={theme}
       onAuthorizeApiKey={noop}
-      onCheckIn={noop}
       onClearApiKey={noop}
       onRecoveryThresholdChange={noop}
       onSaveApiKey={noop}

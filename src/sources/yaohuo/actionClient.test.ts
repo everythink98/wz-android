@@ -140,6 +140,16 @@ describe('runYaohuoAction', () => {
     ).resolves.toEqual({ status: 'confirmed', message: '发送信息成功！' });
   });
 
+  it('identifies a private reply rejection only from the action notice', async () => {
+    const request = buildYaohuoMessageReplyRequest({ content: '收到', fields: { action: 'add', toid: '9' } });
+    await expect(
+      runYaohuoAction({ request, fetcher: vi.fn(async () => htmlResponse('<div class="tip">内容不能为空</div>')) })
+    ).rejects.toMatchObject({ serverRejected: true });
+    await expect(
+      runYaohuoAction({ request, fetcher: vi.fn(async () => htmlResponse('<main>之前的消息：失败</main>')) })
+    ).rejects.not.toMatchObject({ serverRejected: true });
+  });
+
   it('sends yaohuo writes through the native read-only cookie jar', async () => {
     const fetcher = replyFetcher('<div class="tip">评论成功</div>');
 

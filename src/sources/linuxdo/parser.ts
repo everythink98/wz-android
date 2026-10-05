@@ -16,6 +16,7 @@ import {
   normalizeDiscourseCallouts
 } from '@/sources/discourse/content';
 import { LINUXDO_BASE_URL } from './protocol';
+import { normalizeDiscoursePolicyMarkup } from '@/sources/discourse/policy';
 
 function redditSourceUrl(value: unknown) {
   try {
@@ -38,6 +39,7 @@ function linuxDoContentTransform(html: unknown, polls: TopicPoll[] | undefined) 
   const pollNames = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
   const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
   return (root: HTMLElement) => {
+    normalizeDiscoursePolicyMarkup(root);
     for (const [selector, tagName] of [
       ['div.math', FORUM_MATH_BLOCK_TAG],
       ['span.math', FORUM_MATH_INLINE_TAG]

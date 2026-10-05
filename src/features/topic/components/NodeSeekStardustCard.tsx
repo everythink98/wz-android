@@ -4,14 +4,13 @@ import { normalizeNodeSeekStardustRefId, type NodeSeekStardustReceive } from '@/
 import type { NodeSeekStardustStatus } from '@/sources/nodeseek/stardust';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
-import type { ReaderSettings } from '@/domain/reader/readerData';
+import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { topicActionDecisionMessage } from '../actions/topicActionDecision';
 import type { TopicActionsController } from '../actions/useTopicActionsController';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { NODESEEK_BASE_URL } from '@/sources/nodeseek/protocol';
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
     card: {

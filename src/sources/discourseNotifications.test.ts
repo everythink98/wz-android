@@ -11,6 +11,164 @@ function json(value: unknown) {
 }
 
 describe('Discourse notifications', () => {
+  function conversationHistory(count: number) {
+    let size = count;
+    let failPosts = false;
+    let missingAnchor: string | undefined;
+    let incompletePosts = false;
+    const posts = () =>
+      Array.from({ length: size }, (_, index) => ({
+        id: 1000 + index,
+        post_number: index + 1,
+        username: index % 2 ? 'alice' : 'bob',
+        cooked: `<p>消息 ${index + 1}</p>`,
+        created_at: new Date(Date.UTC(2026, 9, 1, 0, index)).toISOString()
+      }));
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const all = posts().filter((post) => String(post.id) !== missingAnchor);
+      if (url.pathname === '/t/201/posts.json') {
+        if (failPosts) throw new Error('历史读取失败');
+        const ids = url.searchParams.getAll('post_ids[]');
+        const found = all.filter((post) => ids.includes(String(post.id)));
+        return json({ post_stream: { posts: incompletePosts ? found.slice(1) : found } });
+      }
+      if (url.pathname !== '/t/201.json') throw new Error(`Unexpected request ${url.pathname}`);
+      return json({
+        id: 201,
+        title: '长私信',
+        slug: 'private-topic',
+        archetype: 'private_message',
+        posts_count: size,
+        created_at: '2026-10-01T00:00:00Z',
+        post_stream: { stream: all.map((post) => post.id), posts: all.slice(0, 20) }
+      });
+    });
+    const item = {
+      source: 'linuxdo' as const,
+      id: 'pm:201',
+      kind: 'private-message' as const,
+      actor: { id: 'bob', name: 'Bob' },
+      title: '长私信',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '201' }
+    };
+    return {
+      item,
+      fetcher,
+      access: { fetcher, identityKey: 'linuxdo:7', userId: '7', username: 'alice' },
+      setSize(value: number) {
+        size = value;
+      },
+      failPosts(value: boolean) {
+        failPosts = value;
+      },
+      removeAnchor(value: string) {
+        missingAnchor = value;
+      },
+      incompletePosts() {
+        incompletePosts = true;
+      }
+    };
+  }
+
+  it('opens a thousand-message conversation with only the latest thirty messages and a bounded request count', async () => {
+    const owner = conversationHistory(1001);
+    const detail = await linuxDoNotificationAdapter.loadDetail(owner.item, owner.access);
+    expect(detail.messages?.map((message) => message.id)).toEqual(
+      Array.from({ length: 30 }, (_, index) => String(1971 + index))
+    );
+    expect(detail.messageHistory).toEqual({ olderCursor: '1971' });
+    expect(owner.fetcher).toHaveBeenCalledTimes(2);
+    expect(detail.messages?.[0]?.mine).toBe(true);
+    expect(detail.messages?.at(-1)?.mine).toBe(false);
+  });
+
+  it('loads one earlier batch from its stable post anchor even when newer messages arrive', async () => {
+    const owner = conversationHistory(65);
+    const detail = await linuxDoNotificationAdapter.loadDetail(owner.item, owner.access);
+    expect(detail.messageHistory?.olderCursor).toBe('1035');
+    owner.setSize(85);
+    owner.fetcher.mockClear();
+    const earlier = await linuxDoNotificationAdapter.loadEarlierMessages(owner.item, '1035', owner.access);
+    expect(earlier.messages.map((message) => message.id)).toEqual(
+      Array.from({ length: 30 }, (_, index) => String(1005 + index))
+    );
+    expect(earlier.olderCursor).toBe('1005');
+    expect(owner.fetcher).toHaveBeenCalledTimes(2);
+    owner.fetcher.mockClear();
+    const first = await linuxDoNotificationAdapter.loadEarlierMessages(owner.item, '1005', owner.access);
+    expect(first.messages.map((message) => message.id)).toEqual(['1000', '1001', '1002', '1003', '1004']);
+    expect(first.olderCursor).toBeNull();
+    expect(owner.fetcher).toHaveBeenCalledTimes(1);
+    expect(detail.messages?.[0]?.id).toBe('1035');
+  });
+
+  it('keeps an earlier-message cursor retryable after transport failure without mutating the shown window', async () => {
+    const owner = conversationHistory(65);
+    const detail = await linuxDoNotificationAdapter.loadDetail(owner.item, owner.access);
+    owner.failPosts(true);
+    await expect(linuxDoNotificationAdapter.loadEarlierMessages(owner.item, '1035', owner.access)).rejects.toThrow(
+      '历史读取失败'
+    );
+    expect(detail.messages).toHaveLength(30);
+    expect(detail.messageHistory?.olderCursor).toBe('1035');
+    owner.failPosts(false);
+    await expect(
+      linuxDoNotificationAdapter.loadEarlierMessages(owner.item, '1035', owner.access)
+    ).resolves.toMatchObject({ olderCursor: '1005' });
+  });
+
+  it.each(['empty', 'removed'] as const)(
+    'fails explicitly for an %s history stream instead of declaring history complete',
+    async (kind) => {
+      const owner = conversationHistory(kind === 'empty' ? 0 : 65);
+      if (kind === 'removed') owner.removeAnchor('1035');
+      await expect(linuxDoNotificationAdapter.loadEarlierMessages(owner.item, '1035', owner.access)).rejects.toThrow(
+        /历史|游标/
+      );
+      expect(owner.fetcher).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('rejects an incomplete history response without advancing its stable cursor', async () => {
+    const owner = conversationHistory(65);
+    owner.incompletePosts();
+    await expect(linuxDoNotificationAdapter.loadEarlierMessages(owner.item, '1035', owner.access)).rejects.toThrow(
+      '私信历史内容不完整'
+    );
+    expect(owner.fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['', '0', '-1', '4wrong', '9007199254740992'])(
+    'rejects invalid history cursor %s before transport',
+    async (cursor) => {
+      const owner = conversationHistory(65);
+      await expect(linuxDoNotificationAdapter.loadEarlierMessages(owner.item, cursor, owner.access)).rejects.toThrow(
+        '游标'
+      );
+      expect(owner.fetcher).not.toHaveBeenCalled();
+    }
+  );
+  it('uses only authoritative actor usernames for profile targets while retaining display labels', async () => {
+    const page = await linuxDoNotificationAdapter.listPage({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      fetcher: async () =>
+        json({
+          notifications: [
+            { id: 1, data: { display_username: '显示名' } },
+            { id: 2, data: { display_username: '显示名', username: 'actual_username' } }
+          ],
+          total_rows_notifications: 2
+        })
+    });
+    expect(page.items.map((item) => item.actor)).toEqual([
+      { name: '显示名' },
+      { name: '显示名', id: 'actual_username' }
+    ]);
+  });
   it('reports optional category-discovery degradation while keeping its existing fallback categories', async () => {
     const categories = await linuxDoNotificationAdapter.getCategories({
       identityKey: 'linuxdo:7',
@@ -199,7 +357,11 @@ describe('Discourse notifications', () => {
     const url = new URL(fetcher.mock.calls[0]?.[0] || '');
     expect(url.pathname).toBe('/u/alice/user-menu-private-messages');
     expect(url.search).toBe('');
-    expect(page).toMatchObject({ hasMore: false, cursor: null });
+    expect(page).toMatchObject({
+      hasMore: false,
+      cursor: null,
+      historyNotice: '此分类仅展示原站菜单提供的近期私信，不含全部历史会话。'
+    });
     expect(page.items).toEqual([
       expect.objectContaining({
         id: 'private-notification:8315',
@@ -211,12 +373,63 @@ describe('Discourse notifications', () => {
       expect.objectContaining({
         id: 'private-topic:201',
         kind: 'private-message',
-        actor: expect.objectContaining({ id: '9', name: 'Bob' }),
+        actor: expect.objectContaining({ id: 'bob', name: 'Bob' }),
         unread: true,
         target: { type: 'private-conversation', conversationId: '201' }
       })
     ]);
   });
+
+  it.each([
+    { participants: [{ user_id: 7 }, { user_id: 9 }], lastPoster: 'Alice', expectedId: 'bob' },
+    { participants: [{ user_id: 7 }, { user_id: 9 }, { user_id: 10 }], lastPoster: 'bob', expectedId: undefined },
+    { participants: [{ user_id: 7 }, { user_id: 9 }, { user_id: 99 }], lastPoster: 'bob', expectedId: undefined }
+  ])(
+    'uses only a unique known non-self participant as a private-topic contact',
+    async ({ participants, lastPoster, expectedId }) => {
+      const page = await linuxDoNotificationAdapter.listPage({
+        categoryId: 'messages',
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        username: 'alice',
+        fetcher: async () =>
+          json({
+            read_notifications: [],
+            unread_notifications: [],
+            topics: [{ id: 201, title: '私信主题', last_poster_username: lastPoster, participants }],
+            users: [
+              { id: 7, username: 'Alice', name: '本人' },
+              { id: 9, username: 'bob', name: 'Bob' },
+              { id: 10, username: 'carol', name: 'Carol' }
+            ]
+          })
+      });
+      expect(page.items[0]?.actor.id).toBe(expectedId);
+      if (expectedId) expect(page.items[0]?.actor.name).toBe('Bob');
+    }
+  );
+
+  it.each(['all', 'messages'])(
+    'does not expose the current account as the private notification contact in %s',
+    async (categoryId) => {
+      const ownNotification = { id: 31, notification_type: 6, topic_id: 201, acting_user_name: 'Alice', data: {} };
+      const page = await linuxDoNotificationAdapter.listPage({
+        categoryId,
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        username: 'alice',
+        fetcher: async () =>
+          json(
+            categoryId === 'messages'
+              ? { topics: [], users: [], unread_notifications: [ownNotification], read_notifications: [] }
+              : { notifications: [ownNotification], total_rows_notifications: 1 }
+          )
+      });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.actor.id).toBeUndefined();
+      expect(page.items[0]?.target).toMatchObject({ type: 'private-conversation', conversationId: '201' });
+    }
+  );
 
   it('opens a private-message notification as the same conversation from All and Personal Info', async () => {
     const notification = {
@@ -542,7 +755,12 @@ describe('Discourse notifications', () => {
         topic_id: 201,
         post_number: 4,
         username: 'alice',
-        cooked: '<p>准确正文</p>',
+        cooked:
+          '<p>准确正文</p><div class="policy" data-accept="已阅读" data-revoke="取消确认">我已知晓此更新内容</div>',
+        policy_accepted: false,
+        policy_revoked: false,
+        policy_can_accept: true,
+        policy_can_revoke: false,
         created_at: '2026-08-02T10:00:00Z'
       })
     );
@@ -569,7 +787,11 @@ describe('Discourse notifications', () => {
       userId: 'alice'
     });
 
-    expect(detail).toMatchObject({ title: '主题一', contentHtml: '<p>准确正文</p>' });
+    expect(detail).toMatchObject({
+      title: '主题一',
+      policy: { postId: '777', accepted: false, canAccept: true, acceptLabel: '已阅读' }
+    });
+    expect(detail.contentHtml).toContain('<p>准确正文</p>');
     expect(detail.topic).toMatchObject({ source: 'linuxdo', id: '201', url: 'https://linux.do/t/hello/201/4' });
     expect(new URL(fetcher.mock.calls[0]?.[0] || '').pathname).toBe('/posts/777.json');
   });
@@ -642,6 +864,11 @@ describe('Discourse notifications', () => {
       })
     ).resolves.toEqual({ confirmed: true });
     expect(fetcher).toHaveBeenCalledTimes(1);
+    const ownActorDetail = await linuxDoNotificationAdapter.loadDetail(
+      { ...item, actor: { id: 'Alice', name: '本人' } },
+      { fetcher, identityKey: 'linuxdo:7', userId: '7', username: 'alice' }
+    );
+    expect(ownActorDetail.notification.actor.id).toBeUndefined();
   });
 
   it('replies to a linux.do private topic with the original Markdown post request', async () => {

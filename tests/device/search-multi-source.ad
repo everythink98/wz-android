@@ -23,6 +23,15 @@ wait label="打开搜索筛选，当前默认" 10000
 press label="打开搜索筛选，当前默认"
 find "label=\"例如 qna / jobs\"" click
 keyboard dismiss
+wait "label=\"展开 V2EX 更多筛选\"" 10000
+press "label=\"展开 V2EX 更多筛选\""
+fill "label=\"V2EX 用户名\"" handfeel
+keyboard dismiss
+wait "label=\"收起 V2EX 更多筛选\"" 10000
+find "label=\"handfeel\"" click
+keyboard dismiss
+wait "label=\"收起 V2EX 更多筛选\"" 10000
+wait label="handfeel" 10000
 wait id="search-filter-close" 10000
 press id="search-filter-close"
 wait label="打开搜索筛选，当前默认" 10000

@@ -20,6 +20,7 @@ const reactClasses = [
   'com.facebook.react.modules.fresco.ReactOkHttpNetworkFetcherTest',
   'com.facebook.react.views.swiperefresh.ReactSwipeRefreshLayoutTest',
   'com.facebook.react.views.image.ReactImageViewEventTest',
+  'com.facebook.react.views.textinput.ReactTextInputUnderlineBackgroundTest',
   'com.facebook.react.views.text.TextLayoutManagerInlineViewSizeTest',
   'com.facebook.react.views.text.internal.span.CustomLineHeightSpanTest'
 ];

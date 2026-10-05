@@ -915,6 +915,41 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
   });
 
+  it('shows the reply policy once at its virtualized tail and disables submitted stale actions', async () => {
+    const policy = {
+      postId: '22',
+      version: '1',
+      accepted: false,
+      revoked: false,
+      canAccept: true,
+      canRevoke: false,
+      acceptLabel: '我已知晓此更新内容',
+      revokeLabel: '等我再仔细阅读一番'
+    };
+    const reply: Reply = { ...replyProps().reply, policy, quotedPosts: [] };
+    const onSetPolicyAcceptance = jest.fn();
+    const props = replyProps({
+      reply,
+      source: 'linuxdo',
+      onSetPolicyAcceptance,
+      decisionFor: () => ({ allowed: true, reason: 'allowed' })
+    });
+    const view = await render(<VirtualizedReplyRows props={props} />);
+    expect(view.getAllByText('阅读确认')).toHaveLength(1);
+    await fireEvent.press(view.getByRole('button', { name: policy.acceptLabel }));
+    expect(onSetPolicyAcceptance).toHaveBeenCalledWith(policy, true);
+    await view.rerender(
+      <VirtualizedReplyRows
+        props={{
+          ...props,
+          policySubmission: { scope: 'linuxdo:topic-1:0:7', postId: '22', version: '1', accepted: true }
+        }}
+      />
+    );
+    expect(view.getByRole('button', { name: policy.acceptLabel })).toBeDisabled();
+    expect(view.getByText('尚未确认阅读当前版本')).toBeTruthy();
+  });
+
   it('keeps reply target before the single virtualized code owner', async () => {
     const codeLines = Array.from(
       { length: 52 },
@@ -2074,12 +2109,12 @@ describe('Topic real child components', () => {
     );
     const view = await render(host(false, false));
     const backdrop = () => view.getByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true });
-    expect(backdrop()).toHaveProp('pointerEvents', 'none');
+    expect(view.queryByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true })).toBeNull();
     await view.rerender(host(false, true));
-    expect(backdrop()).toHaveProp('pointerEvents', 'none');
-    expect(backdrop()).toHaveProp('importantForAccessibility', 'no-hide-descendants');
+    expect(view.queryByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true })).toBeNull();
     await view.rerender(host(true, true));
     expect(backdrop()).toHaveProp('pointerEvents', 'auto');
+    expect(backdrop()).toHaveProp('importantForAccessibility', 'no-hide-descendants');
     await view.rerender(host(false, true));
     expect(backdrop()).toHaveProp('pointerEvents', 'none');
     expect(view.getByText('保留的草稿', { includeHiddenElements: true })).toBeTruthy();

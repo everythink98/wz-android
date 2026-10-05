@@ -93,7 +93,7 @@ const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const NODESEEK_READ_TIMEOUT_MS = 30000;
 
-interface NodeSeekOptions {
+export interface NodeSeekOptions {
   authenticated?: boolean;
   fetcher?: Fetcher;
   nodeSeekUserAgent?: string;
@@ -194,7 +194,7 @@ function nodeSeekCloudflareError() {
   });
 }
 
-async function fetchNodeSeekTextResult(
+export async function fetchNodeSeekTextResult(
   path: string,
   options: NodeSeekOptions = {},
   requestHeaders: Record<string, string> = {},
@@ -238,7 +238,7 @@ async function fetchNodeSeekTextResult(
   return { pageDocument, response, responseUrl: response.url, text };
 }
 
-async function fetchNodeSeekJson(
+export async function fetchNodeSeekJson(
   path: string,
   options: NodeSeekOptions = {},
   requestHeaders: Record<string, string> = {}

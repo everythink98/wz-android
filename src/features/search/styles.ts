@@ -1,8 +1,7 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
 
-export function createSearchStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createSearchStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const radiusSm = 10;
   const radiusMd = 14;

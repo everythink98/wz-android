@@ -173,6 +173,23 @@ describe('production data stress (host SQLite timings, not Android frame or brid
         await measure(`reader.first-page.${collection}.${count}`, () =>
           store.queryReaderPage({ ...request, after: undefined })
         );
+        if (collection !== 'followedUsers') {
+          const categories = await measure(`reader.categories.${collection}.${count}`, () =>
+            store.queryReaderCategories({ collection, sources: sourceValues })
+          );
+          const expectedCategories = sourceValues
+            .toSorted()
+            .flatMap((source) =>
+              ['0', '1', '2']
+                .filter((id) =>
+                  records.some(
+                    (record) => 'topic' in record && record.topic.source === source && record.topic.categoryId === id
+                  )
+                )
+                .map((id) => ({ source, id, name: `分区 ${id}` }))
+            );
+          expect(categories).toEqual(expectedCategories);
+        }
       }
       for (const source of sourceValues) {
         const filtered = await measure(`reader.filter.${source}.${count}`, () =>

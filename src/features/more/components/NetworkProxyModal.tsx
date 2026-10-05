@@ -1,6 +1,6 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { MoreStyles } from '../styles';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -118,6 +118,9 @@ export function NetworkProxyModal({
   const [pendingEnabled, setPendingEnabled] = useState<boolean | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draftKeyboardInset, setDraftKeyboardInset] = useState(0);
+  const opening = useMemo(() => (visible ? {} : null), [visible]);
+  const activeOpening = useRef(opening);
+  const activeTask = useRef<object | null>(null);
   const draftProfile = useMemo(() => profileFromDraft(draft), [draft]);
   const errors = useMemo(() => validateNetworkProxyProfile(draftProfile), [draftProfile]);
   const visibleErrors = submitted ? errors : {};
@@ -130,6 +133,14 @@ export function NetworkProxyModal({
   const accentBorderColor = theme.line;
   const cardColor = theme.surface;
   const pageColor = theme.background;
+
+  useLayoutEffect(() => {
+    activeOpening.current = opening;
+    return () => {
+      activeOpening.current = null;
+      activeTask.current = null;
+    };
+  }, [opening]);
 
   useEffect(() => {
     if (!visible) {
@@ -173,17 +184,24 @@ export function NetworkProxyModal({
   }, [proxyState.profiles]);
 
   const executeProxyTask = async <T,>(task: () => Promise<T>) => {
-    if (busy) {
-      return { ok: false } as const;
+    if (!opening || activeOpening.current !== opening || activeTask.current) {
+      return null;
     }
+    const request = {};
+    activeTask.current = request;
     setBusy(true);
     try {
-      return { ok: true, value: await task() } as const;
+      const value = await task();
+      return activeTask.current === request ? ({ ok: true, value } as const) : null;
     } catch (error) {
+      if (activeTask.current !== request) return null;
       Alert.alert('服务器代理', errorMessage(error));
       return { ok: false } as const;
     } finally {
-      setBusy(false);
+      if (activeTask.current === request) {
+        activeTask.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -204,7 +222,7 @@ export function NetworkProxyModal({
       return;
     }
     const result = await executeProxyTask(() => onUpsertProfile(draftProfile));
-    if (!result.ok) {
+    if (!result?.ok) {
       return;
     }
     setTestResults((current) => {
@@ -252,9 +270,11 @@ export function NetworkProxyModal({
       await executeProxyTask(() => onSetEnabled(enabled));
       return;
     }
-    setPendingEnabled(enabled);
-    const result = await executeProxyTask(() => onSetEnabled(enabled));
-    if (!result.ok) {
+    const result = await executeProxyTask(() => {
+      setPendingEnabled(enabled);
+      return onSetEnabled(enabled);
+    });
+    if (result && !result.ok) {
       setPendingEnabled(null);
     }
   };
@@ -263,18 +283,18 @@ export function NetworkProxyModal({
     if (busy) {
       return;
     }
-    setTestingId(profile.id);
-    try {
-      const result = await executeProxyTask(() => onTestProfile(profile));
-      if (result.ok) {
-        setTestResults((current) => ({
-          ...current,
-          [profile.id]: `${result.value.latencyMs} ms`
-        }));
-      }
-    } finally {
-      setTestingId(null);
+    const result = await executeProxyTask(() => {
+      setTestingId(profile.id);
+      return onTestProfile(profile);
+    });
+    if (!result) return;
+    if (result.ok) {
+      setTestResults((current) => ({
+        ...current,
+        [profile.id]: `${result.value.latencyMs} ms`
+      }));
     }
+    setTestingId(null);
   };
 
   const deleteSelectedProfiles = () => {
@@ -289,7 +309,7 @@ export function NetworkProxyModal({
               await onDeleteProfile(id);
             }
           });
-          if (result.ok) {
+          if (result?.ok) {
             setSelectedIds([]);
           }
         }

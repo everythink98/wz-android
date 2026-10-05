@@ -1,5 +1,314 @@
 # 回归语料库
 
+## `REG-WRITE-128` 妖火标题输入时正文工具按钮无响应
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-07`，共享 `WRITE-01` 的妖火工具切换 |
+| 历史症状与根因 | 2026-10-05 主模拟器大字号验收时，标题拥有 Gboard 输入焦点，点击表情或文字格式没有响应。标题焦点触发的 `dismissPanels` 被工具按钮当作持续禁止打开，而不是收起旧工具的指令。移除此拦截后，标题仍保留原生焦点，再次点击标题会让键盘与表情面板同时出现；只等待键盘隐藏不足以释放标题输入。 |
+| 当前 owner | `tests/ui/topic-composer/create-topic-screen.test.tsx` 持有标题进入工具、再次编辑标题收起及草稿保留；异步关闭、只读、忙碌和 Modal 接管沿用 `tests/ui/topic/yaohuo-reply-composer.test.tsx` 与现有键盘 handoff owner。 |
+| 修复与证据 | 移除持续拦截，复用宿主键盘交接并在隐藏完成后释放发起交接的标题焦点；正文发起的旧交接不会释放后来接管的标题。工具进入、元数据收起及晚到交接的负对照分别实际失败。相关两个 UI owner 110 项通过，seed 1462401415；最终标题五项行为复验通过，seed 1404170016。普通入口匹配 APK build ID `ce2cbac234f64ab1b30fd2066b6a2243` 在主 API 35、真实 Gboard 下完成标题→表情/格式→标题、正文返回、连续插入、面板滚动及浅色 100%／深色 130% 字号截图核对，为 `LIVE_PASS`；面板开启时 IME 隐藏，返回输入时面板收起，光标保留在插入后。 |
+| 验收边界 | 标题与正文协议不变；不提交合成草稿。 |
+
+## `REG-ACCOUNT-062` 关闭原站核对期间发帖规则误报页面未关闭
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-02`，共享 `WRITE-01/04/07` 的 writable session seam |
+| 历史症状与根因 | 2026-10-05 从 APP 原站关闭后，新帖显示“登录页面尚未完成，请关闭后重试”，重试规则仍失败。关闭后的自动核对仍执行，但内存认证屏障的 `reconciling` 阶段被 writable gate 当作仍打开的窗口；核对失败后屏障继续存在，无法通过发帖重试恢复。同一自动核对与显式请求共享结果时，第一个调用释放屏障还会让第二个调用误判 stale。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx` 持有关闭后等待、失败重试、未知继续阻断和重新打开时丢弃旧结果；`src/domain/session/writableSessionGate.test.ts` 保留身份和 epoch 校验。 |
+| 修复与证据 | 只在来源的窗口全部进入 `reconciling` 后等待现有核对，失败后由显式重试重新发起；打开中的窗口继续阻断，unknown 不清身份、不释放屏障。并发调用接受已由同一核对释放的屏障，替换 generation 仍失效。移除等待分支的负对照在 pending 与 failed 两种情况下均失败，Account runtime owner 55 项 `UI_PASS`。主 API 35 的最终普通入口 APK 经 APP 更多→妖火原站→关闭，立即可见自动“刷新中”，随后直接进入发帖规则正常加载，无需手动刷新账号或规则，为 `LIVE_PASS`。 |
+| 验收边界 | 不更改 Cookie、不绕过核对，也不授权真实发帖或回复。 |
+
+## `REG-WRITE-127` 妖火回复与发帖上传未使用原站默认入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-04/07`，共享 `WRITE-01` 的妖火上传入口 |
+| 历史症状与根因 | 2026-10-05 用户反馈回复和发帖图片上传失败。共享上传 helper 接入图床导航中的可选大厂图床，未使用正文旁默认上传图标。经 APP 更多进入原站，实际默认脚本 ImgBed-SHA.js 使用 `aapi.helioho.st/upload.php` 的 multipart `image`，返回 `{code:200,data:{url:URL}}`；当前原站上传后需要再点击图标插入正文。首次原生接入仍返回 403，原因是未携带浏览器自动发送的妖火 Origin；只读 GET 无 Origin／仅 Referer 为 403，带 Origin 则通过来源检查并返回方法不支持的 405。 |
+| 当前 owner | `tests/integration/image-upload.test.ts` 固定默认入口、文件大小、单次 multipart、响应确认、拒绝不重传及无效文件拦截；`src/features/topic-composer/topicCreationActions.test.ts` 固定新帖共用上传与 UBB；`tests/ui/topic/topic-actions-controller.test.tsx` 保持代理就绪后身份复核及图床失败不退出妖火会话。 |
+| 修复与证据 | 共用原站默认通道及 Origin 并自动插入 UBB，缺少选择器元数据时读取本地大小。默认入口协议 oracle 修前 4 项失败，Origin oracle 修前 2 项失败，修后相关 69 项 `UNIT_PASS`。授权的原站合成 PNG 单次上传返回 HTTP 200 与嵌套图片地址，再点插入成功。最终普通入口 APK 在主 API 35 的原生发帖与回复入口分别从系统选择器上传同一合成 PNG，均成功自动插入 `[img]` 链接；新帖记录显示已上传，忙碌结束后工具恢复。两处为 `LIVE_PASS`，测试正文与新帖上传记录已逐项移出，未发送或发布。表情选择器实际显示 GIF、连续选择保持面板，回复仍使用独立表情字段，新帖仍插入 UBB；移除预览和光标恢复的负对照实际失败。最终模拟器 APK 同签名覆盖安装与冷启动为 `APK_SANITY`，首次安装时间保持 `2026-07-26 16:51:37`。 |
+| 验收边界 | 用户持续授权合成纯色 PNG 上传验证，只核对上传与插入；不发送回复或发布帖子。同份源码的签名 ARM64 测试 APK 通过生产签名、ABI、16 KiB 对齐、Hermes 包内代码、source map 与 SHA-256 核验，为 `STATIC_PASS`；物理设备与真实发布仍为 `NOT_VERIFIED`。 |
+
+## `REG-WRITE-126` 表情固定分类栏漏图且半屏只剩一排图片
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/02/04/05/07`、`NOTIFY-02` 的 StructuredReplyComposer 共享 seam |
+| 历史症状与根因 | 2026-10-05 用户在主模拟器指出吸附效果与半屏空间不合理。截图显示图片从滚动区顶部 padding 穿到分类栏上方；半屏正文空区与工具、发送栏继续占高，表情 body 仅 107.5 CSS px，分类又占 50px。此前仅核对分类顶部坐标，缺少完整画面与可选行数 oracle，因此没有发现该逃逸。全屏把空余编辑区全部铺为图片也没有必要。模式切换时先聚焦被隐藏的正文，真实 IME 已出现而面板仍保留。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts` 合并固定分类、回顶、缓存、加载反馈与聚焦交接，相应布局、模式切换及初始 busy oracle 修前失败。`tests/ui/topic/structured-reply-composer.test.tsx` 独立证明 Native 控件收起与恢复且不强制全屏、不重建文档。`scripts/composer-expression-geometry.mjs` 以真实 DOM 尺寸、hit test、未加载图片的可见占位和 Native IME 边界检查可选完整行、漏图、固定栏、正文预览和遮挡，`scripts/run-composer-device-proof.mjs` 持有设备矩阵与截图。 |
+| 修复与证据 | 分类/搜索移出图片 scroller 并与关闭按钮共用 header；短窗口让选择器占用正文区域，长窗口限高并保留上方正文，模式切换先关闭面板。初版选择后恢复正文焦点；后续按用户要求改为连续插入，保留面板与现有焦点，显式关闭后才结束选择。初次加载与重试有固定尺寸占位，保留既有懒加载、缓存及失败退避。初版 Runtime/Bridge/tooling 177 项 `UNIT_PASS`，宿主/键盘及提交/私信 route 278 项 `UI_PASS`，typecheck、lint、格式、625 模块架构检查与文档门禁为 `STATIC_PASS`。 |
+| L 站样式与连续选择验收 | 2026-10-05 真机截图反馈后，L 站改为 32px 纯图标、至少 48px 触控格子，移除截断的英文标题；搜索栏沿主题使用浅底、单层焦点边框，失败重试保持格子高度。连续插入 oracle 修前 4 项失败，修后两站 × 两种编辑模式 × 回复/发帖/私信意图保留面板、查询、滚动、焦点并正确序列化；相关 Runtime/Bridge/tooling 181 项 `UNIT_PASS`，宿主与键盘 111 项 `UI_PASS`。普通入口匹配 APK build ID `8d76224b008246dcb55464982bf867ed` 覆盖安装通过 `APK_SANITY`、首次安装时间不变；主 API 35 的 L 回复富文本/源码 × 半屏/全屏 × 真实搜索 IME 开关、深色 130% 字号下两种模式搜索、连续点选、滚动固定栏和关闭重开均为只读 `LIVE_PASS`，截图人工检查，显示设置与空草稿已恢复。发帖入口规则读取转到 CDK 登录页，取消后表情目录仍在读取，只核对面板边界，完整发帖表情链路为 `BLOCKED_BY_ENV`；真实私信入口、物理设备、真实发布/发送与未运行的隔离组合为 `NOT_VERIFIED`。 |
+| 设备范围与限制 | 普通入口 APK 在主 API 35 验收两站回复的富文本/源码、半屏/全屏、分类滚动与回顶、关闭重开、模式交接；半屏有 3～4 排完整可选图片，长窗口保留正文，L 搜索的真实 Gboard 上方仍有多排完整图片。NS 短窗口和 L 发帖搜索也分别实查，显示设置已恢复。最终 APK SHA-256 `43c0b8b97191123eb36977bcf8f5f3216afae4d4681e69ffe9cdbd960e5ebe1d` 同签名覆盖安装，首次安装时间不变；最终包又复验两站半屏/全屏、NS 选择后键盘恢复及 L 半屏/全屏搜索；主设备 App 内深色、130% 字号下，两站富文本/源码 × 半屏/全屏和 L 搜索分别通过，已恢复浅色、100% 字号及原编辑模式。受控延迟下占位实际可见，恢复网络后同分类 49 张 Fluent 加载完成，无需切 Tab，诊断设置已撤销。截图人工核对；部分早期 AX 读取失败的步骤仅记 DOM 与人工图像证据，未冒充 Native bounds 自动通过。上述只读范围为 `LIVE_PASS`。按用户要求关闭全部模拟器后只重开主设备；隔离矩阵中止，未报告完整 `DEVICE_REPLAY_PASS`。真实私信入口、真实发布/发送、物理设备及未运行的隔离组合仍为 `NOT_VERIFIED`；自然发生的间歇空白根因边界沿用 `REG-WRITE-125`。 |
+
+## `REG-NOTIFY-084` 妖火新版信箱无法解析
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/03`，共享 `NOTIFY-02` 的已读核对 |
+| 历史症状与根因 | 2026-10-04 用户报告消息页顶部报错。主登录模拟器实际显示“妖火消息列表格式不正确”；同一 App 原站 WebView 的信箱可读。原站收件箱已改为 `.msglist-rows .msglist-row`，旧 parser 仅寻找 `.listmms`，因此把有效消息页当作异常。未读改由 `is-unread` 表示，时间在 `.msglist-time[title]`，发送者与 UID 是独立字段。 |
+| 当前 owner | `src/sources/yaohuo/notifications.test.ts` 从当前原站结构建立脱敏 fixture，普通/仅未读两项修前均报同一格式错误，修后通过；相对时间、身份、分页、部分损坏、后台扫描预算与已读核对沿用同一 owner。后台组合输入同步到 `tests/ui/notifications/notifications-performance-stress.test.tsx`，不保留旧收件箱解析分支。 |
+| 修复与证据 | 新版字段直接映射现有通知模型，保留解析质量、来源隔离和原页核对；消息来源与 gateway 73 项 `UNIT_PASS`，相关 UI 296 项 `UI_PASS`，typecheck 为 `STATIC_PASS`。正常入口开发签名 APK 覆盖安装后，主 API 35 的真实收件箱 4 条、系统 3 条、聊天 1 条及仅未读空态均无格式错误，为 `LIVE_PASS`。未执行真实已读或回复写入，实际写后核对仍为 `NOT_VERIFIED`。 |
+
+## `REG-WRITE-124` 回复表情面板与键盘同时挤占正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/04/05`、`NOTIFY-02`，共享 `WRITE-02/07` 的编辑器 |
+| 历史症状与根因 | 2026-10-04 用户报告选表情后点正文弹起输入法，操作区域被压得很小。正文 focusin 只为主题编辑器关闭工具面板，回复与私信没有该交接，导致表情面板保留并继续占据高度。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts` 使用真实 runtime DOM 验证 NodeSeek/linux.do × 富文本/源码 × 回复/私信的正文聚焦、面板关闭和图片/滚动缓存保留，四项参数用例修前均失败。同一 owner 覆盖 NodeSeek 回复、私信与主题的分类吸附、切换回顶、重复点击保位及成功图片复用；切换回顶的三项 oracle 修前均失败。 |
+| 修复与证据 | 把正文聚焦交接扩展到回复/私信的表情面板，继续沿用主题编辑器的既有行为；只关闭对应工具层，不重建表情目录或改稿。切换到其他分类显式回顶。编辑器 149 项 `UNIT_PASS`，相关 UI 296 项 `UI_PASS`，typecheck 为 `STATIC_PASS`。主 API 35 匹配 APK 中，NodeSeek 普通回复富文本/源码点正文均关闭表情并显示真实 IME；滚动、回顶与成功图片节点复用得到验证。原“吸附”证据仅核对顶部坐标，未证明遮挡或选择空间，其逃逸及更强 owner 见 `REG-WRITE-126`；旧结果不外推 linux.do、私信真实入口或物理设备。 |
+
+## `REG-WRITE-125` 新编辑器绕过表情图片资源缓存
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/02/04/05/07`、`NOTIFY-02` 的 StructuredReplyComposer 共享 seam |
+| 历史症状与根因 | 2026-10-04 用户要求核对表情图片缓存。当前 runtime 已保留同一面板的成功图片节点，但宿主 WebView 显式传入 cacheEnabled=false；本机 react-native-webview Android 实现将其映射到 LOAD_NO_CACHE，新建编辑器绕过已存储资源。同一面板复用不能证明 HTTP 缓存生效，也不能据此认定用户最初必须切 Tab 的间歇空白已复现。 |
+| 当前 owner | `tests/ui/topic/structured-reply-composer.test.tsx` 沿用既有共享登录态保护 owner，核对启用资源缓存且不使用 incognito；修前期望 true 实得 false，seed 1134769099。runtime 的懒加载、失败退避、取消等待、旧回调和成功节点复用由 `src/ui/composer/editorRuntime.test.ts` 持有。 |
+| 修复与证据 | 显式启用默认 WebView HTTP 资源缓存，遵循原站缓存响应头；保持内联文档和 bridge 的生命周期。宿主 64 项 `UI_PASS`，runtime 149 项 `UNIT_PASS`，typecheck、定向 lint/格式及架构检查为 `STATIC_PASS`。正常入口开发签名 APK 在两个不同 NodeSeek 主题新建的编辑器中，各 149 张 AC 娘加载成功、148 张被 CDP 标记为 fromDiskCache，未打开分类仍有 0 个 img[src]。同包首次贴纸请求被阻断后显示失败，恢复请求后在原分类自动显示成功，其他 148 张命中磁盘缓存。覆盖安装及保留数据冷重启后的 firstInstallTime 与 3/3 登录态不变；受控故障注入已撤销。自然发生的首次空白仍未复现，保留 `NOT_VERIFIED`，不把缓存修正等同于原间歇故障的根因。 |
+
+## `REG-TOPIC-186` 旧图片下拉关闭回调误关重新打开的预览
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`，共享 `TOPIC-01/03`、`NOTIFY-02` |
+| 历史症状与根因 | 2026-10-03 连续操作审计复现：下拉关闭已排队到 RN，用户先用 Back 关闭旧预览并重新打开图片，旧回调随后直接调用共享 onClose，把新预览关闭。回调未核对原内容实例是否仍挂载。 |
+| 当前 owner | `tests/ui/topic/image-preview.test.tsx` 延迟实际手势的 scheduleOnRN 回执，通过关闭和重开按钮复现，缺陷用例先红后绿；新预览连续两次下拉只排队一次关闭。与 `tests/ui/topic/topic-image-loading.test.tsx` 合计 185 项通过，seed `20261004`。 |
+| 修复与边界 | `ImagePreviewModal` 复用已有 mountedRef，由同一 closePreview 收口下拉、系统返回及关闭按钮，拒绝旧实例回执。竞态为 `UI_PASS`；匹配源码 APK 上放大平移、短下拉取消、长下拉关闭、Back 后打开另一图及按钮关闭为 `LIVE_PASS`，退出前后正文截图 hash 相同。原生跨线程竞态发生频率未验证，未执行保存。 |
+
+## `REG-NOTIFY-083` 返回消息页后重试被旧账号核对忙态拦截
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01` |
+| 历史症状与根因 | 2026-10-03 连续操作审计复现：普通重试等待账号核对时离开消息页，返回后再次点击可见重试，核对入口预期 2 次、实际仅 1 次。生命周期清理取消恢复意图，却留下独立 recoveryBusyRef，直到旧 Promise 结束才允许新点击。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` 经真实 Navigation、Query 与 gateway 验证失焦返回后接管，共享同一个账号核对 Promise，并验证旧核对结束、新读取仍在途时连续点击不重复发起；新增用例先红后绿。四个通知 UI owners 共 237 项通过，seed `410031`。 |
+| 修复与边界 | controller 与 pending 归同一恢复请求记录，取消后可立即重试，finally 只处理所属记录；保留验证页面返回后的恢复回调及离页失效，不取消共享账号核对。竞态证据为 `UI_PASS`；匹配源码 APK 上聚合列表、下拉后页签往返可继续读取和操作。真实错误恢复及写入未验证，不以普通成功列表替代该证据。 |
+
+## `REG-WRITE-123` 源码编辑器没有可访问名称
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/02/05/07`，共享 `NOTIFY-02` |
+| 历史症状与根因 | 2026-10-03 旧 APK 的 NodeSeek 空发帖切到源码后，原生无障碍树中输入区可聚焦、可编辑，却没有 label。CodeMirror 未设置 contentAttributes 名称；同实例切换新文档且 Markdown 同为空时，也没有内容更新来刷新用途名称。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts` 使用真实 CodeMirror contentDOM，覆盖 linux.do、NodeSeek 的新帖、主帖编辑、回复与私信，以及模式切换和新空文档初始化。8 项名称 oracle 修前均得到 null，修后通过；完整 owner 132 项通过，seed `20261004`。 |
+| 修复与边界 | `src/ui/composer/editorRuntime.tsx` 按当前用途提供“主题正文源码编辑器”或“回复正文源码编辑器”，初始化新文档时刷新属性，保留输入实例、多行编辑及隐藏模式边界。`UNIT_PASS`；匹配源码 APK 的 NodeSeek 新帖经实际模式切换，运行中 WebView DOM 和 Chromium AX 均确认该名称、textbox、多行、可编辑及焦点，隐藏富文本不暴露。agent-device 0.20.6 未采集原生 hintText，其 snapshot 仍仅显示换行值，不能据此判断名称缺失。该引擎范围为 `LIVE_PASS`；原生 hintText 和 TalkBack 朗读未验证，未发送正文。 |
+
+## `REG-NAV-009` 返回主题时自动重现离页前的临时菜单
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-03`，共享 `TOPIC-01/03` |
+| 历史症状与根因 | 2026-10-03 旧 APK 打开主题更多菜单后通过 warm deep link 进入另一主题，新主题正常且无遮挡，Back 返回原主题却自动重现旧菜单。TopicScreen 和 TopicContentList 保留临时菜单开关，路由失活时未清除；回复排序菜单存在同一缺口。 |
+| 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx` 挂载真实菜单，验证更多/回复排序在 active false→true 后保持关闭，作者筛选、倒序和滚动调用数不变，手动重开正常。seed `310037` 两例先红后绿；四个相关 UI owners 229 项通过，seed `650318754`；最终 canonical owner 154 项通过，seed `2112655349`。 |
+| 修复与边界 | 两个菜单以 active 控制显示并在失活时清除临时开关，后台同样关闭；不重置回复顺序、筛选与阅读位置。`UI_PASS`；匹配源码 APK 上更多菜单与回复排序菜单分别经过 warm deep link → 另一主题 → Back，返回后均保持关闭。回复排序另经 Home → 前台复验，倒序、只看楼主和当前回复位置保留，手动重开正常；此原生范围为 `LIVE_PASS`。 |
+
+## `REG-SEARCH-037` 收起数字键盘后高级筛选跳回顶部
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-03` |
+| 历史症状与根因 | 2026-10-03 在真实 Gboard 下两次复现：linux.do 筛选滚到帖子数输入框，系统 Back 收键盘后回到排序区域。Android KAV 为清除残余补偿重建子树，Sheet 保留展开与草稿，却未保留原生 ScrollView 偏移。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` 沿用展开/草稿 owner，真实 keyboardDidHide 后原生起始偏移期望 640、旧实现为 0，seed `20261003` 先红后绿；包含连续两轮、普通输入不控制滚动和取消重开归零。 |
+| 修复与边界 | Sheet 记录偏移，局部滚动容器仅在每次挂载时提供该起始值；保留既有 KAV 清补偿逻辑。`UI_PASS`；匹配源码 APK 上真实 Gboard 连续两轮开合保留字段位置与草稿，取消重开回顶部；四个过渡窗口的 169 个编码帧未见回顶再拉回，不推断未编码合成帧。 |
+
+## `REG-SEARCH-038` 候选数量变化让搜索输入框上下跳动
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-03` |
+| 历史症状与根因 | 2026-10-03 真实标签搜索中，多条结果 → 空态 → 5 条结果让输入框随面板高度大幅下移再上移。底部面板按内容自适应，候选 ScrollView 只有 maxHeight，加载、空态与结果高度直接影响输入入口位置。作者候选共用相同结构。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` 的标签/作者参数化用例固定稳定理想高度、可收缩、输入实例与操作可用，覆盖加载、空态/失败及少量结果；seed `20261003` 两例先红后绿。 |
+| 修复与边界 | 标签与作者候选保留相同理想高度并允许 flexShrink，键盘可压缩列表，分类与主筛选保持原高度策略。`UI_PASS`；匹配源码 APK 上真实来源标签三态、作者两态的输入框 rect 均为 `(42,465,996,111)`，标签完成按钮位置不变且键盘打开时一次点击可关闭候选。此设备为 1080×2400，不推断其他尺寸。 |
+
+## `REG-MORE-010` 外观收起提前卸载正文打断高度过渡
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-03`，共享 `ExpandableContent` |
+| 历史症状与根因 | 2026-10-03 原生录像中，展开渐进，而收起时设置整块消失、留一帧空白，下一编码帧“关于”直接跳上。AppearancePanel 在外层开始收起时卸载设置，把用于动画的完整测量高度提前缩为 padding。录像为可变帧率，不将编码帧等同所有合成帧。 |
+| 当前 owner | `tests/ui/more/more-screen.test.tsx` 从 MoreScreen 真实开关验证完整测量内容、无障碍隐藏及禁用命中、未提交字号预览丢弃、已提交设置保留；seed `310035` 先红后绿。后续沿同一 owner 补充开合保留原生 Slider 实例、隐藏期间拒绝迟到事件，seed `310036` 先红后绿。相关四个 UI owners 共 52 项通过，随机 seed `1560891448`。 |
+| 修复与边界 | 外层测量、动画和内部原生控件实例保持；展开态变化显式重置未提交字号预览，隐藏时拒绝滑块修改与提交，避免重建控件首帧绘制不全。`UI_PASS`，`more-readonly.ad` 为 `DEVICE_REPLAY_PASS`；匹配源码 APK 的首次展开、两次收起共 58 个编码帧中 About 连续移动，未再录到滑块错位或半绘，不推断未编码合成帧或其他设备。 |
+
+## `REG-NAV-008` 回收主题卡片的首次点击被旧主题门禁拦截
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-02/03`，共享 `FEED-03`、`SEARCH-02`、`LIBRARY-01/03`、`USER-01` |
+| 历史症状与根因 | 2026-10-03 连续操作审计复现：点击主题后，列表在 500ms 内将同一 TopicCard 实例绑定到另一个主题，新主题首击被旧时间戳拦截。原门禁只记录实例的最近点击时间，未记录来源与主题 ID。 |
+| 当前 owner | `tests/ui/shared/topic-card.test.tsx` 固定同实例换 ID、换来源后的首击，以及同主题等价 payload 仍受门禁限制；seed `310031` 两个缺陷用例先红后绿，三项相关用例通过。 |
+| 修复与边界 | 门禁同时比较 `topicKey` 与时间，保持原 500ms 窗口；新主题立即可打开，同主题连点仍只打开一次。证据为 `UI_PASS`，沿用共享卡片 owner。 |
+
+## `REG-NOTIFY-081` 新页显示前旧触底回调提前读取下一页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01` |
+| 历史症状与根因 | 2026-10-03 连续操作审计复现：第二页已写入 Query 缓存，但列表尚未提交新数据，旧触底回调看到请求已结束，继续读取第三页。单站与聚合入口都只检查请求方向，未确认新页已显示。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` 经真实 Query、gateway 与 adapter 固定缓存先结算、列表后提交的时序；单站与聚合两例先红后绿，并验证第二页提交后的真实触底正常读取第三页。seed `310031`，通知四个 UI owners 共 236 项通过。 |
+| 修复与边界 | 只有当前缓存与列表已显示的 Query snapshot 一致才接受续页；保留分页接替后台刷新、手动刷新优先和失败重试语义，不增加时间延迟。证据为 `UI_PASS`。 |
+
+## `REG-NOTIFY-082` 私信历史提交前连续点击重读同一游标
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02` |
+| 历史症状与根因 | 2026-10-03 连续操作审计复现：加载更早消息的 Promise 已成功，但 `messageHistory` 尚未提交，finally 提前释放忙态，第二次点击再次请求同一 cursor。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` 使用 Discourse HTTP fixture 与连续真实 press，固定成功未提交时不重读、提交后读取下一 cursor，以及取消后旧结果不能释放替代请求；缺陷用例先红后绿。seed `310031`，通知四个 UI owners 共 236 项通过。 |
+| 修复与边界 | 成功请求保留身份与 cursor，直到对应已消费 cursor 随历史提交后释放；失败和取消可立即重试，旧 finally 只能处理自己的请求。沿用现有会话与生命周期取消，不改变历史分页范围。证据为 `UI_PASS`。 |
+
+## `REG-SEARCH-036` 关闭默认标签候选未取消在途读取
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-03` |
+| 历史症状与根因 | 2026-10-03 连续操作审计复现：打开默认空查询的标签候选后关闭 picker，query key 保持不变，只有 enabled 变为 false，旧请求未取消；重开时复用仍在途的旧读取，未发出新的候选请求。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` 固定空查询与非空查询的关闭、取消、重开及迟到结果，另验证当前搜索页失活不取消其他来源的候选读取；seed `310031` 空查询用例先红后绿，三项相关用例通过。 |
+| 修复与边界 | picker 记录自身激活的候选 query key，仅取消刚失活的 exact key；保留其他来源和其他 scope 的在途候选，重开沿新请求更新。证据为 `UI_PASS`。 |
+
+## `REG-MORE-009` 代理弹层重开后旧异步回执污染新会话
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-01` |
+| 历史症状与根因 | 2026-10-03 连续操作审计复现：代理保存尚未完成时路由失焦关闭弹层，重开并编辑新草稿后，旧 success 关闭新草稿、旧 error 弹出错误，旧 finally 还能解除新保存的忙态。原回执没有打开会话与请求身份。 |
+| 当前 owner | `tests/ui/more/network-proxy-modal.test.tsx` 固定旧保存成功、失败以及新旧保存交错，seed `310031` 三例先红后绿；完整 owner 13 项通过，随机 seed `621762564`。 |
+| 修复与边界 | 每次打开与每个异步操作持有独立身份，只有当前请求可更新 UI；忙态拒绝的操作不显示虚假进度。只隔离回执，不取消用户已经授权的底层保存、代理切换或连通性测试。证据为 `UI_PASS`。 |
+
+## `REG-FEED-038` 快速反向滚动后悬浮操作保持旧显隐
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02`、`WRITE-07`，共享 `TOPIC-03`、`WRITE-01` |
+| 历史症状与根因 | 2026-10-03 交互审计复现：同一次 React 提交前下滑再上滑，或上滑再下滑，共享显隐 hook 用旧闭包的 visible 决定是否更新，吞掉最后一次方向变化，必须再滑一次才恢复。 |
+| 当前 owner | `tests/ui/feed/feed-screen.test.tsx` 的连续反向滚动 oracle 两例先红后绿，seed `1729098043`；完整 Feed 与 Topic reply-filters owners 共 195 项通过，随机 seed `-656403955`。 |
+| 修复与边界 | 每次跨过原方向阈值都提交最终显隐，由 React 合并相同值，保留阈值、动画与边界回弹规则。证据为 `UI_PASS`，不证明原生帧时或物理触感。 |
+
+## `REG-SEARCH-034` 重复点击当前来源清除分页反馈并滚回顶部
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02` |
+| 历史症状与根因 | 2026-10-03 交互审计复现：已加载第二页后点击当前来源，Screen 未判断来源是否变化，直接清除分页完成提示并发出滚顶与切站命令。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` 在既有自动分页用例中验证提示保留、零滚顶与零切站，seed `548309` 先红后绿；与搜索筛选、共享 Modal 的完整回归共 56 项通过，随机 seed `-1660892964`。 |
+| 修复与边界 | 当前来源点击直接返回，真正切站、提交搜索与确认筛选保持原行为。证据为 `UI_PASS`；本轮模拟器存在安装元数据但 `pm path` 为空，已停止安装，设备滚动验收为 `BLOCKED_BY_ENV`。 |
+
+## `REG-SEARCH-035` 收键盘导致高级筛选意外折叠
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-03` |
+| 历史症状与根因 | 2026-10-03 交互审计复现：Android keyboardDidHide 为释放旧避让几何而重建 Modal 内部容器，SearchFilterForm 本地持有的 V2EX/linux.do 更多筛选展开态随之丢失，刚输入的字段突然隐藏。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` 经真实页面与 Keyboard 事件，验证两站连续两轮收键盘后展开态与输入保留；两例先红后绿，seed `31003`。搜索与共享 Modal owners 共 56 项通过，随机 seed `-1660892964`。 |
+| 修复与边界 | 展开态归 Sheet 持有，Form 受控展示；保留既有 KAV 重建与取消、重开、重置事务。证据为 `UI_PASS`；首轮隔离设备安装身份异常后停止变更，该设备仍为 `BLOCKED_BY_ENV`。 |
+| 后续设备证据 | 2026-10-03 主登录态 `WZ_Pixel_API_35` 的旧包实际复现 V2EX 收键盘后折叠；当前源码 Release 测试包覆盖安装后，版本 `1.3.150/154`、签名和首次安装时间保持，APK SHA-256 为 `0a5f9885a41185b3bbc87f1c07dcc72bbec3e68e28ca628a27c63dcfd859e6fa`。`tests/device/search-multi-source.ad` 两轮输入、dismiss、草稿保留与取消取得 `DEVICE_REPLAY_PASS`；另用真实 Gboard 与系统 Back 连续两轮确认展开态和输入保留。Replay 的 headless IME 与真实键盘证据分别保存；linux.do 原生键盘、逐帧动画几何及物理设备仍为 `NOT_VERIFIED`，未执行远端写入。 |
+
+## `REG-PERF-032` 无监听 SVG 布局事件重复应用原生动画属性
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02`、`NAV-01`，共享 Reanimated 事件分发 |
+| 历史症状与根因 | 2026-10-03 原生取证确认 NodesManager 的 UI 线程事件分支没有检查监听者，每个 topSvgLayout 都触发 draw-pass nonLayout flush。三次新进程 Search 首次挂载各 146 个无监听布局事件，让同一个仍存在的原生视图被同步应用属性 146 次；不是失效 tag 异常，也不是 React 同一图标重复提交。 |
+| 当前 owner | `patches/react-native-reanimated+4.5.1.patch` 在 UI 事件入口跳过无监听事件，C++ handler 查询同时覆盖指定 tag 与无 tag 全局监听，并沿用 registry mutex。DrawPassDetector 的初始化与 decor 迁移保持在过滤前，避免无先前 RAF 时错过首个 draw；实际 NodesManager JVM oracle 对此先红后绿。`tests/tooling/patch-artifacts.test.ts` 承接真实补丁可逆应用，`dev/reanimated-events-proof/index.tsx` 承接实际 Native scroll、动态全局 handler 与 RAF 行为；操作入口在 `docs/operator-runbook.md`。 |
+| 修复与证据 | 修后私有计数包三次新进程仍各收到 146 个 SVG 事件，但 nonLayout、sync batch、registry visit 和 native apply 均为 0。真实 Release/Hermes 专项完成 10 个 Native RAF，tagged scroll 持续响应；全局 SVG hook 注册后计数 0→12、注销再挂载保持 12、再注册增至 24、再次注销后保持 24。诊断计数完全撤回，正式补丁不携带探针。 |
+| 边界 | 仅关闭确定的重复同步工作；取证时仍有原生创建、GPU 与系统调度慢帧，计数包且存在并行工作负载，不能把本条当作 `REG-PERF-029` 的冷首挂载性能通过，也不承诺所有物理设备无卡顿。 |
+
+## `REG-FEED-037` 首页快速失败或取消后无法继续同页分页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02`，共享 `NAV-01` |
+| 历史症状与根因 | 2026-10-03 从搜索同类问题展开审核，真实 Controller/Query 与延后通知复现：第二页快速失败未提交 loadingMore=true，Screen 的页锁不会释放，点击重试仍停在 [1,2]；取消还会保留旧滚动距离门槛，列表底部即使重新拖动也可能无法再跨过 80px。 |
+| 当前 owner | `tests/ui/feed/feed-screen.test.tsx` 使用真实 Controller/Query 验证快速失败后同页重试、取消后原底部位置新拖动恢复、成功先于 props 时旧动作不越页、旧来源请求结算不释放新来源锁；Feed screen、controller session 与内容源导航三个既有 owners 共 99 项通过（seed 1501544229）。 |
+| 修复与边界 | Route 保留 Promise，Screen 仅释放该次请求的锁，失败暂停自动连续请求直到新手势；新拖动清除旧距离门槛。Controller 读取当前 Query 状态及真实 page/cursor，拒绝在途或已过期的页动作；未假定后端 cursor 必须等于 page+1。2026-10-03 API 35 Release/Hermes proof `ed719688…` 经真实 FeedRoute/FlashList/gateway/parser，仅在 fetcher 注入故障：快速失败及 Native 导航取消后都得到 [1,2,2]、10→15 条唯一主题；取消发生于请求开始后 2.210 秒、abort=1，排除 5 秒聚合预算超时。设备采用只启用 NS 的“全部”列表，单站页故障及物理设备仍未验证。 |
+
+## `REG-NOTIFY-080` 普通消息图片被尺寸探测失败误判为空框
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`，共享 `TOPIC-02` 图片预览 |
+| 历史症状与根因 | 2026-10-03 主 API 35 模拟器的纯本地消息样本中，普通 PNG 在气泡中显示 alt 空框，贴纸与全屏预览能显示同一图像。独立诊断以完全相同的 data URI 对照确认：`Image.getSize` 和 `getSizeWithHeaders` 返回 `Unsupported uri scheme for encoded image fetch`，直接 RN Image 却成功绘制 960×640 位图。RenderHTML 的默认图片状态把独立尺寸探测的失败直接当成显示失败，即使 HTML 已声明尺寸、实际图片组件能够解码。 |
+| 当前 owner | `tests/ui/notifications/notifications-screen.test.tsx` 以尺寸查询拒绝但实际图片可以加载的场景先红后绿，承接真实 RenderHTML 与消息图片组件接线、小图声明尺寸、横竖比例、真实加载失败及预览期间旧 RAF 隔离。消息页面与共享预览两个 owners 共 110 项通过，seed `-2121177872`。 |
+| 修复与边界 | 普通消息图片复用 ExpoImage 的实际 onLoad 尺寸与现有媒体尺寸缓存，保留请求身份与 referrer、声明尺寸、气泡宽度限制和真实失败提示，不再以独立尺寸查询决定能否显示。主 API 35 的 fixture-v4 合成样本匹配当次 Screen，已实际显示横图与竖图，原空框消失；三图切换、缩放、预览返回锚点 523→523、联系人导航和历史 prepend 锚点 680→680 均通过。此为本地样本 DEVICE_FIXTURE_PASS，同一生成位图的诊断与修复截图分别保留。设备证据只证明上述内嵌 PNG 与当前 Android 运行时的差异，不推断所有 HTTP 图片都曾失败，也不把全屏预览成功代替气泡内显示验收。 |
+
+## `REG-NOTIFY-079` 长私信首读游标不一致且串行读取全部历史
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02` |
+| 历史症状与根因 | 2026-10-03 请求链复审通过受控 HTTP 确认：linux.do 话题首批返回 20 个帖子时，移除首帖后产生 nextPage=2、offset=19，而通用回复读取按每页 30 条校验，导致会话详情报游标与页码不一致。即使首批恰好匹配页界，详情仍沿回复游标串行抓取全部历史后才显示，任一后续失败都会使已有首批无法呈现，请求数随会话长度增长。未将合成响应认定为用户原站当次响应。 |
+| 当前 owner | `src/sources/discourseNotifications.test.ts` 先建立修前失败的长会话 HTTP oracle；修后 1001 条会话只显示最新 30 条、最多两次内容 GET，稳定 post ID 锚点在新消息追加后仍读取正确的前一批。`src/sources/notificationGateway.test.ts` 承接读取间取消、身份失效与诊断隐私；`tests/ui/notifications/notifications-route.test.tsx` 承接显式加载、失败保留、刷新权威尾段替换、未知边界重建提示和缺锚恢复。 |
+| 修复与边界 | 初次读取和每次“加载更早消息”各消费至多 30 个 stream ID，仅补取本批缺失帖子；不依赖通用回复页码，也不遍历整段会话。空或不完整 stream、已删除的锚点和不完整帖子响应明确失败，可重试或重新读取会话；原站明确删除的帖子不显示，但继续按 stream 推进。NodeSeek 与妖火保持各自已证实的会话范围，不伪造分页能力。相关 source/gateway 六个 owners 共 122 项通过，seed `1032026`；这属于受控请求 `UNIT_PASS`，不代表真实长私信 `LIVE_PASS`。 |
+| 独立布局证据 | Native prepend 合成会话样本插入更早消息前后，同一条 `031` 消息的 y 坐标均为 680，差为 0；该证据只验证已测原生布局保持位置，不证明原站历史请求、所有消息高度或最终新包已验收。 |
+
+## `REG-NOTIFY-078` 消息列表重复触底取消并重发在途分页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01` |
+| 历史症状与根因 | 2026-10-03 复查分页并发时，真实 Query/gateway 证明聚合与单站列表在 fetchingMore 尚未提交前收到两次触底，会按默认 cancelRefetch=true 取消在途请求，再请求相同 cursor；修前两项请求序列均为 [undefined,next,next]。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` 通过真实 Route、Query、gateway 和可控 adapter 检查实际 cursor、AbortSignal 与最终去重列表；修后重复分页序列均为 [undefined,next]，在途 signal 未取消。新增普通刷新冲突的单站/聚合两项先红后绿：分页取消旧刷新、next 只请求一次、旧刷新晚返回不覆盖新页；完整 owner 76 项通过（seed -1404062621）。 |
+| 修复与边界 | 自动补齐空分类页与可见列表触底共享实时 Query 请求方向判定：在途 forward 分页直接跳过重复 fetchNextPage 调用，普通后台刷新仍允许被分页接替；显式下拉刷新持有独立 request guard，分页不能取消它。复审实际 InfiniteQueryObserver 与 FlashList useBoundDetection 证明，无条件 false 会把刷新期间唯一一次触底合并掉；刷新若返回相同数据，列表的触底标记不会重置，原底部继续下拉不能加载更多。未改来源级恢复、轮询、已读或写操作；确定的重复回调时序由 UI oracle 承接，不把它当作所有原站时序均已验证。 |
+
+## `REG-PERF-031` 非视觉设置与字号中间值重复提交主题卡片
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-03`，共享 `FEED-01`、`SEARCH-02`、`TOPIC-01/04` |
+| 历史症状与根因 | 2026-10-03 复审确认 useAppTheme 依赖完整 ReaderSettings。字号 1→1.1 的 deferred 中间值提交旧字号卡片，随后再提交新字号；修改 NodeSeek 恢复阈值、内容源或传入等价设置对象，也会重建全局主题/context 并通知卡片及图标子树。 |
+| 当前 owner | 主题调色板只依赖主题模式，视觉上下文类型与值仅包含六项视觉设置，样式消费者同步收窄类型。`tests/ui/shared/topic-card.test.tsx` 的真实 hook→Provider→MemoizedTopicCard 组合先出现四个失败，修后字号只提交新值一次，无关设置与等价对象零提交；主题、字号、密度、行距、宽度、字体仍有实际样式 oracle。 |
+| 设备证据与边界 | 2026-10-03 主登录 API 35 普通 Release/Hermes 候选 `8e2ac764…` 实际切换主题、字号、行距、正文宽度、字体和密度，设置页与 Feed 均更新，随后六项设置恢复原值、登录仍为 3/3。本条关闭确定的 React 冗余传播，不把它当作全部原生慢帧的根因；Search 冷绘制与系统合成仍按 `REG-PERF-029` 独立验证。 |
+
+## `REG-SEARCH-032` 分页取消后继续滑动不再请求
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02`，共享 `NAV-01` |
+| 历史症状与根因 | 2026-10-03 排查用户报告的 NS 搜索停止续页，真实 SearchRoute/Controller/Query 复现第二页在途时失焦取消、返回后仍显示“继续下滑”但不再请求。Screen 的 pending 只在错误或页码推进时释放；Query 取消恢复原页且不产生 error，导致四站单源搜索均可能保留死锁。controller 直接返回 stale 时也没有 props 变化来释放它。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` 固定分页取消后原页重试、首屏保留、普通网络失败重试、stale/reject 结算和新旧请求交错；既有分页完成提示用例覆盖先结算后提交结果。复审新增真实 Query 通知延迟时不跨页、相同输入五次刷新不重建列表 renderer 的红绿 oracle；Controller 读取当前缓存并稳定 Query key，关闭解除互斥后暴露的两个竞态/重复渲染回归。 |
+| 修复与证据 | 每次请求只标记自身已结算，解除互斥但保留分页描述直到实际结果提交；旧请求不能修改新请求。修前 seed 1003 的取消/stale/reject 三项普通断言失败，复审新增两项也先红后绿；最终两个搜索 UI owners 共 112 项通过，seed 31008。2026-10-03 隔离 API 35 Release/Hermes 以真实 SearchRoute/native stack/FlashList 和合成 fetcher 完成实际滑动：第二页在途离开触发 abort=1，返回再滑动请求序列为 [1,2,2]，结果从 10 条增至 15 条且无重复；普通网络失败的可见重试也通过。主登录 AVD 普通候选 SHA `411dc94e…` 的真实 NS 搜索从 60 条经切页返回续载到 90 条。未取得用户原始故障响应，也未验证物理设备。 |
+| 最终包复核 | 2026-10-03 普通 Release/Hermes 包 `4526f11f…` 在主 API 35 AVD 再次完成真实 NS 搜索载入 60 条、切到 Feed、返回保留 60 条并继续载入 90 条；三站登录与原 UID、首次安装时间保持。消息列表读取及 Feed 滚动正常，观测窗口无 App crash/ANR、失效 Fabric tag 或 Reanimated 同步更新失败。全量 verify 为 237 个 Vitest 文件 3264 项、97 个 Jest suite 2246 项通过，随后末次消息分页补修的完整 76 项 owner 与 typecheck 通过；此证据不覆盖物理设备或所有冷首挂载性能。 |
+
+## `REG-SEARCH-033` NodeSeek 异常搜索响应被当作成功终页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02/04` |
+| 历史症状与根因 | 同次排查发现 HTTP 200 的空响应或错误 HTML 被接受为成功空结果，并返回 hasMore=false/nextPage=null。旧完整性检查只拒绝缺少结果面的搜索表单，且把任意 alert/notice 当作合法结果面。此缺陷通过故障注入确认，未取得用户当次原站响应，不认定为该次现场的唯一原因。 |
+| 当前 owner | 扩展 `tests/integration/source-read-contracts/nodeseek.test.ts` 的未完成页面 owner，经过真实 searchTopics/reader/parser 验证失败后同页重试，保留正式空列表、empty-state、embedded 空数组和旧页面壳的兼容对照。复审发现 embedded 正则的最小长度还会排除合法短空数组，移除任意长度门槛并保留 JSON/字段验证；script 与 data 属性中的三种最小空数组共六项先红后绿，NS 合同与来源共 340 项通过（seed 31009）。 |
+| 修复与证据 | 无合法结果面或结果数组时抛可重试错误；通用错误提示不能确认空结果或选用旧 embedded 数据。修前 seed 31004 的四个异常响应断言因错误 resolve 转红；修后来源、gateway 与列表相关 229 项通过，随机 seed 1790957500988。2026-10-03 隔离 API 35 Release/Hermes 的真实搜索链路分别注入 HTTP 200 空 body 与独立 alert 错误：实际滑动后保留首屏 10 条、显示重试入口，点击后请求序列 [1,2,2] 并得到 15 条，Query 错误清除。注入只替换 fetcher，经过真实 gateway/reader/parser；不把合成响应当作原站现场证据。错误提示与空 post-list 并存的页面仍遵循既有结果容器优先规则，未证明任意错误 HTML 都能识别；物理设备与原站实际异常仍未验证。 |
+
 ## `REG-TOPIC-183` 视频行在全屏启动期间回收导致原生页面退出
 
 | 字段 | 内容 |
@@ -26,6 +335,8 @@
 | `RESOLVED` | 当前契约已有 canonical owner，并达到该条目的关闭条件；历史事故不再决定测试结构，也不代表所有设备和真实来源分支都已验证。 |
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
+
+未闭合条目的“当前结论”区分“仍有残余失败”“原始症状待定位”和“已确认缺陷已有修复，待验收”。事故状态不等同于代码修复进度：已有修复但未达到关闭条件的条目继续保留原状态，在[待处理清单](code-cleanup-map.md)中单列验收工作。历史症状没有新的复现或归因证据时，不直接当作当前版本仍有同一缺陷。
 
 ## 环境反例：2026-09-20 CF 验证与上报出口不一致
 
@@ -141,6 +452,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 当前结论 | 已移除两处 IME 干预，原始语音症状待用户真机复测。2026-10-04 用户明确要求本轮先不测试，之后自行在真机验证；保留 `EVIDENCE_GAP`，不把模拟器键入或用户记忆写成语音通过。 |
 | 能力 ID | `WRITE-01`、`NOTIFY-02` |
 | 历史症状与根因 | 用户报告妖火语音输入只能进入第一个字，逐字键入正常。共享原生输入器同时存在正文变化后回写受控选区、`keyboardDidHide` 无条件 `blur()` 两处干预 IME 的路径；具体输入法、事件顺序与物理设备语音尚未复验，未确认哪条路径导致原始症状。 |
 | 当前 owner | `tests/ui/topic/yaohuo-reply-composer.test.tsx`；主题回复与妖火纯文本私信共用 `src/ui/composer/YaohuoReplyComposer.tsx`。 |
@@ -324,6 +636,8 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 本轮指定视频播放/跳转与音频短时播放/暂停跳转未复现数秒停顿；原始偶发症状和完整来源矩阵仍未闭合。 |
+| 2026-10-04 复核 | 普通 Release 1.3.150/154：妖火 bbs-1581015.html 的 12 秒视频到达结尾，结束后跳至约 6 秒并继续播放，进出全屏可用；linux.do 2825663 的 #3 音频时长 4:18，采样进度 0:05/0:10/0:16/0:21，暂停后前后跳至 2:09/0:12。证据见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 video-live、video-fullscreen-seek、audio-live 录像及 audio-t*/audio-seek-* 快照。音频脚本最后一次恢复播放采样被后续打开回复的操作打断，该段不计独立通过；没有以这批短样本关闭间歇停顿，也未量化四站、完整后台返回、目标帧/AudioTrack 或物理设备。 |
 | 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03`、`NAV-03`、`ACCOUNT-01` |
 | 历史症状与根因 | 用户报告已加载视频回拖仍转圈、中央图案过大。代码确认音视频未启用磁盘缓存，视频把后续 loading 重新覆盖为首次 poster，音频缓冲时禁用暂停与 seek，ready 后没有播放阶段预算。原生 bufferedPosition 在缓冲时被报为零，播放意图与实际 playing 混用；真实来源数秒停顿的网络/解码占比尚未分离。 |
 | 处置 | 保留 Expo Video/Media3 与原生 controls，Topic 播放协调统一互斥、进度、30 秒无进展预算、暂停/后台和全屏生命周期。启用 256 MiB LRU，SHA-256 身份包含来源/会话/Referer/表示请求头且排除网络代；缓存故障允许回源。原生视频不再请求或展示 HTML poster，首次 loading 等待真实首帧，缓冲仍可控制，失败手动重试取得当前网络代。中央图形去掉实心圆；用户设备反馈后保留更易识别的 40/48dp 图标与 56dp 触控范围。 |
@@ -354,7 +668,8 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `OPEN` |
+| 状态 | `RESOLVED` |
+| 当前结论 | 已解决。2026-10-04 用户确认每日访问统计现在能够正常计入，本条据此结案。Present 与 XHR 协议修复和既有上报证据保留；下方统计未闭合结论属于此前阶段，本次未新增原站统计或 Live 验证。 |
 | 能力 ID | `ACCOUNT-01/04`、`TOPIC-01/03`；共享 `NOTIFY-01` transport |
 | 历史症状与根因 | 2026-09-14 用户报告当天未使用网页，仅 App 阅读后访问记录与等级未更新。已确认账号检测与 timings 缺少 `Discourse-Present`，Reader 却固定为 true，等级 JSON 还缺 XHR 标识；这是活跃语义不一致的协议缺口，不能据此断言等级统计只有这一处原因。 |
 | 处置 | App 在现有代理就绪之后、实际 fetch 之前装配来源修饰函数，精确匹配 linux.do XHR；前台且最近真实交互不足 60 秒才带 Present。复用 AppState 和一个进程内单调时间戳，移除 Reader 固定头；保留访问、阅读计时、批次、取消和重试语义。JS 修饰后与 Native 实际 request-headers-end 记录同请求 ID 的布尔值。 |
@@ -498,14 +813,15 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `EVIDENCE_GAP` |
+| 状态 | `RESOLVED` |
+| 当前结论 | 已解决。2026-10-04 用户明确确认 L 站掉登录问题已解决，与 REG-ACCOUNT-048 一并结案。已有续期修复与真实续签证据继续保留；下方未闭合结论属于此前阶段，不再作为当前待办。本次依据用户使用反馈关闭，未新增设备或 Live 测试，也不把原始每次失效追认为同一根因。 |
 | 能力 ID | `ACCOUNT-01`、`SEARCH-02/04`、`WRITE-01`、`TOPIC-01/02/03`、`MORE-01/02` |
 | 历史症状与根因 | 2026-09-09 用户诊断在 12:23、12:57、13:09（北京时间）三次账号核对为匿名，之前通知/操作已提示登录失效；未发现 App 主动 clear 事件。原生默认响应保存 no-op 确认丢弃续期，但现有日志没有原始响应更新证据，不能断言它是三次失效的唯一原因。 |
 | 修复范围 | 仅合格 L 站原站响应受控转交 Android CookieManager；保留默认只读 Jar、禁止快照与手工凭据、按站显式清除、RN/Fresco 容器和代理隔离；原生 revision/基线与账号屏障拒绝旧响应。 |
 | 当前 owner | `modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt`、`modules/forum-platform/android/src/hostTest/java/com/wz/reader/network/ManagedCookieResponsesInstrumentedTest.kt`；模块内 `NetworkProxyRuntimeTest`；`src/features/account/useVerificationController.test.ts` 与 `tests/ui/account/account-runtime.test.tsx`。 |
 | 失败 oracle | 实际 HTTP 服务先发凭据 B、下次只接受 B；2026-09-09 修复前 native 测试 expected 200 / actual 401，修复后成功。Cookie 值仅为合成测试数据。 |
 | 续期修复证据 | 2026-09-09 原生实际 HTTP 轮换及隔离测试 9 项、既有网络 runtime 77 项、独立 AVD instrumentation 4 项通过。最终候选 `1.3.140/144`、buildId `d7303c65c98c4f289465703bca7aa9f9` 在保留登录的主 AVD 上观察 14:32:05—14:52:28（北京时间，20.4 分钟，超过两个上游默认轮换间隔）；14:37:04、14:47:08 实际应用原站更新，14:48:22 与 14:51:58 后续独立账号核对确认已登录。搜索、通知列表、主题读取及前后台切换成功，窗口内未出现 App clear、写入失败或账号转匿名事件。 |
-| 剩余证据缺口 | 响应续期缺失已有修复与真实更新证据；原始三次失效是否全部由该缺陷导致仍无法归因，频繁失效事故保留 `EVIDENCE_GAP`。真实回复、物理 ARM64 安装与长期登录留存保持 `NOT_VERIFIED`；不清登录态制造场景，不发送真实回复。 |
+| 历史证据边界 | 响应续期缺失已有修复与真实更新证据；原始三次失效是否全部由该缺陷导致仍无法归因，当时频繁失效事故保留 `EVIDENCE_GAP`。真实回复、物理 ARM64 安装与长期登录留存在该轮记录为 `NOT_VERIFIED`；不清登录态制造场景，不发送真实回复。 |
 
 ## `REG-ACCOUNT-046` L 站操作要求登录但未触发账号核对
 
@@ -561,6 +877,8 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 当前结论 | 本轮受控慢网源切换 5 轮未复现，保留原始入口待定位；尚无新的最小重复 oracle。 |
+| 2026-10-04 复核 | 普通 Release 1.3.150/154，关闭 Wi-Fi、核实默认传输为 CELLULAR 后设置 emulator delay=5000ms，同 PID 12161 完成 5 轮 all→yaohuo，每轮均显示妖火数据；本轮对应崩溃缓冲无 Already released、Fatal Exception 或 Fatal signal。Wi-Fi、移动数据、延迟/速率、Gboard 和安装身份均恢复核验。证据见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 feed-slow-switch。这是历史准备阶段源切换的只读复测，不包含完整下拉刷新 oracle；缓存列表出现不证明每轮都有全新图片解码，不能由 5 轮未复现关闭偶发事故。 |
 | 能力 ID | `FEED-02` |
 | 历史症状与根因 | 2026-09-07，API 35 主 AVD 在关闭 Wi-Fi、蜂窝延迟 5000ms 的只读验收中，从全部切至妖火时 App 退出。发生于刷新交叉脚本的来源准备阶段，尚未开始下拉或横滑；系统退出记录为 `APP CRASH(EXCEPTION)`，不是模拟器挂起。根因尚未确认。 |
 | 证据与边界 | 匹配候选 `1.3.138/142`、APK SHA-256 `520b36080bb5b6896ce74180d93972a3c31f3ce70a825c7902b157f3d5ba3747` 的崩溃栈经同包 mapping 还原，异常为 `IllegalStateException: Already released`，路径为 Glide `EngineJob.addCallback` → `SingleRequest` → expo-image `ExpoImageViewWrapper.rerenderIfNeeded/onSizeChanged`。尚无旧包对照或稳定重复 oracle，不能判定与手势补丁的因果关系。 |
@@ -703,6 +1021,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 当前结论 | 已确认缺陷已有修复，待验收。终端完整 ANSI 恢复已实现，设备 Native 文本与原文比对通过；剩余为剪贴板全文读回、性能与系统取消等分支，不再将历史 Tab 空白直接列为当前未修复。 |
 | 能力 ID | `TOPIC-01/02/03` |
 | 历史症状与根因 | 2026-09-04 `post-812712-1` 的前两个 Tab 在 App 中空白，原站与同条评论 Markdown 保有完整 ANSI。隐藏 WebView 抓取时 xterm 已创建行但文字仍为空/部分，后续 `window.stop()` 不保证终端绘制完成；另有原站行没有 `xterm-row` class 的形状。共享来源入口现按唯一身份与块顺序恢复同条完整 ANSI，只替换终端子树；通用转换兼容无 class 行。空/部分/完整、主楼/回复及两种传输已有失败转通过的行为 oracle；批量提交父节点避免新增平方复制。四份真实输入在旧/新 Terminal 空白规范化下完整编译结果一致，因此未将此次空白归因于该算法优化，也未追溯其首次引入版本。 |
 | 当前 owner | `tests/integration/hidden-browser-scripts.test.ts`、`tests/integration/source-read-contracts/nodeseek.test.ts`、`tests/live/agent-live.md` |
@@ -713,6 +1032,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 当前结论 | 已确认缺陷已有修复，待验收。行起点定位、列表就绪及晚测高命令交接已有修复和失败转通过证据；仍需匹配最终 APK 的暖图、重复定位与关联交互验收。 |
 | 能力 ID | `TOPIC-03` |
 | 历史症状与根因 | 2026-09-04 妖火真实回复暖图后重复定位只看到正文中部，目标楼层头部已在屏外。既有楼层定位与排序后定位都传 `viewPosition: 0.2`；FlashList 按整行高度对齐该比例，800 高 viewport 对 1800 高回复会得到 headerY=-200，与 MVCP 是否补位无关。文字加图片可编译为一个合法 reply owner，不拆正文掩盖。两处共享调用改按行起点定位后，匹配 C4 APK 的暖态新 route 仍复现偏移：初次 onLoad 前的估算位置，以及最终命令后、确认前后的晚测高没有完整交接给锚点。共享入口现在等待当前列表就绪，controller 在投影、Native 确认和阅读锚点之间保留同一目标 key，拒绝旧代次回调。真实 Topic 点击/排序命令、晚测高及确认/布局两种顺序均有失败转通过的行为 oracle；匹配最终 APK 的暖图与重复定位另行验收。 |
 | 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`tests/live/agent-live.md` |
@@ -723,6 +1043,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 当前结论 | 已确认缺陷已有修复，待验收。补页锚点、BeginDrag 基线与迟到回调交接已修，部分三站自然续读通过；正倒序组合、失败重试及尾窗收缩仍待验收。 |
 | 能力 ID | `TOPIC-03`、`NAV-02/03` |
 | 历史症状与根因 | 2026-09-04 匹配 APK 对照：V2EX 第 101 楼补页后上移 37px，NodeSeek 第 11 楼下移 71px；不是筛选栏损坏，也未证明首次引入版本。共享 FlashList 在补页后重新选中新插入可见行，后续测高不再维护原阅读内容；旧的限时忽略原生事件不能隔离迟到确认。现由同一 key/index/几何基线持续锚定，真实交互与显式命令接管，原生像素取整和含 footer/padding 的边界独立校验。设备另确认 linux.do 定位已到窗口下端时，一次触边通知先被无手势门禁消费，之后正常下滑仍不加载；共享拖动入口现在用现有 Native 尺寸复核边界。失败 oracle 已覆盖该通知/手势顺序、新插入行晚测高、迟到事件、主动导航和拖动打断惯性；匹配最终 APK 的四站续读与关联交互另行验收。 |
 | 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx`、`tests/integration/source-read-contracts/`、`tests/live/agent-live.md` |
@@ -733,6 +1054,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 当前结论 | 已确认缺陷已有修复，待验收。主楼选择活动已接入 route 返回拦截，UI 与独立 Native 反例已转绿；剩余为匹配 APK 的系统返回和边缘返回验收。 |
 | 能力 ID | `TOPIC-02`、`NAV-03` |
 | 历史症状与根因 | 2026-09-04 修复：选择中的系统返回可能直接退出 Topic，JS route 只知道预览和 composer。Native 现在报告活动及所属 document revision，route-local 边界按预览、composer、选择、页面顺序处理；旧 revision 和重复取消不提交，正文不随活动重渲染。UI 与独立 AVD Native 反例先失败后通过；匹配 APK 的系统/边缘返回仍独立验收。 |
 | 当前 owner | `tests/ui/app/app-navigator.test.tsx`、`tests/ui/topic/topic-rich-text-selection.test.tsx`、`modules/forum-content-selection/android/src/androidTest/java/expo/modules/forumcontentselection/ForumContentSelectionViewTest.kt` |
@@ -742,18 +1064,20 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 当前结论 | 已确认缺陷已有修复，待验收。嵌套 Tab、引用和列表已共享逐层扣减的内宽，真实 ancestor 到 consumer 的反例已转绿；四 Tab、横滑和复制的匹配 APK 验收仍未齐。 |
 | 能力 ID | `TOPIC-02`、`TOPIC-03` |
 | 历史症状与根因 | 用户报告 NS Tab 图片溢出；内部 renderer 沿用外层宽度，未扣除 Tab、引用、列表的实际装饰宽度。现在复用共享宽度 context 逐层扣减，图片、代码、表格、公式获得同一内宽，不裁剪掩盖；真实 ancestor→consumer 的失败反例已通过，实际四 Tab、横滑与复制继续按匹配 APK 验收。 |
 | 当前 owner | `tests/ui/topic/topic-rich-text-selection.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/live/agent-live.md` |
 
-## `REG-WRITE-077` 表情图片失败后无法恢复
+## `REG-WRITE-077` 表情图片或目录失败后无法自动恢复
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `EVIDENCE_GAP` |
-| 能力 ID | `WRITE-01` |
-| 历史症状与根因 | 用户报告 NS 编辑器下滚后部分表情失败并永久保持失败；共享按钮没有失败恢复入口。现在 NS/linux.do 共用带 attempt 的点击重试，重进可见面板/分类只重试失败项一次；失败点击和未完成重试不插入，成功节点及滚动位置保留，旧回调无效，不清缓存或随机化 URL。真实 Runtime DOM 反例已通过，自然失败的设备分支未出现时不得记 Live 通过。 |
-| 当前 owner | `src/ui/composer/editorRuntime.test.ts` |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/02/04/05/07`、`TOPIC-01/03`、`NOTIFY-02` |
+| 历史症状与根因 | 用户报告 NS 编辑器部分表情永久失败；早期修复只提供点击或重开重试，仍不能自动恢复。linux.do 目录初次读取失败也缺少同页恢复。2026-10-03 两类读取加入 1/2/4/8/16/30 秒退避，间隔封顶 30 秒，成功后停止；不可见或取消时停止等待，旧回调和迟到目录无效。手动恢复保留，失败或重试中的图片不插入，成功节点、滚动位置及草稿保留，不清缓存或随机化 URL。真实 Runtime DOM 与三个目录入口有修前失败 oracle；Android 单图受控 503 已复现旧包停留约 15 秒零重试，受控证据不代表自然原站故障的 Live 通过。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/notifications/notifications-route.test.tsx`、`tests/ui/topic-composer/topic-draft-controller.test.tsx` |
+| 修复与边界 | 图片完整 owner 139 项、目录三个 owners 345 项通过；匹配源码 APK 的 Android WebView 对同一图片连续注入两次本地 HTTP 503，约 1.16/2.02 秒后自动再请求，第三次取得真实图片并显示 150×130 自然尺寸，后续无重复请求且正文仍为空。实际 Home 后文档进入 hidden、返回为 visible；linux.do 发帖表情目录正常显示 120 个预览。受控单图恢复不代表目录真实网络故障、所有原生回复宿主或自然原站故障已验证，未执行发布、回复等真实写入。 |
 
 ## `REG-DATA-008` 备份敏感字段过滤误删合法业务身份
 
@@ -4194,7 +4518,8 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `NOTIFY-03`、`MORE-02` |
 | 历史症状与根因 | 底部“更多”出现红点，但进入 More 后“消息通知”入口没有任何红点，用户无法判断提示来自消息还是版本更新；根因：`useAppRuntime` 只把未读状态压成中文 summary 传给 `MoreUtilityPanels`，消息入口没有结构化未读字段，也没有渲染视觉标记。 |
-| 当前 owner | `tests/ui/more/more-screen.test.tsx` |
+| 当前 owner | `tests/ui/app/app-navigator.test.tsx` 承接当前底栏红点分流，`src/ui/navigation/moreBadge.test.ts` 承接提示语义，未读状态核对沿用 `tests/ui/notifications/notifications-runtime.test.tsx`。 |
+| 当前导航模型 | 消息已成为底栏第三格的 Bell 入口，More 不再提供消息行；结构化未读只点亮“消息”，更新只点亮“更多”。 |
 
 
 ## `REG-NOTIFY-053` 主题级通知被强制定位到不存在的具体帖子
@@ -4832,6 +5157,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 已确认缺陷已有修复，待验收。文档级连续选择、文字高亮与平台手柄跟随已有实现修复；指定帖子完整复制、跨回收窗口、逐帧几何及物理设备触感仍须按本条关闭条件验收，不能由历史标题推断当前仍无法跨表格选择。 |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
 | 历史症状与根因 | NodeSeek `post-877083-1` 长按表格前正文后，“全选”只选中当前段落；选择手柄不能越过“配置”标题继续进入表格和表后文字；根因：compiler 的语义/调度 row 与 Android 原生选择 owner 被错误等同。React Native `selectable` 只作用于各自 `TextView`，table 又是独立 View 树，因此逐块 selectable 不能形成文档级连续选择。后续 `post-652056-1` 又因 route 把回复注册进 coordinator，让无关回复的 span 映射失败阻断主楼。边界收窄后仍把 logical tape 当成 Native tree schema：协调器用 `isTextSelectable`、`isLaidOut`、owner/fingerprint 和全 mounted window 完整匹配决定是否允许选择；RN/Fabric 的 sticky `requestLayout`、回收和 layout commit 瞬态都会因此误取消整个 document。selection 身份的根因 seam 是当前实际显示的 opening row 根 marker 才是唯一身份，manifest 直接来自同一 visible opening collection；`selectionToken` 只保存逻辑 copy tape，`TextView.Layout` 只服务当前端点和可见投影，瞬态映射缺失只跳过当前帧而不取消逻辑选区。回复、评论和已采纳答案保持零 marker，并独立整条长按复制。同一链路还暴露 opening renderer 仍为 selectable 时双击会进入原生局部选区、active selection 没有普通短按取消转移；中间的 row-wide double-tap detector 虽能吞第二次 `DOWN`，也会误吞同 row 链接的正常 tap，因此最终删除 detector 与 `TextView` long-click patch，统一设置 opening renderer `selectable=false`，只由自定义 selector 接管静止长按。活动选区上的普通短按先完成既有点击再取消，越过 touch slop 的滚动保持选区。随后逐帧证据确认 route-surface 中央高亮仍是错误绘制 owner：高亮 Path 被转换为祖先坐标并缓存进 surface RenderNode，而文字可随内部 ScrollView/child RenderNode 独立移动，出现峰值 `156px`、持续约 `590–720ms` 的错位；增加 scroll/pre-draw 刷新只能追赶时序，不能修复 owner。把高亮迁到 `TextView.overlay` 后，真实录屏的 1,294 个实测样本达到 `<=2px`，但尝试用独立 `PopupWindow` 承载手柄又引入第二个 ViewRoot 时钟：完整可见的起点/终点手柄分别出现 `279px`/`278px` 峰值并有可见端点缺手柄，故该路线按 falsifier 删除。当时最终绘制 owner 收敛为每个 mounted `TextView.overlay`：可见 slice 用本地 `Layout.getSelectionPath()`，两个端点各持一个本地 handle drawable；route 只保存逻辑状态、ActionMode 和触摸命中点。旧合同为避免 View bounds 越界，把自绘圆形向 TextView 内侧收回并用 stem 连回未偏移的 caret hotspot；滚动不再重建第二套视觉坐标。第一版本地手柄仍把 viewport 裁剪错误地当成 drawable 生命周期：端点离屏时先移除 overlay，RenderThread 让 child 回流后只能等下一次 UI pre-draw 重绑；`post-832584-1` 的 204 帧严格审计因此在 f49、f159 各捕获一次可见起点整帧缺柄。修复将本地投影与 route 命中可见性解耦：owner 仍 mounted 时保留 drawable 并交给祖先裁剪，只有真实卸载/回收重绑、取消或 revision 失效才移除；instrumentation 先以该行为红灯，再达到 18/18。修复后同帖一次 900ms 静止长按、大选区和三轮快速往返的 181 帧审计中，三次起点回流首个完整可见帧 f46/f75/f134 均已有 circle、stem 与 hotspot；高亮 1,301、起点 83、终点 98 个可判定样本的最大 `L∞` 均为 `2px`，真实缺失和确认的 `>2px` 均为 0。随后 1.3.130 真实交互暴露该旧圆形合同会在 wrap-content TextView 的零底部余量中折入字形行并遮住端点文字；这是自定义选择 chrome 的根因，不是 logical document、虚拟化或 TextView-local 同帧 owner 失效。现役合同因此保留跨虚拟行语义、高亮与本地 draw owner，但删除自绘圆形，改用平台主题 left/right handle、AOSP `getLineBottom(line, false)` 与 bidi primary/secondary hotspot；手柄主体从行底向下展开。重复选择同时收敛为 no-op，Android 27+ 只在逻辑端点实际变化后请求 `TEXT_HANDLE_MOVE`。 |
 | 最终修复边界 | 上行末段记录的是第一版平台手柄阶段，现已被严格遮挡/同帧滚动 falsifier 取代：TextView/marked-row overlay 在 wrap-content 行底和相邻 row 仍会裁掉平台手柄主体，不能通过关闭 `clipChildren/clipToPadding` 绕开。高亮继续只由 `TextView.overlay` 持有；两个端点改为同一 ViewRoot 内列表 viewport overlay（无唯一全尺寸 viewport child 时为 `TopicSelectionSurface.overlay`）上的平台 handle wrapper。wrapper 保存 source `TextView` 与 Layout content hotspot，每次 draw 重新读取 source/host 屏幕位置，加 host scroll、减 source scroll 后绘制，所以 pre-draw 之后的纵滚、横滚、translation 与回流首帧仍跟随 caret；不得缓存最终 screen 坐标，也不得使用 `PopupWindow` 或独立 ViewRoot。平台方向/AOSP hotspot、至少 `48dp` 命中、抓取偏移与真实端点变化才请求 `TEXT_HANDLE_MOVE` 的合同不变。 |
@@ -4894,15 +5220,16 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `OPEN` |
+| 状态 | `RESOLVED` |
+| 当前结论 | 已解决。2026-10-04 用户明确确认 L 站掉登录问题已解决；并发 Cookie、响应取消与 WebView 销毁前落盘的既有修复，以及两次自然续签后重启认证证据继续保留。下方 OPEN 与未闭合结论属于此前阶段，本次按用户使用反馈结案；未新增设备或 Live 测试，历史服务端删除凭据的原因不追加归因。 |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`NOTIFY-03` |
-| 历史症状与根因 | 2026-09-10 用户两次导出显示：刚确认登录后重启，分类响应应用 Cookie，首页响应因 stale 被拒绝，随后通知 JSON 403 login_required；日志未见主动清除事务。已用修复前失败的实际 HTTP 并发测试确认客户端缺陷：任意响应推进共享 revision、整份 Header 基线检查都会误丢同账号在途更新；原生响应也缺少明确 flush。现拆开隔离代次与回写序号，正常更新按平台语义串行应用，并补充回调恢复、落盘与诊断。但旧日志没有被丢弃 Cookie 的类别/设置或删除证据，不能断言该响应一定是登录续签，也不能排除服务端独立失效。历史事故继续开放，待真实登录自然续签至少两次、重启及协议核对闭环。 |
+| 历史症状与根因 | 2026-09-10 用户两次导出显示：刚确认登录后重启，分类响应应用 Cookie，首页响应因 stale 被拒绝，随后通知 JSON 403 login_required；日志未见主动清除事务。已用修复前失败的实际 HTTP 并发测试确认客户端缺陷：任意响应推进共享 revision、整份 Header 基线检查都会误丢同账号在途更新；原生响应也缺少明确 flush。现拆开隔离代次与回写序号，正常更新按平台语义串行应用，并补充回调恢复、落盘与诊断。但旧日志没有被丢弃 Cookie 的类别/设置或删除证据，不能断言该响应一定是登录续签，也不能排除服务端独立失效。当时事故继续开放，等待真实登录自然续签至少两次、重启及协议核对闭环。 |
 | 当前 owner | `modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt`、`modules/forum-platform/android/src/hostTest/java/com/wz/reader/network/ManagedCookieResponsesInstrumentedTest.kt`、`tests/ui/account/account-runtime.test.tsx` |
 | 2026-09-10 新包现场 | 主 API 35 AVD 在 16:20:31（北京时间）手动登录后 current-user 核对成功，WebView 交接 flush 成功；16:23:33 再次核对成功。16:27:06 通知请求发送时 hasLoginCookie=true，响应 403/login_required、Set-Cookie 数为 0。16:29:39 账号请求仍带登录 Cookie，响应 404 并明确下发 login/delete/expired；平台接受后 hasLoginCookie=false，flush 成功，账号按 session-404 变为 anonymous。同一进程内，交接后此前原生响应没有 login/set、拒绝续签或写入/落盘失败；未发生显式清除。用户确认未在其他设备退出、结束会话或修改安全设置。该次删除有服务端指令证据，但服务端失效原因、WebView 内部不可见更新及原手机事故仍未归因；两次自然续签后的重启验收未完成，不能关闭事故。 |
 | 后续对照与通过范围 | 同日再次手动登录后，网站 WebView 保持约 11 分钟、三次普通刷新仍登录，期间零原生请求/回写；16:44:36 原生账号核对成功。16:54:38、17:04:38 两次通知响应明确下发 login/set/persistent，分别得到平台接受、凭据变化及 flush 成功记录；两次更新后的账号接口均确认已登录。加入首页、图片及主题读取后仍正常，17:05 保留数据冷启动 PID 29412→32037，17:06:08 新进程 current-user 200 并持久化 confirmed。该条续签→落盘→重启认证链为 `LIVE_PASS`；早先 16:29 的失效原因及原手机事故仍未关闭，不把后续一次成功对照当作排除间歇故障。 |
-| 2026-09-18 客户端补修 | 修复前真实 HTTP 取消实验中，下次请求仍发送 A 而非续签 B；手动检测测试确认 WebView 交接前已发身份请求。现统一卸载→交接→核对，并接受已收到的同代合格响应，不因消费者取消而丢弃；交接回调或 flush 失败不再放行，账号页刷新可重试且不会永久 busy。隔离 AVD 中，真实安装依赖的 WebView 在收到 Cookie B 后于加载完成前销毁，进程重启仍读到 A；正常完成与异步网络错误路径可持久化。现于既有 RN WebView source patch 的 destroy 入口补平台 flush，覆盖提前取消；该受控缺陷不证明手机事故由隐藏 WebView 引起。9 月 17 日日志两次请求携带登录 Cookie 后收到服务端明确删除，不能用这两处缺陷替代服务端归因；本条保持 OPEN，原手机自然续签与外部浏览器对照仍需现场证据。 |
+| 2026-09-18 客户端补修 | 修复前真实 HTTP 取消实验中，下次请求仍发送 A 而非续签 B；手动检测测试确认 WebView 交接前已发身份请求。现统一卸载→交接→核对，并接受已收到的同代合格响应，不因消费者取消而丢弃；交接回调或 flush 失败不再放行，账号页刷新可重试且不会永久 busy。隔离 AVD 中，真实安装依赖的 WebView 在收到 Cookie B 后于加载完成前销毁，进程重启仍读到 A；正常完成与异步网络错误路径可持久化。现于既有 RN WebView source patch 的 destroy 入口补平台 flush，覆盖提前取消；该受控缺陷不证明手机事故由隐藏 WebView 引起。9 月 17 日日志两次请求携带登录 Cookie 后收到服务端明确删除，不能用这两处缺陷替代服务端归因；该轮保持 OPEN，原手机自然续签与外部浏览器对照当时仍缺现场证据。 |
 | 本轮受控验证 | `ACCOUNT-01/02/04` 与共享 `NOTIFY-03`：相关 JS 单测 157、账号与相邻页面 RNTL 124、原生 JVM 116 项通过；隔离 API 35 / WebView 124 AVD 验证真实 HTTP 更新/删除（含接收后取消）、平台属性与原生续签后进程重启认证。安装依赖的 WebView 完成/错误/取消三路径各经过写入与重启回读，取消路径由红转绿。普通配置开发包覆盖安装后 `APK_SANITY` 通过，首次安装时间与签名不变；真实账号面板检测先卸载 WebView，遇到自然 CF 返回保留说明与重试，刷新重挂载、关闭后恢复可刷新状态。React 消息传输在该原生探针中为替身，不能替代整条 App 登录验收；该受控阶段尚未覆盖原手机两次自然续签、自然浏览器掉线对照、真实 Connect 与后台通知；主模拟器后续 Live 结果见下行。 |
-| 2026-09-18 主模拟器复测 | 可见主 API 35 AVD 保留数据覆盖安装同版本修复包，首次安装时间与签名不变。12:23（北京时间）旧会话的 `/site.json` 请求发送唯一且与平台存储一致的 `_t`，HTTP 200 明确下发 login/delete/expired，平台接受并落盘；这仍不能确定后台失效原因。用户完成 App 内验证后，12:32 current-user 确认登录并持久化；本轮未操作外部浏览器。12:37:49.726 手动检测先完成 WebView 交接落盘，12:37:49.753 才发送唯一身份请求，随后 confirmed 并关闭面板。12:41:48 通知响应自然下发 login/set/persistent，平台确认凭据变化、接受并 flush；12:42:03 后续身份请求携带当前唯一凭据并确认登录。12:42 Connect 真实请求 200，等级页显示“官方要求”，没有使用本机估算。12:52:33 第二次通知响应再次自然更新持久型登录 Cookie 并确认凭据变化、平台接受与 flush；12:53:03 身份核对成功。随后保留数据停止并重启 App，PID 3073→5252；12:53:36 新进程发送平台当前唯一凭据，current-user 200、confirmed 并持久化。ACCOUNT-01/02 的 App 登录、手动交接、两次续签及重启认证与 ACCOUNT-04 的真实 Connect 读取为 `LIVE_PASS`；共享 NOTIFY-03 的前台请求 Cookie 接收与持久化链通过，独立系统后台任务投递、原手机及外部浏览器自然掉线对照仍为 `NOT_VERIFIED`。切后台再返回没有丢失会话。该成功样本不解释启动时旧凭据为何被服务端删除，事故保持 OPEN。 |
+| 2026-09-18 主模拟器复测 | 可见主 API 35 AVD 保留数据覆盖安装同版本修复包，首次安装时间与签名不变。12:23（北京时间）旧会话的 `/site.json` 请求发送唯一且与平台存储一致的 `_t`，HTTP 200 明确下发 login/delete/expired，平台接受并落盘；这仍不能确定后台失效原因。用户完成 App 内验证后，12:32 current-user 确认登录并持久化；本轮未操作外部浏览器。12:37:49.726 手动检测先完成 WebView 交接落盘，12:37:49.753 才发送唯一身份请求，随后 confirmed 并关闭面板。12:41:48 通知响应自然下发 login/set/persistent，平台确认凭据变化、接受并 flush；12:42:03 后续身份请求携带当前唯一凭据并确认登录。12:42 Connect 真实请求 200，等级页显示“官方要求”，没有使用本机估算。12:52:33 第二次通知响应再次自然更新持久型登录 Cookie 并确认凭据变化、平台接受与 flush；12:53:03 身份核对成功。随后保留数据停止并重启 App，PID 3073→5252；12:53:36 新进程发送平台当前唯一凭据，current-user 200、confirmed 并持久化。ACCOUNT-01/02 的 App 登录、手动交接、两次续签及重启认证与 ACCOUNT-04 的真实 Connect 读取为 `LIVE_PASS`；共享 NOTIFY-03 的前台请求 Cookie 接收与持久化链通过，独立系统后台任务投递、原手机及外部浏览器自然掉线对照仍为 `NOT_VERIFIED`。切后台再返回没有丢失会话。该成功样本不解释启动时旧凭据为何被服务端删除，当时事故保持 OPEN。 |
 
 ## `REG-FEED-017` 来源重排后旧 Pager 会话卡在 Loading
 
@@ -4954,6 +5281,7 @@
 | 当前 owner | `tests/ui/more/more-screen.test.tsx` |
 | 历史修复与动画恢复 | 2026-07-11 `f43c35f9` 曾以关闭滚动惯性规避，07-12 `ed5879f7` 撤回该设置并删除面板透明度/位移动画；08-23 `869db6dc` 才修正隐藏排序行生命周期，最终 `7ae5a768` 以 `transform: []` 正确清除位移。2026-09-29 用户确认当前未再遇到故障，要求恢复展开动画；共享面板仅恢复透明度淡入，收起直接归零，不恢复位移或布局动画。`tests/ui/shared/expandable-controls.test.tsx` 补充动画未完成时的收起/重开、草稿保留和子动作接线；mock 不证明 Native hit-test。历史 ADB 坐标注入会掩盖症状，匹配 APK 必须另从 Emulator 窗口鼠标验证停止滚动后点击。 |
 | 2026-09-29 验证边界 | `UI_PASS`：相关 29 项通过，新动画 oracle 修前红、修后绿。`DEVICE_REPLAY_PASS`：身份匹配的 `more-readonly.ad` 通过；`LIVE_PASS`：同一 API35 模拟器窗口鼠标验证停滚展开诊断/备份/外观、内容源换位后诊断收起重开，排序最终恢复。原始录屏首次诊断展开的可测文字帧纵向偏移为 0px，像素对比度逐步达到终态；不声明零掉帧。正常入口 x86_64 Release buildId `be1dbab05ca94ebe8586c40c21ca58aa`，SHA-256 `288e32f549f1572e4a19da6cc4b22ef14bb0c1c92f006006bb06f7792a6b2104`，覆盖安装保持首次安装时间与三站登录状态。证据在 ignored `.codex-tmp/more-expand-20260929/`；实体手机触摸与 TalkBack 仍 `NOT_VERIFIED`。 |
+| 2026-10-02 动效完善与验证边界 | 普通展开区域统一为 200ms 实测高度、透明度和箭头旋转，遵循系统减弱动态效果；收起提交即隐藏触摸与无障碍子树，普通草稿保留，凭据与 NodeImage 临时输入在所属区域隐藏时清空。内容源排序仍只在展开时挂载，未改 source host/transform。`UI_PASS`：共享 owner 验证动画未完成时反向切换、测量高度与子树隐藏，并以动画对象 mock 验证旋转值不能插值成字符串；该 oracle 修前失败、修后通过。整仓 95 个 UI suite、2142 项通过；最后日期格式调整后的 More owner 25 项通过。`APK_SANITY`、`DEVICE_REPLAY_PASS`：最终正常入口开发签名 x86_64 Release 的账号/更多只读回放通过。`LIVE_PASS`：同一 API35 Emulator 窗口鼠标验证停滚后诊断/备份标题、账号连续反向点击、资料/站点设置/NodeImage 嵌套展开与三站切换；录屏确认过渡和终态，无残留空白，不声明零掉帧。APK SHA-256 `2f49b4144017260756e9ad54c04e314fdf73481dc178283e8e9477d6f718147a`，版本 1.3.150/154，首次安装时间 2026-07-26 16:51:37 与三站登录保留。证据在 ignored `.codex-tmp/account-center-20261002-implementation/`；未执行真实签到或授权写入，实体手机触摸与 TalkBack 仍 `NOT_VERIFIED`。 |
 
 
 ## `REG-MORE-002` 内容源连续拖回原位后两行重叠
@@ -5491,6 +5819,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 已确认缺陷已有修复，待验收。自动原图的双 owner、历史累计附近集合与 lease 身份已修；剩余为匹配 Release 的完整重图正反向流程。整体容量与环境故障继续由 REG-PERF-025 单独判断。 |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
 | 历史症状与根因 | `TopicContentList` 曾在既有 viewport owner 之外维护只增不减的 `nearbyTopicContentKeys`，使“附近”最终退化为整个浏览历史；renderer 又允许成功 display revision 永久绕过关闭的 viewport gate，并把每次 revision 放入正常 original lease identity。1413 张图片反向滚动时，512 项自然尺寸 LRU 还会确定性淘汰前段布局事实。修复删除第二套集合及 row `onLayout` 写入，并把自动原图 gate 上移到所有 keyed Topic row 的公共 frame，使主楼、回复正文、签名、引用和采纳答案只受当前 viewport/prefetch row set 控制；base、自然比例、frame、150ms 过渡和 forced 预览保持不变。正常 original lease 改用稳定 progressive identity，只有真实失败记录可派生一次 `recovery-after` identity；尺寸 LRU 扩到 2,048，仍只缓存元数据、不缓存 Bitmap。 |
 | 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-body-media-viewport.test.tsx`、`tests/ui/topic/topic-media-coordinator.test.tsx`、`src/platform/media/imageDisplayDimensions.test.ts` 与 `docs/operator-runbook.md` 的重图 Topic Release 验收 |
@@ -5652,7 +5981,11 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 本轮最近一次正式 warm 采样 cfcb8a62… 的三批严格复验为通过/失败/失败，事故重开 `OPEN`；p95/worst 达标，但有 3 对相邻有效 App 记录同时 miss。先前 956 包三批严格通过、四 Tab 与返回恢复验收仍是有效历史证据，不能替代当前包结论。相邻记录间隔约 1.589 秒，不证明连续显示周期掉帧或原生重新附着回归，晚帧是否来自滚动条尚未确认；冷首次进入继续由 `REG-PERF-029` 单列。 |
+| 2026-10-04 复核 | 普通 Release 1.3.150/154（APK SHA 4880a3dc…ec339a），同 PID 4627、三批各 10 次双向切页，共 1,620 个有效帧。三批 p95 为 21.878/21.832/21.543ms，worst 为 23.299/23.424/23.540ms，时长均过门槛；单次转向内相邻 miss 为 0。第一批首个 Search→Feed 边界有一对相邻有效 miss，IntendedVsync 相隔 2100.076ms，因此三批严格门槛为失败/通过/通过。无对应 Fatal、Fabric 或 Reanimated 错误，登录前后 3/3。原帧与统计见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 formal-warm-complete；该跨操作间隔不证明连续显示周期掉帧。 |
 | 能力 ID | `SEARCH-02`、`NAV-01` |
+| 2026-10-02 真实附着链路与最小调整 | 937987c0 包的 Search→Feed 采样中，主线程 UPDATE_PROPS 内反复附着原生树；一次 draw 包含192个 Text与39次palette计算，不是已证实的React重复提交。仅删除首页自定义预绘距离900，采用锁定FlashList默认250，正常Release包 `6a25a9eba246c201f10dde9ed15a76a527a2628c5be651a50f05b3acedd1f3ca` 覆盖安装并正常冷启动，PID2941、原UID/首次安装时间及三站登录保持。原生树降至123 Text/23 palette，典型draw CPU约12ms降至6.4ms；不改变回收池、原生detach或读取gate。 |
+| 本轮正式门槛与剩余范围 | 6a25可见Host同PID三批各10次往返，p95 `22.625/24.679/22.404ms`、worst `23.378/33.931/27.304ms`、missed `16/20/19`；仍有1/2/1对相邻miss记录，间隔900～944ms。快滚6下6上后另三批p95 `26.636/32.615/23.398ms`、worst `34.283/32.823/33.156ms`，同样未通过。快滚录屏10fps抽样未见已加载区整片空白；归因trace的Text/palette只增至126/24，props CPU中位数3.378→3.379ms，没有继续缩回收池的证据。剩余成本在native attach/visibility、App/RT绘制及调度，匹配SF帧正常；不得统称环境因素。原始证据在 ignored `.codex-tmp/intermittent-restart-20261002/feed-window-search-compare.json` 与 `.codex-tmp/intermittent-restart-20261002/feed-window-pool-compare.json`。 |
 | 历史症状与根因 | Feed → 空态 Search 多次出现约 42–53ms 帧；“最近搜索”标题和全部记录原先作为 `FlashList.ListHeaderComponent` 的普通子树一次性挂载，最多 20 条记录绕过 item virtualization。记录迁入 typed list data、恢复原单张圆角分组外观并消除相邻点击区重叠后，最终匹配 SHA 的 Release 三批各 10 次往返 p95 为 `23.484/23.377/23.265ms`，worst 为 `33.642/26.996/27.162ms`，两项数值门槛均通过；但按 `FrameCompleted > FrameDeadline` 统计，两个方向仍分别出现最长 `2–3` 帧与 `9` 帧连续 miss。因此 Header 的结构性 owner 已收口，完整 `NAV-01` 性能门槛尚未关闭，不能再把剩余 deadline miss 归因给最近记录或叠加 memo/延时。 |
 | 当前 owner | `tests/ui/search/search-screen.test.tsx` 继续拥有 typed history、点击区与搜索头提交，`tests/ui/app/app-composition.test.tsx` 和 `tests/ui/app/app-navigator.test.tsx` 承接稳定路由回调与导航接线；设备门槛仍由 `docs/operator-runbook.md` 的 Search Release 性能回归拥有。 |
 | 失败 oracle | 匹配 APK 在主登录态 AVD 上执行三批、每批 10 次 Feed → Search → Feed，任一批 p95 `>25ms`、worst `>35ms` 或出现连续两帧 missed deadline 即保持 `OPEN`；同时要求最近记录是稳定 typed items、UI 与原分组一致、相邻 `48dp` 点击区不重叠。 |
@@ -5660,23 +5993,53 @@
 | 2026-09-23 D 构建复核 | SearchRoute 按实际依赖稳定 scope 与回调，AppComposition 保持 onScreenChange 稳定；仅 Feed/Search 关闭 freezeOnBlur，保留原生 detach 默认值、Library/More 和外层 Stack 的冻结。D 正常 Release APK SHA-256 `133dc35f02fca959b26e830ea9fe49820c6b1363862032806ea97361c7fb052e`、buildId `91481da2a29746988c4f08dedc11a4f3` 在主 `WZ_Pixel_API_35` 冷启，App PID `2869`。首次挂载单列后，三批各 10 次 Feed→Search→Feed 共 1069 个有效帧；三批 p95 为 `22.367186/22.079458/22.120951ms`，worst 为 `32.772985/27.315046/23.845136ms`，missed 数为 `26/28/29`，各批最长连续 miss 均为 `1`。该 D 构建的这一次重复往返满足既有门槛；后续 E 同源码的独立重复未稳定通过，不能沿用本次通过关闭当前问题。 |
 | 2026-09-23 当前 E 与 F 对照 | 当前 E 正常 Release/Hermes APK SHA-256 `afa2a2eb022826b43fa708248add974110b64e3e1ab0287996eb278977eb062a`，两次独立同 PID 三批各 10 次往返：第一轮 p95 `22.976/21.867/22.396ms`、worst `34.451/33.134/23.685ms`、最长相邻记录 miss `2/1/1`；第二轮 p95 `22.074/22.314/22.202ms`、worst `33.612/34.346/25.290ms`、最长 `1/2/1`。两轮各有一批违反现有逐条 gfxinfo 样本的门槛，故重新标 `OPEN`。隔离构建 F 仅将 Tab.Navigator 设为 `detachInactiveScreens={false}`，首轮三批通过，但第二轮第 2 批仍有最长 `2`，未稳定过门槛；它使已访问页面的 Native Views 从 E 的约 `1141` 增至 `1330`，该次首轮前后 PSS 为 `291211→345382KB`（静置 25 秒 `326575KB`），E 可比首轮为 `280444→289594KB`。四对相邻 missed App 记录的 `IntendedVsync` 实际相距 `33–200ms`，不是连续显示周期，不宣称用户看到连续两个显示帧卡顿；既有门槛仍按相邻有效 App 记录保守判定，没有只对 F 放宽。F 未合入，设备已恢复 E。原始帧与内存留在 ignored `.codex-tmp/transition-followup-20260923-021317/`；不能以单轮较快的 p95、一次录屏未闪白或额外驻留换取关闭结论。 |
 | 首次挂载与成本边界 | 同一冷启进程的 Search 首次挂载另有 24 帧，p95 `33.145916ms`、worst `33.35254ms`、missed `3`、最长连续 miss `2`；不计入上述预热后往返通过结论，不能宣称冷首次进入无卡顿。后续三个 fresh process 的首次进入仍有慢帧，独立记为 `REG-PERF-029` 并保持 `OPEN`。局部解除冻结允许隐藏页继续更新，仍可能增加驻留内存，不保证 PSS 零增长；其他设备、首挂载与独立媒体/IME 动画仍按各自 owner 验证。 |
+| 2026-10-02 冷重启复查 | 原已验收 APK `6f636dc7…`、原 Host 配置与保留数据的同 AVD 冷启动后，PID1997 三批各10次往返，逐次 reset；p95 `29.408/22.064/22.446ms`、worst `43.798/33.050/32.998ms`。各单次操作没有相邻有效记录同时 missed；跨轮汇总仍出现相邻 missed 记录，间隔约0.75～0.93秒，现有严格门槛保持 `OPEN`。共享浮动操作 hook 已把切页/暂停隐藏与阅读滚动的160ms动画分离，Feed原oracle修前 Expected0/Received0.4、修后最低1项及Feed/Topic189项通过（seed1790925250）；不以此证明原生性能改善。新版安装时 Agent 误用已禁用的 reinstall，安装身份改变、App数据被清除，立即冻结设备；新版三批门槛与重复内存矩阵为 `BLOCKED_BY_ENV`，没有用新匿名状态继续测量或回滚数据。证据在 ignored `.codex-tmp/intermittent-restart-20261002/acceptance.md`。 |
+| 2026-10-02 恢复后复验 | 用户授权恢复后，从9/23同批磁盘快照恢复原UID10214与首次安装时间，当前共享文件逐项校验一致；用户重新登录L，主AVD正常冷启动后保持三站登录。4c54可见Host/PID17950三批各10次Search往返，p95 `22.449/22.381/22.853ms`、worst `23.116/23.321/23.207ms`且无相邻有效miss记录。后续9d统计槽修复包可见Host/PID2777同样三批，p95 `22.870/22.322/23.207ms`、worst `22.934/22.675/23.260ms`；第三批两条相邻miss记录跨 `922.452ms`，严格门槛仍失败，不能称连续显示周期掉帧，也不以4c54的通过关闭本事故。Vulkan、AsyncComposeSupport及软件渲染对照未稳定通过全部场景，均已恢复原Host配置。内存、原始帧和恢复边界分别保存在 ignored `.codex-tmp/intermittent-restart-20261002/final-acceptance.md` 与 `.codex-tmp/intermittent-restart-20261002/recovery-acceptance.md`；旧冻结记录只代表历史阶段。 |
+| 最终包复验 | 最终正常Release包869e0521、可见Host/PID13505、三站已登录；Search三批各10次往返p95 `23.093/23.073/22.561ms`、worst `23.257/33.489/22.986ms`。前两批相邻miss记录跨 `888.889–922.222ms`，严格门槛未全通过，状态仍 `OPEN`；首次挂载4帧worst23.103ms另记，不混入暖路径。没有并行构建、测试或采样器，也没有以其他站点较快替代此结果。双方向与实际次数见 ignored `.codex-tmp/intermittent-restart-20261002/guard-search-summary.json`。 |
+| 2026-10-04 原生附着路径修复 | `AppNavigator` 设置 `detachInactiveScreens=false`，访问过的主 Tab 保持原生附着，避免返回时重新附着整棵页面；仍按首次访问懒挂载，最多保留四个主 Tab，不预挂载 Search。`tests/ui/app/app-navigator.test.tsx` 沿真实导航验证四页各自状态、嵌套返回、焦点与无障碍可见性，13/13 为 `UI_PASS`。Feed/Search 既有失焦 Query、读取与媒体 gate 不变，隐藏页不接收无障碍焦点；性能与驻留由下列普通包独立验收。 |
+| 2026-10-04 最终普通包验收 | 无 probe 的 Release/Hermes APK `956bce1d…`，按 runbook 覆盖安装后保留数据冷启动主 AVD，PID4362 三批各 10 次 Feed→Search→Feed。60 次转向各保留完整 3 秒，共 1620 帧；三批 p95 `21.717/21.578/21.655ms`、worst `23.665/23.477/23.112ms`、miss `38/40/40`，各批、跨转向及跨全批相邻有效 App miss 对均为 0，旧门槛全部通过，补充 `>=` 口径一致。两个方向各 810 帧的 p95/worst 分别为 `21.775/23.477ms` 与 `21.632/23.665ms`。同 PID Feed PSS 从 warm 基线 `278823` 到 `314803KiB`，增加约 35.14MiB；随后四 Tab 预热基线 `303440KiB`，15 轮后三个批末为 `314673/314840/316845KiB`，Views 始终 1227，没有随访问轮数增加，离散 PSS 有波动，不据此保证不存在任何泄漏。65 份四页 AX 快照均只暴露当前页内容和四个 Tab；打开详情后 Tab 隐藏，返回及 HOME→前台后 Feed 首行位置保留且 PID 不变。真实导航 UI owner 另证明 React 焦点，AX 不替代它。截图保留原圆角分组和分隔线，首屏完整行独立 48dp 点击区不相交。身份、登录 3/3 保持，所查 Fatal/Fabric/Reanimated 同步错误均为 0；`NAV-01/SEARCH-02` 本次 warm 范围为 `LIVE_PASS`。证据在 ignored `.codex-tmp/remaining-four-20261004-113939/final-warm/`、`final-four-tabs/` 与 `final-navigation-return/`，不覆盖冷首次进入或物理设备。 |
+| 2026-10-04 retained 普通包严格复验 | 无 probe 的 Release/Hermes APK `cfcb8a62d50077d832d8690dd7f426ff10a3112f0a5e02e5c8e24a369ec9aa2e`（sourceHash `6c3c9122291d50f718335a3015a7da91d4f3b815ff3f96cec19396e289e31cf2`），主 AVD/PID4090、登录前后 3/3。三批各 10 次 Feed→Search→Feed，60 个完整 3 秒窗口，共 1621 帧；总体 p95 `21.970383ms`、worst `33.349723ms`。三批 p95 `21.970383/21.988982/21.951938ms`、worst `24.664163/33.349723/32.651491ms`、miss `39/40/41`，时长门槛均通过；第 2 批两对、第 3 批一对相邻有效 App 记录同时 miss，均在单次转向窗口内，`IntendedVsync` 间隔均为 `1588.888873ms`，没有跨操作 miss 对，附加 `>=` 口径结果一致。因此三批既有严格门槛为通过/失败/失败，当前保持 `OPEN`，不放宽门槛或裁掉晚帧。该记录间隔不证明连续显示周期掉帧；原始 gfx 没有晚帧元素身份或同次 App→SF 对应，不能确认滚动条归因，也不能证明原生重新附着根因回归。956 包的历史通过完整保留。证据在 ignored `.codex-tmp/remaining-two-20261004-continue/` 下的 `retained-warm/summary.json`、`retained-warm/readonly-audit.json` 和 `.codex-tmp/remaining-two-20261004-continue/retained-warm-audit.md`。 |
+
+## `REG-PERF-030` 失效动画视图的同步更新在绘制中反复抛错
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/04`、`NAV-01/02/03` |
+| 最终最小调整包复验 | 包6a25a9eb、可见Host/PID2941在首页预绘调整后再完成L↔NS、Y↔NS各20次实际选站；p95分别 `22.812/22.453ms`、worst `23.314/22.726ms`，均无相邻有效miss记录；L↔NS行为oracle仍为零失效视图异常。此结果只关闭本条根因，Search事故继续OPEN。 |
+| 历史症状与根因 | 2026-10-02 可见 Host 模拟器上，869e0521 包的 L↔NS 切换仍有 64～74ms 长帧。实际 CPU 采样在一次 66.466ms 帧中捕获 `NativeProxy.synchronouslyUpdateUIProps`、`Throwable.printStackTrace` 与 SVG 绘制分发；日志为不存在的 Fabric tag 触发 `RetryableMountingLayerException`。Reanimated 的 draw-pass 重复读取 retained registry，RN 0.86 的反射路径未检查 view 是否存在，因而每个 SVG layout 事件都可能再次构造并打印长堆栈。独立无采样 20 次切站出现 50 次异常、涉及 5 个失效 tag；不能归因某一个图标，也不是序列化 buffer 没有清空。 |
+| 修复 | 现有 `react-native-reanimated+4.5.1.patch` 回补已合并的上游 [PR #10435](https://github.com/software-mansion/react-native-reanimated/pull/10435)。仅在 RN 0.86 分支的同步原生更新前查询 `getViewExists`，不存在则跳过当次 apply；registry 和 commit hook 保留初挂载属性，其他异常保留简短诊断。没有新增缓存、关动画、删除图标、延时切页或改变依赖版本。 |
+| 当前 owner | `tests/tooling/patch-artifacts.test.ts` 验证真实补丁可逆应用；独立干净安装的 15 份补丁 forward check、真实 postinstall 和 15 项 reverse check 全部通过，seed 210605。最低行为 oracle 为 ignored `.codex-tmp/intermittent-restart-20261002/account-animation-probe.mjs`：实际读取选站节点并验证每次切换，按设备时间窗口计数原生日志；旧 APK 50≠0 失败，新 APK 三批各 20 次全部为 0。 |
+| 原生复测与边界 | 正常 Release/Hermes APK SHA256 `937987c0b66edba77127a6dd870490a3dcdcf92f5632c240ae02a8db4c165710`，同签名覆盖安装并正常冷重启，UID 10214、firstInstallTime `2026-07-26 16:51:37` 与三站登录保持。所有构建和测试结束后，同一 PID 3067 三批 L↔NS 的 p95 为 `23.223/23.087/22.336ms`、worst 为 `34.289/24.816/23.281ms`；第二批两条相邻有效记录均 miss，但 IntendedVsync 间隔 1866.667ms，不是连续显示周期。另一次定位 trace 中 RenderThread 的 46.121ms 帧有 44.884ms 等待系统 buffer，不能把全部系统合成问题也归为该修复。实体机仍未验证，Search 的独立性能事故不随本条关闭。 |
 
 ## `REG-PERF-029` Search 首次挂载仍有原生创建与冷绘制慢帧
 
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 本轮最近一次正式冷测 cfcb 三个 fresh PID 首次进入 worst 为 `33.028/34.405/22.096ms`，仍有冷帧 deadline miss，保持 `OPEN`。系统 ImageView 与透明 TextInput 原生底图移除保留；新的边框替代方案未证实收益或像素不等价，均已撤回。cold 未另设零 miss 门槛，不以原生节点数、shader 消失或 warm 时长达标替代完整结论。 |
+| 2026-10-04 复核 | 同一普通 Release 1.3.150/154、三个 fresh PID 4076/4355/4627，完整采样窗口各 3 秒；有效帧 28/29/29，p95 43.606/25.912/28.828ms，worst 44.132/33.304/32.723ms。未见 Fatal、Fabric 或 Reanimated 同步错误；安装身份和登录 3/3 保持。原数据见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 formal-cold，不把首次挂载簇与整段采样混成一个统计。 |
 | 能力 ID | `SEARCH-02`、`NAV-01` |
+| 2026-10-02 单次候选观测 | 6a25a9eb正常Release、可见Host/PID2941的Search首次挂载4帧，p95/worst `33.425ms`、missed2；首次返回Feed另1帧 `23.203ms`。首次观测与warm三批分开保留，不据此关闭本条；没有预挂载或把首次帧移入warm样本。 |
 | 历史症状与根因 | 2026-09-23 主登录态 AVD 上将 Search 首次进入与预热后往返分开取证：D 三次独立 fresh process 的首次 p95/worst 为 `45.375236/44.649095/44.183480ms`，每次最长连续 missed deadline 均为 `2`；Search 源码相同的 E 三次为 `56.002746/55.666297/54.958170ms`，没有构成改善。独立 D Perfetto 中首两帧 FrameTimeline actual duration 为 `31.09/31.44ms`，RenderThread 上 GPU shader 编译分别占 `8.36/7.65ms`；这些 trace 时长与 gfx 的 IntendedVsync→FrameCompleted 口径不同，不直接比较。实际原生 View 创建共 `286` 次，分批 `32/20/78/78/78`，后三批各含 `12` 个 SVG root、`12` 个 Group、`30` 个 Path、`6` 个 Text 和 `18` 个 View；历史图标形状的 `19` 对纹理分后三个绘制帧上传。已定位首次创建和冷绘制成本，但 trace 不含业务 View identity，尚未证明某个背景或透明度属性单独拥有 shader 峰值。 |
 | 当前 owner | `tests/ui/search/search-screen.test.tsx` 承接 typed history、输入与 Header 提交；首次原生挂载由 `docs/operator-runbook.md` 的 Search Release 性能取证单列，原始 fresh-process gfx、Perfetto 和逐帧归因位于 ignored `.codex-tmp/transition-followup-20260923-021317/`。受控真实 Route/controller 的 history 恢复实验未出现额外输入子树提交或列表重挂，不能用 mock FlashList 的通过代替原生绘制验收。 |
-| 处置与边界 | 尚未修复，保持 `OPEN`；D 的预热后一次重复切换通过不覆盖首次挂载，也已被 E 的独立重复推翻为不稳定。F 全局保留失活 Tab 的单次首次进入 p95 `27.927ms`、worst `28.354ms`、最长连续 miss `2`，且引入额外驻留，未构成可接受修复。后续必须在匹配 APK、同一设备与保留数据下用独立新 PID 重复首次进入并单列 deadline、录屏及 trace，不能通过预挂载、延时或把首次帧移入 warm 样本掩盖。E 较慢不能证明所有首次绘制成本都有同一根因。 |
+| 2026-10-03 原生修复包诊断 | 普通 Release/Hermes 包 `4b2d8475…`（末次通知 guard 补修前，与最终包的 Search/原生实现相同） 在构建、测试与任务隔离 AVD 均停止后，以主 AVD 三个 fresh App PID 首次进入 Search。各轮 worst 为 `55.761/55.380/66.779ms`，均是第 3 帧；UI 至提交区间为 `22.812/26.040/27.773ms`，Render 至交换为 `14.269/15.253/16.226ms`，GPU 完成尾部为 `12.517/7.559/9.871ms`，均为时间戳区间而非线程 CPU 时间。后续第 5–28 帧最高 `14.558/14.829/15.102ms`；没有持续重复更新的证据，但首挂载慢帧仍真实存在。未重启共享 AVD，此为诊断而非完整性能门禁；不能凭 gfx 数据直接更改图标或列表预绘距离。原始记录位于 ignored `.codex-tmp/search-followup-20261003/final-cold-search.json` 与 `.codex-tmp/search-followup-20261003/final-cold-search-stages.json`。 |
+| 同包线程归因 | 同包独立 Perfetto 的第 3 帧实际区间为 71.394ms，含追踪开销且与 gfx 口径不同。UI doFrame 为 52.218ms（running 34.096ms），包含 premount 4.460ms、mount 14.343ms、Record View draw 23.551ms；Render DrawFrames 为 27.753ms，包含 prepareTree 7.945ms、FillRRectOp 与 AAConvexPathOp 两次 shader cache miss 编译 4.431/3.979ms。嵌套区间不得累加。四个首挂载帧共创建 267 个 Native View，40 SVG root、40 Group、100 Path 与 20 条历史行的两个图标/五条路径对应，未证明同一业务 View 重复创建。未确认可直接移除的新增重复工作，既有重复同步更新根因由 `REG-PERF-032` 独立关闭；不能以旧 trace 的 shader 猜测改动最终包 TextInput。证据在 ignored `.codex-tmp/search-followup-20261003/finaltrace-attribution.json`。 |
+| 2026-10-03 原生图标对照 | 同一 AVD、保留 20 条历史的普通包 `4526f11f…` 三个 fresh App PID 首挂载 worst 为 `55.731/55.364/46.567ms`。XML VectorDrawable + RN Image 的真实 source 试测确认 History/Close 各 20 次加载、零错误；移除诊断回调的普通包 `ea66b6cb…` 三轮 worst 为 `92.674/55.165/89.190ms`，首挂载簇 `4/5/7` 帧。独立 trace 的 40 次 Image 创建累计 wall `52.740ms`、running `31.330ms`，最重帧 mount `52.577ms`；创建区段包含构造、初始 props、placeholder 和 controller，不能全部归因为 XML inflate，也不与 gfx 帧时直接比较。RN Image 改用 PNG 的 `22f42244…` 三轮 worst 为 `61.262/61.914/69.165ms`，首挂载簇均为 `12` 帧，不能只取前四帧宣称改善。合并 Lucide Path 仅两轮有效，worst `44.056/77.414ms`、首挂载簇 `4/3` 帧；第三轮在 Feed 前置等待超时，未采到 Search，不能计作三轮通过。以上方案均未稳定改善，已否决；节点减少不能代替帧时验收。探索性记录分别在 ignored `.codex-tmp/search-cold-baseline-20261003-4526/`、`.codex-tmp/search-icon-vector-clean-20261003/`、`.codex-tmp/search-icon-raster-20261003/measurement/final-cold-search.json` 与 `.codex-tmp/search-icon-path-20261003/measurement/capture.log`，不作为完整性能门禁通过。 |
+| 系统 ImageView 修复与正式对照 | 保留系统 ImageView 同步加载静态 PNG 的实现。同一 AVD 保留数据冷启动、空闲主机、20 条历史与三个 fresh App PID 的普通 Release/Hermes 正式对照：基线 `4526f11f…` 首挂载簇 UI→queue 累计 `46.58/46.59/45.20ms`、draw→queue 累计 `18.61/15.79/19.53ms`；候选 `4541247b…` 分别为 `27.65/29.88/26.36ms`、`7.10/6.31/4.79ms`。这些是 gfx 时间戳区间之和，不是线程 CPU 时间，draw 段包含于 UI 段，不相加；cold worst 基线 `43.865/43.768/33.400ms`、候选 `32.694/44.467/33.450ms`，并非每轮下降。独立 trace 按整个 Search 事件窗口统计，旧 Lucide 实现的 `4b2d8475…`（与基线 Search 实现相同）共 `299` 个 Native View，候选为 `159`，其中 40 SVG root、40 Group、100 Path 替换为 40 ImageView；不同于前述仅四个 doFrame 的 `267` 个节点口径。800ms 等待的 warm 短窗口三批 worst 基线 `23.208/32.031/25.186ms`、候选 `23.150/23.210/23.232ms`；候选第二批有 IntendedVsync 间隔 `111.111ms` 的相邻有效记录 miss，基线亦未全通过。相邻记录不等于连续显示周期 miss，不据此猜测根因或关单。复核确认上述 800ms 等待未覆盖原生滚动条的延迟淡出，不能可靠逐帧判断目标页面归属；短窗口不替代完整 warm 验收。最终同包/PID 的每转向 3 秒完整窗口三批 p95 为 `21.828/21.841/21.926ms`、worst 为 `29.379/24.635/23.460ms`，前两批仍有间隔约 `1588.889ms` 的相邻有效记录 miss，故保持门槛未全通过；同 PID Feed PSS 从 `308489` 到 `305852KiB`，没有用不同进程绝对值比较，零 Fatal/Fabric 失效/Reanimated 同步错误。完整记录在 `.codex-tmp/search-icon-native-20261003/formal-warm-complete/summary.json`。独立晚帧 trace 未出现 mount/UPDATE_PROPS/create，源码存在原生滚动条延迟淡出路径，但没有逐帧 owner 标记，不认定每条晚帧的具体原因。此前证据在 ignored `.codex-tmp/search-icon-native-20261003/` 与 `.codex-tmp/search-icon-baseline-formal-20261003/` 下的 `formal-cold/final-cold-search.json`、`formal-warm/summary.json`，候选独立 trace 在前者 `trace/`。 |
+| 处置与边界 | 已降低首次创建/绘制开销；仍有冷帧和相邻有效记录 miss，性能未全通过，保持 `OPEN`。D 的预热后一次重复切换通过不覆盖首次挂载，也已被 E 的独立重复推翻为不稳定。F 全局保留失活 Tab 的单次首次进入 p95 `27.927ms`、worst `28.354ms`、最长连续 miss `2`，且引入额外驻留，未构成可接受修复。后续必须在匹配 APK、同一设备与保留数据下用独立新 PID 重复首次进入并单列 deadline、录屏及 trace，不能通过预挂载、延时或把首次帧移入 warm 样本掩盖。E 较慢不能证明所有首次绘制成本都有同一根因。 |
+| 2026-10-04 透明 TextInput 底图修复 | 同 APK 原生底图移除 A-B-A 仅在 B 消除 NonAALatticeOp，单改 alpha=0 仍编译该 shader。正式 RN patch 只在 underline 完全透明时移除原生背景层，保留并可恢复该 Drawable；React 的填充、边框、阴影和 padding 保持。`ReactTextInputUnderlineBackgroundTest` 的真实 Drawable.draw oracle 先失败后通过，相关 JVM 21 项为 `UNIT_PASS`，tooling 58 项及隔离 clean install 的 15 份补丁 forward/postinstall/reverse 检查为 `STATIC_PASS`。匹配 v4 cold trace 的 NonAALatticeOp 为 0，仍有历史行 shader。边框另已归因到 AAConvexPathOp，但替代绘制的原生像素矩阵 32 项中 24 项不等价，方案已否决，Search 样式恢复原样。这些局部结果不是完整性能门槛通过。证据在 ignored `.codex-tmp/remaining-four-20261004-113939/search-native-background-candidate/`、`.codex-tmp/remaining-four-20261004-113939/search-cold-candidate-v4/shader-comparison.log` 与 `.codex-tmp/remaining-four-20261004-113939/clean-install/`。补丁影响共享 Android TextInput，焦点、输入、主题及有样式输入框仍须按入口验收。 |
+| 2026-10-04 最终普通包首挂载 | 无诊断 probe 的 Release/Hermes APK `956bce1d…`，覆盖安装后按 runbook 保留数据冷启动同一主 AVD；三站登录、UID10214、首次安装时间与版本 1.3.150/154 均保持。三个 fresh PID3827/4105/4362 各保留完整 3 秒、29 帧，p95 `32.754/22.253/22.262ms`、worst `33.385/22.379/22.396ms`、miss `2/3/3`；各自首挂载簇均为 4 帧、miss `1/2/2`，后续约 1.53 秒起的 25 帧没有裁除。原始 gfx 逐帧重算一致，严格 `>` 与补充 `>=` deadline 口径一致，各轮无相邻有效 App miss 对，日志零 Fatal/Fabric/Reanimated 同步错误。现行文档没有独立 cold 数值关闭门槛，不挪用 warm 门槛或只取前四帧宣称通过。首屏 AX 仅证明 12 条完整历史行的独立 48dp 点击区互不重叠，第 13 条被视口裁剪，不代表全量 20 条都在屏内。证据在 ignored `.codex-tmp/remaining-four-20261004-113939/final-cold-reboot/` 与同目录 `scratch/final-cold-audit/report.md`。 |
+| 2026-10-04 边框候选否决 | 保留原轮廓的同色 quad UNION 虽通过 64 图像素矩阵及 4 项 native owner，普通包 `937cf158…` 三个 fresh PID 首次 worst 为 115.909/32.611/32.684ms，没有证实设备收益。独立 trace 确认 AAConvexPathOp 消失但出现新的 FillRectOp shader 编译，不能用后测的 31.615ms 覆盖首轮长尾。直接 DD-RRect 的无 clip/原双 clip 两轮均为 4 项中 2 项失败，分别出现直边 alpha 差 64、角点差 116，未放宽像素门槛。所有边框候选和专属测试均撤回，RN patch 精确恢复 `84e54608…`；不保留无收益的额外快路。证据为 ignored `.codex-tmp/remaining-two-20261004-continue/cold029-union-trace-review.md` 和 `.codex-tmp/remaining-four-20261004-113939/history-border-double-rrect/rollback-receipt.json`。cold 没有另设零 miss 门槛；gfx miss、App Late 与 SF prediction 分开解释，不以单一计数宣称显示通过。 |
+| 2026-10-04 保留版首挂载复验 | 普通 APK `cfcb8a62…`、sourceHash `6c3c9122…`，恢复原 RN 边框实现后保留数据冷启同一主 AVD。fresh PID3530/3811/4090 三次各保留完整 3 秒、29 帧，p95 `26.941720/33.306714/22.032793ms`，worst `33.028309/34.404903/22.095730ms`，miss `3/3/4`；三站登录及安装身份保持。没有将边框候选首轮 115.909ms 长尾计作保留版结果，也没有裁掉后续晚帧。本条仍为 `OPEN`，当前 warm 严格失败另归 `REG-PERF-024`。证据在 ignored `.codex-tmp/remaining-two-20261004-continue/retained-cold/final-cold-search.json`；741 份 runtime 文件及 APK 哈希由同目录 `.codex-tmp/remaining-two-20261004-continue/final-source-check.json` 核对一致。 后续普通包 `68651441…` 仅将共享编辑器层恢复为原 hardware，Search 实现未变，但未在该 APK 重跑完整冷/暖性能，不能把本行改记为新 APK 通过。 |
 
-
-## `REG-PERF-025` 千图 Topic 的 Glide 巨大解码工作集并可拖死模拟器
+## `REG-PERF-025` 千图 Topic 整体容量复核
 
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 本轮同包独立 fresh PID 完成真实正文内两轮 40 下/40 上并正常返回，用户自行测试也正常；不列为本轮待修 Bug。历史整体容量条目仅保留完整基线非回退矩阵的验收边界。 |
+| 2026-10-04 独立补验 | 同一主 AVD、相同普通 APK，fresh PID 6769 的 160 次固定正文区域手势，每步均断言仍为已加载主题，无系统栏或图片预览覆盖；两轮反向末尾截图均回到帖子顶部，最终断言已回首页。Feed/采样峰值/回首页 0/30/60 秒 PSS 分别为 258149/415878/342533/316069/312721KiB；gfxinfo 累计 p95/p99 为 18/21ms，deadline missed 2.00%，有界日志无 Fatal、ANR、OOM 或 Already released。只证明这一次有效完整负载未复现，不代替三次基线非回退对照或所有媒体预算指标。证据为 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38/heavy-verified-gestures`。更早的 heavy-cold-confirmation 上行误入系统栏，已标无效，不用于完整往返、回首页或内存回收结论。 |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
 | 历史症状与根因 | NodeSeek `post-863650-1` 的历史 Release 样本曾出现 Feed `+172,595KB`、`Cannot add callbacks to a cancelled EngineJob`、App PID 退出和模拟器失去响应；有效 heapprofd 样本在 5 次滚动中记录约 1.14GB 总 malloc、仅约 12MB 净留存，Release mapping 将主链还原为 Glide `DecodeJob`、`BitmapFactory.decodeStream` 与 `SkJpegCodec`，说明主要风险是巨大解码工作集和分配抖动，而非持续 JS 泄漏。Glide 5.0.9 与当前 compileSdk 36 不兼容，Glide 5.0.5/回收池 40 保持固定。恢复版 APK 的本轮同条件冷启基线为 Feed `254,970KB`，同 PID 两轮 40 下/40 上的采样峰值 `487,861KB`，返回 Feed 60 秒 `358,337KB`，gfxinfo p95/p99 `18/21ms`，无 Fatal、ANR、OOM 或 EngineJob。随后已完成 `REG-TOPIC-144` 的代码修复（该条目仍等待完整设备证据关闭），并在现有 expo-image patch owner 中把 resize rerender 投递到下一主线程任务，以 generation、attach 与最终宽高丢弃 stale task；Release Kotlin、expo-image Release unit test 和 x86_64 APK 均已构建通过。候选 APK `c63fdc4d…` 经授权覆盖安装后，等待 Package Manager handler 与磁盘同步，再关闭同一 `WZ_Pixel_API_35` 并以 `-no-snapshot-load -no-snapshot-save` 冷启；后续各次冷启均保持相同 APK SHA、`1.3.134/138`、`firstInstallTime=2026-07-26 16:51:37` 与登录数据。两次完整独立候选流程均在同一 App PID 内完成两轮 40 下/40 上：其 Feed/采样峰值/返回 Feed 60 秒分别为 `254,352/428,885/352,410KB` 与 `254,142/464,721/362,399KB`，gfxinfo p95/p99 分别为 `18/21ms`、`16/19ms`，jank 为 `0.51%`、`0.38%`，均无 Fatal、ANR、OOM、EngineJob 或网络异常；原生树保持约 `61–62` 节点，顶部、5 步、中段和反向截图未见空白、4:3 回退、比例/行高/圆角/间距变化。第三次独立冷启先出现可关闭的既有 linux.do 登录 WebView，按关闭后的 Feed `296,147KB` 归一；第一轮及第二轮下行完成，第二轮反向约第 26–30 步时整个 emulator/qemu 进程退出，宿主 Android Emulator 36.5.11 同分钟生成 `48,356,112` 字节 crash dump，故该轮记 `BLOCKED_BY_ENV`，不能当成 App Fatal，也不能关闭总体容量问题。再次冷启后 APK/数据仍完整，候选 7/7 只读 Replay 全部通过。 |
 | 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`patches/expo-image+57.0.4.patch` 中的 `ExpoImageViewWrapperTest` 与 `docs/operator-runbook.md` 的唯一重图 Release 非回退流程 |
@@ -5735,6 +6098,8 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 原始症状待定位。本轮主设备诊断入口的真实 DownloadTask 下载与续传矩阵通过，未复现历史丢字节；尚无确认根因或针对性修复，继续等待复现日志并保留 SHA 校验。 |
+| 2026-10-04 复核 | 主 API 35 模拟器的诊断入口执行真实 DownloadTask：完整下载、暂停后磁盘偏移稳定、进程重启后 206 续传、断流后 206 续传、错误 206 与 416 拒绝且保留偏移、服务忽略 Range 返回 200 时全量覆盖均通过。四次完整落盘均为 49,238,205 字节，SHA-256 与 fixture `4880a3dc…ec339a` 一致。证据为 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38/main-device-proof/download-matrix.json`、`download-matrix.log` 与对应脚本断言；这是本地受控下载链，不是 More 生产公网更新或最终安装验收，不能据此关闭原间歇事故，保持 `OPEN`。 |
 | 能力 ID | `MORE-04`、`MORE-01` |
 | 历史症状与根因 | 2026-09-05 的 1.3.135 设备验收中，fixture 应为 68,340,133 字节，App 经本地代理续传后为 68,340,122；损坏样本末段多处各缺一字节，脱离 Expo 的 nc 代理对照也少 10 字节。具体根因未确定；不能把另一项已确认的 HTTP 提前半关闭直接当作这 11 字节丢失的根因。 |
 | 当前 owner | `dev/app-update-proof/index.tsx`、`scripts/app-update-proof-server.mjs` 与 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01`；尚无可靠的自动失败 oracle。 |
@@ -6089,6 +6454,8 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 实际面板在自身终态布局及对应硬件帧提交后才结束受控收键盘，共享 WebView 保持 hardware。此前普通包全屏/半屏 77 帧及本轮成对开关普通包独立 Back 的 37 帧中，键盘全消后的旧高位和 21px 尾差均未再出现，字体未压扁；本轮仍有最大 739px 跳步，长文光标柄与完整平滑度未闭合，保持 `OPEN`。剩余渲染性能项按用户 2026-10-04 授权暂停；`REG-WRITE-121` 的回升遮挡关闭不代表本条完整动画通过。 |
+| 2026-10-04 复核 | 早期普通回复全屏空稿、真实停靠 Gboard 下，仅执行一次 Back 后等待 8 秒，无关闭或重开。`isolated-back.mp4` 的 36 个实际编码帧经过原帧关键边缘筛查并人工复核关键帧，#16（3.035344s）至 #36（10.757367s）在 IME 消失后贴底，该样本未见旧高位露出帖子。#14→#15 间隔 121.600ms，面板位置跨约 744px，不能证明连续动画平滑。先前 `reply-fullscreen-back.mp4` 混入正常关闭，不构成 Back 失败。证据见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38/editor-original-frame-review/isolated-back-review.md`；该次未复现不覆盖下行后续独立失败，完整选图及光标柄矩阵也未覆盖。 |
 | 能力 ID | `WRITE-01/04/05/07`、`NOTIFY-02` |
 | 历史症状与根因 | 用户在真机测试包反馈选图返回时先空缺再闪现，收键盘后重新点输入区仍抽动；此前 `REG-WRITE-086` 的普通开合验证未覆盖 Activity 打断。API 35 原生时序实录：选图打断收起时停在 142dp，Reanimated 把中间高度认作 OPEN；恢复 Activity 的目标 Insets 又先发布 336dp，下一帧归零再展开。编辑器选图前未交出焦点，上传完成再次强制聚焦，进一步触发自动重开。 |
 | 当前 owner | `tests/native/ComposerKeyboardTest.kt` 覆盖 onPrepare 先于目标布局、打断后窗口归零及重叠动画；`tests/native/ComposerKeyboardHostTest.kt` 覆盖实际 Host 的公开 IME 控制、Back、命令及取消/焦点/窗口生命周期。`src/ui/composer/editorRuntime.test.ts` 保留正文与逻辑选区；`tests/ui/topic/composer-keyboard-viewport.test.tsx`、`tests/ui/topic/structured-reply-composer.test.tsx`、`tests/ui/topic/yaohuo-reply-composer.test.tsx` 和 `tests/ui/topic-composer/create-topic-screen.test.tsx` 持有交接顺序、safearea 几何、Portal/Topic/Modal 与原生输入接线。 |
@@ -6133,12 +6500,21 @@
 | 2026-09-27 v11–v14 增量与未闭合边界 | v11 对共享结构化编辑器持续启用硬件层，已就绪正文聚焦/Back、快速重开选图及长 Browse 返回样本未复现整块白闪；首次加载仍有 516.456ms 呈现间隔，不外推全阶段。v12 将妖火回复/私信接入自然高度的 `FixedComposerPanel` 和原生 TextInput，相关 UI 162/162；六片 527 个原帧中普通 Back、长文回复/私信重开保稿，但 Photos 去程仍有 72/94px、49.089ms 灰带，表情入口有最大 818px、71.988ms 背景洞，均露出底层 fixture。v13 仅补妖火真实上传协议的 mock，owner 49/49，设备实际 uploads=1、UBB 插入且无发送；两次未复现尾缝不能判定 v12 间歇失败已解决。v14 表情/格式入口改为复用受控收键盘，确认并复核生命周期后才 blur/开面板；既有 `tests/ui/topic/yaohuo-reply-composer.test.tsx` 的最低 oracle 修前 8 项失败、修后 34/34（seed `1243117478`）。v14 有效 Gboard 样本中旧键盘退场灰洞未复现，但长文表情打开时 footer 裁切 87.967ms、关闭时旧父高度留白 16.334ms；Topic 格式/表情在收键盘后标题先展开再折叠，分别持续 176.778ms/178.866ms，不能记整体通过。原帧判定见 ignored `.codex-tmp/ime-draw-rootcause-20260927/v14-native-panel-review.md`；两条 Photos 目标通过仅属于对应样本，见 `.codex-tmp/ime-draw-rootcause-20260927/v14-gboard-photos-review.md`。帧证据为 ignored `.codex-tmp/ime-draw-rootcause-20260927/v11-hardware-review.md`、`.codex-tmp/ime-draw-rootcause-20260927/v12-dynamic-review.md`；阶段身份和证据索引见同目录 `.codex-tmp/ime-draw-rootcause-20260927/formal-fix-evidence.md` 第 14 节，几何继续归既有 viewport owner。上行 v9 签名包仅为历史产物，不代表当前源码；本条及相关闪白事故保持 `OPEN`，物理真机 `NOT_VERIFIED`。 |
 | 2026-09-27 v15 动态布局与 Topic 元数据修复验收 | 动态面板改为原生自然 height 与 maxHeight，父子同次 layout；测量只用于首测和开合移动距离。妖火现有 onPanelChange 包含键盘交接 pending，工具仍在交接成功后才 blur/展开，成功衔接不释放占用，失败、取消和迟到回执沿同一请求身份清理。viewport 最低 oracle 修前 3 项失败；Topic 原生高度归零至工具 ready 间隙及组件占用 oracle 修前共 5 项失败，见 ignored `.codex-tmp/ime-draw-rootcause-20260927/v15-dynamic-layout-red.log` 与 `.codex-tmp/ime-draw-rootcause-20260927/v15-yaohuo-metadata-red.log`。合并后相关六个 UI owner 306/306（seed `1243117478`），全量 typecheck、定向 lint/format/diff 通过，见同目录 `v15-related-ui.log`、`v15-typecheck.log`、`v15-eslint.log`。匹配 v15 的可见模拟器 Gboard 回放为 9 条目标样本通过：Photos 有键盘取消/无键盘成功、长文表情、已选表情、回复/私信关闭重开及 Topic 格式/表情/直接 Back；原帧报告分别为同目录 `.codex-tmp/ime-draw-rootcause-20260927/v15-photos-review.md`、`.codex-tmp/ime-draw-rootcause-20260927/v15-native-panel-review.md`、`.codex-tmp/ime-draw-rootcause-20260927/v15-shared-sheet-review.md`，仅限对应目标缺陷，不宣称零掉帧。正常入口 ARM64 包 buildId `bd5245cd7ae84c6bbabc99c4b6da4947`、SHA-256 `4d94c45cbc444a6ff1e0ef2678fa4dd5c1d39195fa61b55977668b4488834bb8`，原签名/正常入口/源码一致性静态核验通过。未连接原真机且正常 ARM64 包未运行；本条保持 `OPEN`，APK_SANITY 和物理真机 `NOT_VERIFIED`。 |
 | 2026-09-28 真机残余闪现与 Structured 面板交接补齐 | 新真机录像确认 linux.do Topic 从键盘进入更多/表情时标题短暂展开再折回，分别为 41.333/49.022ms，正文往返 104px；录像包版本未确认。已知 v15 在可见 API35 模拟器复现同类格式入口回弹 198.244ms，不能用上一轮妖火通过覆盖 Structured 路径。Runtime 现将工具交接 pending 纳入已有 PANEL_CHANGED.open，请求宿主收键盘前同步通知，成功连续接到实际 builder，失败/取消释放；不改变 expanded、上传焦点或渲染配置。rich/source 最低 owner 修前 2 项失败，修后 runtime/bridge 130 项及相关 UI 156 项通过，类型、lint、格式、架构与 diff 检查通过。v16 匹配源码的可见 Gboard 定向录像共 8 条、611 个编码帧：格式/表情/更多/Back 与 Photos 有无键盘各取消/模拟上传，未再见该标题往返或所查整块正文白帧；不声明零跳帧，表情关闭跨层先后变化仍如实保留。两条未确认选择/未启用上传 mock 的初始样本排除；成功上传后的 retained=false 表示不再等于种子正文，已以完整正文及上传计数另验保稿，example.invalid 图片下载不计通过。证据在 ignored `.codex-tmp/phone-flicker-20260928/` 的 `.codex-tmp/phone-flicker-20260928/phone-flicker-review.md`、`.codex-tmp/phone-flicker-20260928/v15-linuxdo-topic-format-before-review.md`、`.codex-tmp/phone-flicker-20260928/v16-panels-review.md`、`.codex-tmp/phone-flicker-20260928/v16-picker-review.md` 与 `.codex-tmp/phone-flicker-20260928/functional-check.json`。原签名正常入口 ARM64 包 buildId `14fc6068c7b748939cc792c2059e033b`、SHA-256 `0d32abe684e5c176769d29f93099df612c36bc6352b71169240d081bc3010c90` 已过静态核验；原真机和正常 ARM64 包启动仍 `NOT_VERIFIED`，本条保持 `OPEN`。 |
+| 2026-10-04 同钟独立 Back 复现 | v2 诊断包 `f2ce897e…`、PID5547，普通 NodeSeek 空回复全屏、真实停靠 Gboard，仅一次 Back。34 个实际编码帧中，#16/17 已无键盘但面板底仍约 y1662，#18 才归位，首个已见失败至恢复为 43.302ms。唯一原生目标的几何、shown、alpha 与 clip 已正常，正确布局对应 App 帧 536.960ms、`drawGl` 272.899ms，随后 SF 呈现与恢复帧对齐；支持旧 App buffer 延后提交，不支持把此时残留归给 toolbar 卸载或裁切。证据为 ignored `.codex-tmp/remaining-four-20261004-113939/editor-native-back-a1/analysis/review.md`。样本含 trace/probe，时长不作无探针性能基准。软件绘制对照与淘汰原因见 `REG-WRITE-121`；最终源码已恢复硬件绘制并移除诊断 probe，本条保持 `OPEN`。 |
+| 2026-10-04 最终普通包独立 Back | 无 probe 的 APK `956bce1d…`、PID4362、真实停靠 Gboard，NodeSeek 空白全屏回复仅按一次 Back，随后 8 秒无其他操作。60 个原始编码帧完整复核：#17（PTS2.899467s）键盘已完全消失，但面板保留旧高位并露出下面的主题；#17–28 持续，#29（3.067300s）才归底，编码可见窗口 `167.833ms`，工具栏位置差约 745px。不是最终静态截图或诊断 probe 的结论；原帧与 Winscope 时间轴一致，但本段无 trace，不能独自归因 GL 耗时。保持 `OPEN`，不以 Topic 工具栏回升通过关闭回复返回、跳步或光标柄范围。证据在 ignored `.codex-tmp/remaining-four-20261004-113939/final-editor-back/original-frame-review/back-review.md`。 |
+| 2026-10-04 实际面板提交门修复 | `FixedComposerPanel` 自身承载 Host，并传稳定无 IME 目标高度；原生等待零进度、实际高度/位移、无待处理布局及所属硬件 frame commit，再复核身份和几何后 `finish(false)`。目标/几何变化、取消、失焦、禁用和 detach 使旧回调失效，无硬件提交能力沿系统 hide；没有固定延时或重挂正文。native 最低 RED 为“动画时间已到但旧面板仍不可结束”，修后键盘两 owners 38/38；对应 Host/viewport 等 UI 52/52（seed337528279）、Structured/妖火/Topic 调用方 170/170（seed-1923220454），类型与架构检查通过。普通 APK `937cf158…`、PID4294、主 AVD/Gboard、无 trace 的三次全屏和一次半屏独立 Back，完整 149 帧均未见键盘消失后的旧高位或尾差；仍有 798–814px 大步位移。固定高度半屏的同一 WebView 始终为 1080×687，因此逐帧 resize 不是跳动的必要原因，未采用提前扩容/裁切重构。该阶段包中的 Search UNION 候选随后独立否决，不作为最终 Search 修复。原帧、字体和因果边界见 ignored `.codex-tmp/remaining-two-20261004-continue/endpoint-back-review.md`；真机、长文光标/选区与其他入口不计本段通过。 |
+| 2026-10-04 半屏绘制归因与缓存对照 | 同为 Host 提交门加 WebView NONE 的普通 `937cf158…` 包，独立 trace 的半屏 Back 37 帧中 #12→13 位移 819px，同期 App→SF 对应 buffer 呈现间隔 247.632ms。关键 `drawGl` 为 224.588ms，其中 5602 次 `glGet* encode` 合计 184.436ms；主线程 doFrame 的 276.844ms 中 Sleeping 272.966ms、Record View draw 仅 0.130ms。支持当前 AVD 的 WebView/HWUI GL 查询提交为瓶颈，不把它写成纯宿主往返、GPU 执行或模拟器崩溃，也不外推真机。临时父面板 hardware cache 的半屏/全屏仍跳约 745/744px，78 帧未证明整体收益，属性已精确撤回；未采用软件绘制、固定延时或提前扩容。因果边界见 ignored `.codex-tmp/remaining-two-20261004-continue/endpoint-half-trace-back/gl-audit/review.md`、`.codex-tmp/remaining-two-20261004-continue/parent-hw-rejected-review.md`。 |
+| 2026-10-04 最终硬件层普通包复验 | 普通 Release/Hermes APK `68651441d8508da45544d9ec97cf66af815cb751506f17563c7d1006198931b6`，sourceHash `62779f29ea9c57708023daff0672cbd33bac41a52bbd9ff163cfb00a42b75c63`，仅保留实际面板提交门，共享编辑器 hardware 和 RN 边框恢复原实现。主 AVD、真实 Gboard、PID2928、无 trace/probe；全屏 36 帧、半屏 41 帧逐原尺寸复核。全屏首个 IME 全消为 #14（PTS3.122967s），此时已到终位；半屏 #19（PTS2.879678s）全消，面板 #15 已到终位，两段之后均无旧高位或尾差。全屏仍跳 798+21px，半屏为 16+58+740+5px；文字全屏全部 36px，半屏 40 帧 36px、#13 墨迹边界 37px，未见压扁。本轮 `WRITE-01/07` 仅该末端样本为 `LIVE_PASS`，完整动画、长文光标/选区、选图完整矩阵与真机不计通过。三站登录、UID、首次安装时间保持，741 份 runtime 文件与 APK 身份相符；证据在 ignored `.codex-tmp/remaining-two-20261004-continue/hardware-back-final-review.md`、`.codex-tmp/remaining-two-20261004-continue/hardware-source-check.json`、`.codex-tmp/remaining-two-20261004-continue/hardware-final-device.json`。中间 NONE 并未稳定解决 Topic 回升，已撤回，详见 `REG-WRITE-121`。 |
+| 2026-10-04 图形查询根因追查 | 实际 provider 为 `com.android.webview 156.0.8062.0`，APK/ELF 与官方 Chromium tag 的 ANGLE revision `2db891493f26` 对齐，但安装包原始下载来源未确认。既有同次 trace 的 44 次 drawGl 均有 5602 次查询，种类与顺序吻合 external context 全状态保存；3724 次 glGetError 是调用数量，不代表实际错误数量，官方 gfxstream safe 查询的错误保全即可解释成对调用，不能认定启用了调试断言。上游 [e6447ec](https://github.com/google/angle/commit/e6447ec72629e569f80a0a7940fca784b746cb41) 于 2026-08-05 扩大 external 状态保存范围，是具体候选回归点；尚无前后版本单变量实测，不能定为唯一根因。未找到 App 可安全关闭全状态查询的公开 API。安装异常经用户授权保留数据恢复后，同 AVD、同 c629 诊断 APK 的独立原生 Activity 对照已完成：无 RN/Composer 页面树的 GL WebView 19 次 drawGl 均为 5602 次查询，wall min/median/max 为 219.8178/227.4881/267.4514ms；临时 HWUI Vulkan 的 360 次 drawVk 均无该查询，wall 为 1.5255/1.91215/5.2311ms，两段全部对应 App/SF，trace 无错误。原生 EditText 控制无 WebView functor。RN/Composer 页面树不是该每次成本的必要条件，但 MainApplication 仍初始化原生依赖；GL→Vulkan 对照支持当前 GL 互操作路径为瓶颈，不能单独定责某个库或候选提交。这是归因证据，不计产品通过。summary 见 ignored `.codex-tmp/editor-root-cause-20261004/` 下的 `native-analysis-v2/summary.json`、`web-analysis-v3/summary.json`、`web-analysis-vulkan-v1/summary.json`。只读证据、二进制身份与固定版本源码链接见 ignored `.codex-tmp/remaining-two-20261004-continue/editor-gl-query-root-cause-research.md`。 |
+| 2026-10-04 普通包临时 Vulkan Back 对照 | 同普通 APK `68651441…`、PID3248，仅临时改变 HWUI renderer；全屏 57 帧、半屏 75 帧，共 132 个实际编码帧按原尺寸复核。两段端点稳定，无旧高位或 21px 尾条，文字墨迹为 36/37px，未见软件绘制式压扁；最大相邻位置变化为 130/126px，均记录到 16 次位置变化，相比默认 GL 的 798/740px 大步明显减少。默认 GL 当前样本本已通过末端归位，因此不将该端点修复归功于 Vulkan，也不以编码帧推断连续显示帧率。当前未找到 App 可稳定按进程选择 HWUI Vulkan 的公开 API，所用 `debug.hwui.renderer` 是临时系统调试属性，实验后恢复 `skiagl`；不是支持的产品修复，默认 GL 完整平滑度及真机仍未闭合，本条保持 `OPEN`。独立原帧报告见 ignored `.codex-tmp/vulkan-back-visual-audit-20261004/review.md`。 |
+| 2026-10-04 成对开关普通包 Back 复验 | 普通默认 GL APK `8f73fcfc…`、PID2839，NodeSeek 空全屏回复、真实 Gboard，仅独立 Back。37 个实际编码帧全片原尺寸复核：首个 IME 全消帧 #15（PTS3.105322222s）工具栏已在终位，#15–37 无旧高位或 21px 尾差；#13→14 仍有最大 739px 跳步，PTS 间隔 156.011111ms 不能当作刷新率。35 帧占位文字墨迹高 36px，#12/13 为 37px，未见压扁。此末端样本为 `LIVE_PASS`，完整动画、长文光标柄与真机仍未通过；剩余渲染性能按用户要求暂停，状态保留 `OPEN`。独立报告见 ignored `.codex-tmp/pair-ordinary-gl-back-visual-audit-20261004/review.md`。 |
 
 ## `REG-WRITE-088` 新版 WebView 重复避让与 Activity 返回后的旧动画样式残留
 
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 已确认缺陷已有修复，待验收。新版 WebView 重复 IME 避让、Reanimated 旧样式、Activity 恢复聚焦与新帖旧 padding 已修，并有局部 Live；剩余为原始物理设备样本与完整编辑、私信和妖火矩阵。 |
 | 能力 ID | `WRITE-01/04/05/07`、`NOTIFY-02` |
 | 历史症状与根因 | 用户 2026-09-16 新录屏中，回复标题仍在，HTML 格式工具栏短暂被裁掉再恢复。此前键盘验证设备的 WebView 是 124，不包含 M139 起的 IME visual viewport 缩放；`REG-WRITE-086/087` 的设备通过不能代表新版内核或真机通过。 |
 | 根因与修复 | 原生 Composer 已按 IME 帧移动/缩放容器，但子 WebView 仍收到已处理的 IME Insets。共享编辑器设置 `automaticallyAdjustContentInsets=false`；对应 Android wrapper 补丁在目标布局和动画帧中只将 IME 置零，继续发送归零事件并保留系统栏 Insets。 |
@@ -6168,6 +6544,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 已确认缺陷已有修复，待验收。生产默认 UA 读取已接入主线程，原生红绿测试与 probe 首启对照通过；无 marker 的正式集成包首启、UA 保持、编辑器可用性及物理设备仍待验收。 |
 | 能力 ID | `NAV-01`、`MORE-01` 的共享 WebView 平台初始化入口 |
 | 历史症状与根因 | 2026-09-27 可见 API 35 模拟器覆盖安装后首启间歇退出，重开正常。精确核对当前 WebView 156.0.8062.0 APK 与 DEX 后，`WV.ye1.b:91` 对应异步启动 continuation 读到空任务队列的断言；官方同版本 `SharedStatics` 确认后台 `getDefaultUserAgent` 会主动调度 Chromium 启动。实际 probe 捕获 `NetworkProxyModule.getConstants` 在 `mqt_v_js` 读取 UA；共享入口没有约束线程，可能与首个 UI WebView 的同步初始化竞争。此事故独立于代理内核就绪门禁、返回预热及 IME 底部间距。 |
 | 当前 owner | `NetworkProxyModule.kt` 的专用 `readDefaultWebViewUserAgentOnMainThread` 供实际 `getConstants` 调用；主线程直接读，后台一次派发并有界等待，超时/中断取消排队任务、保留中断和 provider 原异常。`modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt` 固定线程、原值、主线程直接执行、派发失败、超时及中断取消；不新建全局 WebView，也不改变代理启动事务。 |
@@ -6496,6 +6873,7 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 已确认缺陷已有修复，待验收。effect 已同步当前 AppState 到 appActive，最低失败 oracle 转绿；剩余为匹配修复 APK 的配置重建、发帖分类读取与图片恢复，不能仅凭单测关闭整起事故。 |
 | 能力 ID | `NAV-01`、`WRITE-07` |
 | 历史症状与根因 | 2026-09-21 Android 小屏/字号配置重建后，发帖分类持续禁用、linux.do 正文短地址图片失败；仅退出/重进发帖页面不能恢复，系统 Home 后回到 App 才重新加载规则，重进编辑页后图片恢复。诊断中的规则请求为 canceled，无真实发布。 |
 | 已确认缺口 | `useAppLifecycleRuntime` 在 render 读取 AppState 初始化业务前后台状态；effect 再读取当前值时只同步 Query focus，未同步 appActive。挂载监听前由 background 转为 active 会永久留下 false，直到下一次原生 change。现有 lifecycle owner 模拟这个时序，修复前失败，同步初始值后一并通过导航 14 项。 |
@@ -6526,6 +6904,8 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 原始触发根因待定位。本轮同 WebView 内核的真实编辑器诊断入口，NodeSeek/LinuxDo 各四轮图片选中与预览往返未复现卡死或 ANR；普通完整发帖路由及真实远端图片仍未覆盖，不据此认定已修复。 |
+| 2026-10-04 复核 | 主 API 35、WebView 156.0.8062.0、同一 App PID 11523，诊断入口挂载真实 StructuredReplyComposer 和已加载的 128×96 内嵌 PNG，两来源各四轮真实点击图片形成 NodeSelection→预览→继续编辑均通过；逐轮确认图片完整、选中态、contenteditable 切换和 PID 稳定，采样日志无 Fatal/ANR。未上传或发送；普通发帖入口原稿为空，诊断入口的内嵌图不等同于普通完整路由的真实远端图片。证据为 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38/main-device-proof/image-matrix.json`、`image-matrix.log`、逐轮截图及两站录像；只记本轮未复现，历史事故保持 `OPEN`，物理设备仍未验证。 |
 | 能力 ID | `WRITE-05/07` |
 | 历史症状与根因 | 2026-09-21 普通 APK 在主 API 35 AVD、WebView 156.0.8062.0 中，选中已加载的 128×96 正文图片后发生输入 ANR。主线程停在 HardwareRenderer.syncAndDrawFrame，RenderThread 长时间读取 QemuPipeStream，调用来自 GL2Encoder.safe_glGetInteger64i_v 和 WebView drawGl；不是 JS 异常证据，触发根因尚未确认。重开 App 后 feed 可用，但新 WebView 绘制和初始化仍超时。 |
 | 当前 owner | 同 APK、同 WebView 的原生图片选中/预览复测与 Android `data_app_anr` 线程记录。`scripts/run-composer-device-proof.mjs` 保存匹配构建及内核版本的隔离交互证据，但不同内核的通过不能替代本场景。 |
@@ -6647,11 +7027,12 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `EVIDENCE_GAP` |
+| 状态 | `RESOLVED` |
+| 当前结论 | 已解决。2026-10-04 用户明确确认此前 CF 验证问题已解决，本条据此结案并移出待处理清单。下方重复挑战与归因缺口是历史记录，本次未新增设备或 Live 测试，也不外推所有站点和挑战场景均已验证。 |
 | 能力 ID | `WRITE-07`、`ACCOUNT-02` |
 | 历史症状与根因 | 2026-09-21 普通 Release 1.3.148 模拟器验收中，进入或切回 L 站后再次弹出验证；有时验证文档自行到达普通 404，检测后规则读取成功。根因尚未定位，不认定为弹窗自循环或此前出口差异的再次发生。 |
-| 当前 owner | 按 `docs/operator-runbook.md` 的 CF 出口排查流程继续设备取证；已有 `src/sources/readGateway.test.ts` 和 `tests/ui/topic-composer/topic-draft-controller.test.tsx` 只证明受控传输的恢复接线，不能替代实际挑战根因证据。 |
-| 已确认与缺口 | 导出覆盖可用且无损坏行，但 journal 有历史丢弃/写入失败计数，不外推完整历史。13:50 UTC 的同一 App session 中，原生分类及账号读取 200，网页规则读取 403 并有明确 challenge 标记；请求携带的通行 Cookie 与存储一致。对应隐藏 WebView 也报告挑战；检测后该只读业务经 WebView 200 并完成。再次切站仍可复现。临时延后桥接交接没有建立可自动完成挑战的证据，未合入产品代码；未修改网络、登录态或验证保护。尚缺同一窗口原生与 WebView 实际出口对照及服务端触发原因。 |
+| 当前 owner | `src/sources/readGateway.test.ts` 和 `tests/ui/topic-composer/topic-draft-controller.test.tsx` 承接受控传输的恢复接线；2026-10-04 用户使用反馈为本次结案依据。历史 CF 出口取证流程见 `docs/operator-runbook.md`，不把受控恢复测试当作挑战根因证明。 |
+| 历史确认与缺口 | 导出覆盖可用且无损坏行，但 journal 有历史丢弃/写入失败计数，不外推完整历史。13:50 UTC 的同一 App session 中，原生分类及账号读取 200，网页规则读取 403 并有明确 challenge 标记；请求携带的通行 Cookie 与存储一致。对应隐藏 WebView 也报告挑战；检测后该只读业务经 WebView 200 并完成。再次切站仍可复现。临时延后桥接交接没有建立可自动完成挑战的证据，未合入产品代码；未修改网络、登录态或验证保护。尚缺同一窗口原生与 WebView 实际出口对照及服务端触发原因。 |
 
 ## `REG-FEED-036` 发帖按钮淡出突变发灰并留下阴影残影
 
@@ -6737,11 +7118,14 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `OPEN` |
+| 状态 | `RESOLVED` |
+| 当前结论 | 已改用同一活动栏的原生吸顶动画；主模拟器匹配普通 APK 的六轮快速切换/滚动未再出现整栏缺失，三次 fresh PID 首次进入、跨页与进入主题后返回位置也通过。本条从待修清单移除。 |
+| 2026-10-04 复核 | 普通 Release 1.3.150/154、主 API 35，同一 PID 12161，在 NodeSeek 用户夜轻的 217 个主题/7838 条回复资料页执行六轮切 Tab 后立即拖动。2002 个编码帧的像素筛查、上下文索引及 13 张原帧复核确认第 6/7/276/554/1816 帧缺少整条 rail，命中第 1/2/3/6 轮；不能把像素自动筛查表述为 2002 帧逐张人工验收。本次确认共享 UserScreen 入口，不冒充旧 LeoSH 对象重放。证据见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 user019-six-rounds 与 editor-original-frame-review。 |
 | 能力 ID | `USER-01` |
 | 历史症状与根因 | 2026-09-23 对真实 `68` 个主题、`270` 条回复的资料页执行六轮切换与 `80ms` 级快速拖动。`3037` 帧录像中，第 4 轮 `27.112867s`（帧 `1437`）吸顶 TabRail 出现一帧缺口，前后内容仍沿用户拖动方向移动，未发生资料头回顶。根因 seam 为 FlashList `StickyHeaders` 在 JS 滚动回调中计算 currentStickyIndex，再通过 React state 将普通行交接给吸顶副本；该交接没有与原生滚动逐帧原子结算。它与已修的延迟 scrollToOffset 覆盖用户拖动是不同问题。 |
-| 当前 owner | `src/features/user/UserScreen.tsx` 与 FlashList `StickyHeaders` 的真实吸顶接线；最低可靠证据为同一资料页的 TouchTrace、原生录像及逐帧核对，保存在 ignored `.codex-tmp/transition-followup-20260923-021317/user-fast-d2*`。`tests/ui/user/user-screen.test.tsx` 的 mock 滚动 owner 不具备证明原生吸顶连续性的能力。 |
-| 失败 oracle 与边界 | 在已确认实际滚动、吸顶切换发生且列表位置未复位的录像中，TabRail 任何一帧缺失均保留失败；不能按整块页面未闪白或旧回顶竞态已通过来关闭。FlashList 2.3.2 在 sticky index 为 `-1` 时不挂载副本，现有 `hideRelatedCell`/native driver 配置均无法保证原行离屏到 JS 选中副本的交接零空帧。当前仅确认第 4 轮这一帧，尚未修复，不外推为每次必现或持续空白，也不新增无原生绘制能力的 expected-failure 冒充覆盖。 |
+| 当前 owner | `src/features/user/UserScreen.tsx` 的 RN FlatList 与原生 ScrollView sticky 接线；`tests/ui/user/user-screen.test.tsx` 使用真实列表验证切换、回顶取消与两组分页。最低可靠视觉证据仍为实际 APK 的 TouchTrace 和原生录像，组件测试不代替逐帧结论。 |
+| 失败 oracle 与边界 | 已确认实际滚动与吸顶发生时，整条 TabRail 任何编码帧缺失均为失败。修前 FlashList 2.3.2 在 sticky index 为 -1 时不挂副本，JS 交接缺口由历史及本轮修前录像确认；修后全编码帧的像素筛查与关键原帧复核未再命中。自动候选筛查不等于逐张人工审阅，不外推其他设备与所有输入时序。 |
+| 2026-10-04 修复与验收 | USER 页面改为 RN FlatList，同一栏经原生滚动动画吸顶，保留资料头、同一列表、双组 cursor 与用户滚动意图。首次空数据阶段即固定关闭原生子节点裁剪，避免加载后才出现 sticky 时切换裁剪配置；初候选首次缺栏而暖重进恢复，最终候选三个 fresh PID 均首进正常。普通 1.3.150/154、APK `0eab23334285615fbbd3c10b40de86e36ce039f45bfd8f11735478f0c8d58cd1` 与源码匹配；NodeSeek 夜轻资料页六轮 TouchTrace 完成，43.993189 秒的 2406 个编码帧筛查零缺栏候选，关键窗口 48 个原像素帧复核正常。第 4 轮起点栏 y522，其余主要 y900，六轮均跨过 y305 吸顶阈值；轮间主动回顶不算异常。实际主题/回复分别显示 24/25 条不同内容，跨过来源每页 15 条；User→Topic→Back 锚点 y936→936。取得本场景 `DEVICE_REPLAY_PASS`、只读实际来源 `LIVE_PASS`，USER UI 30/30、列表项单测 2/2、类型检查通过。证据位于 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 user019-fixed-six-rounds、user019-functional-v2、user019-cold-v2 与 editor-original-frame-review；物理设备未验。 |
 
 ## `REG-LIBRARY-001` 分类菜单测量前显示并接受迟到定位
 
@@ -6752,6 +7136,37 @@
 | 历史症状与根因 | 2026-09-23 受控 Native 测量确认：分类按钮先设置菜单可见，异步 measureInWindow 尚未返回时已提交默认或上次坐标；页面失活也未关闭菜单。旧实现的“测量前不可见”和“离开后不重现”两个行为 oracle 失败。 |
 | 当前 owner | `tests/ui/library/library-screen.test.tsx` 保留真实 Screen/PopupMenu，延后原生测量回调，核对首次可见位置、来源/页签/失活取消及旧测量晚于新测量完成；`tests/ui/library/library-route.test.tsx` 用可完成的原生测量边界继续验证实际筛选查询。 |
 | 修复与边界 | 当前测量完成并提交锚点位置后才显示菜单；关闭、换来源/页签、失活、尺寸变化及卸载使旧请求失效。筛选、确认及列表宿主不变。UI 时序 oracle 已通过；使用相同 Library 源码的 B2 正常 Release 在主 AVD 上三次打开菜单，逐帧检查首次可见锚点已稳定，未见位置跳变。修复前录像也未捕获跳动，因此两段录像不是设备红绿对照；原生 measure 回调延迟导致提前显示的因果由 UI 红绿 oracle 证明。设备证据仅覆盖这三次打开，不外推其他设备或全部异步测量时序。 |
+
+## `REG-LIBRARY-003` 收藏二级页布局异常且本机分类缺失
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `LIBRARY-01/02/03`，共享 `NAV-01/03`、`MORE-03`、`DATA-02` 与 More 菜单入口 |
+| 历史症状与根因 | 2026-10-02 用户确认 More 的收藏入口与同组条目不对齐，收藏内页的留白、控制区及内容也不合理。共享 `MenuButton` 对空 `value` 仍渲染元数据行；Library 从底栏迁入 native 二级页后仍叠加旧状态栏和底栏留白，列表外层侧边距又与卡片内边距叠加。分类、计数和清空历史分散，关注用户仍保留隐藏分类槽；首次资料尚未加载时将缺省计数显示为零。来源与分类分别结算还使切站的真实 Route 曾查询 `source: v2ex` 与上一站 `category: nodeseek:daily` 的组合。 |
+| 当前 owner | `tests/ui/shared/expandable-controls.test.tsx` 承接空副标题及非空值；`tests/ui/library/library-screen.test.tsx` 承接 native header 下的列表 inset、关注用户无分类槽、未加载不报零及稳定筛选宿主；`tests/ui/library/library-route.test.tsx` 承接真实 Query 的来源/分类组合、重复选中来源不重查，以及仅在本机集合中的分类菜单；`src/platform/storage/readerDataStore.test.ts` 承接整个集合的分类查询；`tests/ui/app/content-source-navigation.test.tsx` 承接真实 More route 在 Library 或首页往返后保留内联外观展开。沿用现有 owner，不把普通通过测试绑定到 REG。 |
+| 失败 oracle 与修复 | 真实 Route 的跨来源分类 oracle 与三条布局/未加载 oracle 均先 RED 后 GREEN。空副标题不创建文本行，二级页按 native header 与自身安全区布局，帖子卡片使用全宽列表及内部 16dp 留白；tab、来源在上，分类/计数/清空历史同一控制行，关注用户不创建分类槽。来源变化与分类重置在同批提交并回顶，当前来源或分类重复选择不重查、不滚顶；未加载或读取失败不补零计数。 |
+| 本轮 Native 逃逸与根因 | 后续真实模拟器验收中，NodeSeek 历史有 129 条，卡片包含 Dev、测评、沙盒、日常等分类，但分类按钮灰色禁用；全部来源的分类菜单只有妖火。`LibraryRuntime.categories` 来自 Feed 远端 taxonomy 投影，NodeSeek 未读取首页时没有目录，妖火却因本地常量存在目录。分类可用性错误依赖无关的首页读取，已有布局和跨来源筛选 owner 未覆盖仅存于本机集合的分类。 |
+| 本机分类修复与证据 | 分类改用现有 SQLite 的 `source/categoryKey/categoryLabel` 查询对应收藏或历史整个集合及已启用来源，独立本地 Query 与列表分页、来源和分类筛选分离，复用 `reader-library` 失效前缀；不扫描当前 50 条、不新建 schema、不新增网络读取。删除 Library 的 Feed 分类投影，Feed/Search 原有分类读取保持不变，分类读取失败独立显示重试。真实 Route 的最低 oracle 在旧菜单缺少本机 summary 独有分类时 RED；启用来源集合变化后的冷读原先又将已选 `nodeseek:daily` 撤回 `all`，该 oracle 同样先 RED。仅当前 scope 真实分类数据到达后才校验分类，placeholder 只复用同 collection 且过滤仍启用的来源，冷读和失败均保留分类与名称，不复用旧帖子分页；修后 Screen/Route 两个 UI owner 38/38 通过（seed `210602`），SQLite owner 38 项通过。 |
+| 最终自动验证 | 布局、未加载计数、跨来源筛选、本机分类及 scope 冷读保留均已有 RED→GREEN。`STATIC_PASS`：完整 `npm run verify`（含 unused 与版本门禁）、`npm run typecheck`、定向 ESLint、文档 29 项及 14 份文档一致性检查通过。`UNIT_PASS`：235 文件 3217 项（seed `1790916692862`）；`UI_PASS`：95 suite 2180 项（seed `1121396188`），最终冻结源码相关 7 suite 100 项通过（seed `1307702906`）。 |
+| 追加返回逃逸与修复 | 前一候选最终返回 More 时，原来展开的内联外观被关闭。根因是 `MoreRoute` 的 focus effect cleanup 仍执行旧 modal 流程的 `setShowSettingsPanel(false)`，将进入 Library 导致的 More 失焦当成关闭外观。真实导航的 Library/首页两条 oracle 修前 RED（seed `1436050004`），删除该清理后 GREEN；相关 7 suite 100 项 UI 通过（seed `1307702906`），typecheck 与定向 ESLint 通过。 |
+| 最终构建与模拟器验收 | 新 APK SHA-256 为 `a67782abc89faca40d56f9a09b472a79b7fb86901f4b3b0d805390340fb1b4a4`，含新增 MoreRoute 的生产 9 文件 sourcemap 与最终源码精确一致，pinned 签名匹配；`APK_SANITY` 通过。`library-return`（24.7 秒）与 `more-readonly`（20.1 秒）两条 `DEVICE_REPLAY_PASS` 均零重试，前者新增展开外观 → Library → 返回仍展开且主题选项可见的 oracle。人工查看新 APK 截图，More 收藏标题与行中心差 0.5px，收藏行进入/返回 rect 完全一致，外观仍展开，三站登录为 3/3；firstInstallTime 保持 `2026-07-26 16:51:37`。帖子收藏/关注用户空态、历史 418 条及全部/四来源的计数与分类正确，NodeSeek 日常 73/418 且重选当前来源仍为日常。再次进入真实 V2EX Topic 并确认 `topic-detail-loaded` 后返回，V2EX 来源及全部分类保持，未打开的顶部两条旧记录 yDelta 均为 0；打开的旧记录按最近访问重排，其下条目自然上移。 |
+| 验收结论 | 最终匹配 APK 已确认 Library 布局、分类和真实详情返回位置，以及 More 外观展开返回保留；canonical 红绿、全量单元/UI 和匹配设备证据达到本轮关闭条件。UI 属性与 Query 调用不代替 Android 绘制，Replay 与人工结果不外推未验设备。 |
+| 未验证范围 | 本机设备没有非空收藏或非空关注用户，该两种状态仅由 canonical UI owner 承接；真实写入未执行。不外推其他设备或完整真实来源分支，截图与日志保持 ignored，不纳入仓库。 |
+
+## `REG-LIBRARY-002` 历史重读移除日期分组后返回位置跳动
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `LIBRARY-03`，共享 `NAV-03` 的详情返回位置 |
+| 历史症状与根因 | 2026-09-30 保留数据 API 35 主模拟器上，滚动 NodeSeek 历史并重读旧帖后返回，未点击旧卡片出现约 85px 上移。`visit` 将 `savedAt` 更新为当前时间，数据库按最近访问时间降序返回；原“本周”唯一记录移入“今天”后，分组派生移除空的“本周”标题。Library 禁用 FlashList 可见内容锚定，因此分组高度变化直接改变原可见旧记录位置。最近访问排序属于既有行为，不以固定重读行原坐标为验收条件。 |
+| 当前 owner | `tests/ui/library/library-screen.test.tsx` 使用真实日期分组与实际 patched `useRecyclerViewController`，覆盖日期标题及本次打开行处于首个可见位置时，以后续合格旧记录核对重排后的屏幕位置；筛选边界使用真实 `RecyclerViewManager` 与 `ScrollAnchor`，核对默认、冷/缓存数据变化和分类切换不挂载 Native 锚点结构，打开主题才启用，并保留列表身份。该属性边界不复现 Android 绘制。`tests/ui/library/library-route.test.tsx` 继续承接筛选与分页查询。 |
+| 失败 oracle 与修复 | 修前两条位置 oracle 在同 seed `13018274` 下均精确少 85px，修后通过。历史默认及筛选期间保留原 disabled 结构，只有用户从当前历史筛选打开主题才启用 Native 锚定，只选择未被本次打开的可见旧记录，排除日期标题和重读行。访问与数据刷新期间不提前关闭；来源、分类、tab 或启用来源集合变化使旧锚失效，不自动重新开启。不改数据库排序、不延迟刷新、不重建列表宿主。 |
+| 本轮 Native 逃逸与撤回 | 首个修复用 `onCommitLayoutEffect` 在筛选新布局后重新开启锚定。主 AVD 的候选 `71d96b` 在 fresh Library → 历史全部 → linux.do 后计数为 131/415，但卡片持续空白超过 20 秒；NodeSeek 冷筛选同样空白，切回全部恢复。同版本、签名和 firstInstallTime 的旧普通包 `9b8` 经保留数据覆盖对照，在相同 linux.do 顺序立即显示四张卡片，确认是本轮列表开关回归。FlashList 开关会动态增删 absolute top=1,000,000 的 `ScrollAnchor` 并改变 Android ScrollView MVCP，不仅改变 JS 校正；Native 空白的更底层布局机制未独立定位。该候选拒绝交付，已撤回 scope/布局回执恢复状态，保留设备失败历史，不以此前 UI 回执测试代替 Native 验收。 |
+| 自动验证 | 简化修复的 Library Screen/Route 两套共 30 项为 `UI_PASS`，seed `13018274`。既有 Route 超时同 seed 重放通过；最后默认 seed `-413040164` 又出现一次 5000ms 超时，同 seed 单 Route 与两套重放、默认 seed `214513185` 的两套 30 项均通过。未确认该偶发超时根因，未加 timeout、重试或修改 owner；移除默认 disabled guard 的负向控制使冷历史挂载真实 `ScrollAnchor`，属性边界 oracle 失败，恢复后通过。该控制不声称复现 Android 空白。 |
+| 普通 APK Native | 与当前 Library 源码匹配的普通候选 `89cc2ed` 在保留数据主 AVD 上，linux.do 与 NodeSeek 各完成点击首个、靠后可见卡片再返回：所选未点击旧锚的坐标变化均为 0px，重读主题均进入最近访问首位；两站冷来源筛选正常显示卡片。上述真实来源入口为 `LIVE_PASS`，未要求锚下所有旧行同时保持坐标。 |
+| 隔离 Native 与证据边界 | 同一 Library 源码的 Release/Hermes fixture `f9822d`（buildId `7a43893504464907a7277aa65a8a79fd`）使用真实 LibraryScreen、TopicCard、FlashList 与启用 freeze 的 NativeStack，仅在内存更新访问时间。在首个及靠后可见位置分别重读唯一“本周”记录：本周 1→0、今天 2→3，重读记录进入首位；首个用例排除 viewportTop –21.714dp 的点击行后锚定 earlier-1，靠后用例锚定 today-01，真实 ref 视口位置及 AX 坐标变化均为 0，列表 Native 实例与 Screen mount 保持，blockedRequests 为 0。此原生补充证据验证日期标题消失和真实可见行排除；不冒充 tracked `.ad` 的 Replay，也不替代普通包持久化，不声称冷筛选空白的底层布局机制已完全定位，也不外推物理设备。 |
 
 ## `REG-WRITE-118` 只读状态恢复重放已消费的编辑器聚焦
 
@@ -6803,18 +7218,31 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `OPEN` |
+| 状态 | `RESOLVED` |
+| 当前结论 | 已修复一条经同钟证实的 React commit 暂停 Reanimated 提交、导致 IME 新布局被跳过的根因；采用官方要求的成对开关并覆盖 Android Kotlin provider。普通包 8f73fcfc… 在主 AVD、默认 GL、真实 Gboard 下，两次独立冷启动的六轮 linux.do 新主题空正文“文字格式→输入正文”共 422 个原帧均未见工具栏遮挡，文字均为正常 36px，`WRITE-02/07` 该链路为 `LIVE_PASS`，本条关闭。保留直接 IME source 修复及全部历史负例；物理设备、其他输入法、长正文、其他来源和未测选区为 `NOT_VERIFIED`，不承诺未编码时刻。GL 渲染间隔、独立 Back 与完整动画继续由 `REG-WRITE-087` 跟踪。 |
+| 2026-10-04 复核 | 普通 Release 1.3.150/154、主 API 35、Gboard：文字格式→输入正文三轮，204 个实际编码帧。第 31 帧 PTS 3.899756s 工具栏整行不可见，第 32 帧 4.066944s 恢复；第 98/99 帧 10.531900/10.698833s 不可见，第 100 帧 10.854256s 恢复；第 164 帧 17.156567s 不可见，第 165 帧 17.310822s 恢复。均以真实 IME 已出现为前提，没有用自动化 helper IME 的首段录像判断。证据见 ignored `.codex-tmp/known-issues-verify-20261004-2ae8fd38` 的 gboard-three-cycles.mp4、editor-original-frame-review；仅描述实际采集画面及其时间间隔，不推断两帧之间所有显示周期。 |
 | 能力 ID | `WRITE-02/07`，共享 `WRITE-01/04/05` 的结构化编辑器与 IME 绘制边界 |
-| 历史症状与根因 | 2026-09-23 主 AVD 上，旧 D 与最终 E 的有效“文字格式→输入正文”录像均显示新 Gboard 开始上升后，底部单行工具栏先完全不可见，再只露上缘，约 0.477 秒后恢复到键盘上方；分类/标题与正文顶部没有同时消失。E 的 DOM/原生 WebView 尺寸已跟到目标值，但屏幕仍显示两至三张错位编码帧。同 APK 的 Chrome + Perfetto + 视频同钟取证中，遮挡帧对应 App RenderThread `WebViewFunctor::drawGl` 约 `246/248ms`，SurfaceFlinger 仅约 `9/6ms`；一帧内 GL 状态查询累计约 `201ms`，App 出现 `Buffer Stuffing`。瓶颈位于当前模拟器的 WebView 原生 GL 绘制提交前；尚无另一 GPU 后端或真机 A/B，不能断言所有设备同样耗时，也不能说 GL 查询是模拟器独有。 |
-| 当前 owner | `src/features/topic-composer/TopicComposerScreen.tsx` 的单一 IME 高度避让、`src/ui/composer/StructuredReplyComposer.tsx` 的嵌入式 WebView 与匹配 APK 的真实输入法录像；受控 DOM 几何、Chrome/Perfetto/FrameTimeline 对齐和逐帧报告在 ignored `.codex-tmp/transition-followup-20260923-021317/toolbar-attribution-analysis.md`。现有 JS mock 不能证明 Android 绘制连续性。 |
+| 历史症状与根因 | 2026-09-23 主 AVD 上，旧 D 与最终 E 的有效“文字格式→输入正文”录像均显示新 Gboard 开始上升后，底部单行工具栏先完全不可见，再只露上缘，约 0.477 秒后恢复到键盘上方；分类/标题与正文顶部没有同时消失。E 的 DOM/原生 WebView 尺寸已跟到目标值，但屏幕仍显示两至三张错位编码帧。同 APK 的 Chrome + Perfetto + 视频同钟取证中，遮挡帧对应 App RenderThread `WebViewFunctor::drawGl` 约 `246/248ms`，SurfaceFlinger 仅约 `9/6ms`；一帧内 GL 状态查询累计约 `201ms`，App 出现 `Buffer Stuffing`。该历史样本定位当前模拟器的 WebView 原生 GL 绘制提交瓶颈；后续已有同 AVD 后端及独立原生 GL/Vulkan 对照，见下行和 `REG-WRITE-087`，物理设备仍未验证，不能断言所有设备同样耗时，也不能说 GL 查询是模拟器独有。 |
+| 当前 owner | `src/features/topic-composer/TopicComposerScreen.tsx` 的直接 IME 高度避让、`tests/ui/topic-composer/create-topic-screen.test.tsx` 的当前帧行为 oracle、`tests/ui/topic/composer-keyboard-viewport.test.tsx` 的共享几何，以及 `src/ui/composer/StructuredReplyComposer.tsx` 的嵌入式 WebView。`package.json` 与 `patches/react-native+0.86.3.patch` 拥有全局提交策略，补丁安装归 `tests/tooling/patch-artifacts.test.ts`；该静态 owner 不证明并发行为。匹配 APK 的真实输入法录像、native geometry、Perfetto/FrameTimeline 与逐帧报告共同拥有绘制证据；既有同钟报告在 ignored `.codex-tmp/transition-followup-20260923-021317/toolbar-attribution-analysis.md`，本轮证据见下行。JS mock 不能证明 Android 绘制连续性。 |
 | 软件 GPU 对照 | 保留数据和相同 E APK，临时以 `-gpu swiftshader` 冷启同一 AVD，SurfaceFlinger 报告 Google SwiftShader。无输入/发布的有效文字格式→输入正文重放，两次 DOM click 分别命中目标；45 个实际编码帧中，Gboard 上升的第 26–33 帧工具栏未完整出现在键盘上方，第 34 帧恢复，首个错位帧到恢复帧的录像 PTS 约 `245ms`。故问题并非只在原 AMD host 后端出现；但该次两次 DOM click 相隔约 `959ms`，与 host 原样本手势不等时，不能把两段遮挡时长当作性能收益比较。追踪模式的另一手势第二次 click 未命中“输入正文”按钮，其 trace 不作为同动作 A/B 归因。实验后恢复原 host GPU，登录和安装身份保持。 |
-| 失败 oracle 与处置 | 真 IME 已可见时，工具栏不得被遮挡或裁切；host 与 SwiftShader 有效录像均在该条件下失败，保持 `OPEN`。当前证据不支持再改标题 pending、重复添加 Insets、CSS、固定延时或提前预留空白。后续应在物理设备或等时手势下对比 `drawGl`、GL 查询、App buffer 和真实可见帧，再决定是否需要产品层改动；本轮未为该问题加入无因果补丁。 |
+| 失败 oracle 与处置 | 真 IME 已可见时，工具栏不得被遮挡或裁切；同一 oracle 保留历史 host、SwiftShader、686 hardware 与临时 Vulkan 负例，本轮成对开关修复后由两次普通默认 GL 冷启动通过。没有放宽图标可见条件，也未以终态或原生矩形代替逐帧图像。保留直接 IME source，不追加标题 pending、重复 Insets、CSS、固定延时或预留空白；WebView 保持 hardware，不以文字失真或临时 renderer 换取通过。设备与输入法覆盖单列，GL 性能不由本条关闭。 |
+| 2026-09-30 回复呈现慢帧与 GPU 后端 A-B-A | 正常 Release/Hermes APK SHA-256 `71d96b01fd3fc4bcbd48ae851af1d60b3e21311a7f4d752908739e359edf9945`、WebView provider 156 与用户数据保持，临时切换同一 API 35 主 AVD 的 GPU 后端后恢复 host。无 trace 的已初始化暖态回复打开最慢帧为 host `478/489ms` → SwiftShader `89ms` → 恢复 host `522ms`；SwiftShader 收起为 `65/70ms`。Perfetto 的 `WebViewFunctor::drawGl` 均值约 `241ms` → `41ms`，实际输入与原始编码帧同钟对齐的录像也从长时间保持原帖后跳到完整面板，变为记录到多个展开、收起中间位置。慢帧在暖态持续复现，A-B-A 支持当前模拟器 GPU 后端显著放大 WebView GL 绘制耗时；不限定某一显卡厂商，也不外推所有真机。host 录像首次打开为冷编辑器，SwiftShader 录像前已开合两轮，首屏初始化时间不作直接对比；编码帧仍有约 `55–79ms` 间隔，不宣称零卡顿或连续 90Hz。`androidLayerType="none"` 单变量候选未消除绘制阻塞，已恢复原 `hardware`。证据在 ignored `.codex-tmp/topic-followthrough-20260930/` 的 `.codex-tmp/topic-followthrough-20260930/backend-comparison.json`、`.codex-tmp/topic-followthrough-20260930/backend-reply-frame-review.md` 与三份 `final-*-unprofiled.json`；本次仅确诊回复呈现的模拟器慢帧，未新增本条真实 IME 遮挡或实体机通过证据，该轮仍保持 `OPEN`。 |
+| 2026-10-04 直接 IME source 修复 | `TopicComposerKeyboardObserver` 仍仅在页面 active 且无独立 Modal 时订阅，发布稳定键盘 source；viewport 直接计算当前 `height` 减安全区，不经 reaction 复制 padding。卸载只释放自己的 source，保留 OPEN 交接、Modal 生命周期、同一 WebView 与草稿。当前 IME 帧先于 reaction 的最低 oracle 修前期望 312 实得 0，修后相关 UI 104/104、typecheck、定向 lint/format 通过。v4-A 相比 v3-A2 的收键盘原生几何滞后减少，但回升仍有大幅滞后，`drawGl` 中位数 244.732→243.199ms；不是无探针视觉通过。证据为 ignored `.codex-tmp/remaining-four-20261004-113939/topic-direct-height/review.md` 与 `.codex-tmp/remaining-four-20261004-113939/scratch/editor-direct-audit/report.md`。 |
+| 2026-10-04 软件绘制对照淘汰 | v3 同 APK hardware→IME 中途 software→hardware 的实际层为 2/1/2，software 的 `drawGl` 为 0，但正文文字纵向压扁；v5 从创建即使用 WebView software 仍将同宽 258px 的文字高度约 36px 压至 26px，隐藏键盘后仍失真，DOM 字号、行高、DPR 与 transform 未变。v7 的实际层确认为父 Host software=1、子 WebView none=0，GL 为 0，文字区域与 v5 逐像素相同，不能作为产品修复。未形成预期实际层的诊断样本不计对照。证据在 ignored `.codex-tmp/remaining-four-20261004-113939/editor-ime-probe/layer-aba-review.md`、`.codex-tmp/remaining-four-20261004-113939/scratch/editor-software-v5-audit/report.md` 与 `.codex-tmp/remaining-four-20261004-113939/scratch/editor-parent-v7-audit/report.md`。该阶段 Host 已恢复原实现、WebView 恢复 `hardware`，诊断 WZ probe 已移除；当时只保留直接 IME source 修复，后续改动另见下行。 |
+| 2026-10-04 最终普通包原帧验收 | APK `956bce1d…`、PID4362、主 AVD 原 host GPU、Gboard，linux.do 普通新主题空正文三次“文字格式→输入正文”。205 个原始编码帧全部人工复核，三次 Gboard 首可见帧为 #30/94/157（PTS `5.244889/12.889056/20.456522s`），五个工具均已完整出现在其上方；中间 #31/95/158 与稳定 #32/96/159 也完整，至末帧 #205 未见遮挡或裁切。输入前后空草稿保持，采集时无 trace、诊断 probe 或并行构建。旧普通复现每步等待 1200ms，本次 1500ms；回升前均已完全退键盘且工具栏归底，没有以未到达相同起点或截断过渡取得通过。`WRITE-02/07` 该入口为 `LIVE_PASS`，不外推每个显示周期零卡顿、其他来源/输入法或真机，也不关闭独立 Back 的失败。原尺寸帧、PTS/Winscope 对齐与逐帧复核在 ignored `.codex-tmp/remaining-four-20261004-113939/final-editor-cycles/original-frame-review/`；原生控件输入另在同任务 `final-input-check/` 验证 Search 输入与恢复空值，未提交搜索、历史保持。 |
+| 2026-10-04 中间 none 候选复验 | 普通 APK `cfcb8a62…`、PID4090，linux.do 新主题空正文的三轮“文字格式→输入正文”中，第 2 轮 #88/#89 被真实 Gboard 遮挡，#90 恢复；首个已见失败至首恢复的原始 PTS 间隔为 `310.277778ms`。该段 197 个编码帧的正文占位文字高度均为 36px；第 1/3 轮编码帧未见遮挡，不能覆盖第 2 轮失败。`androidLayerType="none"` 候选已撤回，源码恢复原 `hardware`；后续 hardware 也复现，不能据此认定 none 是唯一根因。证据为 ignored `.codex-tmp/remaining-two-20261004-continue/retained-final-visual-review.md` 与 `retained-r2-cycles/original-frame-review/`。 |
+| 2026-10-04 恢复 hardware 普通包复验 | 无 probe 的 Release/Hermes APK `68651441d8508da45544d9ec97cf66af815cb751506f17563c7d1006198931b6`（sourceHash `62779f29ea9c57708023daff0672cbd33bac41a52bbd9ff163cfb00a42b75c63`），同 PID10530、主 AVD 真实 Gboard。linux.do 普通新主题空正文两段各三轮，共 428 个实际编码帧：r1 第 1 轮 #33/#34 五工具被覆盖，#35 恢复，首失败→首恢复 PTS 间隔 `327.766667ms`；r1 第 3 轮 #165/#166 五工具被覆盖，#167 恢复，间隔 `321.988889ms`；r2 第 3 轮 #165/#166 四个高图标下半部被盖、更多三点仍可见，#167 恢复，间隔 `327.844444ms`。其余三轮编码帧未见遮挡，因此六轮为三次失败、三次未见，该阶段保持 `OPEN`。全部 428 帧占位文字墨迹高度为 36px、未见纵向压扁；正常字形和稳定终态不替代过渡帧验收。上述间隔只描述已编码首失败至首恢复，不推断全部未编码显示时刻，也不以源码 layer 配置推断本次实测原生层或线程根因。原始帧、PTS 与独立逐帧报告位于 ignored `.codex-tmp/remaining-two-20261004-continue/` 下的 `hardware-r1-cycles/original-frame-review/`、`hardware-r2-cycles/original-frame-review/` 和 `.codex-tmp/remaining-two-20261004-continue/hardware-topic-visual-review.md`。 |
+| 2026-10-04 普通包临时 Vulkan 回升对照 | 同普通 APK `68651441…`，两次保留数据冷启动后分别为 PID3248/3269，均无 trace/probe。linux.do 新主题空正文各三轮真实 Gboard 回升，共 324+321=645 个实际编码帧：首冷轮三次及第二冷轮前两次未见遮挡，但第二冷轮第 3 次 #250 五工具全部被 Gboard 盖住，#251 恢复。#249 工具栏完整但仍在旧位；#250 PTS20.725433333s、#251 PTS20.737200000s，首失败至恢复的编码间隔为 11.766667ms，不是精确故障持续时间。全部 645 帧占位文字墨迹高 36px，无压字；六轮的一次负例仍否定稳定修复，且视频本身不能区分实际布局滞后与 App buffer 呈现滞后。Vulkan 只作临时环境归因，不是支持的 App 产品方案，不覆盖默认 GL 负例，该阶段保持 `OPEN`。原帧和独立复核见 ignored `.codex-tmp/editor-root-cause-20261004/ordinary-vulkan-topic-r2-independent-review/report.md`；原生 GL/Vulkan 成本对照与公开 API 边界见 `REG-WRITE-087`。 |
+| 2026-10-04 提交暂停同钟红例 | G4 诊断包在临时 Vulkan 下仍复现：React hook 于 78.6117861s 暂停 Reanimated，78.6134677/78.6254951s 两个新 IME batch 在 C++ 实际 skip，同 doFrame 的 toolbar bottom 均停在 1702，IME 为 755/798px，几何重叠为 57/100px；Java queued gate 未挡住更新。mount unpause/requestFlush 后 registry 重放，下一帧 padding/layout 恢复。原尺寸热点 #230–246 中，#240 四个高图标下沿被盖、#241–242 五图全被盖、#243 恢复，首失败至恢复的编码间隔 31.233333ms。pre-draw/commit 不等于上屏，不把矩形差代替可见像素。证据为 ignored `.codex-tmp/editor-ime-geometry-probe-20261004/g4-review.md` 与 `.codex-tmp/editor-root-cause-20261004/geometry-g4-visual-review/report.md`；这一原因不覆盖所有历史 GL 慢帧。 |
+| 2026-10-04 成对开关修复与诊断绿例 | `package.json` 编译期启用 `DISABLE_COMMIT_PAUSING_MECHANISM=true`；RN source patch 同时将 C++ 与 Android Kotlin defaults 的 `preventShadowTreeCommitExhaustion` 设为 true，保留 stable release level，不额外启用其他 experimental flags。Android stable provider 经 JNI 接管 C++ getter，故 Kotlin 侧不能省略。G5/G6b 两次冷启动、同 6c5c3c30… 诊断包各五轮：340 次实际动画 commit 全部成功，两个运行时开关各 340 次观测均为 1，skip/cancel 为 0，537 次 pre-draw 未见旧几何大差；存在 React 与动画提交交叠，并非无更新条件下的零失败。478+532=1010 个原帧独立复核，十次真实 Gboard 回升均未见遮挡。此前 G6 的 IME 未显示前置检查退出，没有动作或录像，不计有效采样。此层仅为临时 Vulkan 诊断；普通默认 GL 另见下行。证据为 ignored `.codex-tmp/editor-ime-geometry-probe-20261004/pair-diagnostic-summary.md` 及 `.codex-tmp/editor-root-cause-20261004/` 下的 `geometry-g5-visual-review/report.md`、`geometry-g6b-visual-review/report.md`。 |
+| 2026-10-04 普通默认 GL 关闭验收 | 无 trace/probe 的普通 Release/Hermes APK `8f73fcfc56a9a48162d3b591afe1910b97c5ca86f01ebaf85ae757dcab68f252`，主 AVD 每轮保留数据冷启动后分别为 PID3162/2839。linux.do 新主题空正文、真实 Gboard，各三轮“文字格式→输入正文”；212+210=422 个 1080×2400 原帧的工具栏与文字均完成原尺寸复核，六次回升未见五工具被遮挡或裁切，文字墨迹均高 36px、无软件压扁。各动作窗延伸至正文动作后 3 秒且包含稳定尾段。回升相邻编码 PTS 仍有 144.177778–176.011111ms 间隔，不代表全部显示时刻或性能通过；本条仅按上述入口验收关闭。相关 tooling 87、UI 387、native 280、架构检查（625 个模块）与 typecheck 通过，不能将 UI mock 或该局部 Live 外推为全局 Reanimated 入口已验收。普通功能另核对新帖标题/链接输入框的聚焦与返回，以及分类 Modal 开合，NodeSeek 回复/私信的全屏 Back、半屏与取消重开，既有图片预览开关、Feed 上下 900px 后的位置及 FAB 隐显恢复、More 账号中心真实内容展开；私信空稿发送保持禁用，未提交发送。这些仅证明本轮实际端态功能，不代表快速竞态、图片拖拽或性能全验。原帧与独立汇总见 ignored `.codex-tmp/editor-root-cause-20261004/pair-ordinary-gl-topic-visual-summary.md` 及其两份逐轮报告。 |
 
 ## `REG-WRITE-122` 图片上传完成时占位与图片之间闪出空白帧
 
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `OPEN` |
+| 当前结论 | 已确认缺陷已有修复，待验收。上传插图与清占位已原子化，返回首帧预热也已接入；最终无探针的隔离 mock Replay 中，八条选图路径及附件取消样本未见返程闪白，另已执行私信成功并确认图片和草稿保留。全部来源、共享入口和物理设备仍须独立验收。 |
 | 能力 ID | `WRITE-04/05/07`、`NOTIFY-02` 的共享结构化编辑器 |
 | 历史症状与根因 | 2026-09-23 用户真机录屏在无键盘上传完成后，先看到“上传中…”占位消失和正文空白，下一帧才出现“图片加载中…”。富文本结算先独立 dispatch 清除 ProseMirror decoration，再另起 transaction 插入 Markdown 图片，两个可见状态之间没有内容。 |
 | 当前 owner | `src/ui/composer/editorRuntime.test.ts` 在真实编辑器每次 transaction 后观察占位或图片节点；旧实现出现 `[false, true, …]`，修复后无空白 transaction，同时验证映射选区、正文与焦点。 |
@@ -6838,3 +7266,98 @@
 | 当前 owner | `src/features/topic/actions/topicActionDecision.test.ts` 维护关闭决策；`tests/ui/topic/topic-actions-controller.test.tsx` 维护同次渲染拒绝、关闭保稿、旧回调与选图/CSRF/真实代理等待后的零 POST，以及开放和合法编辑对照；`tests/ui/topic/topic-reply-filters.test.tsx` 以真实 decision、TopicScreen 与 ReplyItem 维护主/楼层入口和阅读保留。 |
 | 修复 | 共享关闭判断覆盖 LinuxDo，新增回复与上传接入已有请求前 guard；保留已有回复的合法编辑和附件权限；编辑器显示移除错误的点赞权限前置条件，该 UI oracle 修前失败、修后通过（seed `-383859171`）。UNIT 修前 1 项失败（seed `1790696121080`）；controller 修前 5 项失败（seed `-654483801`），包括等待期间关闭后仍产生 POST。 |
 | 验收与边界 | `STATIC_PASS`：类型、相关 lint/格式、架构、文档及 diff 检查；`UNIT_PASS` 33 项（seed `1790696412942`）；`UI_PASS` 299 项（seed `-1455260407`）。主 AVD `emulator-5562` 覆盖安装正常 Release/Hermes build `1c8a11e987e749a9aab0cd0de8c08473`，APK SHA-256 `d43172ddc45748719b79b719730094b5be47fd08a341f0547458b9a3c8d64fdb`，firstInstallTime 保持 `2026-07-26 16:51:37`。`LIVE_PASS`：原帖关闭标记、标题、正文及阅读工具正常，回复按钮消失，点赞/收藏入口保留；该帖零回复，楼层回复入口由真实 ReplyItem UI owner 覆盖。`APK_SANITY`：启动后当前进程无 AndroidRuntime/ReactNativeJS error。未执行真实回复、上传或编辑写入，实体机为 `NOT_VERIFIED`。本机证据保存在 ignored `.codex-tmp/closed-topic-20260929`。 |
+
+## `REG-ACCOUNT-056` NodeSeek 签到成功后收益确认长期等待
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-04`，共享账号中心签到状态与鸡腿流水 |
+| 历史症状与根因 | 2026-10-02 用户在保留登录态的模拟器主动随机签到，余额增加 3 鸡腿，页面仍持续显示“签到成功，收益待刷新”。原站 board 的本人 `record` 仅有 `id/member_id/day_id/gain/created_at`，榜单 `list` 才额外包含 `member_name`；adapter 共用榜单结构校验，错误拒绝合法本人记录，签到后的 GET 对账无法确认收益。旧合成 fixture 为本人记录补了原站不存在的姓名，漏检此差异。 |
+| 当前 owner | `src/sources/nodeseek/accountData.test.ts` 的 `accepts attendance records without leaderboard-only member names`；同 owner 保留本人身份、必需数字/日期字段、缺失与显式 null、榜单姓名的独立验证。通过测试使用行为标题。 |
+| 修复与验证边界 | 拆分 `NodeSeekAttendanceRecord` 与带姓名的榜单 `Entry`，本人记录和 signed 状态消费前者；不放宽 ID、归属、签到日、收益或时间校验，不补零，也不据余额差猜测签到状态。实际 App-owned WebView 只读 GET HTTP 200 已确认原站结构；同结构 oracle 修复前 2 项失败（seed `1790872597764`），修复后相关来源 6 文件 167 项通过。同签名覆盖安装后的实际账号页已通过只读回读显示“今日已签到 · 获得 3 鸡腿”，流水显示收入 3、净变化 +3 和余额 635；重进与返回后状态保持。Agent 未额外提交签到，真实写入由用户主动完成。 |
+
+## `REG-ACCOUNT-057` linux.do 回复统计被拆成独立发言指标
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-04`，共享 `USER-01` |
+| 历史症状与根因 | 2026-10-02 用户指出账号中心 linux.do 将发言统计与回复入口分开。adapter 把实际 `post_count` 放到 `postCount`，把原站未提供的 `reply_count` 当作回复数；More 因而展示不可点的“发言”，另放“我的回复”。这是来源字段口径误判。 |
+| 原站证据 | [Discourse UserStatCountUpdater](https://github.com/discourse/discourse/blob/main/app/services/user_stat_count_updater.rb#L32-L37) 将首帖记为 `topic_count`，普通回复记为 `post_count`；[原站概要 UI](https://github.com/discourse/discourse/blob/main/frontend/discourse/app/templates/user/summary.gjs#L131-L137) 将 `post_count` 直接链接到 `userActivity.replies`。 |
+| 当前 owner | `src/sources/sourceUserRead.test.ts` 固定原始 `post_count` 直接映射 `replyCount`、零值与字段缺失；不相减，也不保留重复 `postCount`。`tests/ui/more/more-screen.test.tsx` 固定“回复”数字直达 replies 和缺数 fallback。来源 oracle 修前 5 项失败、More 两项失败，修后分别 39/39、25/25 通过；通过测试使用行为标题。 |
+| 只读验收 | 当前签名候选覆盖安装后，实际 L 站账号区显示“回复 33”，数字直达已选中的回复列表，用户页同样显示 33 且没有独立发言指标；返回保留账号中心展开与站点。账号区切站、返回、前后台与手动刷新正常，两类流水缓存返回正常。`APK_SANITY`、`DEVICE_REPLAY_PASS` 与此范围 `LIVE_PASS`；firstInstallTime 仍为 `2026-07-26 16:51:37`，三站登录保留。没有执行真实签到或回复写入，零额外 GET 由 UI Query owner 的调用证据维护，不用界面无转圈代替网络证据。 |
+
+## `REG-ACCOUNT-058` 账号中心缓存切站闪白与重复状态提交
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/04` |
+| 历史症状与根因 | 2026-10-02 用户反馈三站切换反复闪动。账号卡片按站点和身份重建时使用 140ms FadeIn，已有缓存内容也先变透明；受控选站在子组件再次同步本地镜像并回传父组件；相同签到看板观察也总创建新的 scopedState，额外触发 Account runtime 更新。Query 的手动刷新和无限内存缓存策略没有产生重复的暖切站 GET。 |
+| 当前 owner | `tests/ui/account/account-center.test.tsx` 维护切站正文无整卡片淡入、受控选站提交次数与同站点击无操作；`tests/ui/account/nodeseek-check-in-controller.test.tsx` 维护相同看板观察不提交，以及收益、记录、排名、服务端日、身份和 epoch 变化仍更新；`tests/ui/more/more-screen.test.tsx` 维护认证关闭、来源禁用/恢复和全部账号来源为空时的选站记忆。通过测试使用行为标题。 |
+| 修复与红绿证据 | 去掉整张账号卡片的 entering 动画，保留身份 key 与展开/收起动效；More 持有受控选站，只记住实际启用的来源；签到状态提交比较实际领域字段。相同受控三站更新修前 6 次提交、修后 3 次（seed `219602`），相同或等值签到看板两次重复观察修前 2 次提交、修后 0 次（seed `19476013`），内容/日期/owner 改变仍提交一次。全部账号来源暂时关闭的新增 oracle 修前失败，实际来源 guard 修后保留原选择。修复前正常 Release/Hermes APK SHA-256 为 `2f49b4144017260756e9ad54c04e314fdf73481dc178283e8e9477d6f718147a`，三站暖缓存各切换两次的原生录屏已捕获整卡片闪白；本机对照证据保存于 ignored `.codex-tmp/account-switch-20261002`。 |
+| 验收与边界 | `STATIC_PASS`：`npm run verify`、`npm run typecheck` 与 `git diff --check`；`UNIT_PASS` 235 文件 3211 项（seed `1790908299225`）；`UI_PASS` 95 owner 2157 项（seed `-871781881`）。正常 Release/Hermes APK SHA-256 `f8995c3c5a66e6a64b41c6b3d0e3099c925813d2da4dee4be88aa591019e5e58` 通过同签名覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`，三站登录与原有数据保留。`APK_SANITY`、两条只读旅程 `DEVICE_REPLAY_PASS`；此范围 `LIVE_PASS`：后台构建/测试均结束后，按同一六次暖切站序列录屏（修前 11259ms、修后 11453ms），整卡片不再从透明开始，展开/收起动效保留。去重后的变化帧为 104/86 帧，固定昵称区域 `(250,970,730,1090)` 无深色像素的帧从 21 降至 0，逐帧拼图复核确认整卡片闪白被消除；这不是丢帧率或 FPS 指标。UI 红绿仅证明 React 提交与网络调用行为，实体机帧率和真实签到写入仍为 `NOT_VERIFIED`。不修改 Query 数据生命周期，不清 Cookie 或登录状态。 |
+| 本轮追加复查与边界 | 后续全面流畅度复查确认，外层账号卡片仍因站点/用户 key 在切站时重建，未打开的站点设置正文也参与挂载。移除外层 key 以复用卡片及共有统计宿主；设置和低频资料仅首次打开时创建，同 owner 收起保留动画子树，来源或用户变化释放旧设置与草稿，低频资料在 site/UID 变化的同次提交中重置展开与正文。linux.do 等级正文首次展开时创建，收起保留，离站释放隐藏正文但保留展开意图，内部 UID key 仍重置 tab。`tests/ui/account/account-center.test.tsx` 与 `tests/ui/more/more-screen.test.tsx` 承接宿主稳定、懒挂载及身份重置，站点面板和共享展开 owner 保留草稿及收起门禁；本轮匹配 APK 的原生流畅度复验仍为 `NOT_VERIFIED`，不以此前淡入或高度动画验收替代。 |
+| 本轮结构修复包原生复验 | 匹配 APK SHA-256 `6124ca7f28fbf40f830c0c2c207d041c3aa6ebcc886bc2561cc5af12dfcb091a` 的多批 L↔NS 切换最长帧分别为 24.5/70.4/81.3ms，同轮旧包为 244.9ms、中间包为 154/157ms；Y↔NS 为 23.4ms，资料与设置开合最长均约 25ms。仍捕获 NS 返回 draw 73ms，不据此标为全流程无长帧。source/profiler 仅提供 SVG 相关线索，未证明头像是唯一原因。此范围原生复验为 `LIVE_PASS`；证据保存在 ignored `.codex-tmp/comprehensive-fluidity-20261002`，实体机和真实签到写入边界不变。 |
+| 2026-10-02 冷重启与调用栈复查 | 正常冷启仍能捕获长帧。临时去掉头像未消除101～116ms长帧，已还原；从原生节点读取坐标并逐次确认实际选站后，Host十次L/NS切换worst111.795ms。同期Perfetto显示主线程Record View#draw7.349ms、另一次postAndWait60.318ms，RenderThread DrawFrames92.088ms及glBufferDataSyncAEMU编码；不能把gfxinfo draw区间当作主线程SVG软件绘制。相同APK的SwiftShader对照使账号worst降至42.423ms，却让Search更慢，已正常关机并恢复Host；不保留配置或新增头像缓存。新修复的原生复验因安装工具误操作后设备冻结而 `BLOCKED_BY_ENV`，仍不能宣称全部切站无长帧。 |
+| 恢复后统计与资料复查 | 同一现有More owner继续承接四个固定统计宿主及资料归属。统计key从文案改为固定位置，NS→L不再重建后两项；seed210603修前复用矩阵为 `[true,true,false,false]`，修后四项同实例且当前金融/公开动作、无障碍属性、UID目的正确。未访问资料的跨站切换原也会在render内同步owner，使组件函数执行两次但只有一次commit；现在仅已访问资料在归属改变时重置。既有standalone case以实际`useWindowDimensions`调用计数建立oracle，seed210604修前期待1实际2、修后1，并保留已打开资料跨站/UID同commit隔离；More30/30通过。没有增加缓存、延时、memo或多树常驻。原安装身份与三站登录已恢复，可见Host的9d候选L↔NS三批仍有 `58.337/68.538/63.566ms` 长帧，妖火↔NS独立20次切换worst `23.271ms`；这些不能证明整体卡顿已解决，RenderThread/GL同步线索仍保留，不把重复函数执行当作全部长帧原因。 |
+| 最终包与边界 | 加入未访问资料guard的869e0521包，同一可见Host/PID13505且三站已登录；L↔NS三批各20次实际切站p95 `23.273/52.267/54.742ms`、worst `74.192/63.912/70.157ms`，未证明稳定性能改善。妖火私有指标加载后独立20次切换p95 `22.974ms`、worst `23.832ms`、无相邻miss，不能替代L站路径。两种流水和收藏返回均实际通过，金融数字未输出；正常冷启、覆盖安装与四条只读Replay后原UID、首次安装时间及三站登录保持。全部3218单测和2194UI、类型与所需静态门禁通过；首次完整verify的文档短引用失败已定点修复并补跑后续检查，不将原exit1记作exit0。证据和未验证范围见 ignored `.codex-tmp/intermittent-restart-20261002/final-acceptance.md`；此事故已有结构修复仍保留，但整体长帧没有标为解决。 |
+
+## `REG-ACCOUNT-059` 账号切站内容被高度动画裁住
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/03/04`，共享 `MORE-02/03/05`、`DATA-03` |
+| 历史症状与根因 | 2026-10-02 去掉整卡片淡入后，用户仍反馈切站观感卡顿。`ExpandableContent` 的测量高度每次改变都成为新的 200ms timing 目标；切站时新内容先替换，外层 clip 却继续从旧高度扩容，先裁掉底部签到与设置。切到较矮卡片后，下方菜单留出旧高度再缓慢回收。上一匹配 APK 原生帧从 0.740011s 到 0.942311s 才展示完整新卡片，约 202ms；这段录制未展开内层，不代表已测得嵌套交互耗时。 |
+| 当前 owner | `tests/ui/shared/expandable-controls.test.tsx` 维护已展开内容变高/变矮时不启动新的高度动画，同时保留中途收起/重开、草稿、隐藏触摸/无障碍、系统减少动态效果与箭头数值验证。Account/More 现有 owner 覆盖实际嵌套入口、会话与选站。 |
+| 修复与红绿证据 | 展开和收起只对 0/1 进度插值，实际高度乘以进度，透明度使用同一进度；展开完成后直接跟随新测量尺寸，嵌套展开时祖先不再次追赶。使用安装的 Reanimated `useDerivedValue` 保证 worklet 数值，不把 animation descriptor 直接相乘。新 oracle 修前因新的 240dp 高度启动 timing 而失败，修后相关四个 owner 89/89 通过（seed `210602`）。共享实现没有增加 props、计时器、组件保活或 Query 读取。 |
+| 验收与边界 | `STATIC_PASS`：`npm run verify`、`npm run typecheck` 与 `git diff --check`；`UNIT_PASS` 235 文件 3211 项（seed `1790909403506`）；`UI_PASS` 95 owner 2158 项（seed `-1324880744`）。正常 Release/Hermes APK SHA-256 `ba14e0e556489963d87478652e8e546e9f8fca207b7a902347e3b7d5a9f00b9c` 同签名覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`、三站登录保留，`APK_SANITY` 与两条只读旅程 `DEVICE_REPLAY_PASS`。此范围 `LIVE_PASS`：构建和测试结束后同一六次暖切站录屏，修前首次 NS 从选中到完整 footer 约 178ms、下方布局约 200ms 才稳定；修后两次 NS 分别从 .630000→.649089s 与 4.242411→4.279522s 展示完整 footer，约 19.1/37.1ms，不再逐帧插值追赶。仍有一个旧测量高度帧，不能称零裁切或首帧完整；后续头像加载变化不属于几何动画。Windows Emulator 窗口静止后鼠标展开/收起外观与账号中心、展开资料、站点设置、NodeImage 及手动备用均能命中并完整显示，没有输入或保存任何凭据/Key。去重后变化帧 90→19 只作录屏内容记录，不是 FPS。证据在 ignored `.codex-tmp/account-smooth-20261002`；真实签到写入和实体机帧率为 `NOT_VERIFIED`。 |
+
+## `REG-ACCOUNT-060` 鸡腿流水今日签到收益误用站点签到日
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-04` |
+| 历史症状与根因 | 2026-10-02 原生只读验收中，设备本机日期已为 10 月 2 日，最新签到账本记录属于本机 10 月 1 日。今日收入和净变化正确为 0，页头却显示“签到 +3”。页头读取 `board.record.gain`，把原站签到日的本人收益当作本机日期的今日账本收益；未齐记录也被该数值错误补成完整合计。 |
+| 当前 owner | `tests/ui/more/nodeseek-credits.test.tsx` 维护原站看板缓存与账本本机日期不同、今日记录未齐、完整零值、读取中反馈，以及两种流水首次读取、返回和刷新均不读取看板。共享本机日期汇总仍由 `src/features/more/nodeSeekCredits.test.ts` 承接；账号区看板继续维护签到资格。通过测试使用行为标题。 |
+| 修复与证据 | 最低行为 oracle 在修复前稳定复现上述日期与完整性错误，修后通过。页头改用既有 `summary.today.attendanceIncome`，完整后才展示合计，零值显示 0，未完整显示统计中或待补齐；移除流水额外看板 Query、返回字段和 route 投影，不修改账号区的看板读取、签到提交或日期规则。相关流水 UI owner、类型、定向 lint 与格式检查通过。 |
+| 验收与边界 | 最终匹配 APK SHA-256 `6f636dc7a7dd0b61f83041f23baaf97c67baa827ff7f90ce6fe35eaf4f26ef88` 以正常 Release/Hermes 同签名覆盖安装，设备本机日期为 GMT `2026-10-02`。More 仍显示原站已签到收益 3；流水读取中先显示统计中，记录完整后本机今日收入、净变化和签到收益均为 0，昨日分组显示签到 +3。右上角 GET 刷新后结果一致，返回 NodeSeek 账号区仍保留选站与展开状态，此跨日显示、刷新和返回范围为 `LIVE_PASS`。证据保存在 ignored `.codex-tmp/comprehensive-fluidity-20261002/accepted-ledger.png`。未执行真实签到 POST；本条不代表最终全量门禁或内存验收结果。 |
+
+## `REG-NOTIFY-077` NodeSeek 个人页重进私信停在旧缓存
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`、`NAV-02/03`、`USER-01` |
+| 历史症状与根因 | 2026-10-02 用户报告从个人页进入 NS 私信后不更新。临时会话使用稳定 conversation UID，详情虽 staleTime=0，却继承全局 refetchOnMount=false；退出重进同一账号/会话直接复用旧 Query，活动详情也没有周期读取。未读 snapshot 轮询只更新总数，不读取会话内容。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` 的同账号缓存重进、可见会话轮询与后台/离页/身份/验证阻断 owner；现有 User route owner 保留入口 descriptor 接线。相关 UI 70 项通过，seed 210602。 |
+| 修复与证据 | 实际 Query 与 Navigation 的缓存重进 oracle 修前第二次仍仅 GET 1，私信 21 不可见；轮询 oracle 推进 60001ms 仍仅 GET 1。详情现在显式重进/前台读取，NS 活动会话按已有消息列表的 60 秒间隔 GET；失焦、后台、来源阻断及身份变化停止。成功读取时间驱动已读核对，相同内容的结构共享不会吞掉回前台的核对。普通模拟器导航与真实互发分别验收，真实互发未获授权，记 `NOT_VERIFIED`；受控 HTTP 响应不冒充原站当天结果。 |
+| 本轮真实读取追加证据 | 从用户指定目标的真实头像 `Image → User → Private` 进入会话，原站读取 37 条；重进、停留一分钟和返回前台 GET 均取得 37 条。最新 UTC `06:00:04.706Z`、`06:01:02.346Z` 两次 GET 分别耗时 500/402ms，此读取入口范围为 `LIVE_PASS`。对方新消息到达与真实互发仍未测试，记 `NOT_VERIFIED`；证据仅存 ignored `.codex-tmp/comprehensive-fluidity-20261002`，不记录私信内容、姓名或目标 ID。 |
+
+## `REG-NOTIFY-076` NodeSeek 会话新消息未读被入口标记挡住
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/02/03`、`USER-01` |
+| 历史症状与根因 | 2026-10-02 用户报告进入会话后 NS 红点偶尔不消失，批量已读才消失。个人页临时会话 unread=false、无 remoteGroup，controller 先跳过已读，adapter 又只以 remoteGroup=message 识别私信；列表入口确认一次后整段 confirmed 也会挡住同一会话后来到达的新 ID。审查补充确认旧取消请求的迟到 finally 会删除后续请求的去重记录，后续失败后便自动再提交。 |
+| 当前 owner | `src/sources/nodeseek/notifications.test.ts`、`tests/ui/notifications/notifications-route.test.tsx` 与 `tests/ui/notifications/notifications-runtime.test.tsx`；未读总数和红点接线继续由既有 runtime、AppNavigator owners 拥有。此前相关 UI 70 项通过，seed 210602；本轮组合证据见下。 |
+| 修复与红绿证据 | 来源分支按 private-conversation 目标识别，只提交原站 unreadMessageIds。修前个人页 descriptor 读取到 20 仍零 mark POST；修后真实 gateway/adapter＋受控 HTTP 响应仅提交 20，再到达 21 仅提交 21，并核对 snapshot=0；已确认 20 重读零重发。失败/未确认 20 刷新零重发，新 21 可独立确认但保留 20 重试入口与 snapshot=1；显式连点只发送一次 20，确认后 snapshot=0。取消时同步释放当前请求的 ID，迟到结算只处理自己的 controller；旧请求迟到、当前重试失败/未确认的两项 oracle 修前额外自动发送第四次，修后保持三次并等待显式重试。后台返回详情修前自动 mark 20，修后零提交，回前台读取后再核对；取消同步更新可重试状态。结算仅失效列表并 GET 核对总数，不强制清零、不重读刚取得的详情。NS source 与 gateway 87 项通过，seed 210602；真实逐条/全部已读和私信发送均 `NOT_VERIFIED`，未执行远端写入。 |
+| 本轮追加根因 | 2026-10-02 进一步建立首次 snapshot GET 与已读 POST 交叉的最低 oracle。首个未读 GET 尚未返回、Query 尚无缓存时，即使 `refetch()` 默认允许取消，也会复用原在途 Promise；POST 已确认后对账仍接受写前总数 2，红点要等下一次读取才更新。根因位于共享 `useNotificationsRuntime.refreshSnapshots`，与个人页入口标记及会话新 ID 防重问题并列保留。 |
+| 本轮追加修复与证据 | 对账先以当前身份的精确 snapshot key 取消在途 GET，再复核挂载、前台就绪、来源生命周期、身份及 epoch 后读取；不取消 list/detail。修前 seed 210602 的交叉 oracle 期望 GET 2 次、实际仅 1 次；修后得到新的总数 0，并核对可见总数及持久化均为 0，迟到旧响应不能恢复红点。另一组合证明前一批 mark pending 时新 ID 到达，待该批结算后只提交新 ID。6 项取消窗口覆盖换身份、同身份 epoch 变化、后台、来源停用、停用后重启用、runtime 卸载，且 snapshot 取消不伤及 list/detail。最低 8 项 `UI_PASS`，seed 210602；route/runtime 两 owner 与既有 notification performance owner 共 132 项 `UI_PASS`，seed 651002；typecheck 为 `STATIC_PASS`。证据保存于 ignored `.codex-tmp/intermittent-restart-20261002/notifications-oracle-red.log`、`notifications-oracle-green2.log`、`notifications-full.log` 与 `typecheck.log`。这些 oracle 使用 fetcher 边界的受控 `Response`，没有启动本地 HTTP 监听，也不构成原站真实已读写入验收。 |
+| 本轮目标会话验收边界 | 用户已授权该目标会话的自动标记未读；实际目标已读，因此产生零 mark POST。真实红点写入仍为 `NOT_VERIFIED`，未执行私信发送或全部已读。 |
+| 最终真实入口 | 最终869e0521包实点用户给定post-959643-1的主楼头像ImageView→User→私信；初次、重入与两次前台轮询均新读37条，完整操作370/384/407/344ms，原生树可见6个消息行及5行非空正文。零已读/回复/全部已读写入；目标没有真实新未读，故不把新GET与已有内容显示当作真实新增未读后的红点验收。四条只读Replay与最终自动门禁通过，原安装身份和三站登录保留；脱敏摘要位于 ignored `.codex-tmp/intermittent-restart-20261002/guard-notifications-summary.json`。 |
+
+## `REG-ACCOUNT-061` 账号统计首次加载为空白并切换入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/04`，共享 `USER-01` 的主题与回复入口 |
+| 历史症状与根因 | 2026-10-02 用户反馈账号资料先空白、数值随后突然出现。AccountOverviewPanel 对 undefined 统计返回 null，同时在另一区域创建备用入口；数据到达后重新挂载统计项并删除备用入口。修前正常 APK 冷启 → 更多 → 展开账号中心的原生树中统计项为 0，主题、回复和两种流水的备用入口可见；读取完成后才出现四项统计。 |
+| 当前 owner | `tests/ui/more/more-screen.test.tsx` 承接三站首次占位、分批返回、真实零值、失败导航、缓存刷新及相同统计宿主；同 owner 的失败重试与回复数缺失入口统一到占位统计项。`tests/ui/more/account-overview.test.tsx` 继续拥有缓存与手动刷新生命周期。 |
+| 修复与证据 | 固定四项统计，未知值显示浅灰色“—”，无障碍区分加载中和暂无数据；数值 0 正常显示，数据返回或刷新只更新同一项内容。删除独立备用按钮，入口在占位时仍可用。相关 UI 35/35（seed -1442577342）、typecheck、定向 lint/format、architecture/docs 与 diff check 通过。未取得新增用例修前 RED；修前最低 oracle 为上述真实设备首次加载。 |
+| 验收与边界 | 正常 Release/Hermes APK SHA-256 `b3265479ff9b3305cfbeace9ff20e303a52be84840b1810fe000251ad01e789d` 同签名覆盖安装，`APK_SANITY`、More 只读旅程 `DEVICE_REPLAY_PASS`。三站首次资料读取 `LIVE_PASS`：NS/L 首帧四项占位，妖火首帧两项数值及两项占位；读取完成后各四项坐标和尺寸保持一致，NS 缓存返回和手动刷新保留四项数值。占位只属于呈现，不落盘、不改变 Query 读取、身份和签到门禁；可选资料与会员字段不在固定统计位置契约内。实体机和真实签到 POST 为 `NOT_VERIFIED`。 |

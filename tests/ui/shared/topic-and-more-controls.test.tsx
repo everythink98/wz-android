@@ -55,6 +55,7 @@ describe('Topic and More controls', () => {
     );
 
     await fireEvent.press(view.getByText('分享'));
+    expect(view.queryByText('分享正文图片')).toBeNull();
     await fireEvent.press(view.getByText('刷新评论'));
     await fireEvent.press(view.getByText('刷新全文'));
     await fireEvent.press(view.getByLabelText('阅读设置'));

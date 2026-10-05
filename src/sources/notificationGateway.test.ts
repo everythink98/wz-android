@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
 import type { ForumNotification } from '@/domain/notifications/models';
+import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -60,6 +61,241 @@ function adapter(result: 'ok' | 'fail'): NotificationAdapter {
 }
 
 describe('notification gateway', () => {
+  const historyItem: ForumNotification = {
+    source: 'linuxdo',
+    id: 'pm:201',
+    kind: 'private-message',
+    actor: { name: 'PRIVATE_SENDER' },
+    title: 'PRIVATE_TITLE',
+    createdAt: null,
+    unread: false,
+    target: { type: 'private-conversation', conversationId: '201' }
+  };
+  function historyMetadata() {
+    return {
+      id: 201,
+      title: 'PRIVATE_TITLE',
+      posts_count: 4,
+      created_at: '2026-10-01T00:00:00Z',
+      post_stream: { stream: [1, 2, 3, 4], posts: [] }
+    };
+  }
+
+  it('reads only one private history batch through the guarded gateway without recording its body', async () => {
+    const fetcher = vi.fn(async (url: string) =>
+      Response.json(
+        new URL(url).pathname.endsWith('/posts.json')
+          ? {
+              post_stream: {
+                posts: [1, 2, 3].map((id) => ({ id, post_number: id, username: 'bob', cooked: '<p>PRIVATE_BODY</p>' }))
+              }
+            }
+          : historyMetadata()
+      )
+    );
+    const gateway = createNotificationGateway({
+      readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher })
+    });
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      await expect(gateway.loadEarlierMessages(historyItem, '4', 'linuxdo:7')).resolves.toMatchObject({
+        olderCursor: null,
+        messages: [{ id: '1' }, { id: '2' }, { id: '3' }]
+      });
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(lines.join('')).not.toMatch(/PRIVATE_|post_ids|bob/);
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        operation: 'notification-history',
+        phase: 'finish',
+        outcome: 'success',
+        itemCount: 3
+      })
+    );
+  });
+
+  it.each(['identity', 'disabled', 'aborted'] as const)(
+    'stops the next history request after %s changes during metadata loading',
+    async (change) => {
+      let allowed = true;
+      const controller = new AbortController();
+      const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        if (change === 'aborted') controller.abort();
+        else allowed = false;
+        return Response.json(historyMetadata());
+      });
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher }),
+        sourceAllowed: () => change !== 'disabled' || allowed,
+        privateAccessAllowed: () => change !== 'identity' || allowed
+      });
+      await expect(
+        gateway.loadEarlierMessages(historyItem, '4', 'linuxdo:7', controller.signal)
+      ).rejects.toBeInstanceOf(Error);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('does not invent earlier-message pagination for a source without that protocol', async () => {
+    const fetcher = vi.fn();
+    const gateway = createNotificationGateway({
+      readAccess: () => ({ identityKey: 'nodeseek:7', userId: '7', fetcher })
+    });
+    await expect(
+      gateway.loadEarlierMessages({ ...historyItem, source: 'nodeseek' }, '4', 'nodeseek:7')
+    ).rejects.toThrow('历史分页');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  const announcement: ForumNotification = {
+    source: 'linuxdo',
+    id: 'notice:41',
+    kind: 'system',
+    actor: { name: 'PRIVATE_ACTOR' },
+    title: 'PRIVATE_TITLE',
+    createdAt: null,
+    unread: false,
+    target: { type: 'topic-post', topicId: '293017', postId: '777', url: 'https://linux.do/t/topic/293017' }
+  };
+  const policy: DiscoursePostPolicy = {
+    postId: '777',
+    version: '2604181600',
+    acceptLabel: 'PRIVATE_ACCEPT_LABEL',
+    revokeLabel: 'PRIVATE_REVOKE_LABEL',
+    accepted: false,
+    revoked: false,
+    canAccept: true,
+    canRevoke: false
+  };
+
+  it('confirms a policy independently of notification read and records only bounded diagnostic state', async () => {
+    const fetcher = vi.fn(async (url: string, _init?: RequestInit) =>
+      Response.json(new URL(url).pathname === '/session/csrf' ? { csrf: 'PRIVATE_CSRF' } : { success: 'OK' })
+    );
+    const gateway = createNotificationGateway({
+      readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher })
+    });
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      await expect(gateway.setPolicyAcceptance(announcement, policy, true, 'linuxdo:7')).resolves.toEqual({
+        confirmed: true
+      });
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    expect(fetcher.mock.calls.map(([url, init]) => [new URL(url).pathname, init?.method || 'GET', init?.body])).toEqual(
+      [
+        ['/session/csrf', 'GET', undefined],
+        ['/policy/accept', 'PUT', 'post_id=777']
+      ]
+    );
+    expect(lines.join('')).not.toMatch(/PRIVATE_|293017|2604181600/);
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        operation: 'notification-policy',
+        phase: 'finish',
+        outcome: 'success',
+        isConfirmed: true
+      })
+    );
+  });
+
+  it.each(['identity', 'disabled', 'aborted'] as const)(
+    'blocks policy writes if %s changes during CSRF preparation',
+    async (change) => {
+      let allowed = true;
+      const controller = new AbortController();
+      const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        if (change === 'aborted') controller.abort();
+        else allowed = false;
+        return Response.json({ csrf: 'fixture' });
+      });
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher }),
+        sourceAllowed: () => (change === 'disabled' ? allowed : true),
+        privateAccessAllowed: () => (change === 'identity' ? allowed : true)
+      });
+      await expect(
+        gateway.setPolicyAcceptance(announcement, policy, true, 'linuxdo:7', controller.signal)
+      ).rejects.toBeInstanceOf(Error);
+      expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/session/csrf']);
+    }
+  );
+
+  it('rejects a policy from another post before any transport', async () => {
+    const fetcher = vi.fn();
+    const gateway = createNotificationGateway({
+      readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher })
+    });
+    await expect(
+      gateway.setPolicyAcceptance(announcement, { ...policy, postId: '778' }, true, 'linuxdo:7')
+    ).rejects.toThrow('公告');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each(notificationSources)('tracks only the dispatched private-reply POST for %s', async (source) => {
+    const dispatchState = { mayHaveSent: false };
+    let stopBeforeDispatch = true;
+    const writes = vi.fn();
+    const fetcher: Fetcher = async (_url, init) => {
+      if (init?.method !== 'POST') {
+        prepareRequestToSend(init);
+        expect(dispatchState.mayHaveSent).toBe(false);
+        return source === 'yaohuo'
+          ? new Response(
+              '<form action="/bbs/messagelist_add.aspx" method="post">' +
+                '<input type="hidden" name="action" value="add" />' +
+                '<input type="hidden" name="toid" value="9" />' +
+                '<textarea name="content"></textarea></form>'
+            )
+          : Response.json({ csrf: 'fixture' });
+      }
+      if (stopBeforeDispatch) throw new Error('transport preparation failed');
+      prepareRequestToSend(init);
+      writes();
+      return source === 'yaohuo' ? new Response('<div>无法确定结果</div>') : Response.json({});
+    };
+    const gateway = createNotificationGateway({
+      readAccess: () => ({ identityKey: `${source}:7`, userId: '7', fetcher })
+    });
+    const item: ForumNotification = {
+      source,
+      id: 'message:9',
+      kind: 'private-message',
+      actor: { name: 'Bob' },
+      title: 'Private message',
+      createdAt: null,
+      unread: false,
+      target:
+        source === 'yaohuo'
+          ? { type: 'message-detail', messageId: '9', url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=9' }
+          : { type: 'private-conversation', conversationId: '9' }
+    };
+    await expect(gateway.replyToConversation(item, 'fixture', `${source}:7`, undefined, dispatchState)).rejects.toThrow(
+      'transport preparation failed'
+    );
+    expect(dispatchState.mayHaveSent).toBe(false);
+    expect(writes).not.toHaveBeenCalled();
+    stopBeforeDispatch = false;
+    await expect(
+      gateway.replyToConversation(item, 'fixture', `${source}:7`, undefined, dispatchState)
+    ).resolves.toMatchObject({
+      confirmed: false
+    });
+    expect(dispatchState.mayHaveSent).toBe(true);
+    expect(writes).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['nodeseek', 'mark-read', ['/api/notification/message/markViewed']],
     [

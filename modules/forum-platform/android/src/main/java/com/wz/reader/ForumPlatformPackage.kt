@@ -28,5 +28,5 @@ class ForumPlatformPackage : BaseReactPackage() {
   }
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-    listOf(PreviewRegionImageViewManager(), ComposerKeyboardHostManager())
+    listOf(PreviewRegionImageViewManager(), ComposerKeyboardHostManager(), SearchHistoryIconViewManager())
 }

@@ -16,10 +16,13 @@ import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
+import type { UserDetails } from '@/domain/forum/models';
+import { Avatar } from '@/ui/avatar/Avatar';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { ExpandablePanel } from '@/ui/controls/ExpandableControls';
+import { DisclosureChevron, ExpandableContent, ExpandablePanel } from '@/ui/controls/ExpandableControls';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import {
   accountCenterSummary,
@@ -31,21 +34,27 @@ import {
 type CommandHandler = (command: AccountCenterCommand) => void | Promise<void>;
 type AccountCenterStyles = ReturnType<typeof createAccountCenterStyles>;
 
-function createAccountCenterStyles(theme: ReaderTheme) {
+function createAccountCenterStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const actionColor = theme.primary;
+  const fontSize = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
     selectorRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      paddingHorizontal: 4
-    },
-    siteTabs: {
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
+      gap: 4
+    },
+    siteTabs: {
       flex: 1,
       flexDirection: 'row',
-      gap: 0
+      minWidth: 0
+    },
+    refreshSlot: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 48,
+      width: 48
     },
     siteTab: {
       alignItems: 'center',
@@ -53,7 +62,7 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       borderBottomWidth: 2,
       flex: 1,
       justifyContent: 'center',
-      minHeight: 42,
+      minHeight: 48,
       paddingHorizontal: 6,
       paddingVertical: 10
     },
@@ -62,7 +71,8 @@ function createAccountCenterStyles(theme: ReaderTheme) {
     },
     siteTabText: {
       color: theme.muted,
-      fontSize: 12,
+      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontSize: fontSize(12),
       fontWeight: '600'
     },
     siteTabTextSelected: {
@@ -86,7 +96,7 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       alignItems: 'center',
       flexDirection: 'row',
       gap: 12,
-      paddingHorizontal: 14,
+      paddingHorizontal: 12,
       paddingVertical: 12
     },
     siteOverviewCopy: {
@@ -95,15 +105,19 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       minWidth: 0
     },
     siteTitle: {
-      fontSize: 18
+      fontSize: fontSize(20)
+    },
+    identityMeta: {
+      fontSize: fontSize(12),
+      lineHeight: fontSize(17)
     },
     section: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       gap: 8,
-      paddingBottom: 12,
-      paddingHorizontal: 14,
-      paddingTop: 12
+      paddingBottom: 8,
+      paddingHorizontal: 12,
+      paddingTop: 8
     },
     sectionHeader: {
       alignItems: 'center',
@@ -129,8 +143,19 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       gap: 2,
-      paddingHorizontal: 14,
+      paddingHorizontal: 12,
       paddingVertical: 6
+    },
+    settingsToggle: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      minHeight: 48
+    },
+    settingsFooter: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12
     },
     action: {
       alignItems: 'center',
@@ -138,12 +163,12 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       flexDirection: 'row',
       gap: 4,
       justifyContent: 'center',
-      minHeight: 42,
+      minHeight: 48,
       paddingHorizontal: 14,
       paddingVertical: 9
     },
     actionCompact: {
-      minHeight: 38,
+      minHeight: 48,
       paddingHorizontal: 10,
       paddingVertical: 7
     },
@@ -437,30 +462,41 @@ export function AccountCenterPanel({
   expanded,
   forcedSite,
   pendingFillSite,
+  selectedSite,
+  profile,
+  overviewContent,
   nodeSeekUserId,
   sessions,
   siteContent,
+  siteSettings,
   statusBusy,
   styles,
   theme,
   onCommand,
-  onExpandedChange
+  onExpandedChange,
+  onSelectedSiteChange
 }: {
   credentials: CredentialSummaries;
   enabledSessionSources: readonly SessionSite[];
   expanded: boolean;
   forcedSite?: SessionSite | null;
   pendingFillSite?: SessionSite | null;
+  selectedSite?: SessionSite;
+  profile?: UserDetails;
+  overviewContent?: ReactNode;
   nodeSeekUserId: number | null;
   sessions: SiteSessionViewModels;
   siteContent: Partial<Record<SessionSite, ReactNode>>;
+  siteSettings?: Partial<Record<SessionSite, (active: boolean) => ReactNode>>;
   statusBusy: boolean;
   styles: MoreScreenStyles;
   theme: ReaderTheme;
   onCommand: CommandHandler;
   onExpandedChange: (expanded: boolean) => void;
+  onSelectedSiteChange?: (site: SessionSite) => void;
 }) {
   const [expandedSite, setExpandedSite] = useState<SessionSite>('nodeseek');
+  const [settingsState, setSettingsState] = useState<{ owner: string; expanded: boolean } | null>(null);
   const availableViews = useMemo(
     () => createSiteAccountViews(sessions, credentials, nodeSeekUserId),
     [credentials, nodeSeekUserId, sessions]
@@ -471,16 +507,18 @@ export function AccountCenterPanel({
       .map((site) => viewsBySite.get(site))
       .filter((view): view is SiteAccountView => Boolean(view));
   }, [availableViews, enabledSessionSources]);
-  const accountStyles = useMemo(() => createAccountCenterStyles(theme), [theme]);
-  const selectedView = views.find((view) => view.site === expandedSite) ?? views[0];
+  const { styles: accountStyles } = useReaderThemeStyles(createAccountCenterStyles);
+  const selectedView = views.find((view) => view.site === (selectedSite ?? expandedSite)) ?? views[0];
 
   useEffect(() => {
+    if (selectedSite !== undefined) return;
     const requestedSite = forcedSite ?? pendingFillSite;
     const nextView = requestedSite ? (views.find((view) => view.site === requestedSite) ?? views[0]) : selectedView;
     if (nextView && nextView.site !== expandedSite) {
       setExpandedSite(nextView.site);
+      onSelectedSiteChange?.(nextView.site);
     }
-  }, [expandedSite, forcedSite, pendingFillSite, selectedView, views]);
+  }, [expandedSite, forcedSite, pendingFillSite, selectedSite, selectedView, views, onSelectedSiteChange]);
 
   if (!selectedView) {
     return (
@@ -509,6 +547,11 @@ export function AccountCenterPanel({
   const primary = primaryCommand(selectedView);
   const waitingForForm = pendingFillSite === selectedView.site;
   const loggedIn = selectedView.isLoggedIn;
+  const levelLabel = profile?.levelLabel || selectedView.user?.levelLabel;
+  const settingsOwner = `${selectedView.site}:${selectedView.user?.id ?? 'anonymous'}`;
+  const settingsVisited = settingsState?.owner === settingsOwner;
+  const settingsExpanded = settingsVisited && settingsState.expanded;
+  const renderSettings = siteSettings?.[selectedView.site];
 
   return (
     <ExpandablePanel
@@ -520,52 +563,65 @@ export function AccountCenterPanel({
       onExpandedChange={onExpandedChange}
     >
       <View style={accountStyles.selectorRow}>
-        <Text style={styles.meta}>站点</Text>
-        <IconButton
-          compact
-          ghost
-          icon={RefreshCw}
-          label={statusBusy ? '刷新中' : '刷新账号状态'}
-          disabled={statusBusy}
-          onPress={() => {
-            void onCommand({ type: 'refresh' });
-          }}
-        />
-      </View>
-      <View style={accountStyles.siteTabs}>
-        {views.map((view) => {
-          const selected = selectedView.site === view.site;
-          return (
-            <Pressable
-              key={view.site}
-              testID={`account-site-${view.site}`}
-              accessibilityRole="tab"
-              accessibilityLabel={`${view.label}，${view.statusLabel}${selected ? '，已选择' : ''}`}
-              accessibilityState={{ selected }}
-              style={[accountStyles.siteTab, selected && accountStyles.siteTabSelected]}
-              onPress={() => {
-                setExpandedSite(view.site);
-              }}
-            >
-              <Text
-                numberOfLines={1}
-                style={[accountStyles.siteTabText, selected && accountStyles.siteTabTextSelected]}
+        <View style={accountStyles.siteTabs}>
+          {views.map((view) => {
+            const selected = selectedView.site === view.site;
+            return (
+              <Pressable
+                key={view.site}
+                testID={`account-site-${view.site}`}
+                accessibilityRole="tab"
+                accessibilityLabel={`${view.label}，${view.statusLabel}${selected ? '，已选择' : ''}`}
+                accessibilityState={{ selected }}
+                style={[accountStyles.siteTab, selected && accountStyles.siteTabSelected]}
+                onPress={() => {
+                  if (selected) return;
+                  if (selectedSite === undefined) setExpandedSite(view.site);
+                  onSelectedSiteChange?.(view.site);
+                  setSettingsState(null);
+                }}
               >
-                {view.label}
-              </Text>
-            </Pressable>
-          );
-        })}
+                <Text
+                  numberOfLines={1}
+                  style={[accountStyles.siteTabText, selected && accountStyles.siteTabTextSelected]}
+                >
+                  {view.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={accountStyles.refreshSlot}>
+          <IconButton
+            ghost
+            iconOnly
+            iconSize={18}
+            icon={RefreshCw}
+            label={statusBusy ? '刷新中' : '刷新账号'}
+            loading={statusBusy}
+            onPress={() => {
+              void onCommand({ type: 'refresh' });
+            }}
+          />
+        </View>
       </View>
       <View style={accountStyles.siteDetail}>
         <View style={accountStyles.accountPanel}>
           <View style={accountStyles.siteOverview}>
+            {selectedView.user ? (
+              <Avatar
+                contentSource={selectedView.site}
+                name={profile?.displayName || selectedView.identityLabel}
+                uri={profile?.avatar || selectedView.user.avatar}
+              />
+            ) : null}
             <View style={accountStyles.siteOverviewCopy}>
-              <Text style={[styles.menuLabel, accountStyles.siteTitle]}>{selectedView.label}</Text>
-              <Text style={styles.meta}>
-                {selectedView.identityLabel === selectedView.statusLabel
-                  ? selectedView.statusLabel
-                  : `${selectedView.identityLabel} · ${selectedView.statusLabel}`}
+              <Text style={[styles.menuLabel, accountStyles.siteTitle]}>
+                {selectedView.user ? profile?.displayName || selectedView.identityLabel : selectedView.label}
+              </Text>
+              <Text style={[styles.meta, accountStyles.identityMeta]}>
+                {selectedView.statusLabel}
+                {levelLabel ? ` · ${levelLabel}` : ''}
               </Text>
             </View>
             {primary ? (
@@ -589,47 +645,74 @@ export function AccountCenterPanel({
               />
             ) : null}
           </View>
-          <CredentialEditor
-            key={selectedView.site}
-            active={expanded && forcedSite !== selectedView.site}
-            site={selectedView.site}
-            view={selectedView}
-            accountStyles={accountStyles}
-            styles={styles}
-            theme={theme}
-            onCommand={onCommand}
-          />
-          {loggedIn ? (
-            <View style={accountStyles.secondaryActions}>
-              <AccountAction
-                compact
-                disclosure
-                label="检测或重新登录"
-                accountStyles={accountStyles}
-                styles={styles}
-                theme={theme}
-                onPress={() => {
-                  void onCommand({ type: 'open-login', site: selectedView.site });
-                }}
-              />
-              {selectedView.credential.hasCredential ? (
-                <AccountAction
-                  compact
-                  label="自动填入"
-                  accountStyles={accountStyles}
-                  styles={styles}
-                  theme={theme}
-                  disabled={waitingForForm}
-                  onPress={() => {
-                    void onCommand({ type: 'open-login-with-fill', site: selectedView.site });
-                  }}
-                />
-              ) : null}
-            </View>
-          ) : null}
+          {overviewContent ? <View style={accountStyles.section}>{overviewContent}</View> : null}
           {siteContent[selectedView.site] ? (
             <View style={accountStyles.accountFeatures}>{siteContent[selectedView.site]}</View>
           ) : null}
+          <View style={accountStyles.settingsFooter}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={settingsExpanded ? '收起站点设置' : '站点设置'}
+              accessibilityState={{ expanded: settingsExpanded }}
+              style={accountStyles.settingsToggle}
+              onPress={() =>
+                setSettingsState((state) => ({
+                  owner: settingsOwner,
+                  expanded: state?.owner !== settingsOwner || !state.expanded
+                }))
+              }
+            >
+              <Text style={styles.meta}>站点设置</Text>
+              <DisclosureChevron expanded={settingsExpanded} size={16} color={theme.muted} />
+            </Pressable>
+          </View>
+          <ExpandableContent expanded={settingsExpanded}>
+            {settingsVisited ? (
+              <>
+                <CredentialEditor
+                  key={settingsOwner}
+                  active={expanded && settingsExpanded && forcedSite !== selectedView.site}
+                  site={selectedView.site}
+                  view={selectedView}
+                  accountStyles={accountStyles}
+                  styles={styles}
+                  theme={theme}
+                  onCommand={onCommand}
+                />
+                {loggedIn ? (
+                  <View style={accountStyles.secondaryActions}>
+                    <AccountAction
+                      compact
+                      disclosure
+                      label="检测或重新登录"
+                      accountStyles={accountStyles}
+                      styles={styles}
+                      theme={theme}
+                      onPress={() => {
+                        void onCommand({ type: 'open-login', site: selectedView.site });
+                      }}
+                    />
+                    {selectedView.credential.hasCredential ? (
+                      <AccountAction
+                        compact
+                        label="自动填入"
+                        accountStyles={accountStyles}
+                        styles={styles}
+                        theme={theme}
+                        disabled={waitingForForm}
+                        onPress={() => {
+                          void onCommand({ type: 'open-login-with-fill', site: selectedView.site });
+                        }}
+                      />
+                    ) : null}
+                  </View>
+                ) : null}
+                {renderSettings ? (
+                  <View style={accountStyles.accountFeatures}>{renderSettings(expanded && settingsExpanded)}</View>
+                ) : null}
+              </>
+            ) : null}
+          </ExpandableContent>
         </View>
       </View>
     </ExpandablePanel>

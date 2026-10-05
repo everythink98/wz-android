@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import { Bell, Bug, DatabaseBackup, Server, Settings } from 'lucide-react-native';
+import { Bug, DatabaseBackup, Server, Settings, Star } from 'lucide-react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
 import { AppButton } from '@/ui/controls/ButtonControls';
@@ -18,10 +18,8 @@ function appearanceSummary(settings: ReaderSettings) {
 }
 
 export type MoreUtilityCapabilities = {
-  notifications: {
-    hasUnread: boolean;
+  library: {
     open: () => void;
-    summary: string;
   };
   backup: {
     recovery: boolean;
@@ -63,19 +61,10 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
 
   return (
     <>
+      <View testID="more-library-row" style={styles.groupList}>
+        <MenuButton icon={Star} label="收藏" value="" onPress={runtime.library.open} />
+      </View>
       <View style={styles.groupList}>
-        <View testID="more-notifications-row" style={[styles.menuRowDivider, styles.notificationMenuRow]}>
-          <MenuButton
-            accessibilityLabel={`消息通知，${runtime.notifications.summary}`}
-            icon={Bell}
-            label="消息通知"
-            value={runtime.notifications.summary}
-            onPress={runtime.notifications.open}
-          />
-          {runtime.notifications.hasUnread ? (
-            <View pointerEvents="none" testID="more-notifications-unread-dot" style={styles.notificationUnreadDot} />
-          ) : null}
-        </View>
         <MenuButton icon={Server} label="服务器代理" value={runtime.proxy.summary} onPress={runtime.proxy.open} />
       </View>
       <NetworkProxyModal
@@ -96,7 +85,7 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
       <ExpandablePanel
         quiet
         title="问题诊断"
-        meta={runtime.diagnostics.busy ? '正在生成' : '生成脱敏日志并分享'}
+        meta={runtime.diagnostics.busy ? '正在生成' : undefined}
         icon={Bug}
         expanded={diagnosticExpanded}
         onExpandedChange={setDiagnosticExpanded}
@@ -120,7 +109,7 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
       <ExpandablePanel
         quiet
         title="备份 / 恢复"
-        meta={runtime.backup.busy ? '处理中' : '文件导出和恢复'}
+        meta={runtime.backup.busy ? '处理中' : undefined}
         icon={DatabaseBackup}
         expanded={backupExpanded}
         onExpandedChange={setBackupExpanded}

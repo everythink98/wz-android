@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowInsetsAnimationControlListener
 import android.view.WindowInsetsAnimationController
@@ -21,8 +22,10 @@ import androidx.core.view.WindowInsetsCompat
 import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.JavaOnlyArray
+import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsForTests
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.PixelUtil
 import com.facebook.react.uimanager.DisplayMetricsHolder
 import com.wz.reader.composer.ComposerKeyboardHost
@@ -123,6 +126,186 @@ class ComposerKeyboardHostTest {
     assertEquals(0, request.frames.last().bottom)
     assertEquals(listOf(7.0 to true), host.events)
     assertSame(input, host.findFocus())
+  }
+
+  @Test fun panelKeepsImeControlUntilTheZeroInsetLayoutHasBeenSubmitted() {
+    ComposerKeyboardHostManager().updateProperties(host, ReactStylesDiffMap(JavaOnlyMap.of(
+      "hiddenLayoutHeight", PixelUtil.toDIPFromPixel(600f).toDouble(),
+    )))
+    host.hideKeyboard(81.0)
+    val request = host.ime.requests.single()
+    request.ready()
+    finishAnimation()
+    assertTrue("Elapsed animator time must not finish a stale panel", request.finishes.isEmpty())
+    val animation = WindowInsetsAnimation(WindowInsets.Type.ime(), LinearInterpolator(), 285)
+    host.dispatchWindowInsetsAnimationPrepare(animation)
+    host.dispatchWindowInsetsAnimationProgress(imeFrame(0), listOf(animation))
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertTrue("A 500px panel is not the 600px hidden endpoint", host.frameCommits.isEmpty())
+    host.layout(0, 0, 400, 600)
+    host.translationY = -21f
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertTrue("The old keyboard translation must also be gone", host.frameCommits.isEmpty())
+    host.translationY = 0f
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertEquals(1, host.frameCommits.size)
+    assertTrue("Pre-draw alone has not submitted the buffer", request.finishes.isEmpty())
+    host.frameCommits.single().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(listOf(false), request.finishes)
+    assertEquals(listOf(81.0 to true), host.events)
+    assertSame(input, host.findFocus())
+  }
+
+  private fun preparePanelCommit(id: Double): Pair<ControlRequest, WindowInsetsAnimation> {
+    host.setHiddenLayoutHeight(PixelUtil.toDIPFromPixel(600f))
+    host.hideKeyboard(id)
+    val request = host.ime.requests.last()
+    request.ready()
+    finishAnimation()
+    val animation = WindowInsetsAnimation(WindowInsets.Type.ime(), LinearInterpolator(), 285)
+    host.dispatchWindowInsetsAnimationPrepare(animation)
+    host.dispatchWindowInsetsAnimationProgress(imeFrame(0), listOf(animation))
+    host.layout(0, 0, 400, 600)
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertTrue(request.finishes.isEmpty())
+    assertTrue(host.frameCommits.isNotEmpty())
+    return request to animation
+  }
+
+  @Test fun aFrameForAnOldPanelHeightCannotFinishTheNewLayout() {
+    val (request) = preparePanelCommit(82.0)
+    val oldCommit = host.frameCommits.single()
+    host.setHiddenLayoutHeight(PixelUtil.toDIPFromPixel(700f))
+    oldCommit.run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(request.finishes.isEmpty())
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertEquals(1, host.frameCommits.size)
+    host.layout(0, 0, 400, 700)
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertEquals(2, host.frameCommits.size)
+    host.frameCommits.last().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(listOf(false), request.finishes)
+    assertEquals(listOf(82.0 to true), host.events)
+  }
+
+  @Test fun aPanelThatMovesAfterDrawingMustSubmitItsNewEndpoint() {
+    val (request) = preparePanelCommit(83.0)
+    host.translationY = -21f
+    host.frameCommits.single().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(request.finishes.isEmpty())
+    host.translationY = 0f
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertEquals(2, host.frameCommits.size)
+    host.frameCommits.last().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(listOf(false), request.finishes)
+  }
+
+  @Test fun restoringGeometryDoesNotTurnAnObsoleteCommitIntoAFreshFrame() {
+    val (request) = preparePanelCommit(89.0)
+    val obsolete = host.frameCommits.single()
+    host.layout(0, 0, 400, 579)
+    host.viewTreeObserver.dispatchOnPreDraw()
+    host.layout(0, 0, 400, 600)
+    obsolete.run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(request.finishes.isEmpty())
+    host.viewTreeObserver.dispatchOnPreDraw()
+    host.frameCommits.last().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(listOf(false), request.finishes)
+  }
+
+  @Test fun removingThePanelTargetDuringAnimationCancelsItsHide() {
+    host.setHiddenLayoutHeight(PixelUtil.toDIPFromPixel(600f))
+    host.hideKeyboard(90.0)
+    val request = host.ime.requests.single()
+    request.ready()
+    host.setHiddenLayoutHeight(0f)
+    finishAnimation()
+    assertTrue(request.signal.isCanceled)
+    assertTrue(request.finishes.isEmpty())
+    assertTrue(host.frameCommits.isEmpty())
+    assertEquals(listOf(90.0 to false), host.events)
+  }
+
+  @Test fun aSoftwareWindowUsesSystemHideInsteadOfInventingAFrameCommit() {
+    host.hardwareAccelerated = false
+    host.setHiddenLayoutHeight(PixelUtil.toDIPFromPixel(600f))
+    host.hideKeyboard(91.0)
+    val request = host.ime.requests.single()
+    request.ready()
+    finishAnimation()
+    assertTrue(request.signal.isCanceled)
+    assertTrue(request.finishes.isEmpty())
+    assertTrue(host.frameCommits.isEmpty())
+    assertEquals(1, host.ime.ordinaryHides)
+    assertTrue(host.events.isEmpty())
+    drawHiddenLayout()
+    assertEquals(listOf(91.0 to true), host.events)
+  }
+
+  @Test fun losingFocusBeforeTheFrameCommitReleasesOnlyTheOldHide() {
+    val (request) = preparePanelCommit(84.0)
+    assertTrue(other.requestFocus())
+    host.frameCommits.single().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(request.signal.isCanceled)
+    assertTrue(request.finishes.isEmpty())
+    assertEquals(listOf(84.0 to false), host.events)
+    assertSame(other, container.findFocus())
+  }
+
+  @Test fun cancelledFrameCallbacksCannotFinishTheNextRequest() {
+    val (oldRequest) = preparePanelCommit(85.0)
+    val oldCommit = host.frameCommits.single()
+    host.cancelHide(85.0)
+    val (newRequest) = preparePanelCommit(86.0)
+    oldCommit.run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(oldRequest.finishes.isEmpty())
+    assertTrue(newRequest.finishes.isEmpty())
+    host.frameCommits.last().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(listOf(false), newRequest.finishes)
+    assertEquals(listOf(85.0 to false, 86.0 to true), host.events)
+  }
+
+  @Test fun systemCancellationDuringTheFrameWaitUsesTheExistingHiddenLayoutFallback() {
+    val (request, animation) = preparePanelCommit(87.0)
+    request.cancelFromSystem()
+    assertEquals(1, host.ime.ordinaryHides)
+    host.dispatchWindowInsetsAnimationEnd(animation)
+    drawHiddenLayout()
+    host.frameCommits.single().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(request.finishes.isEmpty())
+    assertEquals(listOf(87.0 to true), host.events)
+  }
+
+  @Test fun zeroScaleStillSubmitsThePanelEndpointWithoutATimerDelay() {
+    // Finish Activity setup before starting the zero-duration user operation.
+    shadowOf(Looper.getMainLooper()).idle()
+    setAnimationScale(0f)
+    host.setHiddenLayoutHeight(PixelUtil.toDIPFromPixel(600f))
+    host.layout(0, 0, 400, 600)
+    host.hideKeyboard(88.0)
+    val request = host.ime.requests.single()
+    request.ready()
+    assertEquals(0, request.frames.last().bottom)
+    val animation = WindowInsetsAnimation(WindowInsets.Type.ime(), LinearInterpolator(), 0)
+    host.dispatchWindowInsetsAnimationPrepare(animation)
+    host.dispatchWindowInsetsAnimationProgress(imeFrame(0), listOf(animation))
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertTrue(host.events.isEmpty())
+    host.frameCommits.single().run()
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(listOf(false), request.finishes)
+    assertEquals(listOf(88.0 to true), host.events)
   }
 
   @Test fun aSecondBackReleasedAfterCompletionCannotStartAUserShowRequest() {
@@ -442,7 +625,10 @@ class ComposerKeyboardHostTest {
     val ime = PlatformIme()
     val events = mutableListOf<Pair<Double, Boolean>>()
     val insetsEvents = mutableListOf<Double>()
+    val frameCommits = mutableListOf<Runnable>()
+    var hardwareAccelerated = true
     var windowFocused = true
+    override fun isHardwareAccelerated() = hardwareAccelerated
     override fun hasWindowFocus() = windowFocused
     override fun getWindowInsetsController() = ime.window
     override fun getRootWindowInsets(): WindowInsets = WindowInsets.Builder()
@@ -450,6 +636,7 @@ class ComposerKeyboardHostTest {
       .setInsets(WindowInsets.Type.ime(), Insets.of(0, 0, 0, ime.height)).build()
     override fun emitKeyboardHidden(requestId: Double, success: Boolean) { events += requestId to success }
     override fun emitImeInsets(bottom: Double) { insetsEvents += bottom }
+    override fun registerFrameCommit(observer: ViewTreeObserver, callback: Runnable) { frameCommits += callback }
   }
 
   private class PlatformIme {

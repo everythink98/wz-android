@@ -1,14 +1,21 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '../render';
-import React, { type ComponentProps, useState } from 'react';
+import { act, fireEvent, render, waitFor, within } from '../render';
+import React, { type ComponentProps, Profiler, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { MoreScreen as MoreScreenView } from '@/features/more/MoreScreen';
+import { AccountOverviewPanel } from '@/features/more/components/AccountOverviewPanel';
+import { createMoreScreenStyles } from '@/features/more/styles';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createAppQueryClient } from '@/platform/query/serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import type { NodeSeekAccountOverview } from '@/domain/forum/accountData';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 
 let mockDragRunsOnJS = false;
 let mockDeferScheduleOnRN = false;
@@ -16,6 +23,7 @@ let mockDeferredRNCalls: (() => unknown)[] = [];
 let mockSharedValues: { value: unknown }[] = [];
 let mockScreenReaderChangeListener: ((enabled: boolean) => void) | undefined;
 let mockScreenReaderInitialState: boolean | null | 'reject' = false;
+let mockWindowDimensionsCalls = 0;
 const mockScheduleOnRN = jest.fn((callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args));
 const mockAccessibilitySubscriptionRemove = jest.fn();
 const mockIsScreenReaderEnabled = jest.fn(() => {
@@ -35,6 +43,7 @@ beforeEach(() => {
   mockSharedValues = [];
   mockScreenReaderChangeListener = undefined;
   mockScreenReaderInitialState = false;
+  mockWindowDimensionsCalls = 0;
   mockScheduleOnRN.mockClear();
   mockAccessibilitySubscriptionRemove.mockClear();
   mockIsScreenReaderEnabled.mockClear();
@@ -51,6 +60,12 @@ jest.mock('react-native', () => {
   };
   return new Proxy(actual, {
     get(target, property, receiver) {
+      if (property === 'useWindowDimensions') {
+        return () => {
+          mockWindowDimensionsCalls++;
+          return actual.useWindowDimensions();
+        };
+      }
       return property === 'AccessibilityInfo' ? accessibilityInfo : Reflect.get(target, property, receiver);
     }
   });
@@ -133,6 +148,7 @@ jest.mock('lucide-react-native', () => {
     Bug: Icon,
     Check: Icon,
     CheckCircle: Icon,
+    CalendarCheck: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,
     ChevronUp: Icon,
@@ -143,6 +159,7 @@ jest.mock('lucide-react-native', () => {
     RefreshCw: Icon,
     Server: Icon,
     Settings: Icon,
+    Star: Icon,
     Trash2: Icon,
     User: Icon,
     X: Icon
@@ -171,18 +188,22 @@ const authorizedLinuxDoSessions = projectTestAccountSessions(
 
 function MoreScreen(props: ComponentProps<typeof MoreScreenView>) {
   const [contentSourcesExpanded, setContentSourcesExpanded] = useState(props.contentSourcesExpanded);
+  const [queryClient] = useState(createAppQueryClient);
   return (
-    <MoreScreenView
-      {...props}
-      contentSourcesExpanded={contentSourcesExpanded}
-      onContentSourcesExpandedChange={setContentSourcesExpanded}
-    />
+    <QueryClientProvider client={queryClient}>
+      <MoreScreenView
+        {...props}
+        contentSourcesExpanded={contentSourcesExpanded}
+        onContentSourcesExpandedChange={setContentSourcesExpanded}
+      />
+    </QueryClientProvider>
   );
 }
 
 type MoreScreenProps = ComponentProps<typeof MoreScreen>;
 type MoreScreenOverrides = {
   account?: {
+    active?: boolean;
     enabledSessionSources?: MoreScreenProps['account']['enabledSessionSources'];
     read?: Partial<MoreScreenProps['account']['read']>;
     center?: {
@@ -196,7 +217,7 @@ type MoreScreenOverrides = {
   };
   update?: Partial<MoreScreenProps['update']>;
   utilities?: {
-    notifications?: Partial<MoreScreenProps['utilities']['notifications']>;
+    library?: Partial<MoreScreenProps['utilities']['library']>;
     backup?: Partial<MoreScreenProps['utilities']['backup']>;
     diagnostics?: Partial<MoreScreenProps['utilities']['diagnostics']>;
     proxy?: Partial<MoreScreenProps['utilities']['proxy']>;
@@ -206,13 +227,37 @@ type MoreScreenOverrides = {
 
 function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
   const account: MoreScreenProps['account'] = {
+    active: overrides.account?.active ?? true,
     enabledSessionSources: ['nodeseek', 'linuxdo', 'yaohuo'],
     read: {
+      sessionEpochs: initialForumSessionEpochs,
+      gateway: {
+        getReadPlan: () => ({ state: 'blocked', reason: 'login-required', cacheScope: 'blocked:login-required' }),
+        getUserDetails: async () => {
+          throw new Error('资料未提供');
+        },
+        getNodeSeekAccountOverview: async () => {
+          throw new Error('资料未提供');
+        },
+        getYaohuoAccountOverview: async () => {
+          throw new Error('资料未提供');
+        },
+        getNodeSeekAttendanceBoard: async () => {
+          throw new Error('签到状态未提供');
+        },
+        getNodeSeekCredits: async () => {
+          throw new Error('流水未提供');
+        },
+        getNodeSeekStardustCredits: async () => {
+          throw new Error('星辰流水未提供');
+        }
+      },
       sessions: sessionViewModels,
       statusBusy: false,
       ...overrides.account?.read
     },
     center: {
+      openCredits: jest.fn(),
       command: jest.fn(async () => undefined),
       credentials: {
         summaries: emptyCredentialSummaries(),
@@ -235,6 +280,9 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
         ...overrides.account?.center?.nodeImageKey
       },
       nodeSeek: {
+        busy: false,
+        state: { kind: 'idle' },
+        observeBoard: jest.fn(),
         checkIn: jest.fn(),
         ...overrides.account?.center?.nodeSeek
       },
@@ -269,11 +317,9 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       ...overrides.update
     },
     utilities: {
-      notifications: {
-        hasUnread: false,
+      library: {
         open: jest.fn(),
-        summary: '暂无未读 · 后台通知未开启',
-        ...overrides.utilities?.notifications
+        ...overrides.utilities?.library
       },
       backup: {
         recovery: false,
@@ -315,6 +361,782 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
 }
 
 describe('More screen state and actions', () => {
+  it('keeps appearance content measurable while collapsed and discards unfinished font-size previews', async () => {
+    const updateSettings = jest.fn();
+    const props = moreProps();
+    function AppearanceHarness() {
+      const [visible, setVisible] = useState(false);
+      const [settings, setSettings] = useState(readerData.settings);
+      return (
+        <MoreScreen
+          {...props}
+          utilities={{
+            ...props.utilities,
+            settings: {
+              value: settings,
+              visible,
+              changeVisible: setVisible,
+              update: (patch) => {
+                updateSettings(patch);
+                setSettings((current) => ({ ...current, ...patch }));
+              }
+            }
+          }}
+        />
+      );
+    }
+    const view = await render(<AppearanceHarness />);
+    const slider = view.getByTestId('appearance-font-scale-slider', { includeHiddenElements: true });
+    await fireEvent.press(view.getByLabelText('展开外观'));
+    expect(view.getByTestId('appearance-font-scale-slider')).toBe(slider);
+    await fireEvent(slider, 'valueChange', 1.15);
+    expect(view.getByText('字号 115%')).toBeTruthy();
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByLabelText('收起外观'));
+    expect(view.getByTestId('appearance-font-scale-slider', { includeHiddenElements: true })).toBe(slider);
+    expect(view.queryByLabelText('增大字号')).toBeNull();
+    expect(view.getByText('字号 100%', { includeHiddenElements: true })).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('增大字号', { includeHiddenElements: true }));
+    await act(async () => {
+      slider.props.onRNCSliderValueChange({ nativeEvent: { value: 1.3 } });
+      slider.props.onRNCSliderSlidingComplete({ nativeEvent: { value: 1.3 } });
+    });
+    expect(view.getByText('字号 100%', { includeHiddenElements: true })).toBeTruthy();
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await fireEvent.press(view.getByLabelText('展开外观'));
+    expect(view.getByTestId('appearance-font-scale-slider')).toBe(slider);
+    expect(view.getByText('字号 100%')).toBeTruthy();
+    await fireEvent(view.getByTestId('appearance-font-scale-slider'), 'slidingComplete', 1.1);
+    expect(updateSettings.mock.calls).toEqual([[{ fontScale: 1.1 }]]);
+    await fireEvent.press(view.getByLabelText('收起外观'));
+    expect(view.getByText('字号 110%', { includeHiddenElements: true })).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('展开外观'));
+    expect(view.getByText('字号 110%')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('增大字号'));
+    expect(updateSettings.mock.calls).toEqual([[{ fontScale: 1.1 }], [{ fontScale: 1.15 }]]);
+  });
+
+  it('keeps the selected site when all account sources are temporarily disabled', async () => {
+    const enabled = moreProps({ account: { enabledSessionSources: ['linuxdo', 'nodeseek'] } });
+    const view = await render(<MoreScreen {...enabled} />);
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+
+    await view.rerender(<MoreScreen {...moreProps({ account: { enabledSessionSources: [] } })} />);
+    expect(view.getByText('尚未启用账号站点')).toBeTruthy();
+    await view.rerender(<MoreScreen {...enabled} />);
+
+    expect(view.getByTestId('account-site-linuxdo').props.accessibilityState.selected).toBe(true);
+  });
+
+  it.each(['verification', 'credential-fill'] as const)(
+    'keeps the %s account selected after its surface closes',
+    async (trigger) => {
+      const initial = moreProps();
+      const requested = moreProps({
+        account:
+          trigger === 'verification'
+            ? { surfaces: { linuxdo: true } }
+            : { center: { credentials: { pendingFillSite: 'linuxdo' } } }
+      });
+      const view = await render(<MoreScreen {...initial} />);
+      await fireEvent.press(view.getByLabelText('展开账号中心'));
+      await view.rerender(<MoreScreen {...requested} />);
+      expect(view.getByTestId('account-site-linuxdo').props.accessibilityState.selected).toBe(true);
+      await view.rerender(<MoreScreen {...initial} />);
+      expect(view.getByTestId('account-site-linuxdo').props.accessibilityState.selected).toBe(true);
+    }
+  );
+
+  it('refreshes level details through the unified account action only after the user expands them', async () => {
+    const refreshLevel = jest.fn();
+    const props = moreProps({
+      account: {
+        enabledSessionSources: ['linuxdo'],
+        read: { sessions: authorizedLinuxDoSessions },
+        center: { linuxDoLevel: { error: '等级读取失败', refresh: refreshLevel } }
+      }
+    });
+    const view = await render(<MoreScreen {...props} />);
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    expect(view.queryByLabelText('重试等级', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByLabelText('刷新账号'));
+    expect(refreshLevel).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByText('linux.do 等级'));
+    const retryLevel = view.getByLabelText('重试等级');
+    await fireEvent.press(view.getByLabelText('刷新账号'));
+    await waitFor(() => expect(refreshLevel).toHaveBeenCalledTimes(1));
+    await fireEvent.press(view.getByText('linux.do 等级'));
+    expect(view.queryByLabelText('重试等级')).toBeNull();
+    expect(view.getByLabelText('重试等级', { includeHiddenElements: true })).toBe(retryLevel);
+    await view.rerender(
+      <MoreScreen {...props} account={{ ...props.account, enabledSessionSources: ['nodeseek', 'linuxdo'] }} />
+    );
+    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    expect(view.queryByLabelText('重试等级', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByText('linux.do 等级'));
+    expect(view.getByLabelText('重试等级')).toBeTruthy();
+  });
+
+  it('reuses cached metric controls and resets low-frequency details across sources and user identities', async () => {
+    const nodeSeekUser = (id: string) => ({
+      source: 'nodeseek' as const,
+      id,
+      username: `fixture-${id}`,
+      url: `https://www.nodeseek.com/space/${id}`
+    });
+    const linuxDoUser = {
+      source: 'linuxdo' as const,
+      id: 'metric-user',
+      username: 'metric-user',
+      url: 'https://linux.do/u/metric-user'
+    };
+    const nodeSeekProfile = (id: string) => ({
+      ...nodeSeekUser(id),
+      topicCount: 0,
+      replyCount: 8,
+      bio: `NS 资料 ${id}`
+    });
+    const linuxDoProfile = {
+      ...linuxDoUser,
+      topicCount: 3,
+      replyCount: 9,
+      likesReceived: 7,
+      timeRead: 600,
+      bio: 'L 资料'
+    };
+    const getUserDetails = jest.fn<MoreScreenProps['account']['read']['gateway']['getUserDetails']>(
+      async ({ source, id }) => (source === 'linuxdo' ? linuxDoProfile : nodeSeekProfile(id))
+    );
+    const getOverview = jest.fn<MoreScreenProps['account']['read']['gateway']['getNodeSeekAccountOverview']>(
+      async ({ userId }) => ({ source: 'nodeseek', userId, profile: nodeSeekProfile(userId), coin: 5, stardust: 2 })
+    );
+    const getBoard = jest.fn<MoreScreenProps['account']['read']['gateway']['getNodeSeekAttendanceBoard']>(
+      async ({ userId }) => ({ source: 'nodeseek', userId, list: [], record: null, order: null, total: 0 })
+    );
+    const command = jest.fn<MoreScreenProps['account']['center']['command']>();
+    const openCredits = jest.fn<MoreScreenProps['account']['center']['openCredits']>();
+    const propsFor = (id: string) => {
+      const props = moreProps({
+        account: {
+          enabledSessionSources: ['nodeseek', 'linuxdo'],
+          center: { command },
+          read: {
+            sessions: projectTestAccountSessions(
+              createSiteSessionStates({
+                nodeseek: {
+                  site: 'nodeseek',
+                  status: 'logged-in',
+                  cookieSummary: [],
+                  isVerifying: false,
+                  currentUser: nodeSeekUser(id)
+                },
+                linuxdo: {
+                  site: 'linuxdo',
+                  status: 'logged-in',
+                  cookieSummary: [],
+                  isVerifying: false,
+                  currentUser: linuxDoUser
+                }
+              })
+            )
+          }
+        }
+      });
+      props.account.read.gateway = {
+        ...props.account.read.gateway,
+        getReadPlan: () => ({
+          state: 'ready',
+          lane: 'authenticated',
+          transport: 'managed-session',
+          cacheScope: 'authenticated:metrics'
+        }),
+        getUserDetails,
+        getNodeSeekAccountOverview: getOverview,
+        getNodeSeekAttendanceBoard: getBoard
+      };
+      props.account.center.openCredits = openCredits;
+      return props;
+    };
+    const view = await render(<MoreScreen {...propsFor('42')} />);
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await waitFor(() => expect(view.getByLabelText('回复 8')).toBeTruthy());
+    await waitFor(() => expect(view.getByLabelText('鸡腿 5')).toBeTruthy());
+    expect(view.queryByText('NS 资料 42', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByLabelText('更多资料'));
+    const details = view.getByText('NS 资料 42');
+    await fireEvent.press(view.getByLabelText('收起资料'));
+    expect(view.getByText('NS 资料 42', { includeHiddenElements: true })).toBe(details);
+    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    await waitFor(() => expect(view.getByLabelText('回复 9')).toBeTruthy());
+    const linuxDoMetrics = ['主题 3', '回复 9', '获赞 7', '阅读时长 10 分'].map((label) => view.getByLabelText(label));
+    expect(view.queryByLabelText('鸡腿 5')).toBeNull();
+    expect(view.queryByLabelText('星辰 2')).toBeNull();
+    for (const metric of linuxDoMetrics.slice(2)) {
+      expect(metric.props.accessibilityRole).toBeUndefined();
+      expect(metric.props.accessibilityHint).toBeUndefined();
+      await fireEvent.press(metric);
+    }
+    expect(openCredits).not.toHaveBeenCalled();
+    const replyMetric = view.getByLabelText('回复 9');
+    expect(view.queryByText('L 资料', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByLabelText('更多资料'));
+    expect(view.getByText('L 资料')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    expect(view.getByLabelText('回复 8')).toBe(replyMetric);
+    const nodeSeekMetrics = ['主题 0', '回复 8', '鸡腿 5', '星辰 2'].map((label) => view.getByLabelText(label));
+    await fireEvent.press(view.getByLabelText('鸡腿 5'));
+    expect(openCredits).toHaveBeenLastCalledWith('coin');
+    await fireEvent.press(view.getByLabelText('星辰 2'));
+    expect(openCredits).toHaveBeenLastCalledWith('stardust');
+    expect(openCredits).toHaveBeenCalledTimes(2);
+    expect(view.getByLabelText('更多资料').props.accessibilityState.expanded).toBe(false);
+    expect(view.queryByText('NS 资料 42', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByText('L 资料', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    expect(view.getByLabelText('回复 9')).toBe(replyMetric);
+    const cachedLinuxDoMetrics = ['主题 3', '回复 9', '获赞 7', '阅读时长 10 分'].map((label) =>
+      view.getByLabelText(label)
+    );
+    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getOverview).toHaveBeenCalledTimes(1);
+    expect(getBoard).toHaveBeenCalledTimes(1);
+    await fireEvent.press(view.getByLabelText('更多资料'));
+    await view.rerender(<MoreScreen {...propsFor('43')} />);
+    await waitFor(() => expect(view.getByLabelText('鸡腿 5')).toBeTruthy());
+    expect(view.queryByText('NS 资料 42', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByText('NS 资料 43', { includeHiddenElements: true })).toBeNull();
+    expect(view.getByLabelText('更多资料').props.accessibilityState.expanded).toBe(false);
+    await fireEvent.press(view.getByLabelText('回复 8'));
+    expect(command).toHaveBeenLastCalledWith({ type: 'open-user', user: nodeSeekUser('43'), initialTab: 'replies' });
+    expect(cachedLinuxDoMetrics.map((metric, index) => metric === nodeSeekMetrics[index])).toEqual([
+      true,
+      true,
+      true,
+      true
+    ]);
+  });
+
+  it('resets open profile details in the same commit as a source or user change', async () => {
+    const commits = jest.fn();
+    const styles = createMoreScreenStyles(createTheme(readerData.settings), readerData.settings);
+    const panel = (site: 'nodeseek' | 'linuxdo', id: string) => {
+      const profile = {
+        source: site,
+        id,
+        username: 'fixture',
+        url: `https://account.invalid/${id}`,
+        bio: `${site} ${id}`
+      };
+      const data = {
+        profile,
+        overview: undefined,
+        board: undefined,
+        boardBusy: false,
+        boardError: null,
+        boardUpdatedAt: 0,
+        busy: false,
+        error: null,
+        updatedAt: 0,
+        refresh: async () => undefined,
+        retryOverview: async () => undefined,
+        retryAttendance: async () => undefined
+      } satisfies ComponentProps<typeof AccountOverviewPanel>['data'];
+      return (
+        <Profiler id="profile-details" onRender={commits}>
+          <AccountOverviewPanel
+            data={data}
+            site={site}
+            user={profile}
+            styles={styles}
+            onCommand={jest.fn<() => void>()}
+            onOpenCredits={jest.fn()}
+          />
+        </Profiler>
+      );
+    };
+    const view = await render(panel('nodeseek', '42'));
+    for (const site of ['linuxdo', 'nodeseek'] as const) {
+      commits.mockClear();
+      mockWindowDimensionsCalls = 0;
+      await view.rerender(panel(site, '42'));
+      expect(mockWindowDimensionsCalls).toBe(1);
+      expect(commits).toHaveBeenCalledTimes(1);
+      expect(view.queryByText(`${site} 42`, { includeHiddenElements: true })).toBeNull();
+    }
+    await fireEvent.press(view.getByLabelText('更多资料'));
+    expect(view.getByText('nodeseek 42')).toBeTruthy();
+    for (const [site, id] of [
+      ['linuxdo', '42'],
+      ['linuxdo', '43']
+    ] as const) {
+      commits.mockClear();
+      await view.rerender(panel(site, id));
+      expect(commits).toHaveBeenCalledTimes(1);
+      expect(view.getByLabelText('更多资料').props.accessibilityState.expanded).toBe(false);
+      expect(view.queryByText(`${site} ${id}`, { includeHiddenElements: true })).toBeNull();
+      await fireEvent.press(view.getByLabelText('更多资料'));
+      expect(view.getByText(`${site} ${id}`)).toBeTruthy();
+    }
+  });
+
+  it.each([
+    { site: 'nodeseek' as const, labels: ['主题', '回复', '鸡腿', '星辰'], values: ['0', '8', '0', '2'] },
+    { site: 'linuxdo' as const, labels: ['主题', '回复', '获赞', '阅读时长'], values: ['0', '8', '0', '0 分'] },
+    { site: 'yaohuo' as const, labels: ['帖子', '回复', '妖晶', '经验'], values: ['0', '8', '0', '2'] }
+  ])('keeps account metric slots visible while $site data arrives or fails', async ({ site, labels, values }) => {
+    const user = { source: site, id: '42', username: 'fixture', url: 'https://account.invalid/42' };
+    const theme = createTheme(readerData.settings);
+    const styles = createMoreScreenStyles(theme, readerData.settings);
+    const command = jest.fn<ComponentProps<typeof AccountOverviewPanel>['onCommand']>();
+    const openCredits = jest.fn<ComponentProps<typeof AccountOverviewPanel>['onOpenCredits']>();
+    const data = {
+      profile: undefined,
+      overview: undefined,
+      board: undefined,
+      boardBusy: false,
+      boardError: null,
+      boardUpdatedAt: 0,
+      busy: true,
+      error: null,
+      updatedAt: 0,
+      refresh: async () => undefined,
+      retryOverview: async () => undefined,
+      retryAttendance: async () => undefined
+    } satisfies ComponentProps<typeof AccountOverviewPanel>['data'];
+    const panel = (next: ComponentProps<typeof AccountOverviewPanel>['data']) => (
+      <AccountOverviewPanel
+        data={next}
+        site={site}
+        user={user}
+        styles={styles}
+        onCommand={command}
+        onOpenCredits={openCredits}
+      />
+    );
+    const view = await render(panel(data));
+    const slots = labels.map((label) => view.getByLabelText(`${label} 加载中`));
+    expect(view.getAllByText('—')).toHaveLength(4);
+    for (const slot of slots) {
+      expect(slot.props.accessibilityState.busy).toBe(true);
+      expect(StyleSheet.flatten(within(slot).getByText('—').props.style).color).toBe(theme.muted);
+    }
+    for (const label of ['我的主题', '我的帖子', '我的回复', '鸡腿流水', '星辰流水']) {
+      expect(view.queryByLabelText(label)).toBeNull();
+    }
+
+    const partial = { ...data, profile: { ...user, topicCount: 0 } };
+    await view.rerender(panel(partial));
+    expect(view.getByLabelText(`${labels[0]} 0`)).toBe(slots[0]);
+    expect(slots[0].props.accessibilityState.busy).toBe(false);
+    expect(view.getAllByText('—')).toHaveLength(3);
+    labels.slice(1).forEach((label, index) => {
+      expect(view.getByLabelText(`${label} 加载中`)).toBe(slots[index + 1]);
+    });
+
+    await view.rerender(panel({ ...partial, busy: false, error: new Error('资料读取失败') }));
+    labels.slice(1).forEach((label, index) => {
+      expect(view.getByLabelText(`${label} 暂无数据`)).toBe(slots[index + 1]);
+      expect(slots[index + 1].props.accessibilityState.busy).toBe(false);
+    });
+    await fireEvent.press(view.getByLabelText(`${labels[0]} 0`));
+    expect(command).toHaveBeenLastCalledWith({ type: 'open-user', user, initialTab: 'topics' });
+    await fireEvent.press(view.getByLabelText('回复 暂无数据'));
+    expect(command).toHaveBeenLastCalledWith({ type: 'open-user', user, initialTab: 'replies' });
+    if (site === 'nodeseek') {
+      await fireEvent.press(view.getByLabelText('鸡腿 暂无数据'));
+      expect(openCredits).toHaveBeenLastCalledWith('coin');
+      await fireEvent.press(view.getByLabelText('星辰 暂无数据'));
+      expect(openCredits).toHaveBeenLastCalledWith('stardust');
+    }
+
+    const profile = { ...user, topicCount: 0, replyCount: 8, likesReceived: 0, timeRead: 0 };
+    const complete = {
+      ...data,
+      profile,
+      overview:
+        site === 'nodeseek'
+          ? { source: 'nodeseek' as const, userId: user.id, profile, coin: 0, stardust: 2 }
+          : site === 'yaohuo'
+            ? { source: 'yaohuo' as const, userId: user.id, profile, crystals: 0, experience: 2 }
+            : undefined,
+      busy: false
+    };
+    await view.rerender(panel(complete));
+    await view.rerender(panel({ ...complete, busy: true }));
+    labels.forEach((label, index) => {
+      expect(view.getByLabelText(`${label} ${values[index]}`)).toBe(slots[index]);
+      expect(slots[index].props.accessibilityState.busy).toBe(false);
+    });
+    expect(view.queryByText('—')).toBeNull();
+    for (const label of ['我的主题', '我的帖子', '我的回复', '鸡腿流水', '星辰流水']) {
+      expect(view.queryByLabelText(label)).toBeNull();
+    }
+  });
+
+  it('shows targeted retries only for failed data and never resubmits attendance', async () => {
+    const user = { source: 'nodeseek' as const, id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' };
+    const profile = { ...user, topicCount: 1 };
+    const getUserDetails = jest.fn(async () => profile).mockRejectedValueOnce(new Error('主页读取失败'));
+    const getOverview = jest
+      .fn(async () => ({ source: 'nodeseek' as const, userId: '42', profile, coin: 5 }))
+      .mockRejectedValueOnce(new Error('概要读取失败'));
+    const getAttendance = jest
+      .fn(async () => ({ source: 'nodeseek' as const, userId: '42', list: [], record: null, order: null, total: 0 }))
+      .mockRejectedValueOnce(new Error('看板读取失败'));
+    const props = moreProps({
+      account: {
+        read: {
+          sessions: projectTestAccountSessions(
+            createSiteSessionStates({
+              nodeseek: {
+                site: 'nodeseek',
+                status: 'logged-in',
+                isVerifying: false,
+                cookieSummary: [],
+                currentUser: user
+              }
+            })
+          )
+        }
+      }
+    });
+    props.account.read.gateway = {
+      ...props.account.read.gateway,
+      getReadPlan: () => ({
+        state: 'ready',
+        lane: 'authenticated',
+        transport: 'managed-session',
+        cacheScope: 'authenticated:0'
+      }),
+      getUserDetails,
+      getNodeSeekAccountOverview: getOverview,
+      getNodeSeekAttendanceBoard: getAttendance
+    };
+    const view = await render(<MoreScreen {...props} />);
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await waitFor(() => expect(view.getByLabelText('重试资料')).toBeTruthy());
+    await waitFor(() => expect(view.getByLabelText('重试签到状态')).toBeTruthy());
+    const coinSlot = view.getByLabelText('鸡腿 暂无数据');
+    const stardustSlot = view.getByLabelText('星辰 暂无数据');
+    expect(coinSlot.props.accessibilityState.busy).toBe(false);
+    expect(stardustSlot.props.accessibilityState.busy).toBe(false);
+    await fireEvent.press(coinSlot);
+    expect(props.account.center.openCredits).toHaveBeenLastCalledWith('coin');
+    await fireEvent.press(stardustSlot);
+    expect(props.account.center.openCredits).toHaveBeenLastCalledWith('stardust');
+    await fireEvent.press(view.getByLabelText('重试资料'));
+    await waitFor(() => expect(view.getByLabelText('鸡腿 5')).toBe(coinSlot));
+    expect(view.queryByLabelText('鸡腿流水')).toBeNull();
+    expect(view.queryByLabelText('星辰流水')).toBeNull();
+    expect(view.getByLabelText('星辰 暂无数据')).toBe(stardustSlot);
+    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getOverview).toHaveBeenCalledTimes(2);
+    expect(getAttendance).toHaveBeenCalledTimes(1);
+    expect(view.queryByLabelText('重试资料')).toBeNull();
+    await fireEvent.press(view.getByLabelText('重试签到状态'));
+    await waitFor(() => expect(view.queryByLabelText('重试签到状态')).toBeNull());
+    expect(getAttendance).toHaveBeenCalledTimes(2);
+    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getOverview).toHaveBeenCalledTimes(2);
+    expect(props.account.center.nodeSeek.checkIn).not.toHaveBeenCalled();
+    expect(props.account.center.command).not.toHaveBeenCalled();
+  });
+
+  it('cancels the old identity read and never displays its balance after switching accounts', async () => {
+    const user = { source: 'nodeseek' as const, id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' };
+    const accountSessions = (id: string) =>
+      projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: {
+            site: 'nodeseek',
+            status: 'logged-in',
+            isVerifying: false,
+            cookieSummary: [],
+            currentUser: { ...user, id }
+          }
+        })
+      );
+    let finishOldRead: ((value: NodeSeekAccountOverview) => void) | undefined;
+    let oldSignal: AbortSignal | undefined;
+    const oldRead = new Promise<NodeSeekAccountOverview>((resolve) => {
+      finishOldRead = resolve;
+    });
+    const getOverview = jest.fn(({ userId, signal }: { userId: string; signal?: AbortSignal }) => {
+      if (userId === '42') {
+        oldSignal = signal;
+        return oldRead;
+      }
+      return Promise.resolve({ source: 'nodeseek' as const, userId, profile: { ...user, id: userId }, coin: 7 });
+    });
+    const props = moreProps({ account: { read: { sessions: accountSessions('42') } } });
+    props.account.read.gateway = {
+      ...props.account.read.gateway,
+      getReadPlan: () => ({
+        state: 'ready',
+        lane: 'authenticated',
+        transport: 'managed-session',
+        cacheScope: 'authenticated'
+      }),
+      getUserDetails: async ({ id }) => ({ ...user, id }),
+      getNodeSeekAccountOverview: getOverview,
+      getNodeSeekAttendanceBoard: async ({ userId }) => ({
+        source: 'nodeseek',
+        userId,
+        list: [],
+        record: null,
+        order: null,
+        total: 0
+      })
+    };
+    const view = await render(<MoreScreen {...props} />);
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await waitFor(() => expect(getOverview).toHaveBeenCalledTimes(1));
+    await view.rerender(
+      <MoreScreen
+        {...props}
+        account={{
+          ...props.account,
+          read: {
+            ...props.account.read,
+            sessions: accountSessions('43'),
+            sessionEpochs: { ...initialForumSessionEpochs, nodeseek: 1 }
+          }
+        }}
+      />
+    );
+    await waitFor(() => expect(view.getByLabelText('鸡腿 7')).toBeTruthy());
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () => finishOldRead?.({ source: 'nodeseek', userId: '42', profile: user, coin: 999 }));
+    expect(view.queryByLabelText('鸡腿 999')).toBeNull();
+    expect(view.getByLabelText('鸡腿 7')).toBeTruthy();
+  });
+
+  it('loads only the expanded confirmed account, exposes zero statistics, and pauses reads while inactive', async () => {
+    const user = {
+      source: 'nodeseek' as const,
+      id: '42',
+      username: 'alice',
+      displayName: 'Alice',
+      url: 'https://www.nodeseek.com/space/42'
+    };
+    const profile = {
+      ...user,
+      topicCount: 0,
+      replyCount: 8,
+      bio: '我的简介',
+      joinedAt: new Date(2026, 3, 24, 11, 20, 2).toISOString()
+    };
+    const getUserDetails = jest.fn(async () => profile);
+    const getNodeSeekAccountOverview = jest.fn(async () => ({
+      source: 'nodeseek' as const,
+      userId: '42',
+      profile,
+      coin: 0,
+      stardust: 2,
+      fans: 2
+    }));
+    const getNodeSeekAttendanceBoard = jest.fn(async () => ({
+      source: 'nodeseek' as const,
+      userId: '42',
+      list: [],
+      record: null,
+      order: null,
+      total: 0
+    }));
+    const props = moreProps({
+      account: {
+        read: {
+          sessions: projectTestAccountSessions(
+            createSiteSessionStates({
+              nodeseek: {
+                site: 'nodeseek',
+                status: 'logged-in',
+                isVerifying: false,
+                cookieSummary: [],
+                currentUser: user
+              }
+            })
+          )
+        }
+      }
+    });
+    props.account.read.gateway = {
+      ...props.account.read.gateway,
+      getReadPlan: () => ({
+        state: 'ready',
+        lane: 'authenticated',
+        transport: 'managed-session',
+        cacheScope: 'authenticated:0'
+      }),
+      getUserDetails,
+      getNodeSeekAccountOverview,
+      getNodeSeekAttendanceBoard
+    };
+    const view = await render(<MoreScreen {...props} />);
+    expect(getUserDetails).not.toHaveBeenCalled();
+    expect(getNodeSeekAttendanceBoard).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await waitFor(() => expect(view.getByLabelText('鸡腿 0')).toBeTruthy());
+    expect(view.getByLabelText('主题 0')).toBeTruthy();
+    expect(view.getByLabelText('星辰 2')).toBeTruthy();
+    expect(view.queryByText('读取通道自愈阈值')).toBeNull();
+    expect(getUserDetails).toHaveBeenCalledTimes(1);
+    expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(1);
+    expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(1);
+    expect(props.account.center.nodeSeek.observeBoard).toHaveBeenCalledTimes(1);
+    expect(view.queryByLabelText('我的主题')).toBeNull();
+    expect(view.queryByLabelText('我的回复')).toBeNull();
+    expect(view.queryByText(/^更新于 /)).toBeNull();
+    await fireEvent.press(view.getByLabelText('回复 8'));
+    expect(props.account.center.command).toHaveBeenLastCalledWith({ type: 'open-user', user, initialTab: 'replies' });
+    expect(view.getByLabelText('更多资料').props.accessibilityState.expanded).toBe(false);
+    expect(StyleSheet.flatten(view.getByLabelText('更多资料').props.style).minHeight).toBe(48);
+    const toggleDetails = view.getByLabelText('更多资料');
+    await act(async () => {
+      await fireEvent.press(toggleDetails);
+      await fireEvent.press(toggleDetails);
+    });
+    expect(view.getByLabelText('更多资料').props.accessibilityState.expanded).toBe(false);
+    expect(view.queryByText('粉丝 · 2')).toBeNull();
+    await fireEvent.press(view.getByLabelText('更多资料'));
+    expect(view.getByLabelText('收起资料').props.accessibilityState.expanded).toBe(true);
+    expect(view.getByText('粉丝 · 2')).toBeTruthy();
+    expect(view.getByText('加入日期 · 2026-04-24')).toBeTruthy();
+    expect(view.queryByText(`加入日期 · ${profile.joinedAt}`)).toBeNull();
+    await fireEvent.press(view.getByLabelText('收起资料'));
+    expect(view.getByLabelText('更多资料').props.accessibilityState.expanded).toBe(false);
+    expect(view.queryByText('粉丝 · 2')).toBeNull();
+    const hiddenDetails = view.getByText('粉丝 · 2', { includeHiddenElements: true }).parent?.parent;
+    expect(hiddenDetails?.props.pointerEvents).toBe('none');
+    expect(hiddenDetails?.props.accessibilityElementsHidden).toBe(true);
+    expect(hiddenDetails?.props.importantForAccessibility).toBe('no-hide-descendants');
+    await fireEvent.press(view.getByLabelText('更多资料'));
+    expect(view.getByText('粉丝 · 2')).toBeTruthy();
+    expect(getUserDetails).toHaveBeenCalledTimes(1);
+    expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(1);
+    expect(view.queryByLabelText('鸡腿流水')).toBeNull();
+    expect(view.getByLabelText('鸡腿 0').props.accessibilityHint).toBe('查看鸡腿流水');
+    await fireEvent.press(view.getByLabelText('鸡腿 0'));
+    expect(props.account.center.openCredits).toHaveBeenLastCalledWith('coin');
+    expect(view.queryByLabelText('星辰流水')).toBeNull();
+    expect(view.getByLabelText('星辰 2').props.accessibilityHint).toBe('查看星辰流水');
+    await fireEvent.press(view.getByLabelText('星辰 2'));
+    expect(props.account.center.openCredits).toHaveBeenLastCalledWith('stardust');
+    expect(props.account.center.openCredits).toHaveBeenCalledTimes(2);
+    expect(view.queryByLabelText('刷新资料')).toBeNull();
+    expect(view.queryByLabelText('刷新签到状态')).toBeNull();
+    expect(view.queryByLabelText('重试资料')).toBeNull();
+    await fireEvent.press(view.getByLabelText('刷新账号'));
+    await waitFor(() => expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(2));
+    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(2);
+    expect(props.account.center.command).toHaveBeenLastCalledWith({ type: 'refresh' });
+    await view.rerender(<MoreScreen {...props} account={{ ...props.account, active: false }} />);
+    expect(view.getByLabelText('鸡腿 0')).toBeTruthy();
+    expect(view.getByLabelText('主题 0')).toBeTruthy();
+    expect(view.getByText('粉丝 · 2')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(2);
+    expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(2);
+    await view.rerender(<MoreScreen {...props} />);
+    expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(2);
+    expect(getNodeSeekAccountOverview).toHaveBeenCalledTimes(2);
+    expect(getUserDetails).toHaveBeenCalledTimes(2);
+    expect(view.getByLabelText('鸡腿 0')).toBeTruthy();
+    await view.rerender(
+      <MoreScreen
+        {...props}
+        account={{
+          ...props.account,
+          active: false,
+          read: {
+            ...props.account.read,
+            gateway: {
+              ...props.account.read.gateway,
+              getReadPlan: () => ({
+                state: 'blocked',
+                reason: 'source-disabled',
+                cacheScope: 'blocked:source-disabled'
+              })
+            }
+          }
+        }}
+      />
+    );
+    expect(view.queryByLabelText('鸡腿 0')).toBeNull();
+    expect(view.queryByLabelText('主题 0')).toBeNull();
+  });
+
+  it.each([12, 0])(
+    'opens linux.do replies from the reply count (%s) without a duplicate shortcut',
+    async (replyCount) => {
+      const user = authorizedLinuxDoSessions.linuxdo.currentUser;
+      if (!user) throw new Error('Fixture requires a confirmed linux.do user');
+      const props = moreProps({
+        account: { enabledSessionSources: ['linuxdo'], read: { sessions: authorizedLinuxDoSessions } }
+      });
+      props.account.read.gateway = {
+        ...props.account.read.gateway,
+        getReadPlan: () => ({
+          state: 'ready',
+          lane: 'authenticated',
+          transport: 'managed-session',
+          cacheScope: 'authenticated:0'
+        }),
+        getUserDetails: async () => ({ ...user, topicCount: 3, replyCount, likesReceived: 9, timeRead: 120 })
+      };
+      const settings = { ...readerData.settings, fontScale: 1.6 };
+      const view = await render(<MoreScreen {...props} />, {
+        wrapper: ({ children }) => (
+          <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>{children}</ReaderStyleProvider>
+        )
+      });
+      await fireEvent.press(view.getByLabelText('展开账号中心'));
+      await waitFor(() => expect(view.getByLabelText('主题 3')).toBeTruthy());
+      expect(StyleSheet.flatten(view.getByLabelText('主题 3').props.style).width).toBe('50%');
+      expect(view.getByLabelText(`回复 ${replyCount}`).props.accessibilityRole).toBe('button');
+      expect(view.queryByLabelText(`发言 ${replyCount}`)).toBeNull();
+      expect(view.queryByLabelText('我的主题')).toBeNull();
+      expect(view.queryByLabelText('我的回复')).toBeNull();
+      await fireEvent.press(view.getByLabelText('主题 3'));
+      expect(props.account.center.command).toHaveBeenLastCalledWith({ type: 'open-user', user, initialTab: 'topics' });
+      await fireEvent.press(view.getByLabelText(`回复 ${replyCount}`));
+      expect(props.account.center.command).toHaveBeenLastCalledWith({ type: 'open-user', user, initialTab: 'replies' });
+    }
+  );
+
+  it('keeps the linux.do reply metric reachable when the reply count is unavailable', async () => {
+    const user = authorizedLinuxDoSessions.linuxdo.currentUser;
+    if (!user) throw new Error('Fixture requires a confirmed linux.do user');
+    const props = moreProps({
+      account: { enabledSessionSources: ['linuxdo'], read: { sessions: authorizedLinuxDoSessions } }
+    });
+    props.account.read.gateway = {
+      ...props.account.read.gateway,
+      getReadPlan: () => ({
+        state: 'ready',
+        lane: 'authenticated',
+        transport: 'managed-session',
+        cacheScope: 'authenticated:0'
+      }),
+      getUserDetails: async () => ({ ...user, topicCount: 3 })
+    };
+    const view = await render(<MoreScreen {...props} />);
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await waitFor(() => expect(view.getByLabelText('主题 3')).toBeTruthy());
+    expect(view.queryByLabelText('回复 0')).toBeNull();
+    expect(view.queryByLabelText('我的回复')).toBeNull();
+    await fireEvent.press(view.getByLabelText('回复 暂无数据'));
+    expect(props.account.center.command).toHaveBeenLastCalledWith({ type: 'open-user', user, initialTab: 'replies' });
+  });
+
   it('does not mount or refresh account-specific content after its source is disabled', async () => {
     const refreshLinuxDoLevel = jest.fn();
     const view = await render(
@@ -348,6 +1170,19 @@ describe('More screen state and actions', () => {
     expect(view.queryByTestId('account-site-linuxdo')).toBeNull();
     expect(view.queryByText('授权管理')).toBeNull();
     expect(view.queryByText('linux.do 等级')).toBeNull();
+    expect(refreshLinuxDoLevel).not.toHaveBeenCalled();
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          account: {
+            enabledSessionSources: ['linuxdo', 'nodeseek'],
+            read: { sessions: authorizedLinuxDoSessions },
+            center: { linuxDoLevel: { error: '', refresh: refreshLinuxDoLevel } }
+          }
+        })}
+      />
+    );
+    expect(view.getByTestId('account-site-nodeseek').props.accessibilityState.selected).toBe(true);
     expect(refreshLinuxDoLevel).not.toHaveBeenCalled();
   });
 
@@ -938,31 +1773,25 @@ describe('More screen state and actions', () => {
     }).toEqual({ gestureEnabled: false, persistedChanges: 0 });
   });
 
-  it('shows which More entry owns the unread badge', async () => {
+  it('opens the Library from More without a duplicate message entry', async () => {
     const open = jest.fn();
     const view = await render(
       <MoreScreen
         {...moreProps({
           utilities: {
-            notifications: { hasUnread: true, open, summary: '有未读 · 后台通知已开启' }
+            library: { open }
           }
         })}
       />
     );
 
-    await fireEvent.press(view.getByLabelText('消息通知，有未读 · 后台通知已开启'));
+    await fireEvent.press(view.getByRole('button', { name: '收藏' }));
     expect(open).toHaveBeenCalledTimes(1);
-    expect(StyleSheet.flatten(view.getByTestId('more-notifications-unread-dot').props.style)).toMatchObject({
-      backgroundColor: createTheme(readerData.settings).danger,
-      height: 8,
-      width: 8
-    });
-    expect(StyleSheet.flatten(view.getByTestId('more-notifications-row').props.style)).toMatchObject({
+    expect(StyleSheet.flatten(view.getByTestId('more-library-row').props.style)).toMatchObject({
       borderBottomColor: createTheme(readerData.settings).line,
       borderBottomWidth: StyleSheet.hairlineWidth
     });
-
-    await view.rerender(<MoreScreen {...moreProps()} />);
+    expect(view.queryByText('消息通知')).toBeNull();
     expect(view.queryByTestId('more-notifications-unread-dot')).toBeNull();
   });
 
@@ -1116,6 +1945,7 @@ describe('More screen state and actions', () => {
 
     await fireEvent.press(view.getByLabelText('展开账号中心'));
     await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    await fireEvent.press(view.getByLabelText('站点设置'));
     await fireEvent.press(view.getByLabelText('4 次'));
 
     expect(updateSettings).toHaveBeenCalledWith({ nodeSeekRecoveryThreshold: 4 });

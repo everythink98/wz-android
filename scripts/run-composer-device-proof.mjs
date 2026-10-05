@@ -8,11 +8,20 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { PNG } from 'pngjs';
 import { runAgentDevice } from './agent-device-runtime.mjs';
 import { buildDeviceProof } from './device-proof-build.mjs';
+import {
+  captureComposerExpressionGeometry,
+  assertComposerExpressionGeometry,
+  assertComposerExpressionInsets
+} from './composer-expression-geometry.mjs';
 import apkSigning from './apk-signing.cjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const pkg = 'com.wz.reader';
-const allowedProofAvds = ['WZ_ComposerInsets_0916', 'WZ_TopicCreation_Test_API35'];
+const allowedProofAvds = [
+  'WZ_ComposerInsets_0916',
+  'WZ_TopicCreation_Test_API35',
+  'WZ_ComposerExpressions_Test_API35_20261005'
+];
 export function assertComposerProofAvd(avd) {
   if (!allowedProofAvds.includes(avd)) throw new Error(`Refusing non-proof device: ${avd}`);
 }
@@ -242,7 +251,7 @@ async function connectComposerImeDom(adb) {
     let id = 0;
     const connection = {
       close,
-      capture: (phase) =>
+      evaluate: (expression) =>
         new Promise((resolve, reject) => {
           const requestId = ++id;
           const finish = (error, value) => {
@@ -265,15 +274,21 @@ async function connectComposerImeDom(adb) {
               id: requestId,
               method: 'Runtime.evaluate',
               params: {
-                expression: `(${captureComposerImeDom.toString()})(document, ${JSON.stringify(phase)})`,
+                expression,
                 returnByValue: true
               }
             })
           );
         })
     };
-    assertComposerImeDom(await connection.capture('read'));
-    return connection;
+    const capture = (phase) =>
+      connection.evaluate(`(${captureComposerImeDom.toString()})(document, ${JSON.stringify(phase)})`);
+    assertComposerImeDom(await capture('read'));
+    return {
+      ...connection,
+      capture,
+      expressions: () => connection.evaluate(`(${captureComposerExpressionGeometry.toString()})(document)`)
+    };
   } catch (error) {
     close();
     throw error;
@@ -353,6 +368,42 @@ export const topicCreationCases = [
   { id: 'topic-linuxdo-panel-keyboard', source: 'linuxdo', entry: 'topic', stress: 'panel-keyboard', dark: true }
 ];
 export const composerCases = [
+  ...['nodeseek', 'linuxdo'].map((source) => ({
+    id: `expressions-${source}-large-font`,
+    source,
+    entry: 'reply',
+    mode: 'rich',
+    presentation: 'sheet',
+    stress: 'expressions',
+    keyboard: 'hidden',
+    dark: true,
+    fontScale: 1.3
+  })),
+  ...['nodeseek', 'linuxdo'].flatMap((source) =>
+    ['message', 'topic'].map((entry) => ({
+      id: `expressions-${source}-${entry}`,
+      source,
+      entry,
+      mode: 'rich',
+      presentation: 'sheet',
+      stress: 'expressions',
+      keyboard: 'hidden'
+    }))
+  ),
+  ...['nodeseek', 'linuxdo'].flatMap((source) =>
+    ['rich', 'source'].flatMap((mode) =>
+      ['sheet', 'fullscreen'].map((presentation) => ({
+        id: `expressions-${source}-${mode}-${presentation}`,
+        source,
+        mode,
+        presentation,
+        entry: 'reply',
+        stress: 'expressions',
+        keyboard: 'hidden',
+        dark: mode === 'source'
+      }))
+    )
+  ),
   ...['nodeseek', 'linuxdo', 'yaohuo'].map((source) => ({
     id: `topic-edit-${source}-success`,
     source,
@@ -417,7 +468,7 @@ export function composerSourceHash(sourceRoot = root) {
     for (const entry of readdirSync(path.join(sourceRoot, relative), { withFileTypes: true })) {
       const name = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) walk(name);
-      else if (/\.(tsx?|js|json|patch|kt|java|xml)$/.test(name) && !/\.test\.[^.]+$/.test(name)) files.push(name);
+      else if (/\.(tsx?|js|json|patch|kt|java|xml|css)$/.test(name) && !/\.test\.[^.]+$/.test(name)) files.push(name);
     }
   }
   for (const directory of [
@@ -565,7 +616,11 @@ export function assertComposerReceipt(receipt, expected) {
 }
 
 export function assertComposerClosed(nodes, before, after) {
-  if (nodes.some((node) => node.label === 'Bottom Sheet' && node.visibleToUser !== false && node.rect?.height > 0))
+  if (
+    nodes.some(
+      (node) => node.identifier === 'composer-bottom-sheet' && node.visibleToUser !== false && node.rect?.height > 0
+    )
+  )
     throw new Error('Successful submission left a visible Bottom Sheet');
   if (before.width !== after.width || before.height !== after.height) throw new Error('Screen geometry changed');
   // Empty right edge of the fixture detects a remaining dim backdrop independently of accessibility.
@@ -624,7 +679,7 @@ export function assertTopicCreationKeyboardGeometry(nodes, windowInsets, keyboar
 }
 
 export function assertComposerFullscreen(nodes, screenshot, safeTop) {
-  const sheet = nodes.find((node) => node.label === 'Bottom Sheet');
+  const sheet = nodes.find((node) => node.identifier === 'composer-bottom-sheet');
   if (!sheet || sheet.rect.y !== 0) throw new Error(`Fullscreen background starts at ${sheet?.rect?.y}, expected 0`);
   const close = nodes.find((node) => ['收起回复', '取消楼层回复', '取消编辑', '取消'].includes(node.label));
   if (!close || close.rect.y < safeTop) throw new Error('Fullscreen toolbar overlaps the safe top inset');
@@ -725,6 +780,7 @@ async function main() {
   const report = {
     artifact,
     runnerHash: hash(readFileSync(fileURLToPath(import.meta.url))),
+    expressionOracleHash: hash(readFileSync(path.join(root, 'scripts/composer-expression-geometry.mjs'))),
     apk,
     avd,
     serial: values.serial,
@@ -815,6 +871,107 @@ async function main() {
     } while (Date.now() < deadline);
     throw closeError;
   };
+  const verifyExpressions = async (scenario, token, directory, restoredLabel) => {
+    const waitForKeyboard = async (shown) => {
+      const deadline = Date.now() + 30000;
+      do {
+        const windowInsets = adb('shell', 'dumpsys', 'window');
+        writeFileSync(path.join(directory, 'expressions-window.txt'), windowInsets);
+        const ime = windowInsets.match(/type=ime[^\r\n]*?\bvisible=(true|false)/);
+        if (ime && (ime[1] === 'true') === shown) return;
+        await delay(100);
+      } while (Date.now() < deadline);
+      throw new Error('Expression native keyboard visibility did not settle');
+    };
+    const verifyInsets = (name, keyboardShown) => {
+      const windowInsets = adb('shell', 'dumpsys', 'window');
+      writeFileSync(path.join(directory, `${name}-window.txt`), windowInsets);
+      const native = snapshot(directory, name);
+      const insets = assertComposerExpressionInsets(native, windowInsets, keyboardShown);
+      writeFileSync(path.join(directory, `${name}-insets.json`), JSON.stringify(insets));
+      return native;
+    };
+    replay('expressions-open', restoredLabel);
+    await waitForKeyboard(false);
+    agent(['wait', 'label="关闭"']);
+    const dom = await connectComposerImeDom(adb);
+    try {
+      const imageDeadline = Date.now() + 30000;
+      while ((await dom.expressions()).loadedImages === 0) {
+        if (Date.now() >= imageDeadline) throw new Error('Expression images did not load in the visible picker');
+        await delay(100);
+      }
+      const opened = assertComposerExpressionGeometry(await dom.expressions());
+      writeFileSync(path.join(directory, 'expressions-opened-geometry.json'), JSON.stringify(opened));
+      const nativeNodes = verifyInsets('expressions-opened', false);
+      capture(directory, 'expressions-opened');
+      if (scenario.source === 'nodeseek') {
+        agent(['scroll', 'down', '700']);
+        const scrolled = assertComposerExpressionGeometry(await dom.expressions(), opened);
+        if (scrolled.scrollTop <= 0) throw new Error('Sticker scroll did not move the image grid');
+        writeFileSync(path.join(directory, 'expressions-scrolled.json'), JSON.stringify(scrolled));
+        capture(directory, 'expressions-scrolled');
+        agent(['press', 'label="洋葱头"']);
+        const switched = assertComposerExpressionGeometry(await dom.expressions(), opened);
+        if (switched.scrollTop !== 0) throw new Error('Changed category did not start at the top');
+        agent(['press', 'label="AC娘"']);
+      } else {
+        // Android can omit the search input's name. Its actual AX rectangle
+        // distinguishes it from the draft input above the picker.
+        const close = nativeNodes.find((node) => node.label === '关闭')?.rect;
+        if (!close) throw new Error('Expression close control is not accessible');
+        const search = nativeNodes.find(
+          (node) => node.type === 'android.widget.EditText' && Math.abs(node.rect.y - close.y) < close.height / 2
+        );
+        if (!search?.ref) throw new Error('Expression search input is not accessible');
+        agent(['press', `@${search.ref}`]);
+        await waitForKeyboard(true);
+        const searched = assertComposerExpressionGeometry(await dom.expressions());
+        verifyInsets('expressions-search', true);
+        writeFileSync(path.join(directory, 'expressions-search.json'), JSON.stringify(searched));
+        capture(directory, 'expressions-search');
+        adb('shell', 'input', 'keyevent', 'KEYCODE_ESCAPE');
+        await waitForKeyboard(false);
+      }
+      replay('expressions-close', restoredLabel);
+      const restored = snapshot(directory, 'expressions-restored');
+      if (!restored.some((node) => node.label === restoredLabel) || !restored.some((node) => node.label === '表情'))
+        throw new Error('Expression close did not restore composer controls');
+      capture(directory, 'expressions-restored');
+      if (scenario.entry !== 'topic') {
+        const readBody = () =>
+          dom.evaluate(
+            `document.querySelector('.editor-pane.active .ProseMirror, .source-pane.active .cm-content')?.textContent.trim()`
+          );
+        const content = await readBody();
+        replay('expressions-open', restoredLabel);
+        agent(['press', `label="${scenario.mode === 'source' ? '富文本' : '源码'}"`]);
+        await receipt(token, (value) => value.keyboardShown === true);
+        if ((await readBody()) !== content) throw new Error('Mode return changed the actual editor document');
+        const switched = snapshot(directory, 'expressions-mode-return');
+        if (switched.some((node) => node.label === '关闭'))
+          throw new Error('Mode focus left expressions behind the keyboard');
+        capture(directory, 'expressions-mode-return');
+        agent(['press', `label="${scenario.mode === 'source' ? '源码' : '富文本'}"`]);
+        await receipt(token, (value) => value.keyboardShown === true);
+        if (scenario.source === 'nodeseek') {
+          replay('expressions-open', restoredLabel);
+          agent(['press', 'label="ac01"']);
+          await receipt(token, (value) => value.keyboardShown === true);
+          const inserted = await dom.evaluate(
+            `Boolean(document.querySelector('.ProseMirror [data-composer-node="forum-expression"][aria-label="ac01"]')) || Boolean(document.querySelector('.cm-content')?.textContent.includes(':ac01:'))`
+          );
+          if (!inserted) throw new Error('Selected sticker did not enter the actual editor document');
+          const selected = snapshot(directory, 'expressions-selected');
+          if (selected.some((node) => node.label === '关闭'))
+            throw new Error('Selected expression did not return to the editor');
+          capture(directory, 'expressions-selected');
+        }
+      }
+    } finally {
+      dom.close();
+    }
+  };
   try {
     for (const scenario of chosen) {
       const token = randomUUID().replaceAll('-', '');
@@ -828,7 +985,7 @@ async function main() {
           scenario.stress === 'ime-fast' ? '0' : scenario.stress === 'ime-slow' ? '5' : windowAnimationScale;
         setWindowAnimationScale(result.windowAnimationScale);
         launch(
-          `'wzcomposerproof://${token}?source=${scenario.source}&entry=${scenario.entry}&outcome=${scenario.outcome || 'success'}&theme=${scenario.dark ? 'dark' : 'light'}&stress=${scenario.stress || ''}'`
+          `'wzcomposerproof://${token}?source=${scenario.source}&entry=${scenario.entry}&outcome=${scenario.outcome || 'success'}&theme=${scenario.dark ? 'dark' : 'light'}&fontScale=${scenario.fontScale || 1}&stress=${scenario.stress || ''}'`
         );
         await receipt(token, undefined, 60000);
         if (scenario.entry === 'topic-edit') {
@@ -944,6 +1101,10 @@ async function main() {
           agent(['press', 'text="打开测试发帖"']);
           await waitForTitle(scenario.source, 'opened');
           capture(directory, 'opened');
+          if (scenario.stress === 'expressions') {
+            await verifyExpressions(scenario, token, directory, '表情');
+            result.expressions = true;
+          }
           if (scenario.stress === 'panel-keyboard') {
             const verifyGeometry = async (stage, keyboardShown) => {
               const observed = await receipt(token, (value) => value.keyboardShown === keyboardShown);
@@ -1045,7 +1206,7 @@ async function main() {
             await waitForTitle(scenario.source, 'restarted');
             capture(directory, 'restarted');
           }
-          if (['switch', 'restart', 'panel-keyboard'].includes(scenario.stress)) {
+          if (['switch', 'restart', 'panel-keyboard', 'expressions'].includes(scenario.stress)) {
             const settled = await receipt(token, (value) => value.topic?.route === 'TopicComposer');
             assertTopicCreationReceipt(settled, { token, buildId: artifact.buildId, noWrites: true });
             writeFileSync(path.join(directory, 'settled.json'), JSON.stringify(settled));
@@ -1120,9 +1281,16 @@ async function main() {
             adb('shell', 'ime', 'set', 'com.callstack.agentdevice.imehelper/.TestInputMethodService');
             replay('message-input', submitLabel);
             adb('shell', 'ime', 'set', ime);
+            adb('shell', 'input', 'keyevent', 'KEYCODE_ESCAPE');
+            await receipt(token, (value) => value.keyboardShown === false);
+            agent(['press', 'id="structured-composer-webview"']);
             await receipt(token, (value) => value.keyboardShown);
           }
           if (scenario.presentation === 'fullscreen') replay('fullscreen', submitLabel);
+          if (scenario.stress === 'expressions') {
+            await verifyExpressions(scenario, token, directory, submitLabel);
+            result.expressions = true;
+          }
           let imeContent;
           if (['ime-fast', 'ime-slow'].includes(scenario.stress)) {
             const started = Date.now();

@@ -16,6 +16,7 @@ export type ForumReadOperation =
   | 'search-tags'
   | 'search-users'
   | 'semantic-search'
+  | 'account-data'
   | 'level';
 
 export type ForumReadPlan =

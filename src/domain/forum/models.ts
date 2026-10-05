@@ -1,5 +1,6 @@
 import type { DiscourseSource, FeedFilterSource, Source } from './sourceCatalog';
 import type { MediaReferrerContext } from './mediaReferrer';
+import type { DiscoursePostPolicy } from './discoursePolicy';
 
 export type { FeedFilterSource, Source } from './sourceCatalog';
 export type { MediaReferrerContext, MediaReferrerPolicy } from './mediaReferrer';
@@ -158,6 +159,7 @@ export type ReplyWindowPosition =
   | { kind: 'target'; target: ReplyLocationTarget };
 
 export interface Reply {
+  policy?: DiscoursePostPolicy;
   author: string;
   authorId?: string;
   authorAvatar?: string;
@@ -271,6 +273,7 @@ export interface TopicPoll {
 }
 
 export interface TopicDetail extends Topic {
+  policy?: DiscoursePostPolicy;
   canEdit?: boolean;
   contentHtml: string;
   preparedContent?: PreparedForumContent;
@@ -313,6 +316,8 @@ export interface UserIdentity extends UserReferenceBase {
   levelLabel?: string;
 }
 
+export type UserActivityTab = 'topics' | 'replies';
+
 // Local read interfaces: existing canonical profile fields, without activity placeholders.
 export interface UserDetails extends UserIdentity {
   bio?: string;
@@ -320,6 +325,12 @@ export interface UserDetails extends UserIdentity {
   topicCount?: number;
   replyCount?: number;
   postCount?: number;
+  daysVisited?: number;
+  topicsEntered?: number;
+  postsReadCount?: number;
+  timeRead?: number;
+  likesGiven?: number;
+  likesReceived?: number;
 }
 
 export interface UserTopicsPage {

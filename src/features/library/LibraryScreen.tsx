@@ -12,9 +12,10 @@ import {
   type ViewStyle
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronDown, Star, Trash2, type LucideIcon } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile, UserReference } from '@/domain/forum/models';
-import { type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
+import { topicKey, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { type LibraryTab } from '@/domain/forum/feed';
 import { libraryCategoryFilterItems } from './model/libraryFilters';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
@@ -101,6 +102,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
   empty,
   header,
   listRef,
+  openedTopicKey,
   readyTestID,
   renderItem,
   styles,
@@ -112,25 +114,38 @@ const LibraryViewportList = memo(function LibraryViewportList({
   empty: ReactElement;
   header: ReactElement;
   listRef: RefObject<FlashListRef<LibraryDataItem> | null>;
+  openedTopicKey?: string;
   readyTestID?: string;
   renderItem: ListRenderItem<LibraryDataItem>;
   styles: LibraryStyles;
   tab: LibraryTab;
   onLoadMore: (tab: LibraryTab) => void;
 }) {
+  const { bottom } = useSafeAreaInsets();
+  const contentStyle = useMemo(() => ({ ...styles.libraryContentInner, paddingBottom: bottom + 16 }), [bottom, styles]);
+  const positionOptions = useMemo(
+    () =>
+      tab !== 'history' || !openedTopicKey
+        ? { disabled: true }
+        : {
+            shouldAnchorItem: (item: LibraryDataItem) =>
+              'type' in item && item.type === 'record' && item.key !== openedTopicKey
+          },
+    [openedTopicKey, tab]
+  );
   return (
     <FlashList
       testID={readyTestID}
       accessibilityLabel={accessibilityLabel}
       ref={listRef}
       style={styles.content}
-      contentContainerStyle={styles.libraryContentInner}
+      contentContainerStyle={contentStyle}
       data={data}
       keyExtractor={(item) => libraryDataItemKey(item, tab)}
       getItemType={(item) => libraryDataItemType(item, tab)}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       drawDistance={250}
-      maintainVisibleContentPosition={{ disabled: true }}
+      maintainVisibleContentPosition={positionOptions}
       ListHeaderComponent={header}
       ListEmptyComponent={empty}
       renderItem={renderItem}
@@ -151,8 +166,10 @@ export const LibraryScreen = memo(function LibraryScreen({
   visibleTotal,
   error,
   onRetry,
+  onRetryCategories,
   onLoadMore,
   categories,
+  categoriesReady = true,
   enabledSources,
   favoriteRecords,
   followedUsers,
@@ -177,9 +194,11 @@ export const LibraryScreen = memo(function LibraryScreen({
   visibleTotal: number;
   error: boolean;
   onRetry: () => void;
+  onRetryCategories?: () => void;
   onLoadMore: (tab: LibraryTab) => void;
   libraryTab: LibraryTab;
   categories: Parameters<typeof libraryCategoryFilterItems>[0];
+  categoriesReady?: boolean;
   enabledSources: readonly Source[];
   favoriteRecords: TopicRecord[];
   followedUsers: FollowedUserRecord[];
@@ -197,6 +216,7 @@ export const LibraryScreen = memo(function LibraryScreen({
 }) {
   const { styles, theme } = useReaderThemeStyles(createLibraryStyles);
   const { height: windowHeight } = useWindowDimensions();
+  const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
   const [mountedTabs, setMountedTabs] = useState<LibraryTab[]>([libraryTab]);
   useEffect(() => {
     if (!active)
@@ -246,6 +266,13 @@ export const LibraryScreen = memo(function LibraryScreen({
     [favoriteRecords]
   );
   const historyListItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(historyRecords), [historyRecords]);
+  const positionScope = `${enabledMembershipKey}:${effectiveSourceFilter}:${effectiveCategoryFilter}`;
+  const [historyAnchor, setHistoryAnchor] = useState<{ key: string; scope: string }>();
+  useEffect(() => setHistoryAnchor(undefined), [enabledMembershipKey]);
+  const openTopic = useLatestCallback((topic: Topic) => {
+    if (libraryTab === 'history') setHistoryAnchor({ key: topicKey(topic), scope: positionScope });
+    onOpenTopic(topic);
+  });
   const closeCategoryMenu = useCallback(() => {
     categoryMenuRequestRef.current += 1;
     setCategoryMenuTab(null);
@@ -255,7 +282,7 @@ export const LibraryScreen = memo(function LibraryScreen({
     return () => {
       categoryMenuRequestRef.current += 1;
     };
-  }, [active, categoryItems, closeCategoryMenu, libraryTab, windowHeight]);
+  }, [active, categoryItems, closeCategoryMenu, libraryTab, safeBottom, safeTop, windowHeight]);
   const scrollLibraryToTop = useCallback((tab: LibraryTab) => {
     const listRef = tab === 'favorites' ? favoriteListRef : tab === 'history' ? historyListRef : userListRef;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -272,6 +299,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   const changeLibraryTab = useLatestCallback((value: string) => {
     if (value === libraryTab) return;
     const nextTab = value as LibraryTab;
+    setHistoryAnchor(undefined);
     setMountedTabs((current) => (current.includes(nextTab) ? current : [...current, nextTab]));
     closeCategoryMenu();
     setSourceFilter('all');
@@ -280,13 +308,14 @@ export const LibraryScreen = memo(function LibraryScreen({
     onTabChange(nextTab);
     requestAnimationFrame(() => scrollLibraryToTop(nextTab));
   });
-  const changeSourceFilter = useCallback(
-    (value: string) => {
-      closeCategoryMenu();
-      setSourceFilter(value as FeedSource);
-    },
-    [closeCategoryMenu, setSourceFilter]
-  );
+  const changeSourceFilter = useLatestCallback((value: string) => {
+    if (value === effectiveSourceFilter) return;
+    setHistoryAnchor(undefined);
+    closeCategoryMenu();
+    setCategoryFilter('all');
+    setSourceFilter(value as FeedSource);
+    scrollLibraryToTop(libraryTab);
+  });
   const openCategoryMenu = useCallback(
     (tab: 'favorites' | 'history') => {
       if (!active || categoryItems.length <= 1) return;
@@ -301,21 +330,21 @@ export const LibraryScreen = memo(function LibraryScreen({
           position: 'absolute',
           left: Math.max(margin, x),
           ...(opensAbove ? { bottom: Math.max(margin, windowHeight - y + 4) } : { top: y + height + 4 }),
-          maxHeight: Math.max(160, opensAbove ? y - margin : windowHeight - y - height - margin),
+          maxHeight: Math.max(160, opensAbove ? y - safeTop - margin : windowHeight - y - height - safeBottom - margin),
           minWidth: 180
         });
         setCategoryMenuTab(tab);
       });
     },
-    [active, categoryItems.length, closeCategoryMenu, windowHeight]
+    [active, categoryItems.length, closeCategoryMenu, safeBottom, safeTop, windowHeight]
   );
-  const selectCategory = useCallback(
-    (value: string) => {
-      closeCategoryMenu();
-      setCategoryFilter(value);
-    },
-    [closeCategoryMenu, setCategoryFilter]
-  );
+  const selectCategory = useLatestCallback((value: string) => {
+    closeCategoryMenu();
+    if (value === effectiveCategoryFilter) return;
+    setHistoryAnchor(undefined);
+    setCategoryFilter(value);
+    scrollLibraryToTop(libraryTab);
+  });
   useEffect(() => {
     if (sourceFilter !== 'all' && !enabledSourceSet.has(sourceFilter as Source)) {
       closeCategoryMenu();
@@ -324,10 +353,14 @@ export const LibraryScreen = memo(function LibraryScreen({
     }
   }, [closeCategoryMenu, enabledMembershipKey, enabledSourceSet, sourceFilter, setSourceFilter, setCategoryFilter]);
   useEffect(() => {
-    if (effectiveCategoryFilter !== 'all' && !categoryItems.some((item) => item.value === effectiveCategoryFilter)) {
+    if (
+      categoriesReady &&
+      effectiveCategoryFilter !== 'all' &&
+      !categoryItems.some((item) => item.value === effectiveCategoryFilter)
+    ) {
       setCategoryFilter('all');
     }
-  }, [categoryItems, effectiveCategoryFilter, setCategoryFilter]);
+  }, [categoriesReady, categoryItems, effectiveCategoryFilter, setCategoryFilter]);
   const confirmRemoveFavorite = useCallback(
     (topic: Topic) => {
       Alert.alert('确定取消收藏吗？', topic.title || '这条收藏将从本机移除。', [
@@ -386,12 +419,12 @@ export const LibraryScreen = memo(function LibraryScreen({
             readerState={tab === 'favorites' ? { ...readerState, favorite: false, read: false } : readerState}
             renderTrailingAction={tab === 'favorites' ? renderFavoriteTrailingAction : renderHistoryTrailingAction}
             topic={record.topic}
-            onOpenTopic={onOpenTopic}
+            onOpenTopic={openTopic}
           />
         </View>
       );
     },
-    [onOpenTopic, renderFavoriteTrailingAction, renderHistoryTrailingAction, styles, topicStateIndex]
+    [openTopic, renderFavoriteTrailingAction, renderHistoryTrailingAction, styles, topicStateIndex]
   );
   const renderFavoriteItem = useCallback<ListRenderItem<LibraryListItem>>(
     ({ item }) => renderTopicItem(item, 'favorites'),
@@ -440,6 +473,7 @@ export const LibraryScreen = memo(function LibraryScreen({
     (viewportTab: LibraryTab) => {
       const viewportCategoryButtonHidden = viewportTab === 'users';
       const viewportCategorySelectionAvailable = !viewportCategoryButtonHidden && categoryItems.length > 1;
+      const categoryActionAvailable = viewportCategorySelectionAvailable || Boolean(onRetryCategories);
       const categoryMenuTriggerRef =
         viewportTab === 'favorites'
           ? favoriteCategoryMenuTriggerRef
@@ -448,16 +482,6 @@ export const LibraryScreen = memo(function LibraryScreen({
             : undefined;
       return (
         <View style={styles.stack}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>收藏</Text>
-            <Text style={styles.meta}>
-              {viewportTab === 'users'
-                ? `${total} / ${visibleTotal} 人`
-                : total === visibleTotal
-                  ? `${total} 条`
-                  : `${total} / ${visibleTotal} 条`}
-            </Text>
-          </View>
           <PillRail
             variant="tabs"
             items={LIBRARY_TAB_ITEMS}
@@ -472,71 +496,75 @@ export const LibraryScreen = memo(function LibraryScreen({
             testIDPrefix="library-source"
             onChange={changeSourceFilter}
           />
-          <View
-            accessibilityElementsHidden={viewportCategoryButtonHidden}
-            importantForAccessibility={viewportCategoryButtonHidden ? 'no-hide-descendants' : 'auto'}
-            pointerEvents={viewportCategoryButtonHidden ? 'none' : 'auto'}
-            style={[styles.categoryFilterSlot, viewportCategoryButtonHidden && styles.hiddenCategoryFilterSlot]}
-          >
-            <Pressable
-              ref={categoryMenuTriggerRef}
-              collapsable={false}
-              testID="library-category-menu-button"
-              accessibilityRole="button"
-              accessibilityLabel={`分类：${categoryLabel}`}
-              accessibilityState={{
-                disabled: !viewportCategorySelectionAvailable,
-                expanded: categoryMenuTab === viewportTab
-              }}
-              disabled={!viewportCategorySelectionAvailable}
-              style={styles.categoryFilterButton}
-              onPress={() => {
-                if (viewportTab !== 'users') openCategoryMenu(viewportTab);
-              }}
-            >
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.categoryFilterButtonText,
-                  !viewportCategorySelectionAvailable && styles.categoryFilterButtonTextDisabled
-                ]}
-              >
-                分类：{categoryLabel}
-              </Text>
-              <ChevronDown
-                size={14}
-                color={viewportCategorySelectionAvailable ? theme.primary : theme.muted}
-                strokeWidth={1.8}
-              />
-            </Pressable>
-            {categoryMenuTab === viewportTab ? (
-              <PopupMenu
-                accessibilityLabel="关闭分类菜单"
-                placementStyle={categoryMenuPlacement}
-                visible
-                onRequestClose={closeCategoryMenu}
-              >
-                <ScrollView>
-                  {categoryItems.map((item, index) => (
-                    <PopupMenuItem
-                      key={item.value}
-                      compact
-                      label={item.label}
-                      last={index === categoryItems.length - 1}
-                      selected={item.value === effectiveCategoryFilter}
-                      onPress={() => selectCategory(item.value)}
+          <View style={styles.sectionHeader}>
+            {!viewportCategoryButtonHidden ? (
+              <View style={styles.categoryFilterSlot}>
+                <Pressable
+                  ref={categoryMenuTriggerRef}
+                  collapsable={false}
+                  testID="library-category-menu-button"
+                  accessibilityRole="button"
+                  accessibilityLabel={onRetryCategories ? '重新加载分类' : `分类：${categoryLabel}`}
+                  accessibilityState={{
+                    disabled: !categoryActionAvailable,
+                    expanded: categoryMenuTab === viewportTab
+                  }}
+                  disabled={!categoryActionAvailable}
+                  style={styles.categoryFilterButton}
+                  onPress={onRetryCategories ?? (() => openCategoryMenu(viewportTab))}
+                >
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.categoryFilterButtonText,
+                      !categoryActionAvailable && styles.categoryFilterButtonTextDisabled
+                    ]}
+                  >
+                    {onRetryCategories ? '分类 · 重试' : `分类：${categoryLabel}`}
+                  </Text>
+                  {!onRetryCategories ? (
+                    <ChevronDown
+                      size={14}
+                      color={viewportCategorySelectionAvailable ? theme.primary : theme.muted}
+                      strokeWidth={1.8}
                     />
-                  ))}
-                </ScrollView>
-              </PopupMenu>
+                  ) : null}
+                </Pressable>
+                {categoryMenuTab === viewportTab ? (
+                  <PopupMenu
+                    accessibilityLabel="关闭分类菜单"
+                    placementStyle={categoryMenuPlacement}
+                    visible
+                    onRequestClose={closeCategoryMenu}
+                  >
+                    <ScrollView>
+                      {categoryItems.map((item, index) => (
+                        <PopupMenuItem
+                          key={item.value}
+                          compact
+                          label={item.label}
+                          last={index === categoryItems.length - 1}
+                          selected={item.value === effectiveCategoryFilter}
+                          onPress={() => selectCategory(item.value)}
+                        />
+                      ))}
+                    </ScrollView>
+                  </PopupMenu>
+                ) : null}
+              </View>
             ) : null}
-          </View>
-          {viewportTab === 'history' && visibleTotal > 0 ? (
             <View style={styles.actions}>
-              <AppButton compact label="清空历史" variant="danger" onPress={confirmClearHistory} />
+              {loaded && !error ? (
+                <Text style={styles.meta}>
+                  {total === visibleTotal ? total : `${total} / ${visibleTotal}`}{' '}
+                  {viewportTab === 'users' ? '人' : '条'}
+                </Text>
+              ) : null}
+              {viewportTab === 'history' && loaded && visibleTotal > 0 ? (
+                <AppButton compact label="清空历史" variant="danger" onPress={confirmClearHistory} />
+              ) : null}
             </View>
-          ) : null}
-          {viewportTab === 'users' ? <View style={styles.libraryUserListSpacer} /> : null}
+          </View>
         </View>
       );
     },
@@ -551,7 +579,10 @@ export const LibraryScreen = memo(function LibraryScreen({
       confirmClearHistory,
       effectiveCategoryFilter,
       effectiveSourceFilter,
+      error,
+      loaded,
       openCategoryMenu,
+      onRetryCategories,
       selectCategory,
       sourceItems,
       styles,
@@ -566,7 +597,10 @@ export const LibraryScreen = memo(function LibraryScreen({
 
   const renderEmpty = useCallback(
     (viewportTab: LibraryTab, recordCount: number) => (
-      <View testID={loaded && viewportTab === 'favorites' && !recordCount ? 'library-favorites-empty' : undefined}>
+      <View
+        style={styles.libraryEmpty}
+        testID={loaded && viewportTab === 'favorites' && !recordCount ? 'library-favorites-empty' : undefined}
+      >
         {error ? (
           <RecoverableEmptyState message="本机资料加载失败" actionLabel="重试" onAction={onRetry} />
         ) : !loaded ? (
@@ -574,11 +608,13 @@ export const LibraryScreen = memo(function LibraryScreen({
         ) : enabledSources.length === 0 ? (
           <RecoverableEmptyState message="尚未启用内容源" actionLabel="管理内容源" onAction={onManageContentSources} />
         ) : (
-          <EmptyText text={viewportTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} />
+          <EmptyText
+            text={viewportTab === 'users' ? '暂无关注用户' : viewportTab === 'favorites' ? '暂无收藏' : '暂无浏览记录'}
+          />
         )}
       </View>
     ),
-    [enabledSources.length, loaded, onManageContentSources, error, onRetry]
+    [enabledSources.length, loaded, onManageContentSources, error, onRetry, styles.libraryEmpty]
   );
   const favoriteEmpty = useMemo(
     () => renderEmpty('favorites', favoriteListItems.length),
@@ -628,6 +664,9 @@ export const LibraryScreen = memo(function LibraryScreen({
           empty={empty}
           header={header}
           listRef={viewportRef}
+          openedTopicKey={
+            viewportTab === 'history' && historyAnchor?.scope === positionScope ? historyAnchor.key : undefined
+          }
           renderItem={
             viewportTab === 'favorites'
               ? (renderFavoriteItem as ListRenderItem<FollowedUserRecord | LibraryListItem>)

@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { requireOptionalNativeModule } from 'expo';
+import { Platform } from 'react-native';
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './imageRequestSource';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
@@ -37,6 +38,21 @@ async function assertReadableImageFile(uri: string) {
   if (!info.exists || info.isDirectory || info.size <= 0) {
     throw new Error('图片文件无效');
   }
+}
+
+export async function saveLocalImageFileToLibrary(uri: string, assertCurrent: () => void): Promise<void> {
+  if (!/^file:\/\/\/.+/u.test(uri)) throw new Error('图片地址必须是本机文件。');
+  assertCurrent();
+  await assertReadableImageFile(uri);
+  assertCurrent();
+  // The installed Expo module uses MediaStore directly from API 30; its legacy factory needs write access.
+  if (Platform.OS !== 'android' || Number(Platform.Version) < 30) {
+    const permission = await MediaLibrary.requestPermissionsAsync(true, ['photo']);
+    assertCurrent();
+    if (!permission.granted) throw new Error('没有图片保存权限');
+  }
+  // The caller owns the input file and releases it after the native copy finishes.
+  await MediaLibrary.Asset.create(uri);
 }
 
 export async function saveImageUriToLibrary(

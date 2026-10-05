@@ -1,8 +1,7 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, alphaColor, fontFamilyValue, LINK_COLOR } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue, LINK_COLOR } from '@/ui/theme/tokens';
 
-export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontScale = settings.fontScale;
   const titleFontScale = Math.min(fontScale, 1.12);
   const appFontFamily = fontFamilyValue(settings.fontFamily);

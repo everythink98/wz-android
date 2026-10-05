@@ -9,7 +9,7 @@ import {
   normalizeFontScale,
   type ReaderSettings
 } from '@/domain/reader/readerData';
-import type { ReaderTheme } from '@/ui/theme/tokens';
+import type { ReaderStyleSettings, ReaderTheme } from '@/ui/theme/tokens';
 
 export function AppearancePanel({
   settings,
@@ -18,7 +18,7 @@ export function AppearancePanel({
   theme,
   onUpdateSettings
 }: {
-  settings: ReaderSettings;
+  settings: ReaderStyleSettings;
   showSettingsPanel: boolean;
   styles: MoreScreenStyles;
   theme: ReaderTheme;
@@ -26,20 +26,27 @@ export function AppearancePanel({
 }) {
   return (
     <View style={styles.stack}>
-      {showSettingsPanel ? (
-        <SettingsPanel settings={settings} styles={styles} theme={theme} onUpdateSettings={onUpdateSettings} />
-      ) : null}
+      {/* Keep measured content and native controls mounted; the parent owns visibility. */}
+      <SettingsPanel
+        active={showSettingsPanel}
+        settings={settings}
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />
     </View>
   );
 }
 
 function SettingsPanel({
+  active,
   settings,
   styles,
   theme,
   onUpdateSettings
 }: {
-  settings: ReaderSettings;
+  active: boolean;
+  settings: ReaderStyleSettings;
   styles: MoreScreenStyles;
   theme: ReaderTheme;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
@@ -63,6 +70,7 @@ function SettingsPanel({
       <View style={styles.appearanceSection}>
         <Text style={styles.appearanceSectionTitle}>阅读</Text>
         <FontScaleSetting
+          active={active}
           value={settings.fontScale}
           styles={styles}
           theme={theme}
@@ -166,11 +174,13 @@ function SegmentedSetting({
 }
 
 function FontScaleSetting({
+  active,
   styles,
   theme,
   value,
   onChange
 }: {
+  active: boolean;
   styles: MoreScreenStyles;
   theme: ReaderTheme;
   value: number;
@@ -181,9 +191,10 @@ function FontScaleSetting({
 
   useEffect(() => {
     setDraftValue(value);
-  }, [value]);
+  }, [active, value]);
 
   const commit = (nextValue: number) => {
+    if (!active) return;
     const normalized = normalizeFontScale(nextValue);
     setDraftValue(normalized);
     onChange(normalized);
@@ -224,7 +235,9 @@ function FontScaleSetting({
           thumbTintColor={theme.primaryStrong}
           value={draftValue}
           onSlidingComplete={commit}
-          onValueChange={(nextValue) => setDraftValue(normalizeFontScale(nextValue))}
+          onValueChange={(nextValue) => {
+            if (active) setDraftValue(normalizeFontScale(nextValue));
+          }}
         />
         <Pressable
           accessibilityLabel="增大字号"

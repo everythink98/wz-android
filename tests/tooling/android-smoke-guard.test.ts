@@ -735,7 +735,8 @@ describe('Android release evidence guards', () => {
     expect(moreReplay).toMatch(
       /find "label=\\"展开外观\\"" click\s+scroll down\s+wait label="主题" 10000\s+wait label="字号" 10000/
     );
-    expect(notificationsReplay).toContain('find "消息通知" click');
+    expect(notificationsReplay).toContain('press id="main-tab-notifications"');
+    expect(libraryReplay).toContain('find "role=button label=\\"收藏\\"" click');
     for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo']) {
       expect(notificationsReplay).toContain(`notification-source-${source}`);
       for (const outcome of ['data', 'empty', 'partial', 'error', 'auth']) {
@@ -832,10 +833,10 @@ describe('Android release evidence guards', () => {
   it('starts independent journeys from their own App tab', () => {
     const targets = {
       'account-readonly.ad': 'more',
-      'library-return.ad': 'library',
+      'library-return.ad': 'more',
       'more-readonly.ad': 'more',
       'nodeseek-session.ad': 'more',
-      'notifications-readonly.ad': 'more',
+      'notifications-readonly.ad': 'notifications',
       'search-multi-source.ad': 'search'
     } as const;
 

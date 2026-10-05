@@ -28,7 +28,7 @@ export type DiagnosticSessionStatus =
 export type DiagnosticExportMetadata = {
   androidApiLevel?: number;
   appVersion: string;
-  currentScreen?: 'feed' | 'search' | 'library' | 'more' | 'topic' | 'user';
+  currentScreen?: 'feed' | 'search' | 'library' | 'more' | 'notifications' | 'topic' | 'user';
   deviceModel?: string;
   expoVersion?: string;
   fontScale?: number;
@@ -289,6 +289,7 @@ function safeScreen(value: DiagnosticExportMetadata['currentScreen']) {
     value === 'search' ||
     value === 'library' ||
     value === 'more' ||
+    value === 'notifications' ||
     value === 'topic' ||
     value === 'user'
     ? value

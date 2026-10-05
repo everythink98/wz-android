@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React from 'react';
-import { NativeModules, PixelRatio, StyleSheet } from 'react-native';
+import { NativeModules, PixelRatio, Pressable, StyleSheet, Text } from 'react-native';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -29,6 +29,8 @@ let mockGestureHandlerTag = 0;
 const mockGestureStateManagers = new Map<number, { activate: () => void; fail: () => void }>();
 let mockDeferAnimations = false;
 const mockDeferredAnimationCallbacks: (() => void)[] = [];
+let mockDeferRNCallbacks = false;
+const mockDeferredRNCallbacks: (() => void)[] = [];
 let mockZoomNextToken = 0;
 const mockZoomResets = jest.fn<(index: string) => void>();
 const mockPreviewImageUnmounts = jest.fn<(testID: string) => void>();
@@ -153,7 +155,10 @@ jest.mock('react-native-reanimated', () => {
 
 jest.mock('react-native-worklets', () => ({
   ...(jest.requireActual('react-native-worklets') as Record<string, unknown>),
-  scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args)
+  scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) => {
+    if (mockDeferRNCallbacks) mockDeferredRNCallbacks.push(() => callback(...args));
+    else callback(...args);
+  }
 }));
 
 jest.mock('react-native-gesture-handler', () => {
@@ -388,6 +393,8 @@ describe('Image preview', () => {
     mockGestureStateManagers.clear();
     mockDeferAnimations = false;
     mockDeferredAnimationCallbacks.splice(0);
+    mockDeferRNCallbacks = false;
+    mockDeferredRNCallbacks.splice(0);
     mockZoomNextToken = 0;
     mockZoomResets.mockClear();
     mockPreviewImageUnmounts.mockClear();
@@ -402,6 +409,21 @@ describe('Image preview', () => {
       fetchSvgDocument: mockFetchSvgDocument,
       renderPoster: mockRenderSvgPoster
     };
+  });
+
+  it('keeps preview navigation and close available when the caller has no save action', async () => {
+    const onClose = jest.fn();
+    const view = await render(
+      <ImagePreviewModal
+        preview={previewProps([previewItem('https://example.com/message.png')])}
+        onClose={onClose}
+        onSelect={jest.fn()}
+      />
+    );
+    expect(view.getByLabelText('图片预览，第 1 张，共 1 张')).toBeTruthy();
+    expect(view.queryByLabelText('保存图片')).toBeNull();
+    await fireEvent.press(view.getByLabelText('关闭图片预览'));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('reports only the displayed current image and real gesture activity for visible reading', async () => {
@@ -1258,6 +1280,41 @@ describe('Image preview', () => {
 
     expect(view.getByLabelText('关闭图片预览')).toBeTruthy();
     expect(view.getByLabelText('保存图片')).toBeTruthy();
+  });
+
+  it('keeps a reopened preview visible when the previous pull-close reaches RN late', async () => {
+    const first = previewProps([previewItem('https://example.com/old-pull.png')]);
+    const second = previewProps([previewItem('https://example.com/new-opening.png')]);
+    function PreviewHost() {
+      const [preview, setPreview] = React.useState<typeof first | null>(first);
+      return (
+        <>
+          <Pressable accessibilityLabel="打开另一张图片" onPress={() => setPreview(second)}>
+            <Text>打开另一张图片</Text>
+          </Pressable>
+          <ImagePreviewModal preview={preview} onClose={() => setPreview(null)} onSelect={() => undefined} />
+        </>
+      );
+    }
+    const view = await render(<PreviewHost />);
+    mockDeferRNCallbacks = true;
+    await performPreviewGesture(view, { translationY: 100, velocityY: 1_200 });
+    expect(mockDeferredRNCallbacks).toHaveLength(1);
+
+    const [modal] = view.container.queryAll(({ props }) => typeof props.onRequestClose === 'function');
+    await fireEvent(modal, 'requestClose');
+    expect(view.queryByTestId('image-preview-ring')).toBeNull();
+    await fireEvent.press(view.getByLabelText('打开另一张图片'));
+    expect(view.getByTestId('preview-image-0').props.source.uri).toBe(second.items[0].originalUri);
+    await act(() => mockDeferredRNCallbacks.shift()?.());
+
+    expect(view.getByTestId('preview-image-0').props.source.uri).toBe(second.items[0].originalUri);
+    expect(view.getByLabelText('关闭图片预览')).toBeTruthy();
+    await performPreviewGesture(view, { translationY: 100, velocityY: 1_200 });
+    await performPreviewGesture(view, { translationY: 100, velocityY: 1_200 });
+    expect(mockDeferredRNCallbacks).toHaveLength(1);
+    await act(() => mockDeferredRNCallbacks.shift()?.());
+    expect(view.queryByTestId('image-preview-ring')).toBeNull();
   });
 
   it('reopens a previously displayed original without restoring its spinner', async () => {

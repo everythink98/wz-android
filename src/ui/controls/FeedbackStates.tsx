@@ -2,13 +2,12 @@ import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from './ButtonControls';
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     authNoticeBox: {

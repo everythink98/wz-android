@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Linking, ToastAndroid, useWindowDimensions } from 'react-native';
 import { focusManager } from '@tanstack/react-query';
-import type { UserReference } from '@/domain/forum/models';
+import type { UserActivityTab, UserReference } from '@/domain/forum/models';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
 import { errorMessage } from '@/platform/network/errors';
@@ -37,13 +37,13 @@ export function useAppLifecycleRuntime() {
     navigateAppScreen(nextScreen);
   }, []);
   const openUserRoute = useCallback(
-    async (user: UserReference) => {
+    async (user: UserReference, initialTab?: UserActivityTab) => {
       const normalized = normalizeUserReference(user);
       if (!normalized) {
         notify('用户信息不完整');
         return 'completed' as const;
       }
-      pushUserRoute(normalized);
+      pushUserRoute(normalized, initialTab);
       return 'completed' as const;
     },
     [notify]
@@ -125,6 +125,7 @@ export function useAppLifecycleRuntime() {
     changeScreen,
     getCurrentScreen,
     height,
+    feedContentReady: initialForeground.feedContentReady,
     initialForegroundReady: initialForeground.initialForegroundReady,
     loginNavigation: {
       linuxdo: (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.linuxdo),

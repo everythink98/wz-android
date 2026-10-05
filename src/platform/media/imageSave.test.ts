@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { saveImageUriToLibrary } from './imageSave';
+import { saveImageUriToLibrary, saveLocalImageFileToLibrary } from './imageSave';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 const native = vi.hoisted(() => ({
@@ -11,6 +11,8 @@ const native = vi.hoisted(() => ({
   releaseDownload: vi.fn(),
   available: true
 }));
+const platform = vi.hoisted(() => ({ OS: 'android', Version: 35 }));
+vi.mock('react-native', () => ({ Platform: platform }));
 vi.mock('expo', () => ({ requireOptionalNativeModule: () => (native.available ? native : null) }));
 
 const publicMediaOptions = {
@@ -50,6 +52,8 @@ describe('image library saving', () => {
   });
 
   beforeEach(() => {
+    platform.OS = 'android';
+    platform.Version = 35;
     vi.spyOn(Date, 'now').mockReturnValue(1234);
     native.available = true;
     native.createDownload.mockClear();
@@ -200,5 +204,98 @@ describe('image library saving', () => {
     );
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+  });
+
+  describe('local image files', () => {
+    const uri = 'file:///cache/topic-share.png';
+
+    it.each([30, 35])('saves a caller-owned image on Android %i without requesting photo access', async (version) => {
+      platform.Version = version;
+      await saveLocalImageFileToLibrary(uri, () => undefined);
+      expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
+      expect(MediaLibrary.Asset.create).toHaveBeenCalledWith(uri);
+      expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+      expect(native.createDownload).not.toHaveBeenCalled();
+    });
+
+    it.each(['https://example.com/a.png', 'content://images/1', 'data:image/png;base64,a', 'file://', 'file:///'])(
+      'rejects a non-file input %s before file or permission access',
+      async (input) => {
+        await expect(saveLocalImageFileToLibrary(input, () => undefined)).rejects.toThrow('本机文件');
+        expect(FileSystem.getInfoAsync).not.toHaveBeenCalled();
+        expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
+        expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['missing', 'directory', 'empty'] as const)(
+      'rejects a %s local image without deleting it',
+      async (state) => {
+        vi.mocked(FileSystem.getInfoAsync).mockResolvedValueOnce(
+          state === 'missing'
+            ? { exists: false, isDirectory: false, uri }
+            : {
+                exists: true,
+                isDirectory: state === 'directory',
+                size: state === 'empty' ? 0 : 12,
+                uri,
+                modificationTime: 1
+              }
+        );
+        await expect(saveLocalImageFileToLibrary(uri, () => undefined)).rejects.toThrow('图片文件无效');
+        expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
+        expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+        expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+      }
+    );
+
+    it('requests write-only permission for the legacy Android factory', async () => {
+      platform.Version = 29;
+      await saveLocalImageFileToLibrary(uri, () => undefined);
+      expect(MediaLibrary.requestPermissionsAsync).toHaveBeenCalledWith(true, ['photo']);
+      expect(MediaLibrary.Asset.create).toHaveBeenCalledWith(uri);
+      expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+    });
+
+    it('keeps the caller file and creates no asset when write permission is denied', async () => {
+      platform.Version = 29;
+      vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValueOnce({
+        granted: false
+      } as MediaLibrary.PermissionResponse);
+      await expect(saveLocalImageFileToLibrary(uri, () => undefined)).rejects.toThrow('没有图片保存权限');
+      expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+      expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+    });
+
+    it.each(['file inspection', 'permission'] as const)(
+      'does not save after the session expires during %s',
+      async (stage) => {
+        platform.Version = stage === 'permission' ? 29 : 35;
+        let current = true;
+        const assertCurrent = () => {
+          if (!current) throw new Error('图片保存已取消');
+        };
+        if (stage === 'permission') {
+          vi.mocked(MediaLibrary.requestPermissionsAsync).mockImplementationOnce(async () => {
+            current = false;
+            return { granted: true } as MediaLibrary.PermissionResponse;
+          });
+        } else {
+          vi.mocked(FileSystem.getInfoAsync).mockImplementationOnce(async () => {
+            current = false;
+            return { exists: true, isDirectory: false, size: 12, uri, modificationTime: 1 };
+          });
+        }
+        await expect(saveLocalImageFileToLibrary(uri, assertCurrent)).rejects.toThrow('图片保存已取消');
+        expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+        expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+      }
+    );
+
+    it('surfaces a native library failure without deleting the caller file', async () => {
+      vi.mocked(MediaLibrary.Asset.create).mockRejectedValueOnce(new Error('相册写入失败'));
+      await expect(saveLocalImageFileToLibrary(uri, () => undefined)).rejects.toThrow('相册写入失败');
+      expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+    });
   });
 });

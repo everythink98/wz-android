@@ -1,8 +1,14 @@
 import { StyleSheet } from 'react-native';
 import type { ComponentProps } from 'react';
 import type RenderHTML from 'react-native-render-html';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  alphaColor,
+  fontFamilyValue,
+  lineHeightMultiplier,
+  LINK_COLOR,
+  type ReaderStyleSettings,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { DISCOURSE_CALLOUT_TITLE_CLASS, DISCOURSE_CALLOUT_TONE_CLASS_PREFIX } from '@/domain/forum/callouts';
 
 type HtmlProps = ComponentProps<typeof RenderHTML>;
@@ -27,7 +33,7 @@ export function buildHtmlRenderingStyles({
   theme
 }: {
   enableDiscourseCallouts?: boolean;
-  settings: ReaderSettings;
+  settings: ReaderStyleSettings;
   theme: ReaderTheme;
 }) {
   const baseFontSize = Math.round(16 * settings.fontScale);

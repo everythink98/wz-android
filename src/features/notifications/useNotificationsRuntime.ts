@@ -590,21 +590,60 @@ export function useNotificationsRuntime({
     }))
   });
   const snapshotQueriesRef = useRef(snapshotQueries);
+  const snapshotSourcesRef = useRef(snapshotSources);
   const remoteQueryEnabledRef = useRef(remoteQueryEnabled);
   useCommitRefValue(snapshotQueriesRef, snapshotQueries);
+  useCommitRefValue(snapshotSourcesRef, snapshotSources);
   useCommitRefValue(remoteQueryEnabledRef, remoteQueryEnabled);
-  const refetchSnapshots = useCallback(
-    () =>
-      remoteQueryEnabledRef.current
-        ? Promise.all(snapshotQueriesRef.current.map((query) => query.refetch()))
-        : Promise.resolve([]),
-    []
-  );
+  useLayoutEffect(() => {
+    foregroundGenerationRef.current += 1;
+    pendingForegroundDeliveriesRef.current.clear();
+  }, [remoteQueryEnabled]);
+  const refetchSnapshots = useCallback(async () => {
+    if (!mountedRef.current || !remoteQueryEnabledRef.current) return [];
+    const reads = snapshotSourcesRef.current.flatMap((source, index) => {
+      const identityKey = identityKeysRef.current[source];
+      const query = snapshotQueriesRef.current[index];
+      return identityKey && query
+        ? [
+            {
+              source,
+              identityKey,
+              epoch: sessionEpochsRef.current[source],
+              lifecycle: sourceLifecyclesRef.current[source],
+              query
+            }
+          ]
+        : [];
+    });
+    // Initial loads otherwise share the pre-write promise, even with cancelRefetch.
+    await Promise.all(
+      reads.map(({ source, identityKey }) =>
+        appQueryClient.cancelQueries({
+          queryKey: forumQueryKeys.notificationSnapshot({ source, identityKey }),
+          exact: true
+        })
+      )
+    );
+    return Promise.all(
+      reads.flatMap(({ source, identityKey, epoch, lifecycle, query }) =>
+        mountedRef.current &&
+        remoteQueryEnabledRef.current &&
+        sourceIsOperational(source) &&
+        sourceLifecyclesRef.current[source] === lifecycle &&
+        identityKeysRef.current[source] === identityKey &&
+        sessionEpochsRef.current[source] === epoch
+          ? [query.refetch()]
+          : []
+      )
+    );
+  }, [sourceIsOperational]);
 
   const runForegroundDelivery = useCallback(
     function deliver(jobs: readonly ForegroundDelivery[]): void {
       const currentJob = (job: ForegroundDelivery) =>
         mountedRef.current &&
+        remoteQueryEnabledRef.current &&
         foregroundGenerationRef.current === job.generation &&
         permissionRef.current &&
         stateRef.current.globalEnabled &&

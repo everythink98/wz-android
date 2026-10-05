@@ -36,13 +36,13 @@ function notification(
     createdAt: FIXED_TIME,
     id,
     kind,
-    preview: '固定消息预览，用于检查已读状态和来源层级。',
+    preview: '这段回复还有一点补充：先看上下文，再决定是否需要回复。较长摘要会单独换行，保留标题的阅读空间。',
     source,
     target:
       kind === 'private-message'
         ? { conversationId: `conversation-${id}`, type: 'private-conversation' }
         : { topicId: `topic-${id}`, type: 'topic', url: `https://visual.invalid/${source}/topic-${id}` },
-    title: `${source} 的示例消息`,
+    title: kind === 'private-message' ? '关于上次讨论的私信' : `${source} · 关于社区阅读体验的一些想法与建议`,
     unread
   };
 }
@@ -101,18 +101,30 @@ function detail(state: Exclude<NotificationDetailState, 'error' | 'loading'>): N
         { author: '我', contentText: '随后发出的回复。', createdAt: FIXED_TIME, id: 'message-2', mine: true }
       ],
       notification: item,
+      reply: { format: 'markdown' },
       title: '示例私信会话'
     };
   }
   return {
-    contentText: '固定通知正文用于检查标题、正文、错误提示和底部主题操作之间的层级。',
-    notification: item,
-    title: '示例回复通知',
+    contentHtml:
+      '<h2>社区准则更新</h2><p>请阅读本次变更后确认。</p><ul><li>保留清晰的讨论上下文。</li><li>确认操作与通知已读独立。</li></ul><blockquote><p>阅读完整内容后，使用下方按钮确认。</p></blockquote>',
+    notification: { ...item, source: 'linuxdo', kind: 'system' },
+    title: '社区准则更新公告',
+    policy: {
+      postId: '77',
+      version: '1',
+      acceptLabel: '我已知晓此更新内容',
+      revokeLabel: '等我再仔细阅读一番',
+      accepted: false,
+      revoked: false,
+      canAccept: true,
+      canRevoke: false
+    },
     topic: {
       author: '示例作者',
       createdAt: FIXED_TIME,
       id: 'notification-topic',
-      source: 'nodeseek',
+      source: 'linuxdo',
       title: '通知关联主题',
       url: 'https://visual.invalid/nodeseek/notification-topic'
     }
@@ -129,7 +141,14 @@ function NotificationDetailScenario({ state }: { state: NotificationDetailState 
         detail={loadedDetail}
         error={state === 'error' ? '详情暂时无法读取，仍可前往完整主题。' : undefined}
         loading={state === 'loading'}
-        topicReplyAction={state === 'data'}
+        replyContent={state === 'conversation' ? '我看过了，补充一个想法' : ''}
+        actorUser={
+          state === 'conversation'
+            ? { source: 'nodeseek', id: '9', displayName: '示例用户甲', url: 'https://visual.invalid/nodeseek/space/9' }
+            : undefined
+        }
+        onOpenActor={noop}
+        onSetPolicyAcceptance={noop}
         onOpenExternalUrl={noop}
         onOpenTopic={noop}
         onRetry={noop}

@@ -14,7 +14,7 @@ export type MoreRouteRuntimeValue = {
     metadata: Parameters<typeof useDiagnosticLogController>[0]['metadata'];
   };
   notify: (message: string) => void;
-  notifications: MoreUtilityCapabilities['notifications'];
+  library: MoreUtilityCapabilities['library'];
   proxy: Pick<
     ReturnType<typeof useNetworkProxyRuntime>,
     | 'activeProfile'

@@ -26,9 +26,8 @@ import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-na
 import { X } from 'lucide-react-native';
 import { imageRequestHeadersForUrl, imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/imagePreviewCatalog';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -86,7 +85,7 @@ type ImagePreviewModalProps = {
   preview: ImagePreviewList | null;
   nodeSeekMediaUserAgent?: string;
   onClose: () => void;
-  onSave: () => void;
+  onSave?: () => void;
   onSelect: (index: number) => void;
   onVisibleImageChange?: (item: ImagePreviewItem | null) => void;
   onInteraction?: () => void;
@@ -593,7 +592,7 @@ function ImagePreviewModalContent({
   );
 
   const handleSave = useCallback(async () => {
-    if (saving) {
+    if (!onSave || saving) {
       return;
     }
     setSaving(true);
@@ -605,6 +604,10 @@ function ImagePreviewModalContent({
       }
     }
   }, [onSave, saving]);
+
+  const closePreview = useCallback(() => {
+    if (mountedRef.current) onClose();
+  }, [onClose]);
 
   const handleVerticalPull = useCallback(
     ({ released, translateY, velocityY }: VerticalPullState) => {
@@ -618,14 +621,14 @@ function ImagePreviewModalContent({
       if (distance >= height * PULL_CLOSE_DISTANCE_RATIO || velocityY >= PULL_CLOSE_VELOCITY) {
         if (!closing.value) {
           closing.value = true;
-          scheduleOnRN(onClose);
+          scheduleOnRN(closePreview);
         }
         return;
       }
       pullTranslateY.value = withTiming(0);
       overlayOpacity.value = withTiming(1);
     },
-    [closing, height, onClose, overlayOpacity, pullTranslateY]
+    [closePreview, closing, height, overlayOpacity, pullTranslateY]
   );
 
   const previousSlot = ring.slots.find(({ page, role }) => role === -1 && page?.index === activeIndex - 1)?.slot ?? -1;
@@ -764,7 +767,7 @@ function ImagePreviewModalContent({
   }
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+    <Modal visible transparent animationType="none" onRequestClose={closePreview}>
       <GestureHandlerRootView
         onTouchStart={recordUserInteraction}
         onTouchMove={recordUserInteraction}
@@ -843,7 +846,7 @@ function ImagePreviewModalContent({
                 accessibilityRole="button"
                 accessibilityLabel="关闭图片预览"
                 style={styles.imagePreviewClose}
-                onPress={onClose}
+                onPress={closePreview}
               >
                 <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
               </Pressable>
@@ -852,20 +855,25 @@ function ImagePreviewModalContent({
               </Text>
               <View style={componentStyles.chromeSpacer} />
             </View>
-            <View pointerEvents="box-none" style={[componentStyles.bottomBar, { bottom: Math.max(insets.bottom, 16) }]}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="保存图片"
-                accessibilityState={{ busy: saving, disabled: saving }}
-                disabled={saving}
-                style={[styles.imagePreviewTextButton, saving && componentStyles.disabledButton]}
-                onPress={() => {
-                  void handleSave();
-                }}
+            {onSave ? (
+              <View
+                pointerEvents="box-none"
+                style={[componentStyles.bottomBar, { bottom: Math.max(insets.bottom, 16) }]}
               >
-                <Text style={styles.imagePreviewButtonText}>{saving ? '保存中…' : '保存'}</Text>
-              </Pressable>
-            </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="保存图片"
+                  accessibilityState={{ busy: saving, disabled: saving }}
+                  disabled={saving}
+                  style={[styles.imagePreviewTextButton, saving && componentStyles.disabledButton]}
+                  onPress={() => {
+                    void handleSave();
+                  }}
+                >
+                  <Text style={styles.imagePreviewButtonText}>{saving ? '保存中…' : '保存'}</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </>
         ) : null}
       </GestureHandlerRootView>
@@ -904,7 +912,7 @@ function PreviewRingSlotView({
   );
 }
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     imagePreviewOverlay: {

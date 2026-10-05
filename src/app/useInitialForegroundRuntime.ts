@@ -5,6 +5,7 @@ export function useInitialForegroundRuntime() {
   const [feedContentReady, setFeedContentReady] = useState(false);
 
   return {
+    feedContentReady,
     initialForegroundReady: feedContentReady && catalogSettled,
     onCatalogSettled: useCallback((settled: boolean) => {
       if (settled) setCatalogSettled(true);

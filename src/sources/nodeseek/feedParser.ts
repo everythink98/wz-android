@@ -215,12 +215,14 @@ export function isIncompleteNodeSeekSearchPage(document: NodeSeekPageDocument, i
   if (items.length) {
     return false;
   }
-  const { root } = document;
-  const hasResultSurface = Boolean(root.querySelector('li.post-list-item, .post-list, .empty-state, .notice, .alert'));
-  if (hasResultSurface) {
+  const { embedded, root } = document;
+  if (root.querySelector('.post-list, .empty-state')) {
     return false;
   }
-  return Boolean(root.querySelector('form[action*="/search"], input[name="q"]'));
+  return (
+    Boolean(root.querySelector('form[action*="/search"], input[name="q"], .notice, .alert')) ||
+    ![embedded?.rotateTopics, embedded?.topicList, embedded?.posts].some(Array.isArray)
+  );
 }
 
 export function normalizeCategories(data: Record<string, unknown>) {

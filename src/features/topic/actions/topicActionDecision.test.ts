@@ -16,6 +16,22 @@ const loggedIn = createSiteSessionViewModel({
 });
 
 describe('topic action decision', () => {
+  it('allows reading confirmation on a closed linux.do topic through the same account and object guards', () => {
+    expect(decideTopicAction({ account: loggedIn, action: 'policy', topic: { ...topic, closed: true } }).allowed).toBe(
+      true
+    );
+    expect(decideTopicAction({ account: loggedIn, action: 'policy', topic, objectAllowed: false }).reason).toBe(
+      'object-forbidden'
+    );
+    expect(decideTopicAction({ account: { ...loggedIn, canWrite: false }, action: 'policy', topic }).reason).toBe(
+      'login-required'
+    );
+    for (const source of ['nodeseek', 'yaohuo', 'v2ex'] as const) {
+      expect(decideTopicAction({ account: loggedIn, action: 'policy', topic: { ...topic, source } }).reason).toBe(
+        'unsupported'
+      );
+    }
+  });
   it.each([
     ['yaohuo', '本帖已结束，无法回复'],
     ['linuxdo', '本帖已关闭，无法回复']

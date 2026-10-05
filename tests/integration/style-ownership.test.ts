@@ -111,8 +111,8 @@ describe('Android reader theme safety rails', () => {
     const base = createNotificationStyles(theme, settings);
     const large = createNotificationStyles(theme, { ...settings, fontScale: 1.3 });
 
-    expect(base.title.fontSize).toBe(14);
-    expect(large.title.fontSize).toBe(Math.round(14 * 1.3));
+    expect(base.title.fontSize).toBe(15);
+    expect(large.title.fontSize).toBe(Math.round(15 * 1.3));
     expect(large.messageBody.lineHeight).toBe(Math.round(21 * 1.3));
     expect(large.detailLink.color).toBe(theme.primary);
   });

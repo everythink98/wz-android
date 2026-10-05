@@ -3681,23 +3681,45 @@ describe('Android local sources', () => {
     });
   });
 
-  it('surfaces incomplete NodeSeek search pages as a retryable failure', async () => {
-    const fetcher = routeFetcher([
-      [
-        (input) => input.includes('/search?') && input.includes('q=retry'),
-        html('<main><form action="/search"><input name="q" value="retry" /></form></main>')
-      ],
-      [
-        /.*/,
-        (input) => {
-          throw new Error(`unexpected ${input}`);
-        }
-      ]
-    ]);
+  it.each([
+    '',
+    '<main>Temporary server error, please retry</main>',
+    '<div class="alert">Temporary server error, please retry</div>',
+    '<div class="notice">Temporary server error, please retry</div>',
+    `<div class="alert">Temporary server error, please retry</div><script>${nodeSeekPayload}</script>`,
+    '<main><form action="/search"><input name="q" value="retry" /></form></main>'
+  ])('keeps an unconfirmed NodeSeek search page retryable: %j', async (body) => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(html(body))
+      .mockResolvedValueOnce(html('<ul class="post-list"></ul>'));
+    const options = { source: 'nodeseek' as const, query: 'retry', page: 2, fetcher, nodeSeekAuthenticated: true };
 
-    await expect(
-      searchTopics({ source: 'nodeseek', query: 'retry', fetcher, nodeSeekAuthenticated: true })
-    ).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
+    await expect(searchTopics(options)).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
+    await expect(searchTopics(options)).resolves.toMatchObject({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      'https://www.nodeseek.com/search?q=retry&page=2',
+      'https://www.nodeseek.com/search?q=retry&page=2'
+    ]);
+  });
+
+  it.each([
+    '<div class="empty-state">没有找到相关内容</div>',
+    ...['rotateTopics', 'topicList', 'posts'].flatMap((key) => {
+      const payload = Buffer.from(JSON.stringify({ [key]: [] })).toString('base64');
+      return [`<script>${payload}</script>`, `<div data-page="${payload}"></div>`];
+    })
+  ])('preserves a confirmed empty NodeSeek search response: %j', async (body) => {
+    const fetcher = vi.fn(async () => html(body));
+    const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekAuthenticated: true });
+
+    expect(search).toMatchObject({ items: [], errors: {}, hasMore: false, nextPage: null });
+    expect(sourceDiagnosticSummary(search)).toMatchObject({ isExpectedEmpty: true, isParseEmpty: false });
   });
 
   it('surfaces NodeSeek site search failures instead of filtering the latest feed', async () => {

@@ -1,11 +1,18 @@
-import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useRef, type ComponentRef } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ComponentRef
+} from 'react';
 import {
   findNodeHandle,
   Keyboard,
   Platform,
   requireNativeComponent,
   UIManager,
-  View,
   type NativeSyntheticEvent,
   type ViewProps
 } from 'react-native';
@@ -18,18 +25,20 @@ export type ComposerKeyboardHostHandle = {
 
 type HiddenEvent = NativeSyntheticEvent<{ requestId: number; success: boolean }>;
 export type ComposerImeInsetsEvent = NativeSyntheticEvent<{ bottom: number }>;
-type HostProps = ViewProps & {
+type NativeHostProps = ViewProps & {
   enabled: boolean;
+  hiddenLayoutHeight?: number;
   trackImeInsets?: boolean;
   onImeInsets?: (event: ComposerImeInsetsEvent) => void;
 };
-const NativeHost = requireNativeComponent<HostProps & { onKeyboardHidden: (event: HiddenEvent) => void }>(
+const NativeHost = requireNativeComponent<NativeHostProps & { onKeyboardHidden: (event: HiddenEvent) => void }>(
   'WzComposerKeyboardHost'
 );
 const AnimatedNativeHost = Animated.createAnimatedComponent(NativeHost);
+type HostProps = Omit<NativeHostProps, 'style'> & Pick<ComponentProps<typeof AnimatedNativeHost>, 'style'>;
 
 export const ComposerKeyboardHost = forwardRef<ComposerKeyboardHostHandle, HostProps>(function ComposerKeyboardHost(
-  { enabled, ...props },
+  { enabled, hiddenLayoutHeight, ...props },
   ref
 ) {
   const nativeRef = useRef<ComponentRef<typeof NativeHost>>(null);
@@ -102,12 +111,13 @@ export const ComposerKeyboardHost = forwardRef<ComposerKeyboardHostHandle, HostP
     }),
     [currentEnabled, finish]
   );
-  if (Platform.OS !== 'android') return <View {...props} />;
+  if (Platform.OS !== 'android') return <Animated.View {...props} />;
   return (
     <AnimatedNativeHost
       {...props}
       ref={nativeRef}
       enabled={enabled}
+      hiddenLayoutHeight={hiddenLayoutHeight}
       onKeyboardHidden={({ nativeEvent }) => {
         if (pending.current?.id !== nativeEvent.requestId) return;
         finish(nativeEvent.success ? undefined : '键盘尚未收起，请重试');

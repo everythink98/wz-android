@@ -1,13 +1,11 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { ReaderState, ReaderCommand } from '@/domain/reader/readerRecordState';
-import type { Category } from '@/domain/forum/models';
 import type { Source } from '@/domain/forum/sourceCatalog';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReadGateway } from '@/sources/readGateway';
 
 export type LibraryRouteRuntimeValue = {
   readingGateway?: Pick<ReadGateway, 'getReadingBatch' | 'reading'>;
-  categories: Category[];
   enabledSources: readonly Source[];
   notify: (message: string) => void;
   topicStateIndex: TopicListItemStateIndex;

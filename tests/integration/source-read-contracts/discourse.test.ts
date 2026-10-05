@@ -927,7 +927,6 @@ describe('Android local sources', () => {
       json({
         user_summary: {
           topic_count: 0,
-          reply_count: 0,
           post_count: 0,
           user: { id: 7, username: 'newbie', name: 'Newbie' }
         },
@@ -939,7 +938,7 @@ describe('Android local sources', () => {
       fetcher
     });
 
-    expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
+    expect(profile).toMatchObject({ topicCount: 0, replyCount: 0 });
   });
 
   it('paginates linux.do user topics by consumed source rows and the summary total', async () => {

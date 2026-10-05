@@ -10,8 +10,8 @@ import type { FollowedUserRecord, TopicRecord } from '@/domain/reader/readerData
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { LibraryListItem } from './libraryScreenItems';
 import { LibraryScreen } from './LibraryScreen';
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { queryReaderPage } from '@/platform/storage/readerDataStore';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { queryReaderCategories, queryReaderPage } from '@/platform/storage/readerDataStore';
 import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
 
 import { useReaderDataActionsController } from './useReaderDataActionsController';
@@ -48,6 +48,22 @@ export function LibraryRoute() {
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const collection = libraryTab === 'users' ? 'followedUsers' : libraryTab;
+  const categoryQuery = useQuery({
+    queryKey: ['reader-library', collection, 'categories', runtime.enabledSources.slice().sort().join('|')],
+    enabled: active && runtime.reader.loaded && collection !== 'followedUsers',
+    queryFn: () => queryReaderCategories({ collection, sources: runtime.enabledSources }),
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === collection
+        ? previous?.filter((category) => runtime.enabledSources.includes(category.source))
+        : undefined,
+    staleTime: Infinity,
+    retry: false
+  });
+  const categories = useMemo(() => categoryQuery.data ?? [], [categoryQuery.data]);
+  const { refetch: refetchCategories } = categoryQuery;
+  const retryCategories = useCallback(() => {
+    void refetchCategories();
+  }, [refetchCategories]);
   const source = sourceFilter === 'all' || runtime.enabledSources.includes(sourceFilter) ? sourceFilter : 'all';
   const category = source === sourceFilter ? categoryFilter : 'all';
   const requestFor = (candidate: ReaderPageRequest['collection']) => ({
@@ -131,7 +147,9 @@ export function LibraryRoute() {
   return (
     <LibraryScreen
       active={active}
-      categories={runtime.categories}
+      categories={categories}
+      categoriesReady={categoryQuery.data !== undefined && !categoryQuery.isPlaceholderData}
+      onRetryCategories={categoryQuery.isError ? retryCategories : undefined}
       enabledSources={runtime.enabledSources}
       favoriteRecords={favoriteRecords}
       followedUsers={followedUsers}

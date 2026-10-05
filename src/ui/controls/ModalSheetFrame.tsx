@@ -1,9 +1,8 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import type { ReaderTheme } from '@/ui/theme/tokens';
+import type { ReaderStyleSettings, ReaderTheme } from '@/ui/theme/tokens';
 import {
   ComposerKeyboardHost,
   type ComposerKeyboardHostHandle,
@@ -11,7 +10,7 @@ import {
 } from '@/ui/composer/ComposerKeyboardHost';
 import Animated, { useAnimatedStyle, useEvent, useSharedValue } from 'react-native-reanimated';
 
-function createStyles(theme: ReaderTheme, _settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, _settings: ReaderStyleSettings) {
   return StyleSheet.create({
     root: {
       flex: 1,

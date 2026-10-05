@@ -1,6 +1,7 @@
 import {
   type Dispatch,
   type ReactNode,
+  type RefObject,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -29,6 +30,7 @@ import Animated, {
   type SharedValue
 } from 'react-native-reanimated';
 import type { ComposerPresentation } from '@/domain/forum/structuredComposer';
+import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
 
 type KeyboardSource = ReturnType<typeof useAnimatedKeyboard>;
 
@@ -53,6 +55,7 @@ export function FixedComposerPanel({
   height,
   insets,
   keyboardActive,
+  keyboardHostRef,
   maxDynamicContentHeight,
   pickerReady,
   presentation,
@@ -69,6 +72,7 @@ export function FixedComposerPanel({
   height: number;
   insets: { top: number; bottom: number };
   keyboardActive: boolean;
+  keyboardHostRef: RefObject<ComposerKeyboardHostHandle | null>;
   maxDynamicContentHeight?: number;
   pickerReady: SharedValue<boolean>;
   presentation: ComposerPresentation;
@@ -81,6 +85,20 @@ export function FixedComposerPanel({
   const [contentHeight, setContentHeight] = useState(0);
   const dynamicContent = maxDynamicContentHeight !== undefined;
   const contentReady = !dynamicContent || contentHeight > 0;
+  const desiredHeight =
+    maxDynamicContentHeight === undefined
+      ? sheetHeight
+      : Math.min(contentHeight, maxDynamicContentHeight) + insets.bottom;
+  // The native host acknowledges the settled panel, independently of intermediate
+  // IME frames and the sheet/fullscreen presentation animation.
+  const hiddenLayoutHeight =
+    !contentReady || height <= 0
+      ? undefined
+      : dynamicContent
+        ? desiredHeight
+        : presentation === 'fullscreen'
+          ? height
+          : Math.min(height, desiredHeight);
   const measureContent = useCallback((event: LayoutChangeEvent) => {
     setContentHeight(event.nativeEvent.layout.height);
   }, []);
@@ -155,10 +173,6 @@ export function FixedComposerPanel({
     // Offset only the excess IME height so the footer stays above both insets.
     const keyboardOverlap = Math.max(0, keyboardHeight - insets.bottom);
     const viewportHeight = Math.max(0, height - keyboardOverlap);
-    const desiredHeight =
-      maxDynamicContentHeight === undefined
-        ? sheetHeight
-        : Math.min(contentHeight, maxDynamicContentHeight) + insets.bottom;
     // Measurements determine animation travel only. Native layout resizes a
     // dynamic panel with its children, without waiting for the onLayout commit.
     const sheetPanelHeight = dynamicContent ? desiredHeight : Math.min(viewportHeight, desiredHeight);
@@ -166,6 +180,9 @@ export function FixedComposerPanel({
       ? sheetPanelHeight
       : sheetPanelHeight + (viewportHeight - sheetPanelHeight) * fullscreenProgress.value;
     return {
+      // A transparent hardware WebView still draws; hide it after the close
+      // animation while retaining the editor and its document for reopening.
+      display: !presented && openProgress.value === 0 ? 'none' : 'flex',
       bottom: 0,
       height: dynamicContent ? undefined : panelHeight,
       maxHeight: maxDynamicContentHeight === undefined ? undefined : maxDynamicContentHeight + insets.bottom,
@@ -188,8 +205,11 @@ export function FixedComposerPanel({
         importantForAccessibility="no-hide-descendants"
         style={[StyleSheet.absoluteFill, { backgroundColor: 'black' }, backdropStyle]}
       />
-      <Animated.View
+      <ComposerKeyboardHost
         key="fixed-composer-panel"
+        ref={keyboardHostRef}
+        enabled={presented}
+        hiddenLayoutHeight={hiddenLayoutHeight}
         testID="composer-bottom-sheet"
         pointerEvents={presented ? 'auto' : 'none'}
         accessibilityElementsHidden={!presented}
@@ -203,7 +223,7 @@ export function FixedComposerPanel({
         >
           {children}
         </View>
-      </Animated.View>
+      </ComposerKeyboardHost>
     </View>
   );
 }

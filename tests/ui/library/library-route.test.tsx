@@ -7,7 +7,7 @@ import type { ComponentProps } from 'react';
 import { LibraryRoute } from '@/features/library/LibraryRoute';
 import { LibraryRouteRuntimeProvider } from '@/features/library/LibraryRouteRuntime';
 import type { LibraryScreen } from '@/features/library/LibraryScreen';
-import { queryReaderPage } from '@/platform/storage/readerDataStore';
+import { queryReaderCategories, queryReaderPage } from '@/platform/storage/readerDataStore';
 import type { ReaderPage } from '@/platform/storage/readerDatabase';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -43,7 +43,10 @@ jest.mock('@/features/library/LibraryScreen', () => ({
     return <Actual {...props} />;
   }
 }));
-jest.mock('@/platform/storage/readerDataStore', () => ({ queryReaderPage: jest.fn() }));
+jest.mock('@/platform/storage/readerDataStore', () => ({
+  queryReaderCategories: jest.fn(),
+  queryReaderPage: jest.fn()
+}));
 jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native'),
   useIsFocused: () => mockFocused,
@@ -52,6 +55,11 @@ jest.mock('@react-navigation/native', () => ({
   StackActions: { push: jest.fn() }
 }));
 const query = jest.mocked(queryReaderPage);
+const categoryQuery = jest.mocked(queryReaderCategories);
+const localCategories = [
+  { source: 'nodeseek' as const, id: 'daily', name: '日常' },
+  { source: 'v2ex' as const, id: 'daily', name: '分享创造' }
+];
 const page = (id: string, next?: ReaderPage['next']): ReaderPage => ({
   records: [
     {
@@ -74,10 +82,6 @@ async function mount(enabledSources: readonly Source[] = ['nodeseek']) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const data = createEmptyReaderState();
   const value = {
-    categories: [
-      { source: 'nodeseek' as const, id: 'daily', name: '日常' },
-      { source: 'v2ex' as const, id: 'daily', name: '分享创造' }
-    ],
     enabledSources,
     notify: jest.fn(),
     topicStateIndex: createTopicListItemStateIndex(data),
@@ -90,11 +94,12 @@ async function mount(enabledSources: readonly Source[] = ['nodeseek']) {
       </LibraryRouteRuntimeProvider>
     </QueryClientProvider>
   );
-  return { ...view, client };
+  return { ...view, client, runtime: value };
 }
 beforeEach(() => {
   jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => callback(40, 200, 180, 44));
   query.mockReset();
+  categoryQuery.mockReset().mockResolvedValue(localCategories);
   mockFocused = true;
   mockListFrames.length = 0;
 });
@@ -102,6 +107,84 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 describe('Library route database query lifecycle', () => {
+  it('preserves a retained-source category through a cold source-scope read, failure and retry', async () => {
+    let failCategories!: (error: Error) => void;
+    query.mockResolvedValue(page('kept'));
+    categoryQuery
+      .mockResolvedValueOnce(localCategories)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failCategories = reject;
+          })
+      )
+      .mockResolvedValue(localCategories.filter((category) => category.source === 'nodeseek'));
+    const view = await mount(['nodeseek', 'v2ex']);
+    try {
+      await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
+      await fireEvent.press(view.getByTestId('library-source-nodeseek'));
+      await fireEvent.press(view.getByTestId('library-category-menu-button'));
+      await fireEvent.press(view.getByRole('menuitem', { name: '日常' }));
+      await waitFor(() => expect(mockScreen.categoryFilter).toBe('nodeseek:daily'));
+      await view.rerender(
+        <QueryClientProvider client={view.client}>
+          <LibraryRouteRuntimeProvider value={{ ...view.runtime, enabledSources: ['nodeseek'] }}>
+            <LibraryRoute />
+          </LibraryRouteRuntimeProvider>
+        </QueryClientProvider>
+      );
+      await waitFor(() => expect(failCategories).toBeDefined());
+      expect(mockScreen.categoryFilter).toBe('nodeseek:daily');
+      expect(view.getByLabelText('分类：日常')).toBeTruthy();
+      await act(async () => failCategories(new Error('read failed')));
+      await waitFor(() => expect(view.getByLabelText('重新加载分类')).toBeTruthy());
+      expect(mockScreen.categoryFilter).toBe('nodeseek:daily');
+      await fireEvent.press(view.getByLabelText('重新加载分类'));
+      await waitFor(() => expect(view.getByLabelText('分类：日常')).toBeTruthy());
+      expect(mockScreen.categoryFilter).toBe('nodeseek:daily');
+      expect(categoryQuery).toHaveBeenCalledTimes(3);
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+  it('retries a failed local category read without discarding the loaded collection', async () => {
+    query.mockResolvedValue(page('kept'));
+    categoryQuery.mockRejectedValueOnce(new Error('category read failed')).mockResolvedValue(localCategories);
+    const view = await mount();
+    try {
+      await waitFor(() => expect(view.getByLabelText('重新加载分类')).toBeTruthy());
+      expect(mockScreen.favoriteRecords[0]?.topic.id).toBe('kept');
+      await fireEvent.press(view.getByLabelText('重新加载分类'));
+      await waitFor(() => expect(view.getByLabelText('分类：全部')).toBeTruthy());
+      expect(categoryQuery).toHaveBeenCalledTimes(2);
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(mockScreen.favoriteRecords[0]?.topic.id).toBe('kept');
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+  it('opens the complete local category catalog without relying on the remote feed catalog', async () => {
+    query.mockResolvedValue(page('first-page'));
+    categoryQuery.mockResolvedValue([{ source: 'nodeseek', id: 'archive', name: '旧记录分类' }]);
+    const view = await mount();
+    try {
+      await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
+      await fireEvent.press(view.getByTestId('library-source-nodeseek'));
+      await fireEvent.press(view.getByTestId('library-category-menu-button'));
+      await fireEvent.press(view.getByRole('menuitem', { name: '旧记录分类' }));
+      await waitFor(() =>
+        expect(query).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'nodeseek:archive' }))
+      );
+      expect(categoryQuery).toHaveBeenCalledTimes(1);
+      expect(categoryQuery).toHaveBeenCalledWith({ collection: 'favorites', sources: ['nodeseek'] });
+      expect(view.getByLabelText('分类：旧记录分类')).toBeTruthy();
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
   it('queries only the active collection with filters selected through its controls', async () => {
     query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
     const view = await mount(['nodeseek', 'v2ex']);
@@ -153,6 +236,63 @@ describe('Library route database query lifecycle', () => {
         ['history', 'v2ex', 'all'],
         ['history', 'v2ex', 'v2ex:daily']
       ]);
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+  it('starts a changed source with all categories without querying the previous source category', async () => {
+    query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
+    const view = await mount(['nodeseek', 'v2ex']);
+    try {
+      await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
+      await fireEvent.press(view.getByTestId('library-source-nodeseek'));
+      await fireEvent.press(view.getByTestId('library-category-menu-button'));
+      await fireEvent.press(view.getByRole('menuitem', { name: '日常' }));
+      await waitFor(() =>
+        expect(query).toHaveBeenLastCalledWith(
+          expect.objectContaining({ collection: 'favorites', source: 'nodeseek', category: 'nodeseek:daily' })
+        )
+      );
+
+      await fireEvent.press(view.getByTestId('library-source-v2ex'));
+      await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
+      const changedSourceRequests = query.mock.calls
+        .map(([request]) => request)
+        .filter(({ source }) => source === 'v2ex');
+      expect(changedSourceRequests[0]).toEqual({
+        collection: 'favorites',
+        sources: ['nodeseek', 'v2ex'],
+        source: 'v2ex',
+        category: 'all',
+        after: undefined
+      });
+      expect(changedSourceRequests.every(({ category }) => category === 'all')).toBe(true);
+      expect(view.getByLabelText('分类：全部')).toBeTruthy();
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+  it('preserves the selected category without querying again when its source is pressed again', async () => {
+    query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
+    const view = await mount(['nodeseek', 'v2ex']);
+    try {
+      await waitFor(() => expect(view.getByTestId('library-favorites-ready')).toBeTruthy());
+      await fireEvent.press(view.getByTestId('library-source-nodeseek'));
+      await fireEvent.press(view.getByTestId('library-category-menu-button'));
+      await fireEvent.press(view.getByRole('menuitem', { name: '日常' }));
+      await waitFor(() =>
+        expect(query).toHaveBeenLastCalledWith(
+          expect.objectContaining({ collection: 'favorites', source: 'nodeseek', category: 'nodeseek:daily' })
+        )
+      );
+      const calls = query.mock.calls.length;
+
+      await fireEvent.press(view.getByTestId('library-source-nodeseek'));
+
+      expect(view.getByLabelText('分类：日常')).toBeTruthy();
+      expect(query).toHaveBeenCalledTimes(calls);
     } finally {
       await view.unmount();
       view.client.clear();

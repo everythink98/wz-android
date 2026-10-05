@@ -102,10 +102,10 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 
 ### LIVE-NAV-01 底部导航整格点击
 
-- 能力：`NAV-01`；保持 `NOTIFY-03`、`REG-NOTIFY-052` 的 More 红点和无障碍文案。
-- 前置：使用身份匹配的当前 APK、竖屏主 AVD 和无弹层的首页；只读记录 `firstInstallTime`，从 UI hierarchy 读取底栏与 `main-tab-feed/search/library/more` 的实际 bounds，并保存首页选中态的底栏截图。
-- 点击 oracle：四个按钮在保留既有外层 padding 的底栏内容区内首尾相接、互不重叠且高度保持现有 `48dp`。每个按钮分别从另一个 tab 开始，在其上、下、左、右边缘内侧 2px 点击；相邻边界两侧各点一次，均必须只选中坐标所属 tab，并显示对应首页、搜索、收藏或更多页面。坐标每次从当前 hierarchy 推导，不复用其他设备或分辨率的固定值。
-- 视觉 oracle：恢复首页后对比修复前后底栏截图，底栏高度、外层留白、安全区、四个图标与文字的位置/尺寸/颜色、选中态及 More 红点保持一致；只允许按钮 accessibility bounds 扩展。
+- 能力：`NAV-01`；保持 `NOTIFY-03` 的消息与更新提示分离及无障碍文案。
+- 前置：使用身份匹配的当前 APK、竖屏主 AVD 和无弹层的首页；只读记录 `firstInstallTime`，从 UI hierarchy 读取底栏与 `main-tab-feed/search/notifications/more` 的实际 bounds，并保存首页选中态的底栏截图。
+- 点击 oracle：四个按钮在保留既有外层 padding 的底栏内容区内首尾相接、互不重叠且高度保持现有 `48dp`。每个按钮分别从另一个 tab 开始，在其上、下、左、右边缘内侧 2px 点击；相邻边界两侧各点一次，均必须只选中坐标所属 tab，并显示对应首页、搜索、消息或更多页面。坐标每次从当前 hierarchy 推导，不复用其他设备或分辨率的固定值。
+- 视觉 oracle：恢复首页后对比修复前后底栏截图，底栏高度、外层留白、安全区、四个图标与文字的位置/尺寸/颜色、选中态保持原规格；第三格“消息”使用铃铛图标 `Bell`，第四格“更多”保留 `MoreHorizontal`；未读只点亮消息，更新只点亮更多。
 - 结束：恢复首页，确认 `firstInstallTime` 未变化且无 crash、ANR、RedBox 或意外 PID 重启；本场景不发搜索、不打开动态内容、不执行任何本机或远端写操作。坐标步骤不得录成 `.ad`。
 
 ### LIVE-NAV-02 四站内部楼层 deep link

@@ -30,6 +30,7 @@ import com.facebook.react.uimanager.annotations.ReactProp
 import com.facebook.react.uimanager.events.Event
 import com.facebook.react.views.view.ReactViewGroup
 import com.facebook.react.views.view.ReactViewManager
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val HIDDEN_EVENT = "topKeyboardHidden"
@@ -58,6 +59,7 @@ private class KeyboardHiddenEvent(
 /** Keeps IME content alive until the editor's controlled hide animation has completed. */
 open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(context) {
   private var hostEnabled = false
+  private var hiddenLayoutHeight = 0
   private var pending: HideRequest? = null
   private var backDownTime: Long? = null
   private var backFocus: View? = null
@@ -87,6 +89,8 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     var hiddenLayoutReady = false
     var drawObserver: ViewTreeObserver? = null
     var drawListener: ViewTreeObserver.OnPreDrawListener? = null
+    var commitObserver: ViewTreeObserver? = null
+    var commitCallback: Runnable? = null
   }
 
   fun setHostEnabled(value: Boolean) {
@@ -94,6 +98,21 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     hostEnabled = value
     if (!value) pending?.let(::cancelRequest)
     else syncImeInsets()
+  }
+
+  fun setHiddenLayoutHeight(value: Float) {
+    require(value.isFinite() && value >= 0) { "hiddenLayoutHeight must be a non-negative DIP height" }
+    val next = PixelUtil.toPixelFromDIP(value).roundToInt()
+    if (hiddenLayoutHeight == next) return
+    hiddenLayoutHeight = next
+    pending?.takeIf { !it.fallback }?.let {
+      clearFrameCommit(it)
+      if (next == 0) cancelRequest(it) else postInvalidateOnAnimation()
+    }
+  }
+
+  protected open fun registerFrameCommit(observer: ViewTreeObserver, callback: Runnable) {
+    observer.registerFrameCommitCallback(callback)
   }
 
   fun setTrackImeInsets(value: Boolean) {
@@ -114,8 +133,14 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   }
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+    if (changed) pending?.let(::clearFrameCommit)
     super.onLayout(changed, left, top, right, bottom)
     syncImeInsets()
+  }
+
+  override fun setTranslationY(value: Float) {
+    if (translationY != value) pending?.let(::clearFrameCommit)
+    super.setTranslationY(value)
   }
 
   private fun syncImeInsets() {
@@ -299,7 +324,8 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
               val start = controller.currentInsets
               val hidden = controller.hiddenStateInsets
               if (start == hidden || !ValueAnimator.areAnimatorsEnabled()) {
-                controller.finish(false)
+                controller.setInsetsAndAlpha(hidden, 1f, 1f)
+                finishAfterLayout(request, controller)
                 return
               }
               val animator = ValueAnimator.ofFloat(0f, 1f)
@@ -325,7 +351,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
                   if (pending !== request) return
                   if (!owns(request)) { cancelRequest(request); return }
                   if (controller.isReady) {
-                    try { controller.finish(false) } catch (_: RuntimeException) { fallback(request) }
+                    finishAfterLayout(request, controller)
                   }
                 }
               })
@@ -345,6 +371,75 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     } catch (_: RuntimeException) { fallback(request) }
   }
 
+  private fun finishAfterLayout(request: HideRequest, controller: WindowInsetsAnimationController) {
+    if (hiddenLayoutHeight == 0) {
+      try { controller.finish(false) } catch (_: RuntimeException) { fallback(request) }
+      return
+    }
+    // FrameCommit is a hardware-renderer contract. An unsupported window uses
+    // the existing system hide path, never a posted Runnable as a fake commit.
+    if (!isHardwareAccelerated) { fallback(request); return }
+    // Insets progress precedes Fabric's native layout. The controlled IME can
+    // already be at zero while the submitted App buffer still has the old panel.
+    // Wait for this panel's actual endpoint, then the buffer containing that draw.
+    fun layoutReady() = imeProgressBottom == controller.hiddenStateInsets.bottom &&
+      abs(height - hiddenLayoutHeight) <= 1 && abs(translationY) < 0.5f && !isLayoutRequested
+    val listener = ViewTreeObserver.OnPreDrawListener {
+      if (pending === request) {
+        if (!owns(request)) cancelRequest(request)
+        else if (!layoutReady()) clearFrameCommit(request)
+        else if (controller.isReady && request.commitCallback == null) {
+          val targetHeight = hiddenLayoutHeight
+          val observer = viewTreeObserver
+          val callback = object : Runnable {
+            override fun run() {
+              val committed = this
+              post {
+                if (pending !== request || request.commitCallback !== committed) return@post
+                clearFrameCommit(request)
+                if (!owns(request)) { cancelRequest(request); return@post }
+                if (hiddenLayoutHeight != targetHeight || !layoutReady()) {
+                  postInvalidateOnAnimation()
+                  return@post
+                }
+                if (controller.isReady) {
+                  try { controller.finish(false) } catch (_: RuntimeException) { fallback(request) }
+                }
+              }
+            }
+          }
+          request.commitObserver = observer
+          request.commitCallback = callback
+          try { registerFrameCommit(observer, callback) } catch (_: RuntimeException) { fallback(request) }
+        }
+      }
+      true
+    }
+    request.drawListener = listener
+    request.drawObserver = viewTreeObserver.also { it.addOnPreDrawListener(listener) }
+    postInvalidateOnAnimation()
+  }
+
+  private fun clearFrameCommit(request: HideRequest) {
+    request.commitCallback?.let { callback ->
+      if (Build.VERSION.SDK_INT >= 29) {
+        request.commitObserver?.takeIf { it.isAlive }?.unregisterFrameCommitCallback(callback)
+      }
+      removeCallbacks(callback)
+    }
+    request.commitObserver = null
+    request.commitCallback = null
+  }
+
+  private fun clearDrawWait(request: HideRequest) {
+    clearFrameCommit(request)
+    request.drawListener?.let { listener ->
+      request.drawObserver?.takeIf { it.isAlive }?.removeOnPreDrawListener(listener)
+    }
+    request.drawObserver = null
+    request.drawListener = null
+  }
+
   private fun stopAnimator(request: HideRequest) {
     request.animator?.let {
       // cancel() also invokes onAnimationEnd; remove it before relinquishing the old owner.
@@ -359,11 +454,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     if (pending !== request) return
     pending = null
     stopAnimator(request)
-    request.drawListener?.let { listener ->
-      request.drawObserver?.takeIf { it.isAlive }?.removeOnPreDrawListener(listener)
-    }
-    request.drawObserver = null
-    request.drawListener = null
+    clearDrawWait(request)
     request.commands.forEach { emitKeyboardHidden(it, success) }
     request.commands.clear()
   }
@@ -379,6 +470,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     if (!owns(request)) { cancelRequest(request); return }
     request.fallback = true
     stopAnimator(request)
+    clearDrawWait(request)
     request.signal.cancel()
     if (!standardHide(request.focus, request.token)) { complete(request, false); return }
     if (pending !== request) return
@@ -440,6 +532,9 @@ class ComposerKeyboardHostManager : ReactViewManager() {
 
   @ReactProp(name = "trackImeInsets", defaultBoolean = false)
   fun setTrackImeInsets(view: ReactViewGroup, value: Boolean) = (view as ComposerKeyboardHost).setTrackImeInsets(value)
+
+  @ReactProp(name = "hiddenLayoutHeight", defaultFloat = 0f)
+  fun setHiddenLayoutHeight(view: ReactViewGroup, value: Float) = (view as ComposerKeyboardHost).setHiddenLayoutHeight(value)
 
   override fun onDropViewInstance(view: ReactViewGroup) {
     (view as ComposerKeyboardHost).setHostEnabled(false)

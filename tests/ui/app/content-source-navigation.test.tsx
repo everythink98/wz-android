@@ -1,4 +1,5 @@
 jest.mock('@/platform/storage/readerDataStore', () => ({
+  queryReaderCategories: jest.fn(async () => []),
   queryReaderPage: jest.fn(async () => ({ records: [], total: 0, visibleTotal: 0 }))
 }));
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -10,7 +11,7 @@ import { DefaultTheme } from '@react-navigation/native';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
-import { navigationRef, pushTopicRoute } from '@/app/appNavigation';
+import { navigateMainTab, navigationRef, pushTopicRoute } from '@/app/appNavigation';
 import type { FeedSource, Topic } from '@/domain/forum/models';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -36,7 +37,15 @@ import { createTestStyles as createStyles } from '../styleFixture';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { ChevronLeft: Icon, Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
+  return {
+    ChevronLeft: Icon,
+    Bell: Icon,
+    Home: Icon,
+    MoreHorizontal: Icon,
+    Search: Icon,
+    Settings: Icon,
+    Star: Icon
+  };
 });
 jest.mock('react-native-webview', () => ({ WebView: () => null }));
 jest.mock('@/features/feed/useFeedController', () => ({ useFeedController: jest.fn() }));
@@ -109,18 +118,29 @@ jest.mock('@/features/library/LibraryScreen', () => ({
 }));
 function mockMoreScreen({
   contentSourcesExpanded,
-  onContentSourcesExpandedChange
+  onContentSourcesExpandedChange,
+  utilities
 }: {
   contentSourcesExpanded: boolean;
   onContentSourcesExpandedChange: (expanded: boolean) => void;
+  utilities: { settings: { visible: boolean; changeVisible: (visible: boolean) => void } };
 }) {
   return (
-    <Pressable
-      accessibilityLabel={contentSourcesExpanded ? '收起内容源' : '展开内容源'}
-      onPress={() => onContentSourcesExpandedChange(!contentSourcesExpanded)}
-    >
-      <Text>{contentSourcesExpanded ? '内容源面板已展开' : '内容源面板已折叠'}</Text>
-    </Pressable>
+    <>
+      <Pressable
+        accessibilityLabel={contentSourcesExpanded ? '收起内容源' : '展开内容源'}
+        onPress={() => onContentSourcesExpandedChange(!contentSourcesExpanded)}
+      >
+        <Text>{contentSourcesExpanded ? '内容源面板已展开' : '内容源面板已折叠'}</Text>
+      </Pressable>
+      <Pressable
+        accessibilityLabel={utilities.settings.visible ? '收起外观' : '展开外观'}
+        accessibilityState={{ expanded: utilities.settings.visible }}
+        onPress={() => utilities.settings.changeVisible(!utilities.settings.visible)}
+      >
+        <Text>{utilities.settings.visible ? '外观面板已展开' : '外观面板已折叠'}</Text>
+      </Pressable>
+    </>
   );
 }
 jest.mock('@/features/more/MoreScreen', () => ({ MoreScreen: mockMoreScreen }));
@@ -184,7 +204,6 @@ const searchRuntime = {
   topicStateIndex
 } as SearchRouteRuntimeValue;
 const libraryRuntime = {
-  categories: [],
   enabledSources: [],
   notify: jest.fn(),
   reader: {
@@ -278,6 +297,7 @@ function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: Feed
           getNotificationSettingsRoute={() => EmptyRoute}
           getNotificationsRoute={() => EmptyRoute}
           getReadingSettingsRoute={() => EmptyRoute}
+          getNodeSeekCreditsRoute={() => EmptyRoute}
           getSearchRoute={() => SearchTab}
           getTopicRoute={() => TopicScreen}
           getUserRoute={() => EmptyRoute}
@@ -317,6 +337,30 @@ describe('content-source management navigation', () => {
     await cleanup();
   });
 
+  it.each(['Library', 'feed'] as const)('preserves inline appearance when returning from %s', async (destination) => {
+    const view = await render(<Navigator />);
+    await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+    await fireEvent.press(view.getByTestId('main-tab-more'));
+    await fireEvent.press(view.getByLabelText('展开外观'));
+    expect(view.getByLabelText('收起外观').props.accessibilityState.expanded).toBe(true);
+
+    if (destination === 'Library') {
+      await act(async () => navigationRef.navigate('Library'));
+    } else {
+      await fireEvent.press(view.getByTestId('main-tab-feed'));
+    }
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe(destination));
+    if (destination === 'Library') {
+      await act(async () => navigationRef.goBack());
+    } else {
+      await fireEvent.press(view.getByTestId('main-tab-more'));
+    }
+
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('more'));
+    expect(view.getByText('外观面板已展开')).toBeTruthy();
+    expect(view.getByLabelText('收起外观').props.accessibilityState.expanded).toBe(true);
+  });
+
   it.each<['feed' | 'search' | 'library', string]>([
     ['feed', '首页'],
     ['search', '搜索'],
@@ -324,10 +368,12 @@ describe('content-source management navigation', () => {
   ])('carries the %s route intent through the real stack and tabs exactly once', async (tab, label) => {
     const view = await render(<Navigator />);
     await waitFor(() => expect(navigationRef.isReady()).toBe(true));
-    if (tab !== 'feed') {
+    if (tab === 'library') {
+      await act(async () => navigationRef.navigate('Library'));
+    } else if (tab !== 'feed') {
       await fireEvent.press(view.getByTestId(`main-tab-${tab}`));
     }
-    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe(tab));
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe(tab === 'library' ? 'Library' : tab));
 
     await fireEvent.press(view.getByLabelText(`${label}管理内容源`));
 
@@ -337,9 +383,13 @@ describe('content-source management navigation', () => {
     });
     await waitFor(() => expect(navigationRef.getCurrentRoute()?.params).toEqual({}));
     await fireEvent.press(view.getByLabelText('收起内容源'));
-    await fireEvent.press(view.getByTestId(`main-tab-${tab}`));
-    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe(tab));
-    await fireEvent.press(view.getByTestId('main-tab-more'));
+    if (tab === 'library') {
+      await act(async () => navigationRef.navigate('Library'));
+    } else {
+      await fireEvent.press(view.getByTestId(`main-tab-${tab}`));
+    }
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe(tab === 'library' ? 'Library' : tab));
+    await act(async () => navigateMainTab('more'));
 
     await waitFor(() => expect(view.getByText('内容源面板已折叠')).toBeTruthy());
   });

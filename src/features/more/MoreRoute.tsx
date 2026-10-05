@@ -60,7 +60,6 @@ export function MoreRoute() {
       () => () => {
         closeAccountSurfaces();
         setShowNetworkProxyPanel(false);
-        setShowSettingsPanel(false);
       },
       [closeAccountSurfaces]
     )
@@ -76,7 +75,7 @@ export function MoreRoute() {
 
   return (
     <MoreScreen
-      account={runtime.account}
+      account={{ ...runtime.account, active: active && runtime.account.active }}
       contentSourcesExpanded={contentSourcesExpanded}
       scrollRef={scrollRef}
       update={{
@@ -92,7 +91,7 @@ export function MoreRoute() {
         install: update.installAppUpdate
       }}
       utilities={{
-        notifications: runtime.notifications,
+        library: runtime.library,
         backup: {
           recovery: runtime.reader.status === 'recovery',
           busy: backupBusy,

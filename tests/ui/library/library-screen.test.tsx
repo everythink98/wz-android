@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '../render';
+import { act, fireEvent, render, within } from '../render';
 import React, { useState } from 'react';
 import { Alert, View } from 'react-native';
 import type { LibraryTab } from '@/domain/forum/feed';
@@ -9,20 +9,28 @@ import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState
 import type { Category, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import type { Source } from '@/domain/forum/sourceCatalog';
 import { PillRail } from '@/ui/controls/SelectionControls';
+import { renderHook } from '@testing-library/react-native';
+import { useRecyclerViewController } from '@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController';
+import type { LibraryListItem } from '@/features/library/libraryScreenItems';
 
 let mockFlashListMountCount = 0;
 let mockFlashListUnmountCount = 0;
-const mockFlashListRenders: { data: unknown[]; dataLength: number; testID?: string }[] = [];
+const mockFlashListRenders: { data: unknown[]; dataLength: number; positionEnabled: boolean; testID?: string }[] = [];
 const mockFlashListOnLoadByData = new Map<unknown[], (info: { elapsedTimeInMs: number }) => void>();
 const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
+  const { RecyclerViewManager } =
+    require('@shopify/flash-list/dist/recyclerview/RecyclerViewManager') as typeof import('@shopify/flash-list/dist/recyclerview/RecyclerViewManager');
+  const { ScrollAnchor } =
+    require('@shopify/flash-list/dist/recyclerview/components/ScrollAnchor') as typeof import('@shopify/flash-list/dist/recyclerview/components/ScrollAnchor');
   return {
     FlashList: ReactModule.forwardRef(function FlashList(
       {
         data = [],
+        contentContainerStyle,
         drawDistance,
         keyExtractor,
         ListEmptyComponent,
@@ -33,6 +41,7 @@ jest.mock('@shopify/flash-list', () => {
         testID
       }: {
         data?: unknown[];
+        contentContainerStyle?: React.ComponentProps<typeof NativeView>['style'];
         drawDistance?: number;
         keyExtractor?: (item: unknown, index: number) => string;
         ListEmptyComponent?: React.ReactNode;
@@ -44,6 +53,15 @@ jest.mock('@shopify/flash-list', () => {
       },
       ref: React.ForwardedRef<{ scrollToOffset: (options: { animated: boolean; offset: number }) => void }>
     ) {
+      const managerProps = {
+        data,
+        keyExtractor,
+        maintainVisibleContentPosition,
+        renderItem
+      } as unknown as ConstructorParameters<typeof RecyclerViewManager>[0];
+      const [manager] = ReactModule.useState(() => new RecyclerViewManager(managerProps));
+      manager.updateProps(managerProps);
+      const anchorRef = ReactModule.useRef(null);
       ReactModule.useState(() => {
         mockFlashListMountCount += 1;
         return undefined;
@@ -51,15 +69,30 @@ jest.mock('@shopify/flash-list', () => {
       ReactModule.useEffect(
         () => () => {
           mockFlashListUnmountCount += 1;
+          manager.dispose();
         },
-        []
+        [manager]
       );
-      mockFlashListRenders.push({ data, dataLength: data.length, testID });
+      mockFlashListRenders.push({
+        data,
+        dataLength: data.length,
+        positionEnabled: !maintainVisibleContentPosition?.disabled,
+        testID
+      });
       if (onLoad) mockFlashListOnLoadByData.set(data, onLoad);
       ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockFlashListScrollToOffset }));
       return ReactModule.createElement(
         NativeView,
-        { drawDistance, maintainVisibleContentPosition, testID } as React.ComponentProps<typeof NativeView>,
+        { contentContainerStyle, drawDistance, maintainVisibleContentPosition, testID } as React.ComponentProps<
+          typeof NativeView
+        >,
+        manager.shouldMaintainVisibleContentPosition()
+          ? ReactModule.createElement(
+              NativeView,
+              { testID: `${testID}-native-anchor` },
+              ReactModule.createElement(ScrollAnchor, { horizontal: false, scrollAnchorRef: anchorRef })
+            )
+          : null,
         ListHeaderComponent,
         ...data.map((item, index) =>
           ReactModule.createElement(
@@ -104,7 +137,7 @@ jest.mock('@/ui/topic/TopicCard', () => {
         null,
         ReactModule.createElement(
           NativePressable,
-          { testID, onPress: () => onOpenTopic(topic) },
+          { accessibilityRole: 'button', testID, onPress: () => onOpenTopic(topic) },
           ReactModule.createElement(NativeText, null, topic.title)
         ),
         renderTrailingAction?.(topic)
@@ -171,6 +204,7 @@ const noopUserProfile = (_user: UserProfile) => undefined;
 
 function LibraryHarness({
   active = true,
+  loaded = true,
   enabledSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'],
   followedUsers: libraryUsers = followedUsers,
   favoriteRecords = records,
@@ -185,6 +219,7 @@ function LibraryHarness({
   onRemoveUser = noopUserProfile
 }: {
   active?: boolean;
+  loaded?: boolean;
   enabledSources?: readonly Source[];
   followedUsers?: FollowedUserRecord[];
   favoriteRecords?: TopicRecord[];
@@ -227,7 +262,7 @@ function LibraryHarness({
         followedUsers={libraryUsers}
         historyRecords={historyRecords}
         libraryTab={libraryTab}
-        loaded
+        loaded={loaded}
         topicStateIndex={topicStateIndex}
         onClearHistory={onClearHistory}
         onManageContentSources={onManageContentSources}
@@ -252,6 +287,26 @@ beforeEach(() => {
 });
 
 describe('Library presentation', () => {
+  it('starts below the native header without reapplying status-bar or card side padding', async () => {
+    const view = await render(<LibraryHarness />);
+    expect(view.getByTestId('library-favorites-ready').props.contentContainerStyle).toEqual(
+      expect.objectContaining({ paddingTop: 8, paddingHorizontal: 0 })
+    );
+  });
+
+  it('omits the category slot from the followed-user viewport and simplifies an unfiltered count', async () => {
+    const view = await render(<LibraryHarness />);
+    await fireEvent.press(view.getByTestId('library-tab-users'));
+    const users = within(view.getByTestId('library-users-viewport'));
+    expect(users.queryByTestId('library-category-menu-button', { includeHiddenElements: true })).toBeNull();
+    expect(users.getByText('2 人')).toBeTruthy();
+  });
+
+  it('does not publish a zero count while the collection is still loading', async () => {
+    const view = await render(<LibraryHarness loaded={false} favoriteRecords={[]} />);
+    expect(view.getByText('正在读取本机资料')).toBeTruthy();
+    expect(view.queryByText('0 条')).toBeNull();
+  });
   it('shows the category menu only after its current anchor has been measured', async () => {
     const measurements: Parameters<View['measureInWindow']>[0][] = [];
     jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => measurements.push(callback));
@@ -598,14 +653,149 @@ describe('Library presentation', () => {
     expect(mockFlashListScrollToOffset).not.toHaveBeenCalled();
   });
 
-  it('disables visible-position anchoring while library datasets switch', async () => {
+  it('keeps native history anchoring disabled while cold and cached filters settle', async () => {
     const view = await render(<LibraryHarness />);
 
     expect(view.getByTestId('library-favorites-ready').props.maintainVisibleContentPosition).toEqual({
       disabled: true
     });
     expect(view.getByTestId('library-favorites-ready').props.drawDistance).toBe(250);
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    const historyList = view.getByTestId('library-history-ready');
+    expect(view.queryByTestId('library-history-ready-native-anchor')).toBeNull();
+    await fireEvent.press(view.getByTestId('library-history-first'));
+    const anchor = view.getByTestId('library-history-ready-native-anchor').children[0];
+    expect(anchor).toHaveStyle({ position: 'absolute', top: 1000000, height: 0 });
+    mockFlashListRenders.length = 0;
+    await fireEvent.press(view.getByTestId('library-source-linuxdo'));
+    expect(historyList.props.maintainVisibleContentPosition).toEqual({ disabled: true });
+    await view.rerender(<LibraryHarness historyRecords={[]} />);
+    await view.rerender(<LibraryHarness historyRecords={[records[2]]} />);
+    expect(view.getByText(records[2].topic.title)).toBeTruthy();
+    expect(view.queryByTestId('library-history-ready-native-anchor')).toBeNull();
+    expect(view.getByTestId('library-history-ready')).toBe(historyList);
+    expect(
+      mockFlashListRenders
+        .filter((frame) => frame.testID === 'library-history-ready')
+        .every((frame) => !frame.positionEnabled)
+    ).toBe(true);
+    await fireEvent.press(view.getByTestId('library-source-all'));
+    await view.rerender(<LibraryHarness />);
+    expect(view.getByText(records[0].topic.title)).toBeTruthy();
+    expect(view.queryByTestId('library-history-ready-native-anchor')).toBeNull();
+    await fireEvent.press(view.getByTestId('library-history-first'));
+    expect(view.getByTestId('library-history-ready-native-anchor')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
+    expect(view.queryByTestId('library-history-ready-native-anchor')).toBeNull();
   });
+
+  it.each(['section', 'opened-record'] as const)(
+    'preserves the next visible history record when a reread removes its old date section (%s)',
+    async (firstVisible) => {
+      const today = new Date();
+      const thisWeek = new Date(today);
+      thisWeek.setDate(thisWeek.getDate() - 1);
+      const earlier = new Date(today);
+      earlier.setDate(earlier.getDate() - 8);
+      const historyRecords = [
+        { ...records[0], savedAt: today.toISOString() },
+        { ...records[1], savedAt: thisWeek.toISOString() },
+        ...Array.from({ length: 4 }, (_, index) => ({
+          topic: { ...records[2].topic, id: `earlier-${index}`, title: `Earlier ${index}` },
+          savedAt: earlier.toISOString()
+        }))
+      ];
+      const onOpenTopic = jest.fn();
+      const view = await render(<LibraryHarness historyRecords={historyRecords} onOpenTopic={onOpenTopic} />);
+      await fireEvent.press(view.getByTestId('library-tab-history'));
+      const currentData = () =>
+        mockFlashListRenders.filter((state) => state.testID === 'library-history-ready').at(-1)!
+          .data as LibraryListItem[];
+      const positionOptions = () => view.getByTestId('library-history-ready').props.maintainVisibleContentPosition;
+      const measureRows = () => {
+        let y = 0;
+        return currentData().map((item) => {
+          const layout = { x: 0, y, width: 320, height: item.type === 'section' ? 85 : 350 };
+          y += layout.height;
+          return layout;
+        });
+      };
+      let layouts = measureRows();
+      const anchorKey = 'linuxdo:earlier-0';
+      const openedIndex = currentData().findIndex((item) => item.key === 'v2ex:2');
+      const startIndex = firstVisible === 'section' ? openedIndex - 1 : openedIndex;
+      let offset = layouts[startIndex].y + 5;
+      let screenOffset = offset;
+      let nativeScrollDelta = 0;
+      const anchorScreenY = () => layouts[currentData().findIndex((item) => item.key === anchorKey)].y - screenOffset;
+      const initialScreenY = anchorScreenY();
+      const manager = {
+        get props() {
+          return { data: currentData(), horizontal: false, maintainVisibleContentPosition: positionOptions() };
+        },
+        getDataLength: () => currentData().length,
+        getIsFirstLayoutComplete: () => true,
+        hasStableDataKeys: () => true,
+        shouldMaintainVisibleContentPosition: () => !positionOptions()?.disabled,
+        computeVisibleIndices: () => {
+          const visible = layouts.flatMap((layout, index) =>
+            layout.y + layout.height > offset && layout.y < offset + 1000 ? [index] : []
+          );
+          return { startIndex: visible[0] ?? -1, endIndex: visible.at(-1) ?? -1 };
+        },
+        getDataKey: (index: number) => currentData()[index].key,
+        getLayout: (index: number) => layouts[index],
+        firstItemOffset: 0,
+        getAbsoluteLastScrollOffset: () => offset,
+        getMaxScrollOffset: () => layouts.at(-1)!.y + layouts.at(-1)!.height - 1000,
+        updateScrollOffset: (value: number) => {
+          offset = value;
+        },
+        animationOptimizationsEnabled: false,
+        setOffsetProjectionEnabled: () => undefined
+      };
+      await fireEvent.press(view.getByRole('button', { name: historyRecords[1].topic.title }));
+      expect(onOpenTopic).toHaveBeenCalledWith(historyRecords[1].topic);
+      const hook = await renderHook(() =>
+        useRecyclerViewController(
+          manager as unknown as Parameters<typeof useRecyclerViewController>[0],
+          null,
+          {
+            current: {
+              scrollTo: ({ y }: { y: number }) => {
+                screenOffset = y;
+              }
+            }
+          } as unknown as Parameters<typeof useRecyclerViewController>[2],
+          {
+            current: {
+              scrollBy: (delta: number) => {
+                nativeScrollDelta += delta;
+              }
+            }
+          }
+        )
+      );
+      hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+      hook.result.current.applyOffsetCorrection();
+      const revisited = { ...historyRecords[1], savedAt: today.toISOString() };
+      await view.rerender(
+        <LibraryHarness historyRecords={[revisited, historyRecords[0], ...historyRecords.slice(2)]} />
+      );
+      expect(
+        currentData()
+          .filter((item) => item.type === 'section')
+          .map((item) => item.label)
+      ).toEqual(['今天', '更早']);
+      expect(currentData()[1]).toMatchObject({ key: 'v2ex:2' });
+      layouts = measureRows();
+      hook.result.current.applyOffsetCorrection();
+      screenOffset += nativeScrollDelta;
+      hook.result.current.acceptScrollOffset(screenOffset, 0, manager.getMaxScrollOffset());
+      expect(anchorScreenY()).toBe(initialScreenY);
+    }
+  );
 
   it('settles all three tabs with an empty device library', async () => {
     const view = await render(<LibraryHarness favoriteRecords={[]} followedUsers={[]} historyRecords={[]} />);
@@ -614,10 +804,10 @@ describe('Library presentation', () => {
     expect(view.getByTestId('library-favorites-empty')).toBeTruthy();
     await fireEvent.press(view.getByTestId('library-tab-users'));
     expect(view.getByTestId('library-users-ready')).toBeTruthy();
-    expect(view.getByText('这里还没有关注用户')).toBeTruthy();
+    expect(view.getByText('暂无关注用户')).toBeTruthy();
     await fireEvent.press(view.getByTestId('library-tab-history'));
     expect(view.getByTestId('library-history-ready')).toBeTruthy();
-    expect(view.getByText('这里还没有内容')).toBeTruthy();
+    expect(view.getByText('暂无浏览记录')).toBeTruthy();
   });
 
   it('requires destructive confirmation before removing a favorite or clearing history', async () => {

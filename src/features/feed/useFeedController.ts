@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import type { ReadGateway } from '@/sources/readGateway';
 import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
@@ -267,14 +267,18 @@ export function useFeedController({
       ? forumReadPlanScopesKey(feedReadPlanScopes)
       : feedReadPlanScopes[0]?.[1] || 'blocked:source-disabled';
   const feedFilter = feedFilterForRequest(feedSource, categoryFilter, feedFilters);
-  const feedQueryKey = forumQueryKeys.feed({
-    category: categoryFilter || undefined,
-    enabledSourcesKey,
-    feedFilter,
-    readPlanScope: feedReadPlanScope,
-    scope: sessionEpochs,
-    source: feedSource
-  });
+  const feedQueryKey = useMemo(
+    () =>
+      forumQueryKeys.feed({
+        category: categoryFilter || undefined,
+        enabledSourcesKey,
+        feedFilter,
+        readPlanScope: feedReadPlanScope,
+        scope: sessionEpochs,
+        source: feedSource
+      }),
+    [categoryFilter, enabledSourcesKey, feedFilter, feedReadPlanScope, sessionEpochs, feedSource]
+  );
   const feedEnabled =
     feedSourceRequestEnabled &&
     (feedSource !== 'all' || enabledFeedSources.length > 0) &&
@@ -315,8 +319,12 @@ export function useFeedController({
     }
   });
   const categories = useMemo(
-    () => mergeCategories(catalogCategories, sourceCategoriesQuery.data?.items || []),
-    [catalogCategories, sourceCategoriesQuery.data?.items]
+    () =>
+      mergeCategories(
+        catalogCategories,
+        feedSource !== 'all' && feedSourceIncluded ? sourceCategoriesQuery.data?.items || [] : []
+      ),
+    [catalogCategories, feedSource, feedSourceIncluded, sourceCategoriesQuery.data?.items]
   );
   const feedCategories = useMemo(
     () =>
@@ -490,6 +498,7 @@ export function useFeedController({
   useEffect(() => {
     if (
       !feedActive ||
+      feedSource === 'all' ||
       !feedSourceRequestEnabled ||
       !sourceCategoriesQuery.isError ||
       handledSourceCategoriesErrorRef.current === sourceCategoriesQuery.error
@@ -610,12 +619,17 @@ export function useFeedController({
   ]);
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!feedActive || !feedSourceRequestEnabled || !nextPage || feedQuery.isFetchingNextPage) {
+    if (!feedActive || !feedSourceRequestEnabled || !nextPage) {
       return 'stale';
     }
+    const current = queryClient.getQueryState<InfiniteData<FeedPage, FeedPageParam>>(feedQueryKey);
+    if (!current || current.fetchStatus !== 'idle') return 'stale';
+    const last = current.data?.pages.at(-1);
+    const currentNextPage = last ? nextFeedPage(last) : undefined;
+    if (currentNextPage?.page !== nextPage.page || currentNextPage.cursor !== nextPage.cursor) return 'stale';
     const result = await feedQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [feedActive, feedSourceRequestEnabled, feedQuery.fetchNextPage, feedQuery.isFetchingNextPage, nextPage]);
+  }, [feedActive, feedSourceRequestEnabled, feedQuery.fetchNextPage, feedQueryKey, nextPage, queryClient]);
 
   const refreshFeed = useCallback(async () => {
     if (!feedActive || !feedSourceRequestEnabled) return;
@@ -671,18 +685,16 @@ export function useFeedController({
 
   const abortFeedRequests = useCallback(() => {
     void queryClient.cancelQueries({
-      predicate: ({ queryKey }) =>
-        queryKey[0] === 'forum' && (queryKey[2] === 'feed' || (queryKey[2] === 'categories' && queryKey[1] !== 'all'))
+      predicate: (query) =>
+        query.queryKey[0] === 'forum' &&
+        (query.queryKey[2] === 'feed' || (query.queryKey[2] === 'categories' && !query.isActive()))
     });
   }, [queryClient]);
 
   useEffect(() => {
     if (feedActive) return;
-    void queryClient.cancelQueries({
-      predicate: ({ queryKey }) =>
-        queryKey[0] === 'forum' && (queryKey[2] === 'feed' || (queryKey[2] === 'categories' && queryKey[1] !== 'all'))
-    });
-  }, [feedActive, queryClient]);
+    abortFeedRequests();
+  }, [feedActive, abortFeedRequests]);
   useEffect(() => abortFeedRequests, [abortFeedRequests]);
 
   return {

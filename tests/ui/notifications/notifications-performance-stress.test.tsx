@@ -167,6 +167,51 @@ afterEach(async () => {
 });
 
 describe('notification runtime repeated lifecycle pressure', () => {
+  it.each(['snapshot', 'queued scan'] as const)(
+    'stops a late %s from starting foreground reads in the background and resumes on return',
+    async (pendingStage) => {
+      let holdSnapshot = pendingStage === 'snapshot';
+      let holdLists = pendingStage === 'queued scan';
+      const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url) => {
+        if (url.endsWith('/unread-count')) {
+          const payload = { atMe: 0, reply: 1, message: 0 };
+          return holdSnapshot ? heldResponse(payload).promise : response(payload);
+        }
+        const payload = listResponse(url, 1);
+        return holdLists ? heldResponse(payload).promise : response(payload);
+      });
+      const listRequests = () => fetcher.mock.calls.filter(([url]) => !url.endsWith('/unread-count')).length;
+      let options = optionsFor(fetcher);
+      const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+      await waitFor(() => expect(releases.size).toBe(pendingStage === 'snapshot' ? 1 : 3));
+      if (pendingStage === 'queued scan') {
+        await act(async () => hook.result.current.refreshSnapshots());
+      }
+      const workerCount = jest.mocked(runNotificationBackgroundWorker).mock.calls.length;
+      const listCount = listRequests();
+      options = { ...options, appActive: false };
+      await act(async () => hook.rerender({}));
+      holdSnapshot = false;
+      holdLists = false;
+      await act(async () => releases.forEach((release) => release()));
+      await settleWorkers();
+      await act(async () => jest.advanceTimersByTimeAsync(300_001));
+      expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(workerCount);
+      expect(listRequests()).toBe(listCount);
+      expect(presentSourceNotification).not.toHaveBeenCalled();
+
+      options = { ...options, appActive: true };
+      await act(async () => hook.rerender({}));
+      await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(workerCount + 1));
+      await settleWorkers();
+      expect(listRequests()).toBe(listCount + 3);
+      expect(hook.result.current.unreadTotal).toBe(1);
+      expect((await loadNotificationState()).sources.nodeseek.baselineReady).toBe(true);
+      await hook.unmount();
+      await expectDetached(() => fetcher.mock.calls.length);
+    }
+  );
+
   it.each(['linuxdo', 'yaohuo'] as const)(
     'preserves %s protocol counts and delivery IDs through 20 slow scans and four identity changes',
     async (source) => {
@@ -202,8 +247,9 @@ describe('notification runtime repeated lifecycle pressure', () => {
         const page = Number(url.searchParams.get('page'));
         expect([1, 2]).toContain(page);
         const row = (suffix: number, unread: boolean, actor = `actor-${id}`) =>
-          `<div class="listmms">${unread ? '<img src="/NetImages/new.gif">' : ''}` +
-          `<a href="/bbs/messagelist_view.aspx?id=${id * 10 + suffix}">private-title</a> 来自${actor} [刚刚]</div>`;
+          `<ul class="msglist-rows"><li><a class="msglist-row${unread ? ' is-unread' : ''}" href="/bbs/messagelist_view.aspx?id=${id * 10 + suffix}">` +
+          `<span class="msglist-text">private-title</span><span class="msglist-from">${actor}</span>` +
+          '<time class="msglist-time">刚刚</time></a></li></ul>';
         const payload =
           (page === 1 ? row(1, true) + row(3, false) : row(1, true) + row(2, true) + row(4, true, '系统')) +
           `<div class="showpage">${page}/2 页</div>`;

@@ -1,4 +1,5 @@
 import type { Topic } from '@/domain/forum/models';
+import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 
 export type NotificationKind = 'mention' | 'reply' | 'private-message' | 'reaction' | 'system' | 'other';
@@ -42,6 +43,7 @@ export interface NotificationPage {
   items: ForumNotification[];
   cursor: string | null;
   hasMore: boolean;
+  historyNotice?: string;
 }
 
 export interface NotificationUnreadSnapshot {
@@ -58,12 +60,19 @@ export interface NotificationMessage {
   mine?: boolean;
 }
 
+export interface NotificationMessagePage {
+  messages: NotificationMessage[];
+  olderCursor: string | null;
+}
+
 export interface NotificationDetail {
+  policy?: DiscoursePostPolicy;
   notification: ForumNotification;
   title: string;
   contentHtml?: string;
   contentText?: string;
   messages?: NotificationMessage[];
+  messageHistory?: { olderCursor: string | null };
   reply?: {
     format: 'markdown' | 'plain-text';
     disabledReason?: string;

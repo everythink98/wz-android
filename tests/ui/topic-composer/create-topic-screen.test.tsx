@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createRef, useRef, useState, type ComponentProps, type Ref } from 'react';
-import { Dimensions, StatusBar as NativeStatusBar, StyleSheet, Text } from 'react-native';
+import { Dimensions, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput } from 'react-native';
 import * as ReactNative from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardState } from 'react-native-reanimated';
@@ -21,6 +21,13 @@ import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor, within } from '../render';
 
 type Controller = ComponentProps<typeof TopicComposerScreen>['controller'];
+const originalSetSelection = TextInput.prototype.setSelection;
+beforeAll(() => {
+  TextInput.prototype.setSelection = jest.fn();
+});
+afterAll(() => {
+  TextInput.prototype.setSelection = originalSetSelection;
+});
 let mockStructuredProps: ComponentProps<typeof StructuredReplyComposer>;
 let mockUseRealEditor = false;
 const mockKeyboardStreams = new Set<{ height: { value: number }; state: { value: number } }>();
@@ -363,6 +370,28 @@ describe('Create topic screen', () => {
       expect(view.getByLabelText('帖子标题').props.value).toBe('草稿标题');
     }
   );
+  it('positions the page viewport from the current IME frame before reactions run', async () => {
+    const view = await render(<Harness initialDraft={draftFor('linuxdo')} />);
+    const padding = () => {
+      const styles = [view.getByTestId('create-topic-keyboard-viewport').props.style].flat(Infinity);
+      const read = styles.map((style) => mockKeyboardStyles.get(style)).find(Boolean)!;
+      return read().paddingBottom;
+    };
+    expect(mockKeyboardStreams.size).toBe(1);
+    expect(padding()).toBe(0);
+    // Native animation values can change before the reaction mappers run.
+    for (const [height, state, expectedPadding] of [
+      [336, KeyboardState.OPENING, 312],
+      [120, KeyboardState.CLOSING, 96],
+      [0, KeyboardState.CLOSED, 0]
+    ] as const) {
+      mockKeyboardStreams.forEach((keyboard) => {
+        keyboard.height.value = height;
+        keyboard.state.value = state;
+      });
+      expect(padding()).toBe(expectedPadding);
+    }
+  });
   it('releases the page keyboard viewport while a modal or another activity owns input', async () => {
     mockUseRealEditor = true;
     const view = await render(<Harness initialDraft={draftFor('nodeseek')} />);
@@ -425,6 +454,47 @@ describe('Create topic screen', () => {
     expect(view.queryByLabelText('粗体')).toBeNull();
     expect(view.getByLabelText('帖子正文').props.value).toBe('正文');
     expect(view.getByLabelText('帖子标题').props.value).toBe('草稿标题');
+  });
+  it.each([
+    { label: '表情', item: '淡定' },
+    { label: '文字格式', item: '粗体' }
+  ])('opens Yaohuo $label from title editing and closes it on the next title focus', async ({ label, item }) => {
+    const view = await render(<Harness initialDraft={draftFor('yaohuo')} />);
+    const title = view.getByLabelText('帖子标题');
+    await fireEvent(title, 'focus');
+    await press(view.getByLabelText(label));
+    expect(view.getByLabelText(item)).toBeTruthy();
+    expect(view.queryByLabelText('帖子标题')).toBeNull();
+    expect(view.getByLabelText('查看标题与标签')).toBeTruthy();
+    await fireEvent(view.getByLabelText('帖子标题', { includeHiddenElements: true }), 'focus');
+    expect(view.queryByLabelText(item)).toBeNull();
+    expect(view.getByLabelText('帖子标题').props.value).toBe('草稿标题');
+    expect(view.getByLabelText('帖子正文').props.value).toBe('正文');
+  });
+  it('keeps a title takeover when an earlier Yaohuo body tool handoff settles', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const frame = jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const blurredInputs: string[] = [];
+    const blur = jest.spyOn(TextInput.prototype, 'blur').mockImplementation(function (this: TextInput) {
+      blurredInputs.push(this.props.accessibilityLabel || '');
+    });
+    const view = await render(<Harness initialDraft={draftFor('yaohuo')} />);
+    try {
+      await fireEvent.press(view.getByLabelText('表情'));
+      await fireEvent(view.getByLabelText('帖子标题', { includeHiddenElements: true }), 'focus');
+      blurredInputs.length = 0;
+      for (let index = 0; index < 2; index++) await act(() => frames.splice(0).forEach((callback) => callback(index)));
+      expect(blurredInputs).not.toContain('帖子标题');
+      expect(view.queryByLabelText('淡定')).toBeNull();
+      expect(view.getByLabelText('帖子标题').props.value).toBe('草稿标题');
+    } finally {
+      blur.mockRestore();
+      frame.mockRestore();
+      await view.unmount();
+    }
   });
   it('waits for the embedded viewport native hide completion before dispatching an image picker', async () => {
     const frames: FrameRequestCallback[] = [];
@@ -1699,7 +1769,7 @@ describe('Create topic screen', () => {
         <Harness />
       </ReaderStyleProvider>
     );
-    expect(StyleSheet.flatten(view.getByLabelText('帖子标题').props.style).fontSize).toBe(33);
+    expect(StyleSheet.flatten(view.getByLabelText('帖子标题').props.style).fontSize).toBe(30);
     expect(view.queryByLabelText('预览')).toBeNull();
     await press(view.getByLabelText('帖子设置'));
     expect(StyleSheet.flatten(view.getByLabelText('悬赏妖晶（选填，至少 1000）').props.style).fontSize).toBe(21);

@@ -184,10 +184,10 @@ export function nodeSeekAccessRequirementFromListRow(
 
 function embeddedCandidates(html: string) {
   const scriptContents = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
-  const dataAttributes = [...html.matchAll(/\sdata-[\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]{40,}[^"']*)["']/g)].map(
+  const dataAttributes = [...html.matchAll(/\sdata-[\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]+[^"']*)["']/g)].map(
     (match) => match[1]
   );
-  return [...scriptContents, ...dataAttributes].flatMap((content) => content.match(/eyJ[A-Za-z0-9+/=]{40,}/g) || []);
+  return [...scriptContents, ...dataAttributes].flatMap((content) => content.match(/eyJ[A-Za-z0-9+/=]+/g) || []);
 }
 
 export function extractNodeSeekEmbeddedData(html: string) {

@@ -10,7 +10,7 @@ describe('More badge', () => {
     expect(moreBadgeState(true, true)).toBe('both');
     expect(moreBadgeAccessibilityLabel('none')).toBe('更多');
     expect(moreBadgeAccessibilityLabel('update')).toBe('更多，有可用更新');
-    expect(moreBadgeAccessibilityLabel('messages')).toBe('更多，有新消息');
-    expect(moreBadgeAccessibilityLabel('both')).toBe('更多，有新消息和可用更新');
+    expect(moreBadgeAccessibilityLabel('messages')).toBe('更多');
+    expect(moreBadgeAccessibilityLabel('both')).toBe('更多，有可用更新');
   });
 });

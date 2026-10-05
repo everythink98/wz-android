@@ -1,10 +1,9 @@
 import type { ReactNode } from 'react';
 import { StatusBar as NativeStatusBar, StyleSheet, Text, View } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
-export function createScreenTopBarStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createScreenTopBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     bar: {
       alignItems: 'center',

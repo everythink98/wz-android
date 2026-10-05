@@ -718,6 +718,100 @@ describe('reader data storage authority', () => {
     expect(Object.keys(final.history)).toEqual(['nodeseek:3']);
   });
 
+  it.each(['favorites', 'history'] as const)(
+    'reads the complete local %s taxonomy beyond the first page',
+    async (collection) => {
+      const data = createEmptyReaderData();
+      for (let i = 0; i < 51; i++)
+        data[collection][`nodeseek:${i}`] = {
+          topic: { ...topic, id: String(i), categoryId: 'dev', category: 'Dev' },
+          savedAt: at
+        };
+      data[collection]['nodeseek:51'] = {
+        topic: { ...topic, id: '51', categoryId: 'trade', category: '交易' },
+        savedAt: at
+      };
+      seed(data);
+      const store = await reopen();
+      await store.loadReaderState();
+      const request = { collection, sources: ['nodeseek'] as const, source: 'all' as const, category: 'all' };
+      const first = await store.queryReaderPage(request);
+      expect(first.records).toHaveLength(50);
+      expect(first.records.every((record) => 'topic' in record && record.topic.categoryId === 'dev')).toBe(true);
+
+      await expect(store.queryReaderCategories(request)).resolves.toEqual([
+        { source: 'nodeseek', id: 'dev', name: 'Dev' },
+        { source: 'nodeseek', id: 'trade', name: '交易' }
+      ]);
+      const second = await store.queryReaderPage({ ...request, after: first.next });
+      expect(second.records.some((record) => 'topic' in record && record.topic.categoryId === 'trade')).toBe(true);
+    }
+  );
+
+  it('keeps identical category ids from different enabled sources and excludes disabled sources', async () => {
+    const data = createEmptyReaderData();
+    for (const source of ['nodeseek', 'linuxdo', 'yaohuo'] as const)
+      data.history[`${source}:1`] = {
+        topic: { ...topic, source, categoryId: 'dev', category: 'Dev' },
+        savedAt: at
+      };
+    data.history['nodeseek:2'] = {
+      topic: { ...topic, id: '2', categoryId: 'dev', category: 'Dev' },
+      savedAt: at
+    };
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    const request = { collection: 'history' as const, sources: ['nodeseek', 'linuxdo'] as const };
+
+    await expect(store.queryReaderCategories(request)).resolves.toEqual([
+      { source: 'linuxdo', id: 'dev', name: 'Dev' },
+      { source: 'nodeseek', id: 'dev', name: 'Dev' }
+    ]);
+    await expect(store.queryReaderCategories({ ...request, sources: ['linuxdo', 'nodeseek'] })).resolves.toEqual([
+      { source: 'linuxdo', id: 'dev', name: 'Dev' },
+      { source: 'nodeseek', id: 'dev', name: 'Dev' }
+    ]);
+  });
+
+  it('uses stored category labels or ids without including empty identities or another collection', async () => {
+    const data = createEmptyReaderData();
+    const topics = [
+      { ...topic, id: '1', categoryId: 'dev', category: '' },
+      { ...topic, id: '2', categoryId: 'dev', category: 'Dev' },
+      { ...topic, id: '3', categoryId: 'id-only', category: '' },
+      { ...topic, id: '4', categoryId: undefined, category: '日常' },
+      { ...topic, id: '5', categoryId: undefined, category: '' }
+    ];
+    for (const value of topics) data.history[topicKey(value)] = { topic: value, savedAt: at };
+    data.favorites['nodeseek:6'] = {
+      topic: { ...topic, id: '6', categoryId: 'favorite-only', category: '收藏类别' },
+      savedAt: at
+    };
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+
+    await expect(store.queryReaderCategories({ collection: 'history', sources: ['nodeseek'] })).resolves.toEqual([
+      { source: 'nodeseek', id: 'dev', name: 'Dev' },
+      { source: 'nodeseek', id: 'id-only', name: 'id-only' },
+      { source: 'nodeseek', id: '日常', name: '日常' }
+    ]);
+  });
+
+  it('does not query category metadata for followed users or when every source is disabled', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    await store.commitReaderCommand({ type: 'visit', topic, at });
+    harness.queries = [];
+
+    await expect(store.queryReaderCategories({ collection: 'followedUsers', sources: ['nodeseek'] })).resolves.toEqual(
+      []
+    );
+    await expect(store.queryReaderCategories({ collection: 'history', sources: [] })).resolves.toEqual([]);
+    expect(harness.queries.some((sql) => /FROM reader_records/.test(sql))).toBe(false);
+  });
+
   it('paginates tied timestamps with stable cursors and filters category fallback', async () => {
     const data = createEmptyReaderData();
     for (let i = 0; i < 123; i++) data.history[`nodeseek:${i}`] = { topic: { ...topic, id: String(i) }, savedAt: at };

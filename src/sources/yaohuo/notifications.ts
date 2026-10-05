@@ -1,4 +1,5 @@
 import { elementText, hasRenderableHtmlContent, parseHtml, toIsoString } from '@/domain/forum/html';
+import { parseForumUserLink } from '@/domain/forum/links';
 import { notificationPageError, notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
   annotateSourceDiagnosticSummary,
@@ -37,7 +38,8 @@ type ParsedNotificationMessage = NotificationMessage & { contentKey: string };
 function messageId(href: string) {
   try {
     const url = new URL(href.replace(/&amp;/gi, '&'), YAOHUO_BASE_URL);
-    if (!/^\/bbs\/messagelist_(?:view|del)\.aspx$/i.test(url.pathname)) return '';
+    if (url.origin !== new URL(YAOHUO_BASE_URL).origin || !/^\/bbs\/messagelist_view\.aspx$/i.test(url.pathname))
+      return '';
     const id = url.searchParams.get('id') || '';
     return /^\d+$/.test(id) ? id : '';
   } catch {
@@ -45,61 +47,42 @@ function messageId(href: string) {
   }
 }
 
+function senderProfileId(href: string) {
+  const user = parseForumUserLink(href, YAOHUO_BASE_URL);
+  const id = user?.source === 'yaohuo' ? user.id : undefined;
+  return id && Number.isSafeInteger(Number(id)) && Number(id) > 0 ? id : undefined;
+}
+
 function parsePage(html: string, unreadOnly = false, categoryId = 'all'): NotificationPage {
   const root = parseHtml(html);
-  const rows = root.querySelectorAll('.listmms');
-  const explicitEmpty =
-    /(?:暂无|没有|无)(?:任何|新的?)?(?:站内|短|私)?(?:消息|短信|私信)(?:记录)?|(?:消息|短信|私信)(?:列表)?为空/.test(
-      elementText(root)
-    );
+  const rows = root.querySelectorAll('.msglist-rows .msglist-row');
+  const explicitEmpty = Boolean(root.querySelector('.msglist-page .msglist-empty'));
   if (!rows.length && !explicitEmpty) throw new Error('妖火消息列表格式不正确');
-  if (
-    rows.length &&
-    !rows.some((row) => row.querySelectorAll('a[href]').some((link) => messageId(link.getAttribute('href') || '')))
-  ) {
+  if (rows.length && !rows.some((row) => messageId(row.getAttribute('href') || ''))) {
     throw new Error('妖火消息列表格式不正确');
   }
   let filteredCount = 0;
   const items = rows.flatMap((row) => {
-    const link = row.querySelectorAll('a[href]').find((candidate) => messageId(candidate.getAttribute('href') || ''));
-    const id = messageId(link?.getAttribute('href') || '');
+    const id = messageId(row.getAttribute('href') || '');
     if (!id) return [];
-    const rowText = elementText(row);
-    const actionLabels = new Set(
-      row
-        .querySelectorAll('a[href]')
-        .filter((candidate) => /messagelist_del\.aspx/i.test(candidate.getAttribute('href') || ''))
-        .map((candidate) =>
-          elementText(candidate)
-            .replace(/^\[|\]$/g, '')
-            .trim()
-        )
-    );
-    const inlineTime = rowText.match(/\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?/)?.[0];
-    const displayTime =
-      inlineTime ||
-      [...rowText.matchAll(/\[([^\[\]]+)\]/g)]
-        .map((match) => match[1]?.trim() || '')
-        .reverse()
-        .find((candidate) => candidate && !actionLabels.has(candidate));
-    const actor =
-      rowText.match(/来自\s*(.+?)(?=\s*\[|\s+\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?|$)/)?.[1]?.trim() ||
-      '妖火用户';
-    const unread = row
-      .querySelectorAll('img[src]')
-      .some((image) => /(?:^|\/)new\.gif(?:$|[?#])/i.test(image.getAttribute('src') || ''));
+    const time = row.querySelector('.msglist-time');
+    const displayTime = time?.getAttribute('title') || elementText(time);
+    const actor = elementText(row.querySelector('.msglist-from')) || '妖火用户';
+    const senderId = elementText(row.querySelector('.msglist-uid')).match(/^\(\s*(\d+)\s*\)$/)?.[1];
+    const actorId = senderId && Number.isSafeInteger(Number(senderId)) && Number(senderId) > 0 ? senderId : undefined;
+    const unread = /(?:^|\s)is-unread(?:\s|$)/.test(row.getAttribute('class') || '');
     if (unreadOnly && !unread) {
       filteredCount += 1;
       return [];
     }
-    const title = elementText(link) || '站内消息';
+    const title = elementText(row.querySelector('.msglist-text')) || '站内消息';
     const createdAt = toIsoString(displayTime, '+08:00') || null;
     return [
       {
         source: 'yaohuo',
         id,
-        kind: /系统(?:通知|消息)?|管理员/.test(actor) ? 'system' : 'private-message',
-        actor: { name: actor },
+        kind: actor === '系统' && !actorId ? 'system' : 'private-message',
+        actor: { name: actor, ...(actorId ? { id: actorId } : {}) },
         title,
         createdAt,
         ...(!createdAt && displayTime ? { displayTime } : {}),
@@ -156,6 +139,17 @@ function detailContent(root: ReturnType<typeof parseHtml>, detailUrl: string) {
   }
   const content = sanitizeContentHtmlWithRoot(fragments.join(''), detailUrl);
   return hasRenderableHtmlContent(content.contentHtml, content.root) ? content : null;
+}
+
+function detailActorId(root: ReturnType<typeof parseHtml>) {
+  const contentLabel = root.querySelectorAll('b').find((candidate) => /^内容\s*[：:]$/.test(elementText(candidate)));
+  if (!contentLabel) return undefined;
+  const siblings = contentLabel.parentNode?.children || [];
+  const senderLabel = siblings
+    .slice(0, siblings.indexOf(contentLabel))
+    .find((candidate) => candidate.tagName === 'B' && /^发件人\s*[：:]$/.test(elementText(candidate)));
+  const link = senderLabel?.nextElementSibling;
+  return link?.tagName === 'A' ? senderProfileId(link.getAttribute('href') || '') : undefined;
 }
 
 function chatContent(value: string, detailUrl: string) {
@@ -322,9 +316,10 @@ export const yaohuoNotificationAdapter = {
     const root = parseHtml(result.html);
     const content = detailContent(root, detailUrl);
     if (!content) throw new Error('妖火消息对应的正文未找到');
+    const actorId = detailActorId(root);
     const replyable = item.kind === 'private-message';
     return {
-      notification: item,
+      notification: actorId ? { ...item, actor: { ...item.actor, id: actorId } } : item,
       title: item.title,
       contentHtml: content.contentHtml,
       ...(replyable

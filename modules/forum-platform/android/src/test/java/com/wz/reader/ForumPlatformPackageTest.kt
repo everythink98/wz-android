@@ -8,11 +8,11 @@ import org.junit.Test
 
 class ForumPlatformPackageTest {
   @Test
-  fun registersBothNativeViewsWithoutReplacingTheExistingImageView() {
+  fun registersEachNativeViewWithoutReplacingTheExistingImageView() {
     ReactNativeFeatureFlagsForTests.setUp()
     val context = BridgeReactContext(android.content.ContextWrapper(null))
     assertEquals(
-      listOf("WzPreviewRegionImage", "WzComposerKeyboardHost"),
+      listOf("WzPreviewRegionImage", "WzComposerKeyboardHost", "WzSearchHistoryIcon"),
       ForumPlatformPackage().createViewManagers(context).map { it.getName() },
     )
   }

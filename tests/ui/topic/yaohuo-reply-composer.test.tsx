@@ -65,6 +65,23 @@ function Harness({
 }
 
 describe('Yaohuo reply composer', () => {
+  it('previews reply faces as images and preserves the chooser while changing the submitted face', async () => {
+    const view = await render(<Harness />);
+    await fireEvent.press(view.getByLabelText('表情'));
+    const faceUrl = `https://www.yaohuo.me/bbs/face/${encodeURIComponent('淡定.gif')}`;
+    expect(view.getByTestId('yaohuo-face-preview-淡定.gif').props.source[0].uri).toBe(faceUrl);
+    await fireEvent.press(view.getByLabelText('踩'));
+    expect(view.getByText('表情：踩')).toBeTruthy();
+    expect(view.getByLabelText('淡定')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('淡定'));
+    expect(view.getByText('表情：淡定')).toBeTruthy();
+    expect(view.getByTestId('yaohuo-selected-face-preview').props.source[0].uri).toBe(faceUrl);
+    expect(view.getByPlaceholderText('输入回复内容').props.value).toBe('');
+    await fireEvent.press(view.getByLabelText('无表情'));
+    expect(view.queryByTestId('yaohuo-selected-face-preview')).toBeNull();
+    await fireEvent.press(view.getByLabelText('表情'));
+    expect(view.queryByLabelText('淡定')).toBeNull();
+  });
   it.each([
     { presentation: 'sheet', label: '表情', item: '无表情' },
     { presentation: 'embedded', label: '表情', item: '无表情' },
@@ -335,8 +352,8 @@ describe('Yaohuo reply composer', () => {
     expect(view.getByLabelText('发送中…').props.accessibilityState.disabled).toBe(true);
     expect(view.queryByText('上传中…')).toBeNull();
   });
-  it('inserts an inline face at the current selection for new topics', async () => {
-    const onContentChange = jest.fn();
+  it('inserts consecutive inline faces at the current selection and keeps the chooser open for new topics', async () => {
+    const onContentChange = jest.fn<(value: string) => void>();
     const view = await render(
       <YaohuoReplyComposer
         awaitKeyboardSettled={async () => undefined}
@@ -356,6 +373,17 @@ describe('Yaohuo reply composer', () => {
     await fireEvent.press(view.getByLabelText('淡定'));
     expect(onContentChange).toHaveBeenCalledWith(
       `甲[img]https://www.yaohuo.me/bbs/face/${encodeURIComponent('淡定.gif')}[/img]丙`
+    );
+    expect(view.getByLabelText('淡定')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('踩'));
+    expect(onContentChange).toHaveBeenLastCalledWith(
+      `甲[img]https://www.yaohuo.me/bbs/face/${encodeURIComponent('淡定.gif')}[/img][img]https://www.yaohuo.me/bbs/face/${encodeURIComponent('踩.gif')}[/img]丙`
+    );
+    expect(mockInputHandle.focus).not.toHaveBeenCalled();
+    const inserted = onContentChange.mock.lastCall![0];
+    await fireEvent.press(view.getByLabelText('输入正文'));
+    await waitFor(() =>
+      expect(mockInputHandle.setSelection).toHaveBeenLastCalledWith(inserted.length - 1, inserted.length - 1)
     );
   });
   it('embeds the native input and UBB tools without duplicate page actions', async () => {

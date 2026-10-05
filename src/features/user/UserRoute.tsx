@@ -110,6 +110,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
 
   return (
     <UserScreen
+      initialTab={route.params.initialTab}
       busy={controller.userBusy}
       error={controller.userError || null}
       topicsError={controller.userTopicsError}

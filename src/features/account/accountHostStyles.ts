@@ -1,8 +1,7 @@
 import { StyleSheet } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
-export function createAccountHostStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createAccountHostStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     flex: {

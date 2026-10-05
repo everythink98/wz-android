@@ -70,7 +70,7 @@ function FeedNavigationHarness({
         setFeedSource(source);
       }}
       onManageContentSources={jest.fn()}
-      onLoadMore={jest.fn()}
+      onLoadMore={jest.fn<() => void>()}
       onOpenTopic={jest.fn()}
       onReadingFilterChange={jest.fn()}
       onRefresh={jest.fn()}

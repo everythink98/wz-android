@@ -370,7 +370,7 @@ describe('StructuredReplyComposer', () => {
       const webView = view.getByTestId('structured-composer-webview');
       const source = webView.props.source;
       const postMessage = webView.props.postMessageMock;
-      await fireEvent(webView, 'message', message('PANEL_CHANGED', { documentEpoch: 0, open: true, expanded: true }));
+      await fireEvent(webView, 'message', message('PANEL_CHANGED', { documentEpoch: 0, open: true, layout: 'form' }));
       expect(onPresentationChange).toHaveBeenLastCalledWith('fullscreen');
       expect(view.queryByTestId('structured-composer-header')).toBeNull();
       expect(view.queryByTestId('structured-composer-footer')).toBeNull();
@@ -378,7 +378,7 @@ describe('StructuredReplyComposer', () => {
       await fireEvent(webView, 'message', message('PANEL_CHANGED', { documentEpoch: 0, open: false }));
       expect(onPresentationChange).toHaveBeenLastCalledWith(initialPresentation);
       await view.rerender(<StructuredReplyComposer {...props} presentation={initialPresentation} />);
-      await fireEvent(webView, 'message', message('PANEL_CHANGED', { documentEpoch: 0, open: true, expanded: true }));
+      await fireEvent(webView, 'message', message('PANEL_CHANGED', { documentEpoch: 0, open: true, layout: 'form' }));
       await view.rerender(<StructuredReplyComposer {...props} presentation="fullscreen" />);
       // The native sheet handles Android Back by leaving fullscreen first.
       await view.rerender(<StructuredReplyComposer {...props} presentation="sheet" />);
@@ -392,6 +392,41 @@ describe('StructuredReplyComposer', () => {
       expect(view.getByTestId('structured-composer-webview').props.postMessageMock).toBe(postMessage);
       expect(view.getByTestId('structured-composer-webview').props.source).toBe(source);
       expect(postMessage.mock.calls.map(([raw]: [string]) => JSON.parse(raw).type)).not.toContain('INIT');
+    }
+  );
+  it.each(['sheet', 'fullscreen'] as const)(
+    'gives expressions the %s composer space and restores controls without reloading the draft',
+    async (presentation) => {
+      const onPresentationChange = jest.fn();
+      const view = await render(
+        <StructuredReplyComposer
+          actionBusy={false}
+          content="保留正文"
+          initialMode="rich"
+          intent={{ kind: 'reply', site: 'nodeseek', topicId: 'expressions' }}
+          pendingNodeSeekPolls={[]}
+          presentation={presentation}
+          visible
+          onPresentationChange={onPresentationChange}
+          onSnapshot={jest.fn()}
+        />
+      );
+      const webView = view.getByTestId('structured-composer-webview');
+      const source = webView.props.source;
+      await fireEvent(
+        webView,
+        'message',
+        message('PANEL_CHANGED', { documentEpoch: 0, open: true, layout: 'expression' })
+      );
+      expect(view.getByTestId('structured-composer-header')).toBeTruthy();
+      expect(view.queryByTestId('structured-composer-footer')).toBeNull();
+      expect(view.queryByLabelText('表情')).toBeNull();
+      expect(onPresentationChange).not.toHaveBeenCalled();
+      await fireEvent(webView, 'message', message('PANEL_CHANGED', { documentEpoch: 0, open: false }));
+      expect(view.getByTestId('structured-composer-footer')).toBeTruthy();
+      expect(view.getByLabelText('表情')).toBeTruthy();
+      expect(webView.props.source).toBe(source);
+      expect(onPresentationChange).not.toHaveBeenCalled();
     }
   );
   it('restores the initial draft before loadEnd and keeps the HTML stable while editing', async () => {
@@ -1604,7 +1639,7 @@ describe('StructuredReplyComposer', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('keeps the editor WebView from clearing shared login state', async () => {
+  it('uses the resource cache without clearing shared login state', async () => {
     const view = await render(
       <StructuredReplyComposer
         actionBusy={false}
@@ -1626,7 +1661,7 @@ describe('StructuredReplyComposer', () => {
 
     const webView = view.getByTestId('structured-composer-webview');
     expect(webView.props.incognito).not.toBe(true);
-    expect(webView.props.cacheEnabled).toBe(false);
+    expect(webView.props.cacheEnabled).toBe(true);
     expect(webView.props.domStorageEnabled).toBe(false);
     expect(webView.props.saveFormDataDisabled).toBe(true);
     expect(StyleSheet.flatten(view.getByTestId('structured-composer-header').props.style)).toEqual(

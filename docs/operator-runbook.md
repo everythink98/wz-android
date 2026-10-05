@@ -27,6 +27,8 @@ Composer 专项使用 `npm run test:composer:device -- --serial emulator-5556 --
 
 专项只接受当前源码与 APK 哈希、buildId 匹配且 `isDev=false/isHermes=true` 的包；先比对已装 APK 签名，再覆盖安装并复核 `firstInstallTime`。完整场景矩阵定义在 `scripts/run-composer-device-proof.mjs`，含两站 16 种编辑模式/面板/键盘组合、各独立写入口、失败保稿/重开、深浅全屏及竞态/选图取消。`stress-ime-fast/slow` 在隔离设备分别使用 0/5 倍 window animation scale，记录并最终恢复原值；这些压力条件不代替原生 IME 帧顺序单测。所有发送使用合成账号与 HTTP/adapter 响应，未匹配请求立即失败；不得将这些结果标为 `LIVE_PASS`。较大挖孔须在同一隔离 AVD 单独切换系统 cutout overlay、记录实际 Insets，并添加 `--require-cutout` 重跑深浅全屏，最后恢复原 overlay；overlay 已启用不等于生效，cutout Insets 仍为 0 时必须失败，工具栏按状态栏与 cutout 的较大值验收。可参考 [Android 官方挖孔测试说明](https://developer.android.com/develop/ui/compose/system/test-cutouts)。真实物理设备没有对应证据时仍为 `NOT_VERIFIED`。结束后 runner 释放自己的 agent-device session 并恢复 IME/动画设置；操作者只关闭本次启动的隔离模拟器。
 
+表情布局专项选择 `composerCases.filter(case => case.stress === 'expressions')` 的场景 ID，覆盖两站富文本/源码、半屏/全屏、私信、发帖、深浅主题和 1.3 倍字号。`expressions-open/close.ad` 走实际工具按钮；DOM oracle 检查完整可选行、固定分类遮挡、长窗口的正文预览和未加载图片的可见占位，Native oracle 核对选择器位于 IME 与导航区上方。模式切换和贴纸选择后必须恢复正文与真实 IME；截图另行人工核对。当前 App 锁定竖屏，改变系统旋转设置不能作为横屏证据；短窗口须在独立设备按下文小屏流程记录实际 viewport 并恢复显示设置。2026-10-05 两台既有 proof AVD 出现安装元数据存在但 `pm path` 为空，已冻结安装变更；本轮另建独立 `WZ_ComposerExpressions_Test_API35_20261005`，数据目录为本轮 ignored scratch，确认全新空设备后首次安装匹配 proof APK，再按同一覆盖安装与身份门禁运行。该精确 AVD 名也在 runner allowlist 中，不能借此重置旧 AVD 或主登录态设备。用户随后要求关闭全部模拟器并只重开主设备，本轮隔离矩阵因此中止；局部结果不作为完整 `DEVICE_REPLAY_PASS`，普通入口在主设备另做只读验收。
+
 长输入定向使用 `--cases stress-ime-fast,stress-ime-slow --ime-cycles 20 --ime-chars 512 --ime-timeout-minutes 20`。两种动画速度各循环 20 次，每轮交替富文本/源码，输入可区分的确定性 ASCII 块，验证完整 WebView 文档只插入一次、收起重开保稿、全屏几何和最终模拟提交全文；结果逐轮保存。每轮按最多 64 字符的连续 `adb input text` 批次刷新事件时间戳，避免 Android 把耗时超过 10 秒的同批旧按键丢弃；总字符数不减少，不按失败结果重传。Runner 同时保存输入前 DOM/选区、输入事件聚合及严格全文差异，CDP 只接自有进程并验证实际 Composer base URI 和编辑器结构。真实系统键盘保持激活，但发送的是键事件，不能据此声称中文组合输入或候选词提交通过。`inputToReceiptMs` 包含输入、bridge 与自动保存，不能作为纯渲染耗时。
 
 发帖专项复用同一隔离构建，不另开 Metro：
@@ -94,6 +96,12 @@ npm run visual:gallery -- --port 8081
 关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态任务表覆盖 forum-platform、selection、App、ReactAndroid、Expo FileSystem 和 Expo Image 六类 JVM owner；App 通过 `tests/native/composer-keyboard.gradle` 挂入 Composer 与系统选图 IO 测试。每个预期测试类必须有本次新鲜报告、非跳过用例且零失败/错误；邻近测试通过不能替代缺席 owner。runner 输出每项耗时；selection 不能只编译 App。CI 使用 Node `22.22.2` 验证最低支持版本。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
+
+### Reanimated 原生事件专项
+
+`node dev/reanimated-events-proof/build.mjs` 复用现有 `buildDeviceProof` 构建 Release/Hermes 专用入口，APK 与哈希清单输出到 ignored `.codex-tmp`；不挂业务 runtime、不读写账号资料，也不发网络请求。按本节身份、签名和保留数据规则覆盖安装，先记录原普通入口 APK 以便验收后恢复。
+
+查看 `native-events-receipt`：启动后 `frames=10`；在 `native-scroll-fixture` 内实际上下滑动，`scroll` 必须持续增加。点击 `toggle-global` 注册无 tag SVG 监听，等待新图形挂载，`global` 必须增加；注销后点击 `remount-svg`，计数必须保持，再注册时须恢复增加。正常滚动动画与 RAF 不能被无监听事件过滤影响。保存节点、截图、安装身份和 exact APK SHA；结束后恢复普通入口并复核首次安装时间与资料。此行为专项不替代普通入口的 FrameTimeline/gfxinfo 冷挂载性能取证，也不把私有诊断计数带入正式补丁。
 
 ### 诊断导出与崩溃还原
 
@@ -399,7 +407,7 @@ runner 会拒绝与 `WZ_ANDROID_TEST_DEVICE` 或 `WZ_ANDROID_SMOKE_DEVICE` 相�
 
 1. 核对安装身份、版本与 APK SHA-256；覆盖安装后执行 `APK_SANITY` 和 `tests/device/feed-gesture-priority.ad`。
 2. 打开首页，顺序执行下方连续手势矩阵、双向 CANCEL/UP、独立惯性、首页刷新和边界交叉脚本。
-3. 打开“更多 → 消息通知”，执行通知刷新取消脚本，然后返回首页。
+3. 核对底栏顺序为“首页、搜索、消息、更多”，第三格使用铃铛 `Bell`，第四格保留 `MoreHorizontal`。打开“消息”，执行通知刷新取消脚本，然后返回首页。
 4. 按 `tests/live/agent-live.md` 的 `LIVE-FEED-01` 补验首尾边界、点选、分类栏、刷新中切来源/底栏和返回。只读手势验收不改变来源启停/顺序或账号状态。
 5. 保存每项通过或未验证范围及设备输入方式；实体手机与鼠标手动操作分别记录，不借用自动注入结论。回收本轮会话和专用临时文件。
 
@@ -458,7 +466,7 @@ node scripts/check-feed-boundaries.mjs '<ignored-evidence-directory>'
 
 `rail` 后可再指定 `v2ex`、`linuxdo`、`nodeseek` 或 `yaohuo`，用于独立重放中断来源。反向拖动先验证实际回移，再继续拖至起点检查边界，不假定两次等距输入必然抵消原生惯性。
 
-通知刷新取消另在浅色主题、“消息通知 → 全部”、列表顶部运行，沿用以上显式设备与 session：
+通知刷新取消另在浅色主题、“消息 → 全部”、列表顶部运行，沿用以上显式设备与 session：
 
 ```powershell
 node scripts/check-notification-refresh-cancel.mjs '<ignored-evidence-directory>'
@@ -553,6 +561,8 @@ Runner 不构建或安装；它核对已安装 APK SHA、UID、首次安装时�
 正式门槛只使用与当前 revision、APK SHA、PID 和主登录态 AVD 匹配的 Release `FrameTimeline/gfxinfo` 与 `meminfo`。Perfetto、heapprofd 或 Hermes sampling 只用于独立归因，采样轮次不能混入通过数据。每个页面把首次挂载与预热路径分开统计；PSS 一律以同一 PID 的 Feed 静置基线计算增量。
 
 Search 空态固定执行三批、每批 10 次 Feed → Search → Feed：每次转向前重置 `gfxinfo`，同时报告两个方向和整批的 p95、worst、missed deadline。门槛为每批 p95 `<=25ms`、worst `<=35ms`，且不得有相邻两条有效 App 帧记录均 missed deadline；若这两条记录的 `IntendedVsync` 跨多个显示周期，另报间隔，不描述成连续显示周期掉帧。另取原始分辨率截图与 Native tree：最近记录仍须保持单张圆角分组面板、hairline 分隔和互不重叠的 `48dp` 点击区，最多 20 条记录不得作为 Header 子树整体常驻。节点减少但 traversal/draw 仍稳定在 21–26ms 时，只 profile Header 控件；不得叠加全局 memo、延时或预挂载 workaround。
+
+每次测量须等上一转向及原生延迟淡出完全结束后再重置 `gfxinfo`；重置时间不能当作真实点击时间，逐帧判断页面归属须另取实际输入时序。当前 API 35 每次转向完成后至少保留 3 秒完整采样窗口，以覆盖已观察到的晚帧；若独立归因证明仍有更晚帧，应延长窗口并保留全部有效帧，不得裁剪晚帧、关闭滚动条或修改系统动画来满足门槛。
 
 重图 Topic 只使用主登录态 AVD `WZ_Pixel_API_35` 和 NodeSeek `https://www.nodeseek.com/post-863650-1`，不换未登录模拟器，也不再用其他图片帖代替或扩样。基线与新版必须使用相同构建类型、AVD、滚动动作和采样点：每次独立运行先在 Feed 静置并记录 PID/PSS，再以 deep link 打开目标，同一 PID 连续两轮各 40 次向下、40 次向上，返回 Feed 后再记录 0/30/60 秒 PSS；同时报告 FrameTimeline/gfxinfo、warm/running/original、重复 identity、cancel、Fatal、ANR、OOM 和模拟器响应。历史 `+150MB/+80MB/p95 50ms` 仅作为观察值，不再作为中止或撤销正确性修复的固定门槛；以基线三轮中位数及最大自然偏差判断非回退，首次同方向超出后补一轮复测，仍变差才定位并重做对应层。新增崩溃、空白、比例变化、较早卡死或 PID 退出直接记为回退；新旧都触发独立 `system_server` 故障时记 `BLOCKED_BY_ENV`。
 

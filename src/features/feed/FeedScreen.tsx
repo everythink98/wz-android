@@ -104,7 +104,7 @@ export const FeedScreen = memo(function FeedScreen({
   onFeedSourceChange: (source: FeedSource) => void;
   onInitialContentReady?: () => void;
   onManageContentSources: () => void;
-  onLoadMore: () => void;
+  onLoadMore: () => void | Promise<unknown>;
   onOpenTopic: (topic: Topic) => void;
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
@@ -116,7 +116,7 @@ export const FeedScreen = memo(function FeedScreen({
   if (renderedSourceRef.current.source !== feedSource)
     renderedSourceRef.current = { source: feedSource, hasList: false };
   const { width: pagerWidth } = useWindowDimensions();
-  const requestedFeedPageRef = useRef<number | null>(null);
+  const requestedFeedPageRef = useRef<{ page: number } | null>(null);
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
   const autoLoadPausedAfterFailureRef = useRef(false);
   const {
@@ -221,17 +221,29 @@ export const FeedScreen = memo(function FeedScreen({
         }
       }
       const nextPage = feedPage + 1;
-      if (requestedFeedPageRef.current === nextPage) {
+      if (requestedFeedPageRef.current?.page === nextPage) {
         return;
       }
-      requestedFeedPageRef.current = nextPage;
+      const request = { page: nextPage };
+      requestedFeedPageRef.current = request;
       if (source === 'button') {
         autoLoadPausedAfterFailureRef.current = false;
       }
       if (source === 'scroll') {
         lastAutoLoadMoreOffsetRef.current = offsetY;
       }
-      onLoadMore();
+      const settle = (failed: boolean) => {
+        if (requestedFeedPageRef.current !== request) return;
+        requestedFeedPageRef.current = null;
+        if (failed) {
+          autoLoadPausedAfterFailureRef.current = true;
+          lastAutoLoadMoreOffsetRef.current = null;
+        }
+      };
+      void Promise.resolve(onLoadMore()).then(
+        (outcome) => settle(outcome === 'failed'),
+        () => settle(true)
+      );
     },
     [busy, feedHasMore, feedPage, loadingMore, onLoadMore]
   );
@@ -249,6 +261,7 @@ export const FeedScreen = memo(function FeedScreen({
 
   const handleScrollBeginDrag = useCallback(() => {
     autoLoadPausedAfterFailureRef.current = false;
+    lastAutoLoadMoreOffsetRef.current = null;
   }, []);
 
   useEffect(() => {

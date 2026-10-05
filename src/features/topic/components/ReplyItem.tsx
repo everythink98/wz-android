@@ -43,6 +43,9 @@ import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicA
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
+import { DiscoursePolicyPanel } from '@/ui/content/DiscoursePolicyPanel';
+import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
+import type { TopicActionsController } from '../actions/useTopicActionsController';
 import { getReplyKey, type ReplyRenderableContent, type TopicReplyListItem } from '../model/replyListModel';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
@@ -209,6 +212,8 @@ export function ReplyItem({
   onQuoteContentLayout,
   onReplyToFloor,
   onVotePoll,
+  onSetPolicyAcceptance,
+  policySubmission,
   onToggleReplyQuote
 }: {
   actionBusy: boolean;
@@ -246,6 +251,8 @@ export function ReplyItem({
   onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
   onReplyToFloor: (reply: Reply) => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
+  onSetPolicyAcceptance?: (policy: DiscoursePostPolicy, accepted: boolean) => void;
+  policySubmission?: TopicActionsController['policySubmissions'][string];
   onToggleReplyQuote: (options: ToggleReplyQuoteOptions) => void;
 }) {
   const { getMappingKey } = useMappingHelper();
@@ -495,6 +502,7 @@ export function ReplyItem({
   const showStart = !section || section.type === 'replyStart';
   const showQuotes = !section || section.type === 'replyQuoteSummary';
   const showTail = !section || section.type === 'replyEnd';
+  const policy = source === 'linuxdo' ? reply.policy : undefined;
   return (
     <View
       testID={isTerminal ? 'terminal-reply' : undefined}
@@ -744,6 +752,17 @@ export function ReplyItem({
               ) : null}
               {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
                 <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
+              ) : null}
+              {policy && onSetPolicyAcceptance ? (
+                <DiscoursePolicyPanel
+                  policy={policy}
+                  busy={actionBusy}
+                  disabled={!decisionFor({ action: 'policy' }).allowed || policySubmission?.version === policy.version}
+                  status={
+                    policySubmission?.version === policy.version ? '操作已提交，请刷新公告核对阅读状态' : undefined
+                  }
+                  onSetAcceptance={(accepted) => onSetPolicyAcceptance(policy, accepted)}
+                />
               ) : null}
               {isDiscourse && discourseReplyReactionStats.length ? (
                 <View style={styles.replyStatRail}>
@@ -1006,6 +1025,8 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.onTogglePollSelection !== next.onTogglePollSelection ||
     previous.onToggleReplyQuote !== next.onToggleReplyQuote ||
     previous.onVotePoll !== next.onVotePoll ||
+    previous.onSetPolicyAcceptance !== next.onSetPolicyAcceptance ||
+    previous.policySubmission !== next.policySubmission ||
     previous.pollSelections !== next.pollSelections ||
     previous.query !== next.query ||
     previous.reply !== next.reply ||

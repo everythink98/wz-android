@@ -2,6 +2,11 @@ import type { TextStyle } from 'react-native';
 import { type ReaderSettings } from '@/domain/reader/readerData';
 import type { Source } from '@/domain/forum/models';
 
+export type ReaderStyleSettings = Pick<
+  ReaderSettings,
+  'theme' | 'fontScale' | 'listDensity' | 'lineHeight' | 'contentWidth' | 'fontFamily'
+>;
+
 export interface ReaderTheme {
   dark: boolean;
   background: string;
@@ -149,7 +154,7 @@ export function sourceBadgeColorStyle(source: Source, theme: ReaderTheme): TextS
   };
 }
 
-export function createTheme(settings: ReaderSettings): ReaderTheme {
+export function createTheme(settings: Pick<ReaderStyleSettings, 'theme'>): ReaderTheme {
   const dark = settings.theme === 'dark';
   const favorite = { light: '#facc15', dark: '#fde047' };
   if (dark) {

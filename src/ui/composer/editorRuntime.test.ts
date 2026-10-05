@@ -7,6 +7,7 @@ import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { NODESEEK_STICKER_CATEGORIES } from '@/domain/forum/nodeSeekStickers';
 import {
   ComposerEditorRuntime,
   composerEditorExtensions,
@@ -140,6 +141,77 @@ function activateToolbarUpload(
 }
 
 describe('Composer editor runtime codec', () => {
+  it.each(
+    (['linuxdo', 'nodeseek'] as const).flatMap((site) =>
+      (
+        [
+          { intentKind: 'create-topic', label: '主题正文', nextIntentKind: 'reply', nextLabel: '回复正文' },
+          { intentKind: 'edit-topic', label: '主题正文', nextIntentKind: 'private-message', nextLabel: '回复正文' },
+          { intentKind: 'reply', label: '回复正文', nextIntentKind: 'edit-topic', nextLabel: '主题正文' },
+          { intentKind: 'private-message', label: '回复正文', nextIntentKind: 'create-topic', nextLabel: '主题正文' }
+        ] as const
+      ).map((intent) => ({ site, ...intent }))
+    )
+  )(
+    'names the $site $intentKind source input through mode switches and a new empty document',
+    async ({ site, intentKind, label, nextIntentKind, nextLabel }) => {
+      const { host, send, toolbarAction } = await mountRuntime({ site, intentKind });
+      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      const input = source.contentDOM;
+      const richInput = host.querySelector<HTMLElement>('.ProseMirror')!;
+      expect(richInput.getAttribute('aria-label')).toBe(`${label}富文本编辑器`);
+      const switchMode = async (mode: 'rich' | 'source') => {
+        if (intentKind === 'create-topic' || intentKind === 'edit-topic') {
+          await toolbarAction('more');
+          await act(async () => {
+            host
+              .querySelector<HTMLButtonElement>(`button[aria-label="切换到${mode === 'source' ? '源码' : '富文本'}"]`)!
+              .click();
+            await new Promise(requestAnimationFrame);
+          });
+        } else {
+          // Reply and message mode controls live in the native composer header.
+          await send({ type: 'SET_MODE', payload: { mode } });
+        }
+      };
+
+      await switchMode('source');
+      expect(input.getAttribute('aria-label')).toBe(`${label}源码编辑器`);
+      expect(input.getAttribute('role')).toBe('textbox');
+      expect(input.getAttribute('aria-multiline')).toBe('true');
+      expect(input.getAttribute('contenteditable')).toBe('true');
+      expect(input.closest('.source-pane')?.getAttribute('aria-hidden')).not.toBe('true');
+      expect(richInput.closest('.editor-pane')?.getAttribute('aria-hidden')).toBe('true');
+
+      await switchMode('rich');
+      expect(richInput.getAttribute('aria-label')).toBe(`${label}富文本编辑器`);
+      expect(richInput.closest('.editor-pane')?.getAttribute('aria-hidden')).not.toBe('true');
+      expect(input.closest('.source-pane')?.getAttribute('aria-hidden')).toBe('true');
+
+      await send({
+        type: 'INIT',
+        payload: {
+          documentEpoch: 1,
+          site,
+          intentKind: nextIntentKind,
+          markdown: '',
+          pendingNodeSeekPolls: [],
+          mode: 'source',
+          theme: TEST_THEME
+        }
+      });
+      expect(EditorView.findFromDOM(host.querySelector('.cm-editor')!)).toBe(source);
+      expect(source.contentDOM).toBe(input);
+      expect(input.getAttribute('aria-label')).toBe(`${nextLabel}源码编辑器`);
+      expect(input.getAttribute('role')).toBe('textbox');
+      expect(input.getAttribute('aria-multiline')).toBe('true');
+      expect(input.getAttribute('contenteditable')).toBe('true');
+      expect(input.closest('.source-pane')?.getAttribute('aria-hidden')).not.toBe('true');
+      expect(richInput.closest('.editor-pane')?.getAttribute('aria-hidden')).toBe('true');
+      expect(source.state.doc.toString()).toBe('');
+    }
+  );
+
   it.each(['rich', 'source'] as const)(
     'awaits prepare-panel before blurring or opening the %s link form',
     async (mode) => {
@@ -312,6 +384,53 @@ describe('Composer editor runtime codec', () => {
     });
     expect(host.querySelector('[role="dialog"]')).toBeNull();
   });
+
+  it.each(
+    (['nodeseek', 'linuxdo'] as const).flatMap((site) => (['rich', 'source'] as const).map((mode) => ({ site, mode })))
+  )(
+    'closes the $site expression panel when the $mode body receives focus and preserves its cache',
+    async ({ site, mode }) => {
+      for (const intentKind of ['reply', 'private-message'] as const) {
+        const { host, toolbarAction, postMessage } = await mountRuntime({
+          site,
+          mode,
+          intentKind,
+          runtimeStyle: true,
+          markdown: '保留正文',
+          discourseEmoji: [{ name: 'smile', url: 'https://linux.do/smile.png' }]
+        });
+        await toolbarAction('emoji');
+        const panel = host.querySelector<HTMLElement>('[data-expression-cache]')!;
+        const body = panel.querySelector<HTMLElement>('.builder-body')!;
+        const image = panel.querySelector<HTMLImageElement>('.expression-grid:not([hidden]) img')!;
+        const navigation = panel.querySelector(site === 'nodeseek' ? '.category-rail' : '.expression-search')!;
+        expect(body.contains(navigation)).toBe(false);
+        expect(
+          getComputedStyle(host.querySelector(mode === 'rich' ? '.editor-pane' : '.source-pane')!).visibility
+        ).toBe('hidden');
+        expect(
+          postMessage.mock.calls
+            .map(([raw]) => JSON.parse(String(raw)))
+            .findLast((event) => event.type === 'PANEL_CHANGED').payload
+        ).toMatchObject({ open: true, layout: 'expression' });
+        body.scrollTop = 120;
+        await act(async () => image.dispatchEvent(new Event('load')));
+        const input = host.querySelector<HTMLElement>(mode === 'rich' ? '.ProseMirror' : '.cm-content')!;
+        await act(async () => input.focus());
+        expect(document.activeElement).toBe(input);
+        expect(panel.hidden).toBe(true);
+        expect(
+          postMessage.mock.calls
+            .map(([raw]) => JSON.parse(String(raw)))
+            .findLast((event) => event.type === 'PANEL_CHANGED').payload.open
+        ).toBe(false);
+        await toolbarAction('emoji');
+        expect(host.querySelector('[data-expression-cache]')).toBe(panel);
+        expect(panel.querySelector('.expression-grid:not([hidden]) img')).toBe(image);
+        expect(body.scrollTop).toBe(120);
+      }
+    }
+  );
 
   it.each(['reply', 'create-topic', 'edit-topic'] as const)(
     'uses the native accessory without duplicating the %s bottom toolbar',
@@ -1709,6 +1828,117 @@ describe('Composer editor runtime codec', () => {
     }
   );
 
+  it.each(['rich', 'source'] as const)(
+    'returns from expressions before focusing the next %s editing mode',
+    async (mode) => {
+      const { host, send, toolbarAction } = await mountRuntime({
+        site: 'nodeseek',
+        mode,
+        waitForFrame: false,
+        markdown: '保留正文'
+      });
+      await toolbarAction('emoji');
+      await send({ type: 'SET_MODE', payload: { mode: mode === 'rich' ? 'source' : 'rich' } });
+      expect(host.querySelector<HTMLElement>('[data-expression-cache]')?.hidden).toBe(true);
+      expect(host.querySelector('.ProseMirror')?.textContent).toBe('保留正文');
+    }
+  );
+  it.each(['reply', 'private-message', 'create-topic'] as const)(
+    'starts each sticker category at the top with pinned tabs in %s',
+    async (intentKind) => {
+      const { host, toolbarAction } = await mountRuntime({ site: 'nodeseek', intentKind, runtimeStyle: true });
+      await toolbarAction('emoji');
+      const panel = host.querySelector<HTMLElement>('[data-expression-cache="stickers"]')!;
+      const body = panel.querySelector<HTMLElement>('.builder-body')!;
+      const rail = panel.querySelector<HTMLElement>('.category-rail')!;
+      const categories = rail.querySelectorAll<HTMLButtonElement>('button');
+      const firstImage = panel.querySelector<HTMLImageElement>('.expression-grid:not([hidden]) img')!;
+      await act(async () => firstImage.dispatchEvent(new Event('load')));
+      body.scrollTop = 180;
+      await act(async () => categories[1]!.click());
+      expect(body.scrollTop).toBe(0);
+      body.scrollTop = 120;
+      await act(async () => categories[0]!.click());
+      expect(body.scrollTop).toBe(0);
+      expect(panel.querySelector('.expression-grid:not([hidden]) img')).toBe(firstImage);
+      body.scrollTop = 60;
+      await act(async () => categories[0]!.click());
+      expect(body.scrollTop).toBe(60);
+      expect(body.contains(rail)).toBe(false);
+      expect(rail.closest('.builder-header')).not.toBeNull();
+      expect(getComputedStyle(panel.querySelector('.builder-backdrop')!).position).toBe('absolute');
+      expect(getComputedStyle(panel.querySelector('.builder-backdrop')!).maxHeight).toBe('none');
+    }
+  );
+
+  it.each(
+    (['nodeseek', 'linuxdo'] as const).flatMap((site) => (['rich', 'source'] as const).map((mode) => ({ site, mode })))
+  )(
+    'keeps the $site $mode expression panel and focus for consecutive insertions until explicitly closed',
+    async ({ site, mode }) => {
+      for (const intentKind of ['reply', 'create-topic', 'private-message'] as const) {
+        const { host, send, postMessage, toolbarAction } = await mountRuntime({
+          site,
+          mode,
+          intentKind,
+          discourseEmoji: [
+            { name: 'smile', url: 'https://linux.do/smile.png' },
+            { name: 'smirk', url: 'https://linux.do/smirk.png' }
+          ]
+        });
+        await toolbarAction('emoji');
+        const panel = host.querySelector<HTMLElement>('[data-expression-cache]')!;
+        const body = panel.querySelector<HTMLElement>('.builder-body')!;
+        const search = panel.querySelector<HTMLInputElement>('input[type="search"]');
+        if (search) {
+          await act(async () => {
+            search.focus();
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, 'smi');
+            search.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+        }
+        const focus = document.activeElement;
+        body.scrollTop = 120;
+        const buttons = [...panel.querySelectorAll<HTMLButtonElement>('.expression-grid:not([hidden]) button')].slice(
+          0,
+          2
+        );
+        const images = buttons.map((button) => button.querySelector('img')!);
+        for (const image of images) await act(async () => image.dispatchEvent(new Event('load')));
+        for (const button of buttons) {
+          await act(async () => button.click());
+          expect(panel.hidden).toBe(false);
+          expect(document.activeElement).toBe(focus);
+          expect(body.scrollTop).toBe(120);
+          if (search) expect(search.value).toBe('smi');
+          expect(
+            postMessage.mock.calls
+              .map(([raw]) => JSON.parse(String(raw)))
+              .findLast((event) => event.type === 'PANEL_CHANGED').payload
+          ).toMatchObject({ open: true, layout: 'expression' });
+        }
+        await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'consecutive-expressions' } });
+        expect(
+          postMessage.mock.calls
+            .map(([raw]) => JSON.parse(String(raw)))
+            .findLast((event) => event.payload?.requestId === 'consecutive-expressions').payload.snapshot.markdown
+        ).toBe(
+          site === 'linuxdo'
+            ? ':smile::smirk:'
+            : NODESEEK_STICKER_CATEGORIES[0]!.items
+                .slice(0, 2)
+                .map((item) => item.code)
+                .join('')
+        );
+        await act(async () => panel.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!.click());
+        expect(panel.hidden).toBe(true);
+        await toolbarAction('emoji');
+        expect(buttons.map((button) => button.querySelector('img'))).toEqual(images);
+        expect(body.scrollTop).toBe(120);
+      }
+    }
+  );
+
   it.each(['nodeseek', 'linuxdo'] as const)(
     'recovers failed %s expressions without inserting or replacing successful images',
     async (site) => {
@@ -1728,6 +1958,8 @@ describe('Composer editor runtime codec', () => {
       const successButton = buttons[1]!;
       const failed = failedButton.querySelector('img')!;
       const success = successButton.querySelector('img')!;
+      expect(failedButton.getAttribute('aria-busy')).toBe('true');
+      expect(successButton.getAttribute('aria-busy')).toBe('true');
       const label = failedButton.getAttribute('aria-label')!;
       const body = panel.querySelector<HTMLElement>('.builder-body')!;
       body.scrollTop = 180;
@@ -1735,6 +1967,8 @@ describe('Composer editor runtime codec', () => {
         success.dispatchEvent(new Event('load'));
         failed.dispatchEvent(new Event('error'));
       });
+      expect(successButton.getAttribute('aria-busy')).toBe('false');
+      expect(failedButton.getAttribute('aria-busy')).toBe('false');
       expect(failedButton.getAttribute('aria-label')).toBe(`${label}，加载失败，点击重试`);
       await act(async () => failedButton.click());
       const retried = failedButton.querySelector('img')!;
@@ -1762,9 +1996,183 @@ describe('Composer editor runtime codec', () => {
       await act(async () => failedButton.click());
       await act(async () => failedButton.querySelector('img')!.dispatchEvent(new Event('load')));
       await act(async () => failedButton.click());
-      expect(panel.hidden).toBe(true);
+      expect(panel.hidden).toBe(false);
     }
   );
+  it.each([
+    ...NODESEEK_STICKER_CATEGORIES.map(({ label, items }) => ({
+      site: 'nodeseek' as const,
+      category: label,
+      images: items.map((item) => item.imageUrl)
+    })),
+    { site: 'linuxdo' as const, category: '', images: ['https://linux.do/first.png', 'https://linux.do/second.png'] }
+  ])(
+    'automatically retries visible $site $category expression images with backoff until they load',
+    async ({ site, category, images }) => {
+      const { host, send, postMessage, toolbarAction } = await mountRuntime({
+        site,
+        markdown: 'draft',
+        waitForFrame: false,
+        discourseEmoji: [
+          { name: 'first', url: 'https://linux.do/first.png' },
+          { name: 'second', url: 'https://linux.do/second.png' }
+        ]
+      });
+      await toolbarAction('emoji');
+      const panel = host.querySelector<HTMLElement>('[data-expression-cache]')!;
+      if (category) {
+        const categoryButton = Array.from(panel.querySelectorAll<HTMLButtonElement>('.category-rail button')).find(
+          (button) => button.textContent === category
+        )!;
+        await act(async () => categoryButton.click());
+      }
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const buttons = panel.querySelectorAll<HTMLButtonElement>('.expression-grid:not([hidden]) button');
+      expect(Array.from(buttons, (item) => item.querySelector('img')!.getAttribute('src'))).toEqual(images);
+      const button = buttons[0]!;
+      const failedButtons = Array.from(buttons).filter((_, index) => index !== 1);
+      const success = buttons[1]!.querySelector('img')!;
+      const body = panel.querySelector<HTMLElement>('.builder-body')!;
+      body.scrollTop = 180;
+      await act(async () => success.dispatchEvent(new Event('load')));
+
+      for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+        const previous = failedButtons.map((item) => item.querySelector('img')!);
+        await act(async () => previous.forEach((image) => image.dispatchEvent(new Event('error'))));
+        await act(async () => vi.advanceTimersByTime(delay - 1));
+        failedButtons.forEach((item, index) => expect(item.querySelector('img')).toBe(previous[index]));
+        await act(async () => vi.advanceTimersByTime(1));
+        const next = button.querySelector('img')!;
+        failedButtons.forEach((item, index) => {
+          const retried = item.querySelector('img')!;
+          expect(retried).not.toBe(previous[index]);
+          expect(retried.getAttribute('src')).toBe(previous[index]!.getAttribute('src'));
+          expect(item.getAttribute('aria-busy')).toBe('true');
+        });
+        // A click during recovery must not insert an invisible expression.
+        await act(async () => button.click());
+        expect(panel.hidden).toBe(false);
+        expect(button.querySelector('img')).toBe(next);
+      }
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'automatic-retry-does-not-insert' } });
+      expect(
+        postMessage.mock.calls
+          .map(([raw]) => JSON.parse(String(raw)))
+          .findLast((event) => event.payload?.requestId === 'automatic-retry-does-not-insert').payload.snapshot.markdown
+      ).toBe('draft');
+      const loaded = button.querySelector('img')!;
+      const recovered = failedButtons.map((item) => item.querySelector('img')!);
+      await act(async () => recovered.forEach((image) => image.dispatchEvent(new Event('load'))));
+      await act(async () => vi.advanceTimersByTime(60000));
+      failedButtons.forEach((item, index) => {
+        expect(item.querySelector('img')).toBe(recovered[index]);
+        expect(item.getAttribute('aria-busy')).toBe('false');
+      });
+      expect(button.querySelector('img')).toBe(loaded);
+      expect(buttons[1]!.querySelector('img')).toBe(success);
+      expect(body.scrollTop).toBe(180);
+      await act(async () => button.click());
+      expect(panel.hidden).toBe(false);
+    }
+  );
+
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'cancels queued %s expression retries when the panel closes or the composer becomes inactive',
+    async (site) => {
+      const { host, send, toolbarAction, root } = await mountRuntime({
+        site,
+        waitForFrame: false,
+        discourseEmoji: [{ name: 'first', url: 'https://linux.do/first.png' }]
+      });
+      await toolbarAction('emoji');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const panel = host.querySelector<HTMLElement>('[data-expression-cache]')!;
+      const button = panel.querySelector<HTMLButtonElement>('.expression-grid:not([hidden]) button')!;
+      const image = () => button.querySelector('img')!;
+      for (const close of [
+        () => act(async () => panel.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!.click()),
+        () => send({ type: 'COMMAND', payload: { name: 'blur' } }),
+        () => send({ type: 'SET_READ_ONLY', payload: { readOnly: true } })
+      ]) {
+        const pending = image();
+        await act(async () => pending.dispatchEvent(new Event('error')));
+        await close();
+        await act(async () => vi.advanceTimersByTime(60000));
+        expect(panel.hidden).toBe(true);
+        expect(image()).toBe(pending);
+        await send({ type: 'SET_READ_ONLY', payload: { readOnly: false } });
+        await toolbarAction('emoji');
+        const reopened = image();
+        expect(reopened).not.toBe(pending);
+        // Late callbacks and the old timer cannot reset the replacement attempt.
+        await act(async () => pending.dispatchEvent(new Event('error')));
+        await act(async () => vi.advanceTimersByTime(60000));
+        expect(image()).toBe(reopened);
+      }
+      const pending = image();
+      const schedule = vi.spyOn(window, 'setTimeout');
+      const clear = vi.spyOn(window, 'clearTimeout');
+      await act(async () => pending.dispatchEvent(new Event('error')));
+      const retryTimerIndex = schedule.mock.calls.findLastIndex(([, delay]) => delay === 8000);
+      expect(retryTimerIndex).toBeGreaterThanOrEqual(0);
+      const retryTimer = schedule.mock.results[retryTimerIndex]!.value;
+      await act(async () => root.unmount());
+      expect(clear).toHaveBeenCalledWith(retryTimer);
+      host.remove();
+      await act(async () => vi.advanceTimersByTime(60000));
+    }
+  );
+
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'pauses failed %s expression retries while the WebView document is hidden',
+    async (site) => {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+      const { host, toolbarAction } = await mountRuntime({
+        site,
+        waitForFrame: false,
+        discourseEmoji: [{ name: 'first', url: 'https://linux.do/first.png' }]
+      });
+      await toolbarAction('emoji');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const panel = host.querySelector<HTMLElement>('[data-expression-cache]')!;
+      const button = panel.querySelector<HTMLButtonElement>('.expression-grid:not([hidden]) button')!;
+      const failed = button.querySelector('img')!;
+      await act(async () => failed.dispatchEvent(new Event('error')));
+      visibility.mockReturnValue('hidden');
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+      await act(async () => vi.advanceTimersByTime(60000));
+      expect(button.querySelector('img')).toBe(failed);
+      expect(panel.hidden).toBe(false);
+      visibility.mockReturnValue('visible');
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+      const resumed = button.querySelector('img')!;
+      expect(resumed).not.toBe(failed);
+      await act(async () => resumed.dispatchEvent(new Event('load')));
+      await act(async () => vi.advanceTimersByTime(60000));
+      expect(button.querySelector('img')).toBe(resumed);
+    }
+  );
+
+  it('pauses failed sticker retries while another category is selected', async () => {
+    const { host, toolbarAction } = await mountRuntime({ site: 'nodeseek', waitForFrame: false });
+    await toolbarAction('emoji');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const panel = host.querySelector<HTMLElement>('[data-expression-cache]')!;
+    const categories = panel.querySelectorAll<HTMLButtonElement>('.category-rail button');
+    const button = panel.querySelector<HTMLButtonElement>('.expression-grid:not([hidden]) button')!;
+    const failed = button.querySelector('img')!;
+    await act(async () => failed.dispatchEvent(new Event('error')));
+    await act(async () => categories[1]!.click());
+    await act(async () => vi.advanceTimersByTime(60000));
+    expect(button.querySelector('img')).toBe(failed);
+    await act(async () => categories[0]!.click());
+    const retry = button.querySelector('img')!;
+    expect(retry).not.toBe(failed);
+    await act(async () => retry.dispatchEvent(new Event('error')));
+    await act(async () => vi.advanceTimersByTime(2000));
+    expect(button.querySelector('img')).not.toBe(retry);
+  });
+
   const editors: Editor[] = [];
   afterEach(async () => {
     editors.splice(0).forEach((editor) => editor.destroy());
@@ -2435,6 +2843,7 @@ describe('Composer editor runtime codec', () => {
         .find((button) => button.textContent === 'AC娘')
         ?.click()
     );
+    const expressionFocus = document.activeElement;
     await act(async () => {
       host.querySelector<HTMLButtonElement>('button[aria-label="ac01"]')?.click();
       await new Promise(requestAnimationFrame);
@@ -2443,8 +2852,8 @@ describe('Composer editor runtime codec', () => {
     expect(insertedSticker?.querySelector('img')?.getAttribute('src')).toBe(
       'https://www.nodeseek.com/static/image/sticker/ac/01.png'
     );
-    expect.soft(document.activeElement).toBe(editable);
-    expect(stickerPanel?.closest<HTMLElement>('[data-expression-cache]')?.hidden).toBe(true);
+    expect(document.activeElement).toBe(expressionFocus);
+    expect(stickerPanel?.closest<HTMLElement>('[data-expression-cache]')?.hidden).toBe(false);
     const originalURL = URL;
     vi.stubGlobal(
       'URL',
@@ -2515,11 +2924,12 @@ describe('Composer editor runtime codec', () => {
     expect(codeMirrorStyle?.nonce).toBe('wz-composer-runtime');
 
     await toolbarAction('emoji');
+    const sourceExpressionFocus = document.activeElement;
     await act(async () => {
       host.querySelector<HTMLButtonElement>('button[aria-label="ac02"]')?.click();
       await new Promise(requestAnimationFrame);
     });
-    expect(document.activeElement).toBe(sourceContent);
+    expect(document.activeElement).toBe(sourceExpressionFocus);
     expect(sourceContent.textContent).toContain(':ac02:');
 
     await toolbarAction('ordered-list');
@@ -2700,15 +3110,13 @@ describe('Composer editor runtime codec', () => {
     const emojiPanel = host.querySelector<HTMLElement>('[role="dialog"][aria-label="LinuxDo Emoji"]');
     const emojiImage = emojiPanel?.querySelector<HTMLImageElement>('button[aria-label="grinning face"] img');
     expect(emojiPanel).not.toBeNull();
-    expect(emojiPanel?.querySelector<HTMLInputElement>('input[aria-label="搜索 Emoji"]')?.placeholder).toBe(
-      '搜索 Emoji'
-    );
+    expect(emojiPanel?.querySelector<HTMLInputElement>('input[aria-label="搜索 Emoji"]')?.placeholder).toBe('搜索表情');
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="grinning face"]')?.click());
     expect(host.querySelector<HTMLElement>('[data-composer-node="forum-expression"] img')?.getAttribute('src')).toBe(
       'https://linux.do/images/emoji/grinning-face.png'
     );
     expect(host.querySelector('.composer-document')?.textContent).toContain('draft');
-    expect(emojiPanel?.closest<HTMLElement>('[data-expression-cache]')?.hidden).toBe(true);
+    expect(emojiPanel?.closest<HTMLElement>('[data-expression-cache]')?.hidden).toBe(false);
     await toolbarAction('poll');
     const linuxPollBuilder = host.querySelector<HTMLElement>('[role="dialog"][aria-label="LinuxDo 投票"]');
     expect(linuxPollBuilder?.querySelectorAll('input[aria-label^="投票选项 "]')).toHaveLength(2);

@@ -12,7 +12,7 @@ import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/q
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { sessionSources, sourceValues, type SessionSource, type Source } from '@/domain/forum/sourceCatalog';
-import type { Category, SourceErrors, Topic } from '@/domain/forum/models';
+import type { Category, FeedResponse, SourceErrors, Topic } from '@/domain/forum/models';
 import { forumReadPlanScopesKey, resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
 import { isSessionSource } from '@/domain/forum/sourceCatalog';
 import { QueryTestWrapper } from '../QueryTestWrapper';
@@ -30,6 +30,7 @@ type FeedRuntimeOptions = Omit<
 > & {
   anonymousSources?: readonly SessionSource[];
   catalogActive?: boolean;
+  deferSecondaryCatalogs?: boolean;
   identityBarriers?: readonly SessionSource[];
 };
 
@@ -73,7 +74,7 @@ function aggregateReadPlanScope(
   );
 }
 
-function useFeedRuntime({ catalogActive, ...options }: FeedRuntimeOptions) {
+function useFeedRuntime({ catalogActive, deferSecondaryCatalogs, ...options }: FeedRuntimeOptions) {
   const sourceProjection = projectContentSourcePreferences(options.readerData.settings.contentSources);
   const enabledSources = new Set(sourceProjection.enabledSources);
   const readGateway = {
@@ -90,9 +91,8 @@ function useFeedRuntime({ catalogActive, ...options }: FeedRuntimeOptions) {
   } as ReadGateway;
   const catalog = useForumCatalogRuntime({
     active: (catalogActive ?? options.active) && !options.linuxDoVerificationActive,
+    deferSecondary: deferSecondaryCatalogs,
     enabledFeedSources: sourceProjection.enabledSources,
-    enabledSourcesKey: canonicalEnabledSourcesKey(options.readerData.settings.contentSources),
-    notify: options.notify,
     readGateway,
     sessionEpochs: options.sessionEpochs
   });
@@ -125,6 +125,42 @@ describe('Feed controller sessions', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+  });
+
+  it('loads an explicitly selected source immediately and reuses its catalog after the first Feed', async () => {
+    const category = { source: 'v2ex' as const, id: 'general', name: 'General' };
+    const getCategories = jest.fn(async ({ source }: { source: Source }) => ({
+      items: source === 'v2ex' ? [category] : [],
+      errors: {}
+    }));
+    let deferSecondaryCatalogs = true;
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        deferSecondaryCatalogs,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway: {
+          getCategories,
+          getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
+        } as unknown as ReadGateway
+      })
+    );
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(2));
+    expect(getCategories.mock.calls.map(([request]) => request.source).sort()).toEqual(['linuxdo', 'yaohuo']);
+    await act(async () => hook.result.current.changeFeedSource('v2ex'));
+    await waitFor(() => expect(hook.result.current.categories).toEqual([category]));
+    expect(getCategories).toHaveBeenCalledTimes(3);
+    deferSecondaryCatalogs = false;
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(4));
+    expect(getCategories.mock.calls.filter(([request]) => request.source === 'v2ex')).toHaveLength(1);
+    expect(hook.result.current.categories).toEqual([category]);
   });
 
   it('finishes readable aggregate pages and restores a blocked source only after its real session changes', async () => {
@@ -407,7 +443,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.shownFeedItems).toEqual([topic]));
     expect(getCategories.mock.calls[0]?.[1]).toMatchObject({
-      readPlanScopes: [['linuxdo', 'public:omit']]
+      readPlanScope: 'public:omit'
     });
     expect(getFeed.mock.calls[0]?.[1]).toMatchObject({
       readPlanScopes: [['linuxdo', 'public:omit']]
@@ -757,82 +793,93 @@ describe('Feed controller sessions', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it('aborts the owned Feed request after leaving Feed and ignores later credential changes', async () => {
-    const pendingFeed = Promise.withResolvers<{
-      items: never[];
-      errors: {
-        linuxdo: {
-          kind: 'verification-required';
-          message: string;
-          verificationRequired: true;
-        };
-      };
-      hasMore: false;
-      nextPage: null;
-    }>();
-    const feedSignals: AbortSignal[] = [];
-    const getFeed = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
-      feedSignals.push(signal);
-      return pendingFeed.promise;
-    });
-    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
-    const showNodeSeekVerification = jest.fn<void, [message?: string]>();
-    const showYaohuoLogin = jest.fn<void, [message?: string]>();
-    const readGateway = {
-      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
-      getFeed,
-      hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as ReadGateway;
-    let sessionEpochs = initialForumSessionEpochs;
-    let active = true;
-    const hook = await renderHook(() =>
-      useFeedRuntime({
-        sessionEpochs,
-        linuxDoVerificationActive: false,
-        notify: jest.fn(),
-        readerData: createEmptyReaderData(),
-        readerDataLoaded: true,
-        active,
-        showLinuxDoVerification,
-        showNodeSeekVerification,
-        showYaohuoLogin,
-        readGateway
-      })
-    );
-    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
-
-    active = false;
-    await act(async () => {
-      hook.rerender({});
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(feedSignals[0]?.aborted).toBe(true));
-
-    sessionEpochs = { ...initialForumSessionEpochs, linuxdo: 1 };
-    await act(async () => {
-      hook.rerender({});
-      await Promise.resolve();
-    });
-    await act(async () => {
-      pendingFeed.resolve({
-        items: [],
-        errors: {
-          linuxdo: {
-            kind: 'verification-required',
-            message: '离开页面后的旧请求',
-            verificationRequired: true
-          }
-        },
-        hasMore: false,
-        nextPage: null
+  it.each(['unchanged', 'changed'] as const)(
+    'aborts the owned Feed request on leaving and resumes the %s session on return',
+    async (session) => {
+      const pendingFeed = Promise.withResolvers<FeedResponse>();
+      const feedSignals: AbortSignal[] = [];
+      const getFeed = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
+        feedSignals.push(signal);
+        return pendingFeed.promise;
       });
-      await pendingFeed.promise;
-    });
-    expect(getFeed).toHaveBeenCalledTimes(1);
-    expect(showLinuxDoVerification).not.toHaveBeenCalled();
-    expect(showNodeSeekVerification).not.toHaveBeenCalled();
-    expect(showYaohuoLogin).not.toHaveBeenCalled();
-  });
+      const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
+      const showNodeSeekVerification = jest.fn<void, [message?: string]>();
+      const showYaohuoLogin = jest.fn<void, [message?: string]>();
+      const notify = jest.fn();
+      const readGateway = {
+        getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+        getFeed,
+        hasYaohuoCredential: jest.fn(async () => false)
+      } as unknown as ReadGateway;
+      let sessionEpochs = initialForumSessionEpochs;
+      let active = true;
+      const hook = await renderHook(() =>
+        useFeedRuntime({
+          sessionEpochs,
+          linuxDoVerificationActive: false,
+          notify,
+          readerData: createEmptyReaderData(),
+          readerDataLoaded: true,
+          active,
+          showLinuxDoVerification,
+          showNodeSeekVerification,
+          showYaohuoLogin,
+          readGateway
+        })
+      );
+      await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+
+      active = false;
+      await act(async () => {
+        hook.rerender({});
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(feedSignals[0]?.aborted).toBe(true));
+
+      if (session === 'changed') sessionEpochs = { ...initialForumSessionEpochs, linuxdo: 1 };
+      await act(async () => {
+        hook.rerender({});
+        await Promise.resolve();
+      });
+      await act(async () => {
+        pendingFeed.resolve({
+          items: [],
+          errors: {
+            linuxdo: {
+              kind: 'verification-required',
+              message: '离开页面后的旧请求',
+              verificationRequired: true
+            }
+          },
+          hasMore: false,
+          nextPage: null
+        });
+        await pendingFeed.promise;
+      });
+      expect(getFeed).toHaveBeenCalledTimes(1);
+      expect(showLinuxDoVerification).not.toHaveBeenCalled();
+      const restoredTopics: Topic[] = sourceValues.map((source) => ({
+        source,
+        id: `restored-${source}`,
+        title: `${source} restored`,
+        author: 'alice',
+        url: `https://${source}.test/restored`,
+        createdAt: '2026-07-26T00:00:00.000Z',
+        replyCount: 0
+      }));
+      getFeed.mockResolvedValueOnce({ items: restoredTopics, errors: {}, hasMore: false, nextPage: null });
+      active = true;
+      await act(async () => hook.rerender({}));
+      await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual(restoredTopics));
+      expect(getFeed).toHaveBeenCalledTimes(2);
+      expect(getFeed.mock.calls[1][0].signal.aborted).toBe(false);
+      expect(hook.result.current.feedOutcomeKind).toBe('data');
+      expect(hook.result.current.feedBusy).toBe(false);
+      expect(notify).not.toHaveBeenCalled();
+      expect(showNodeSeekVerification).not.toHaveBeenCalled();
+      expect(showYaohuoLogin).not.toHaveBeenCalled();
+    }
+  );
 
   it('pauses categories during verification without canceling the primary Feed read', async () => {
     const categorySignals: AbortSignal[] = [];
@@ -876,7 +923,7 @@ describe('Feed controller sessions', () => {
       })
     );
     await waitFor(() => {
-      expect(getCategories).toHaveBeenCalledTimes(1);
+      expect(getCategories).toHaveBeenCalledTimes(4);
       expect(getFeed).toHaveBeenCalledTimes(1);
     });
 
@@ -887,14 +934,14 @@ describe('Feed controller sessions', () => {
     });
     await waitFor(() => expect(categorySignals[0]?.aborted).toBe(true));
     expect(feedSignals[0]?.aborted).toBe(false);
-    expect(getCategories).toHaveBeenCalledTimes(1);
+    expect(getCategories).toHaveBeenCalledTimes(4);
 
     linuxDoVerificationActive = false;
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(5));
     expect(getFeed).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -938,7 +985,7 @@ describe('Feed controller sessions', () => {
     );
 
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(4));
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([topic]));
     expect(getFeed.mock.calls[0]?.[1]?.readPlanScopes).toEqual([
       ['v2ex', 'public:omit'],
@@ -1168,22 +1215,23 @@ describe('Feed controller sessions', () => {
         readGateway
       })
     );
-    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(4));
     expect(getFeed).not.toHaveBeenCalled();
+    expect(categorySignals.every((signal) => !signal.aborted)).toBe(true);
 
     catalogActive = false;
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(categorySignals[0]?.aborted).toBe(true));
+    await waitFor(() => expect(categorySignals.every((signal) => signal.aborted)).toBe(true));
     expect(getFeed).not.toHaveBeenCalled();
   });
 
   it('does not replay a stale single-source category panel when shared categories settle on Search', async () => {
     const sharedCategories = Promise.withResolvers<{ items: never[]; errors: Record<string, never> }>();
     const getCategories = jest.fn(async ({ source }: { source: string }) => {
-      if (source === 'all') {
+      if (source !== 'nodeseek') {
         return sharedCategories.promise;
       }
       throw Object.assign(new Error('NodeSeek 分类需要验证'), {
@@ -1205,6 +1253,7 @@ describe('Feed controller sessions', () => {
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
         active,
+        catalogActive: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification,
         showYaohuoLogin: jest.fn(),
@@ -1675,7 +1724,7 @@ describe('Feed controller sessions', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    expect(hook.result.current.categories).toEqual([]);
+    expect(hook.result.current.categories).toEqual([cachedTargetCategory]);
     expect(
       (hook.result.current as typeof hook.result.current & { feedCategories?: Category[] }).feedCategories
     ).toEqual([cachedTargetCategory]);
@@ -2078,7 +2127,7 @@ describe('Feed controller sessions', () => {
       title: '身份确认后的完整主题',
       url: 'https://www.nodeseek.com/post-bootstrap-full-new-1'
     };
-    const oldSafeCategory = { source: 'v2ex' as const, id: 'warm-category-old', name: '上次运行的公开分类' };
+    const oldSafeCategory = { source: 'nodeseek' as const, id: 'warm-category-old', name: '上次运行的公开分类' };
     const safeCategory = { source: 'v2ex' as const, id: 'bootstrap-category-new', name: '本次启动的公开分类' };
     const fullCategory = { source: 'nodeseek' as const, id: 'bootstrap-category-full', name: '身份确认后的完整分类' };
     const fullRead = Promise.withResolvers<{
@@ -2092,11 +2141,12 @@ describe('Feed controller sessions', () => {
       errors: Record<string, never>;
     }>();
     let feedReadCount = 0;
-    let categoryReadCount = 0;
     const readGateway = {
-      getCategories: jest.fn(async () => {
-        categoryReadCount += 1;
-        return categoryReadCount === 1 ? { items: [safeCategory], errors: {} } : fullCategoriesRead.promise;
+      getCategories: jest.fn(async ({ source }: { source: Source }, context?: { readPlanScope?: string }) => {
+        if (source === 'v2ex') return { items: [safeCategory], errors: {} };
+        if (source === 'nodeseek' && context?.readPlanScope?.startsWith('authenticated:'))
+          return fullCategoriesRead.promise;
+        return { items: [], errors: {} };
       }),
       getFeed: jest.fn(async () => {
         feedReadCount += 1;
@@ -2128,12 +2178,7 @@ describe('Feed controller sessions', () => {
       }
     );
     appQueryClient.setQueryData(
-      forumQueryKeys.categories(
-        'all',
-        initialForumSessionEpochs,
-        defaultEnabledSourcesKey,
-        aggregateReadPlanScope('categories')
-      ),
+      forumQueryKeys.categories('nodeseek', initialForumSessionEpochs, undefined, 'authenticated:0'),
       {
         items: [oldSafeCategory],
         errors: {}
@@ -2174,18 +2219,18 @@ describe('Feed controller sessions', () => {
     });
 
     await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(5));
     expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
     expect(hook.result.current.categories).toEqual([safeCategory]);
     expect(renderedKeys.slice(firstSafeFrame)).not.toContainEqual([topicKey(oldSafeTopic)]);
 
     await act(async () => {
       fullRead.resolve({ items: [fullTopic], errors: {}, hasMore: false, nextPage: null });
-      fullCategoriesRead.resolve({ items: [safeCategory, fullCategory], errors: {} });
+      fullCategoriesRead.resolve({ items: [fullCategory], errors: {} });
       await Promise.all([fullRead.promise, fullCategoriesRead.promise]);
     });
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([fullTopic]));
-    await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory, fullCategory]));
+    await waitFor(() => expect(hook.result.current.categories).toEqual([fullCategory, safeCategory]));
   });
 
   it('keeps the safe list and disables old pagination when the last startup barrier clears', async () => {
@@ -2311,7 +2356,7 @@ describe('Feed controller sessions', () => {
     });
   });
 
-  it('keeps only cache-safe aggregate categories across plan and epoch changes', async () => {
+  it('keeps unaffected catalogs visible while hiding categories from old account scopes', async () => {
     const safeCategory = { source: 'v2ex' as const, id: 'v2ex', name: 'V2EX' };
     const privateCategory = { source: 'nodeseek' as const, id: 'nodeseek', name: 'NodeSeek' };
     const unchangedCategory = { source: 'linuxdo' as const, id: 'linuxdo', name: 'linux.do' };
@@ -2319,25 +2364,20 @@ describe('Feed controller sessions', () => {
       items: (typeof safeCategory | typeof privateCategory | typeof unchangedCategory)[];
       errors: Record<string, never>;
     }>();
-    const pendingRead = Promise.withResolvers<{
-      items: (typeof safeCategory)[];
-      errors: Record<string, never>;
-    }>();
     const changedEpochRead = Promise.withResolvers<{
       items: (typeof safeCategory)[];
       errors: Record<string, never>;
     }>();
-    let categoryReadCount = 0;
+    let nodeSeekReads = 0;
     const readGateway = {
-      getCategories: jest.fn(async () => {
-        categoryReadCount += 1;
-        if (categoryReadCount === 1) {
-          return { items: [safeCategory], errors: {} };
-        }
-        if (categoryReadCount === 2) {
-          return fullRead.promise;
-        }
-        return categoryReadCount === 3 ? pendingRead.promise : changedEpochRead.promise;
+      getCategories: jest.fn(async ({ source }: { source: Source }, context?: { readPlanScope?: string }) => {
+        if (source === 'v2ex') return { items: [safeCategory], errors: {} };
+        if (source === 'linuxdo')
+          return { items: context?.readPlanScope === 'public:omit' ? [] : [unchangedCategory], errors: {} };
+        if (source !== 'nodeseek') return { items: [], errors: {} };
+        nodeSeekReads += 1;
+        if (nodeSeekReads === 1) return { items: [], errors: {} };
+        return nodeSeekReads === 2 ? fullRead.promise : changedEpochRead.promise;
       }),
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
@@ -2363,21 +2403,21 @@ describe('Feed controller sessions', () => {
       return controller;
     });
 
-    await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory]));
+    await waitFor(() => expect(hook.result.current.categories).toEqual([unchangedCategory, safeCategory]));
     identityBarriers = [];
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(2));
-    expect(hook.result.current.categories).toEqual([safeCategory]);
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(5));
+    expect(hook.result.current.categories).toEqual([unchangedCategory, safeCategory]);
 
     await act(async () => {
-      fullRead.resolve({ items: [safeCategory, privateCategory, unchangedCategory], errors: {} });
+      fullRead.resolve({ items: [privateCategory], errors: {} });
       await fullRead.promise;
     });
     await waitFor(() =>
-      expect(hook.result.current.categories).toEqual([safeCategory, privateCategory, unchangedCategory])
+      expect(hook.result.current.categories).toEqual([privateCategory, unchangedCategory, safeCategory])
     );
 
     identityBarriers = ['nodeseek', 'linuxdo'];
@@ -2385,14 +2425,8 @@ describe('Feed controller sessions', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(6));
     expect(hook.result.current.categories).toEqual([safeCategory]);
-
-    await act(async () => {
-      pendingRead.resolve({ items: [safeCategory], errors: {} });
-      await pendingRead.promise;
-    });
-    await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory]));
 
     sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     identityBarriers = ['linuxdo'];
@@ -2401,13 +2435,13 @@ describe('Feed controller sessions', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(7));
     expect(hook.result.current.categories).toEqual([safeCategory]);
     const firstSafeFrame = renderedCategoryKeys.findIndex((keys) => keys.includes('v2ex:v2ex'));
     expect(renderedCategoryKeys.slice(firstSafeFrame)).not.toContainEqual([]);
 
     await act(async () => {
-      changedEpochRead.resolve({ items: [safeCategory], errors: {} });
+      changedEpochRead.resolve({ items: [], errors: {} });
       await changedEpochRead.promise;
       await new Promise((resolve) => setTimeout(resolve, 0));
       hook.rerender({});
@@ -2416,7 +2450,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.categories).toEqual([safeCategory]);
   });
 
-  it('removes the aggregate category cache on a direct source epoch change', async () => {
+  it('replaces only the changed source catalog on a direct session epoch change', async () => {
     const changedCategory = { source: 'nodeseek' as const, id: 'direct-private', name: '旧账号分类' };
     const safeCategory = { source: 'v2ex' as const, id: 'direct-safe', name: 'V2EX 分类' };
     const unchangedCategory = { source: 'linuxdo' as const, id: 'direct-unchanged', name: 'linux.do 分类' };
@@ -2426,11 +2460,14 @@ describe('Feed controller sessions', () => {
     }>();
     let changedEpoch = false;
     let sessionEpochs = initialForumSessionEpochs;
-    const getCategories = jest.fn(async () =>
-      changedEpoch
-        ? changedEpochRead.promise
-        : { items: [changedCategory, safeCategory, unchangedCategory], errors: {} }
-    );
+    const getCategories = jest.fn(async ({ source }: { source: Source }) => {
+      if (source === 'nodeseek')
+        return changedEpoch ? changedEpochRead.promise : { items: [changedCategory], errors: {} };
+      return {
+        items: source === 'v2ex' ? [safeCategory] : source === 'linuxdo' ? [unchangedCategory] : [],
+        errors: {}
+      };
+    });
     const readGateway = {
       getCategories,
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
@@ -2452,9 +2489,10 @@ describe('Feed controller sessions', () => {
     );
 
     await waitFor(() =>
-      expect(hook.result.current.categories).toEqual([changedCategory, safeCategory, unchangedCategory])
+      expect(hook.result.current.categories).toEqual([changedCategory, unchangedCategory, safeCategory])
     );
 
+    const frameBeforeEpochChange = hook.result.current.categories;
     changedEpoch = true;
     sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     await act(async () => {
@@ -2462,17 +2500,19 @@ describe('Feed controller sessions', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(2));
-    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(5));
+    expect(hook.result.current.categories).not.toContainEqual(changedCategory);
+    expect(hook.result.current.categories).not.toBe(frameBeforeEpochChange);
+    expect(hook.result.current.categories).toEqual([unchangedCategory, safeCategory]);
 
     await act(async () => {
-      changedEpochRead.resolve({ items: [safeCategory], errors: {} });
+      changedEpochRead.resolve({ items: [], errors: {} });
       await changedEpochRead.promise;
       await new Promise((resolve) => setTimeout(resolve, 0));
       hook.rerender({});
       await Promise.resolve();
     });
-    expect(hook.result.current.categories).toEqual([safeCategory]);
+    expect(hook.result.current.categories).toEqual([unchangedCategory, safeCategory]);
   });
 
   it('removes old-plan aggregate data across an epoch change', async () => {
@@ -3572,7 +3612,7 @@ describe('Feed controller sessions', () => {
   it('reports a single-source category error instead of treating it as an empty category list', async () => {
     const readGateway = {
       getCategories: jest.fn(async ({ source }: { source: string }) =>
-        source === 'all'
+        source !== 'v2ex'
           ? { items: [], errors: {} }
           : { items: [], errors: { v2ex: { kind: 'ordinary' as const, message: '分类读取失败' } } }
       ),
@@ -3600,10 +3640,12 @@ describe('Feed controller sessions', () => {
 
     await waitFor(() =>
       expect(readGateway.getCategories).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'all' }),
+        expect.objectContaining({ source: 'v2ex' }),
         expect.any(Object)
       )
     );
+    await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
+    expect(notify).not.toHaveBeenCalled();
     await act(async () => {
       hook.result.current.changeFeedSource('v2ex');
     });

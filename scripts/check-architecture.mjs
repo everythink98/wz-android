@@ -31,6 +31,7 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/library/LibraryRoute',
   '@/features/library/LibraryRouteRuntime',
   '@/features/more/MoreRoute',
+  '@/features/more/NodeSeekCreditsRoute',
   '@/features/more/MoreRouteRuntime',
   '@/features/notifications/NotificationRoute',
   '@/features/notifications/NotificationRouteRuntime',
@@ -65,7 +66,7 @@ const ACCOUNT_RUNTIME_WRITE_CAPABILITIES = new Set([
 ]);
 const ACCOUNT_RUNTIME_CENTER_CAPABILITIES = new Set([
   'account',
-  'checkIn',
+  'nodeSeek',
   'credentials',
   'handleAccountCenterCommand',
   'nodeImage',

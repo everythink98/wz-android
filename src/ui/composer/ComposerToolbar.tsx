@@ -27,10 +27,9 @@ import {
   type LucideIcon
 } from 'lucide-react-native';
 import type { ComposerIntent, ComposerSite } from '@/domain/forum/structuredComposer';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import type { ComposerToolbarAction, ComposerToolbarState } from './structuredComposerBridge';
 
 export type ComposerToolbarProps = {
@@ -54,7 +53,7 @@ type ToolbarButton = {
 };
 type Menu = { kind: MenuKind; left: number; top: number; width: number; height: number };
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     root: {
       height: 58,

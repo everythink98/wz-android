@@ -1,7 +1,6 @@
 const DEFAULT_DRAW_DISTANCE = 900;
 
 export const FEED_LIST_PERFORMANCE_PROPS = {
-  drawDistance: DEFAULT_DRAW_DISTANCE,
   maintainVisibleContentPosition: { disabled: true },
   maxItemsInRecyclePool: 120
 };

@@ -1,12 +1,11 @@
 import { useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { getNativePropsForTNode, type CustomBlockRenderer, type CustomMixedRenderer } from 'react-native-render-html';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { isPreviewableImageUrl, type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
 import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
-import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
+import { fontFamilyValue, lineHeightMultiplier, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import type {
   MediaReferrerPolicy,
   ReplyLocationTarget,
@@ -56,8 +55,8 @@ export function useHtmlRenderingController({
   onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
   selectedTopic: Topic | null;
-  settings: ReaderSettings;
-  styleSettings?: ReaderSettings;
+  settings: ReaderStyleSettings;
+  styleSettings?: ReaderStyleSettings;
   theme: ReaderTheme;
   topicDetail: TopicDetail | null;
   webViewBlockMessage: string;

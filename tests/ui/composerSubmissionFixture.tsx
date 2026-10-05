@@ -91,7 +91,7 @@ export function createComposerTransport(
         method === 'POST' &&
         ((url.origin === 'https://api.nodeimage.com' && url.pathname === '/api/upload') ||
           (url.origin === 'https://linux.do' && url.pathname === '/uploads.json') ||
-          url.href === 'https://file.sang.pub/api/upload')
+          url.href === 'https://aapi.helioho.st/upload.php')
       ) {
         prepareRequestToSend(init);
         await transport.respond(init?.signal);
@@ -99,8 +99,8 @@ export function createComposerTransport(
         transport.onChange();
         return new Response(
           JSON.stringify(
-            url.href === 'https://file.sang.pub/api/upload'
-              ? { code: 200, data: 'https://example.invalid/composer-proof.png' }
+            url.href === 'https://aapi.helioho.st/upload.php'
+              ? { code: 200, data: { url: 'https://example.invalid/composer-proof.png' } }
               : { url: 'https://example.invalid/composer-proof.png' }
           )
         );
@@ -245,6 +245,9 @@ export function TopicSubmissionFixture({
       })
     },
     refreshTopicReplies: transport.refresh,
+    refreshWholeTopic: async () => {
+      throw new Error('Unexpected policy refresh in composer fixture');
+    },
     siteSessionViewModels: account.sessions,
     topicDetail: topic,
     topicReplies: [reply],

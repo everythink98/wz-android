@@ -778,79 +778,92 @@ describe('NodeSeek notifications', () => {
     ]);
   });
 
-  it('loads rich private messages and marks only the exact unread incoming message ids', async () => {
-    const calls: { url: string; init?: RequestInit }[] = [];
-    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-      calls.push({ url, init });
-      if (new URL(url).pathname.endsWith('/message/with/9')) {
-        return json({
-          talkTo: { member_name: '丙' },
-          msgArray: [
-            {
-              id: 20,
-              sender_id: 9,
-              receiver_id: 7,
-              content: '**新消息** :ac04:',
-              is_markdown: true,
-              created_at: '2026-08-02T12:00:00Z',
-              viewed: false
-            },
-            {
-              id: 19,
-              sender_id: 7,
-              receiver_id: 9,
-              content: '*我的回复*',
-              is_markdown: false,
-              created_at: '2026-08-01T12:00:00Z',
-              viewed: false
-            },
-            {
-              id: 18,
-              sender_id: 9,
-              receiver_id: 7,
-              content: '旧消息',
-              is_markdown: false,
-              created_at: '2026-07-31T12:00:00Z',
-              viewed: true
-            }
-          ]
-        });
-      }
-      return json({ success: true });
-    });
-    const item = {
-      source: 'nodeseek' as const,
-      id: 'message:9',
-      kind: 'private-message' as const,
-      actor: { id: '9', name: '丙' },
-      title: '丙',
-      createdAt: null,
-      unread: true,
-      target: { type: 'private-conversation' as const, conversationId: '9' },
-      remoteGroup: 'message'
-    };
-    const access = { fetcher, identityKey: 'nodeseek:7', userId: '7' };
+  it.each(['notification-list', 'user-profile'] as const)(
+    'loads rich private messages from %s and marks only the exact unread incoming message ids',
+    async (origin) => {
+      const calls: { url: string; init?: RequestInit }[] = [];
+      const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        if (new URL(url).pathname.endsWith('/message/with/9')) {
+          return json({
+            talkTo: { member_name: '丙' },
+            msgArray: [
+              {
+                id: 20,
+                sender_id: 9,
+                receiver_id: 7,
+                content: '**新消息** :ac04:',
+                is_markdown: true,
+                created_at: '2026-08-02T12:00:00Z',
+                viewed: false
+              },
+              {
+                id: 19,
+                sender_id: 7,
+                receiver_id: 9,
+                content: '*我的回复*',
+                is_markdown: false,
+                created_at: '2026-08-01T12:00:00Z',
+                viewed: false
+              },
+              {
+                id: 18,
+                sender_id: 9,
+                receiver_id: 7,
+                content: '旧消息',
+                is_markdown: false,
+                created_at: '2026-07-31T12:00:00Z',
+                viewed: true
+              }
+            ]
+          });
+        }
+        return json({ success: true });
+      });
+      const item = {
+        source: 'nodeseek' as const,
+        id: origin === 'notification-list' ? 'message:9' : 'conversation:9',
+        kind: 'private-message' as const,
+        actor: { id: '9', name: '丙' },
+        title: '丙',
+        createdAt: null,
+        unread: origin === 'notification-list',
+        target: { type: 'private-conversation' as const, conversationId: '9' },
+        ...(origin === 'notification-list' ? { remoteGroup: 'message' } : {})
+      };
+      const access = { fetcher, identityKey: 'nodeseek:7', userId: '7' };
 
-    const detail = await nodeSeekNotificationAdapter.loadDetail(item, access);
-    await nodeSeekNotificationAdapter.markRead(item, detail, access);
+      const detail = await nodeSeekNotificationAdapter.loadDetail(item, access);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.init?.method).toBeUndefined();
+      await nodeSeekNotificationAdapter.markRead(item, detail, access);
 
-    expect(detail.messages?.map((message) => [message.id, message.mine])).toEqual([
-      ['18', false],
-      ['19', true],
-      ['20', false]
-    ]);
-    expect(detail.reply).toEqual({ format: 'markdown' });
-    expect(detail.messages?.[2]?.contentHtml).toContain('<strong>新消息</strong>');
-    expect(detail.messages?.[2]?.contentHtml).toContain(
-      '<img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04">'
-    );
-    expect(detail.messages?.[1]).toMatchObject({ contentText: '*我的回复*' });
-    expect(detail.unreadMessageIds).toEqual(['20']);
-    expect(calls.at(-1)).toMatchObject({
-      init: { method: 'POST', body: JSON.stringify({ messages: [20] }) }
-    });
-    expect(new URL(calls.at(-1)?.url || '').pathname).toBe('/api/notification/message/markViewed');
-  });
+      expect(detail.messages?.map((message) => [message.id, message.mine])).toEqual([
+        ['18', false],
+        ['19', true],
+        ['20', false]
+      ]);
+      expect(detail.reply).toEqual({ format: 'markdown' });
+      expect(detail.messages?.[2]?.contentHtml).toContain('<strong>新消息</strong>');
+      expect(detail.messages?.[2]?.contentHtml).toContain(
+        '<img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04">'
+      );
+      expect(detail.messages?.[1]).toMatchObject({ contentText: '*我的回复*' });
+      expect(detail.unreadMessageIds).toEqual(['20']);
+      expect(calls.at(-1)).toMatchObject({
+        init: { method: 'POST', body: JSON.stringify({ messages: [20] }) }
+      });
+      expect(new URL(calls.at(-1)?.url || '').pathname).toBe('/api/notification/message/markViewed');
+      calls.length = 0;
+      await expect(
+        nodeSeekNotificationAdapter.markRead(item, { ...detail, unreadMessageIds: [] }, access)
+      ).resolves.toMatchObject({ confirmed: false });
+      await expect(
+        nodeSeekNotificationAdapter.markRead(item, { ...detail, unreadMessageIds: ['invalid'] }, access)
+      ).resolves.toMatchObject({ confirmed: false });
+      expect(calls).toEqual([]);
+    }
+  );
 
   it('serializes the exact NodeSeek receiver UID as a number', async () => {
     let wireBody: Record<string, unknown> | undefined;

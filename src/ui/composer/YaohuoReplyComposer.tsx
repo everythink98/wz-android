@@ -2,6 +2,9 @@ import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
+import { Image as ExpoImage } from 'expo-image';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import {
   Bold,
   Code,
@@ -15,11 +18,10 @@ import {
   Type,
   type LucideIcon
 } from 'lucide-react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { YAOHUO_FACE_ITEMS, yaohuoFaceImageUrl } from './expressionCatalogs';
 
 type FormatAction = 'bold' | 'italic' | 'link' | 'image' | 'quote' | 'code' | 'list';
@@ -66,7 +68,7 @@ function formatUbb(action: FormatAction, text: string) {
   }
 }
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const scaled = (value: number) => Math.round(value * settings.fontScale);
   const neutral = theme.dark ? '#ffffff' : '#000000';
@@ -75,7 +77,26 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   return StyleSheet.create({
     composer: { gap: 10, paddingHorizontal: 16, paddingTop: 14, width: '100%' },
     embedded: { flex: 1, minHeight: 0, gap: 0, paddingHorizontal: 0, paddingTop: 0 },
-    embeddedInput: { flex: 1, maxHeight: undefined, borderRadius: 0, borderWidth: 0, paddingHorizontal: 16 },
+    embeddedInput: {
+      flex: 1,
+      maxHeight: undefined,
+      borderRadius: 0,
+      borderWidth: 0,
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      paddingBottom: 16,
+      fontSize: scaled(15),
+      lineHeight: scaled(24)
+    },
+    bodyLabel: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: scaled(12),
+      lineHeight: scaled(18),
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 4
+    },
     bottomTools: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -106,17 +127,23 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     toolbarContent: { alignItems: 'center', flexDirection: 'row', gap: 6, padding: 6 },
     embeddedToolbarContent: { flexWrap: 'wrap', justifyContent: 'space-around', gap: 4, padding: 8 },
     selectedFace: {
+      alignItems: 'center',
       alignSelf: 'flex-start',
       backgroundColor: neutralSurface,
-      borderRadius: 999,
+      borderRadius: 10,
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: 9,
+      paddingVertical: 4
+    },
+    selectedFaceText: {
       color: theme.ink,
       fontFamily,
       fontSize: scaled(12),
       fontWeight: '700',
-      lineHeight: scaled(18),
-      paddingHorizontal: 9,
-      paddingVertical: 3
+      lineHeight: scaled(18)
     },
+    selectedFaceImage: { height: 24, width: 24 },
     facePanel: {
       backgroundColor: neutralSurface,
       borderColor: neutralBorder,
@@ -132,12 +159,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center',
-      minHeight: 44,
-      paddingHorizontal: 10,
-      paddingVertical: 7
+      gap: 4,
+      minHeight: 72,
+      padding: 6,
+      width: 64
     },
     faceChipActive: { backgroundColor: theme.mist, borderColor: theme.primary },
     faceText: { color: theme.ink, fontFamily, fontSize: scaled(12), fontWeight: '500' },
+    faceImage: { height: 36, width: 36 },
     input: {
       backgroundColor: theme.surface,
       borderColor: neutralBorder,
@@ -222,6 +251,7 @@ export function YaohuoReplyComposer({
   onUploadImage?: (() => void) | (() => Promise<string | undefined | void>);
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
+  const mediaContext = useForumMediaRequestContext('yaohuo');
   const inputRef = useRef<InputHandle | null>(null);
   // Portal forwards parent props after the input's native change has committed.
   // Echo typing locally so TextInput never restores the preceding parent value.
@@ -337,7 +367,7 @@ export function YaohuoReplyComposer({
     }
   };
   const togglePanel = async (panel: 'face' | 'format') => {
-    if (actionBusy || disabledReason || dismissPanels || imageRequestRef.current || panelRequestRef.current) return;
+    if (actionBusy || disabledReason || imageRequestRef.current || panelRequestRef.current) return;
     if (panel === 'face' ? facePanelOpen : formatPanelOpen) {
       closePanels();
       return;
@@ -425,6 +455,7 @@ export function YaohuoReplyComposer({
           key={item.value || 'empty'}
           accessibilityRole="button"
           accessibilityLabel={item.label}
+          accessibilityState={{ selected: faceMode === 'selection' && item.value === face }}
           disabled={inputBusy}
           style={[styles.faceChip, item.value === face && styles.faceChipActive, inputBusy && styles.disabled]}
           onPress={() => {
@@ -435,12 +466,19 @@ export function YaohuoReplyComposer({
                 Math.max(0, Math.min(selectionRef.current.start, contentRef.current.length)) + replacement.length;
               changeContent(next);
               selectionRef.current = { start: cursor, end: cursor };
-              if (!disabledReason && !dismissPanels) onReturnToEditor?.();
-              focusAtSelection(selectionRef.current);
             } else onFaceChange(item.value);
-            setFacePanelOpen(false);
           }}
         >
+          {item.value ? (
+            <ExpoImage
+              accessible={false}
+              cachePolicy="memory-disk"
+              contentFit="contain"
+              source={imageSourceFromUrl(yaohuoFaceImageUrl(item.value), { mediaContext })}
+              style={styles.faceImage}
+              testID={`yaohuo-face-preview-${item.value}`}
+            />
+          ) : null}
           <Text style={styles.faceText}>{item.label}</Text>
         </Pressable>
       ))}
@@ -450,7 +488,19 @@ export function YaohuoReplyComposer({
   return (
     <View style={[styles.composer, presentation === 'embedded' && styles.embedded]}>
       {presentation !== 'embedded' ? <Text style={styles.title}>{title}</Text> : null}
-      {face && selectedFaceLabel ? <Text style={styles.selectedFace}>表情：{selectedFaceLabel}</Text> : null}
+      {face && selectedFaceLabel ? (
+        <View style={styles.selectedFace}>
+          <ExpoImage
+            accessible={false}
+            cachePolicy="memory-disk"
+            contentFit="contain"
+            source={imageSourceFromUrl(yaohuoFaceImageUrl(face), { mediaContext })}
+            style={styles.selectedFaceImage}
+            testID="yaohuo-selected-face-preview"
+          />
+          <Text style={styles.selectedFaceText}>表情：{selectedFaceLabel}</Text>
+        </View>
+      ) : null}
       {disabledReason ? <Text style={styles.disabledReason}>{disabledReason}</Text> : null}
       {displayError ? (
         <Text accessibilityLiveRegion="polite" style={styles.error}>
@@ -462,6 +512,7 @@ export function YaohuoReplyComposer({
           {status}
         </Text>
       ) : null}
+      {presentation === 'embedded' ? <Text style={styles.bodyLabel}>正文</Text> : null}
       <TextInput
         ref={(node) => {
           inputRef.current = node ? (node as InputHandle) : null;
@@ -522,7 +573,7 @@ export function YaohuoReplyComposer({
             disabled={inputBusy}
             onPress={() => {
               if (panelPending && !disabledReason && !dismissPanels) onReturnToEditor?.();
-              focusAtSelection();
+              focusAtSelection(selectionRef.current);
             }}
           />
         </View>

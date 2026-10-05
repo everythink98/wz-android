@@ -73,6 +73,29 @@ describe('Composer keyboard native host', () => {
     expect(done).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the Android layout target out of the non-Android view and uses the platform keyboard dismissal', async () => {
+    jest.replaceProperty(ReactNative.Platform, 'OS', 'ios');
+    const dismiss = jest.spyOn(native.Keyboard, 'dismiss').mockImplementation(() => undefined);
+    const ref = createRef<ComposerKeyboardHostHandle>();
+    const view = await render(
+      <ComposerKeyboardHost
+        ref={ref}
+        enabled
+        hiddenLayoutHeight={600}
+        testID="host"
+        pointerEvents="box-none"
+        style={{ height: 600, transform: [{ translateY: -120 }] }}
+      />
+    );
+    const host = view.getByTestId('host');
+    expect(host).not.toHaveProp('hiddenLayoutHeight');
+    expect(host).toHaveProp('pointerEvents', 'box-none');
+    expect(host).toHaveStyle({ height: 600, transform: [{ translateY: -120 }] });
+    await ref.current!.hideKeyboard();
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    expect(native.UIManager.dispatchViewManagerCommand).not.toHaveBeenCalled();
+  });
+
   it.each(['abort', 'disable', 'unmount'] as const)(
     'cancels a native request on %s and ignores its late event',
     async (end) => {

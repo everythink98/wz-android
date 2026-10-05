@@ -1,13 +1,18 @@
 import { StyleSheet } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { alphaColor, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  type ReaderStyleSettings,
+  alphaColor,
+  fontFamilyValue,
+  lineHeightMultiplier,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 
-export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createNotificationStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const scaled = (value: number) => Math.round(value * settings.fontScale);
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.background },
-    listContent: { backgroundColor: theme.surface, paddingBottom: 32 },
+    listContent: { flexGrow: 1, backgroundColor: theme.surface, paddingBottom: 24 },
     toolbar: {
       gap: 0,
       backgroundColor: theme.surface,
@@ -27,13 +32,25 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       alignItems: 'center',
       flexDirection: 'row',
       justifyContent: 'space-between',
-      gap: 16
+      gap: 8,
+      flexWrap: 'wrap'
     },
-    unreadControl: { alignItems: 'center', flexDirection: 'row', gap: 7 },
-    controlLabel: { color: theme.muted, fontFamily, fontSize: scaled(12), fontWeight: '500', lineHeight: scaled(18) },
+    unreadControl: { minHeight: 48, alignItems: 'center', flexDirection: 'row', gap: 7 },
+    controlSummary: {
+      flex: 1,
+      minWidth: 0,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      columnGap: 12,
+      rowGap: 4,
+      paddingVertical: 4
+    },
+    controlLabel: { color: theme.ink, fontFamily, fontSize: scaled(13), fontWeight: '500', lineHeight: scaled(20) },
     controlMeta: { color: theme.muted, fontFamily, fontSize: scaled(11), lineHeight: scaled(16) },
     inlineAction: {
-      minHeight: 44,
+      minHeight: 48,
       justifyContent: 'center',
       paddingHorizontal: 4
     },
@@ -45,7 +62,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       paddingHorizontal: 16,
       paddingVertical: 8
     },
-    sourceErrorRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+    sourceErrorRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     sourceErrorText: { flex: 1 },
     noticeText: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
     errorText: { color: theme.danger, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
@@ -55,26 +72,42 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       flexDirection: 'row',
       gap: 12,
       backgroundColor: theme.surface,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 16,
-      paddingVertical: 11
+      paddingVertical: settings.listDensity === 'compact' ? 10 : 12
     },
-    rowBody: { flex: 1, minWidth: 0, gap: 3 },
+    rowUnread: { backgroundColor: alphaColor(theme.primary, theme.dark ? 0.08 : 0.035) },
+    rowSeparator: {
+      position: 'absolute',
+      bottom: 0,
+      left: 60,
+      right: 16,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: theme.line
+    },
+    rowBody: { flex: 1, minWidth: 0, gap: 4 },
     actorRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
     actorText: { flex: 1, color: theme.ink, fontFamily, fontSize: scaled(13), lineHeight: scaled(18) },
-    actorName: { fontWeight: '600' },
+    actorName: { fontWeight: '500' },
     actionText: { color: theme.muted, fontWeight: '400' },
-    unreadDot: { width: 6, height: 6, backgroundColor: theme.primary, borderRadius: 3 },
-    title: { color: theme.ink, fontFamily, fontSize: scaled(14), lineHeight: scaled(20) },
+    unreadLabel: { color: theme.primary, fontFamily, fontSize: scaled(11), lineHeight: scaled(16), fontWeight: '600' },
+    title: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '500', lineHeight: scaled(22) },
     titleUnread: { fontWeight: '600' },
-    previewInline: { color: theme.muted, fontWeight: '400' },
+    preview: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
     meta: { color: theme.muted, fontFamily, fontSize: scaled(11), lineHeight: scaled(16) },
     centeredState: { alignItems: 'center', gap: 10, paddingHorizontal: 28, paddingVertical: 40 },
-    stateActions: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+    stateActions: { alignItems: 'center', justifyContent: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     stateTitle: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600', textAlign: 'center' },
     stateText: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20), textAlign: 'center' },
-    footer: { minHeight: 56, alignItems: 'center', justifyContent: 'center' },
+    footer: { minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12 },
+    paginationSources: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      columnGap: 16,
+      rowGap: 4,
+      paddingHorizontal: 16,
+      paddingTop: 12
+    },
     settingsContent: { gap: 20, padding: 16, paddingBottom: 40 },
     settingsIntro: { color: theme.muted, fontFamily, fontSize: scaled(13), lineHeight: scaled(20) },
     settingsSection: {
@@ -101,13 +134,15 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
-    detailContent: { gap: 16, padding: 16, paddingBottom: 24 },
+    documentScreen: { backgroundColor: theme.surface },
+    detailContent: { gap: 12, padding: 16, paddingBottom: 24 },
     conversationScreen: { backgroundColor: theme.surface2 },
-    conversationContent: { flexGrow: 1, gap: 12, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12 },
+    conversationContent: { flexGrow: 1, gap: 12, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 },
     conversationContext: {
-      minHeight: 36,
+      minHeight: 24,
       alignItems: 'center',
       flexDirection: 'row',
+      flexWrap: 'wrap',
       justifyContent: 'space-between',
       gap: 8
     },
@@ -133,14 +168,16 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       fontWeight: '600',
       lineHeight: scaled(16)
     },
-    conversationMessageList: { flexGrow: 1, justifyContent: 'flex-end', gap: 9 },
+    detailHeaderContent: { gap: 12 },
+    conversationSpacer: { flexGrow: 1 },
+    conversationHistory: { minHeight: 48, alignItems: 'center', justifyContent: 'center', gap: 6 },
     detailHeader: {
-      gap: 12,
+      gap: 8,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingBottom: 14
+      paddingBottom: 16
     },
-    detailActorRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },
+    detailActorRow: { minHeight: 48, alignItems: 'center', flexDirection: 'row', gap: 10 },
     detailActorBody: { flex: 1, minWidth: 0, gap: 1 },
     detailActorName: {
       color: theme.ink,
@@ -165,39 +202,60 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       lineHeight: scaled(18),
       textAlign: 'center'
     },
-    messageRow: { alignItems: 'flex-start', gap: 3 },
+    detailViewport: { flex: 1 },
+    latestMessageAction: { position: 'absolute', right: 12, bottom: 12, zIndex: 1 },
+    detailRecovery: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      backgroundColor: theme.surface2,
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 16,
+      paddingVertical: 8
+    },
+    messageRow: { alignItems: 'flex-start', gap: 4 },
     messageRowMine: { alignItems: 'flex-end' },
     messageBubble: {
       maxWidth: '86%',
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 16,
+      borderRadius: 14,
       borderBottomLeftRadius: 4,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 13,
+      paddingHorizontal: 12,
       paddingVertical: 10
     },
     messageBubbleMine: {
       backgroundColor: theme.primarySoft,
       borderColor: alphaColor(theme.primary, 0.22),
-      borderBottomLeftRadius: 16,
+      borderBottomLeftRadius: 14,
       borderBottomRightRadius: 4
     },
-    messageMetaRow: { maxWidth: '86%', marginHorizontal: 4 },
+    messageMetaRow: {
+      maxWidth: '86%',
+      alignItems: 'baseline',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      columnGap: 8,
+      rowGap: 2,
+      marginHorizontal: 4
+    },
     messageMetaMine: { justifyContent: 'flex-end' },
     messageAuthor: {
+      flexShrink: 1,
       color: theme.muted,
       fontFamily,
       fontSize: scaled(11),
-      fontWeight: '600',
+      fontWeight: '500',
       lineHeight: scaled(16)
     },
     messageTime: {
       color: theme.muted,
       fontFamily,
-      fontSize: scaled(10),
-      lineHeight: scaled(15),
-      marginHorizontal: 4
+      fontSize: scaled(11),
+      lineHeight: scaled(16)
     },
     messageBody: {
       color: theme.ink,
@@ -209,7 +267,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       backgroundColor: theme.surface,
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
+      paddingHorizontal: 16,
       paddingVertical: 9
     },
     replyLauncher: {
@@ -219,7 +277,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       gap: 10,
       backgroundColor: theme.surface2,
       borderColor: theme.lineStrong,
-      borderRadius: 25,
+      borderRadius: 16,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 15,
       paddingVertical: 7
@@ -281,6 +339,8 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       fontWeight: '700',
       lineHeight: scaled(20)
     },
+    topicActionSecondary: { backgroundColor: theme.surface },
+    topicActionSecondaryText: { color: theme.primary },
     disabled: { opacity: 0.45 }
   });
 }

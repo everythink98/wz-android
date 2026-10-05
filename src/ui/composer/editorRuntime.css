@@ -964,13 +964,48 @@ select:focus-visible {
 .expression-search .tiptap-input:focus {
   box-shadow: none;
 }
+[data-expression-cache='emoji'] .expression-search {
+  border-color: transparent;
+  background: var(--surface-2);
+}
+[data-expression-cache='emoji'] .expression-search:focus-within {
+  border-color: var(--primary);
+  box-shadow: none;
+}
+[data-expression-cache='emoji'] .expression-search .tiptap-input:focus {
+  outline: none;
+}
 .category-rail {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
   overflow-x: auto;
   padding-bottom: 2px;
+  background: var(--surface);
   scrollbar-width: none;
+}
+.expression-navigation {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.builder-backdrop[data-expression='true'] {
+  position: absolute;
+  inset: 0;
+  flex: none;
+  max-height: none;
+  border-top: 0;
+}
+.builder-backdrop[data-expression='true'] .builder-header {
+  flex: 0 0 auto;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+[data-expression-cache='emoji'] .builder-header {
+  gap: 8px;
+  padding: 4px 8px;
+}
+[data-expression-cache='emoji'] .builder-header > .tiptap-button {
+  color: var(--muted);
 }
 .category-rail::-webkit-scrollbar {
   display: none;
@@ -998,6 +1033,7 @@ select:focus-visible {
   display: none;
 }
 .expression-grid .tiptap-button {
+  position: relative;
   min-width: 0;
   min-height: 60px;
   display: flex;
@@ -1017,12 +1053,33 @@ select:focus-visible {
   height: 40px;
   object-fit: contain;
 }
-.expression-grid span {
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10px;
+.expression-grid .tiptap-button[aria-busy='true'] img {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.expression-grid .tiptap-button[data-image-status='failed'] img {
+  visibility: hidden;
+}
+.expression-grid .expression-retry {
+  position: absolute;
+  inset: 8px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+.emoji-grid .tiptap-button {
+  min-height: 48px;
+  gap: 0;
+  padding: 8px;
+}
+.emoji-grid img {
+  width: 32px;
+  height: 32px;
 }
 .expression-load-more.tiptap-button {
   width: 100%;
@@ -1039,8 +1096,21 @@ select:focus-visible {
   border-top: 0;
 }
 .form-open > .editor-pane,
-.form-open > .source-pane {
+.form-open > .source-pane,
+.expression-open > .editor-pane,
+.expression-open > .source-pane {
   visibility: hidden;
+}
+@media (min-height: 560px) {
+  .expression-open > .editor-pane,
+  .expression-open > .source-pane {
+    visibility: visible;
+  }
+  .expression-open .builder-backdrop[data-expression='true'] {
+    position: static;
+    inset: auto;
+    flex: 0 0 360px;
+  }
 }
 .builder-actions {
   flex: 0 0 auto;

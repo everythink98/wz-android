@@ -848,6 +848,112 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
+  it.each(['identity', 'session-epoch', 'background', 'source-disabled', 'source-reenabled', 'unmount'] as const)(
+    'does not resume a snapshot refresh after %s changes during cancellation',
+    async (change) => {
+      const stored = defaultNotificationState();
+      stored.sources.nodeseek.identityKey = 'nodeseek:42';
+      let persisted = JSON.stringify(stored);
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        persisted = value;
+      });
+      let sessions = nodeSeekSessions('confirmed');
+      let enabledNotificationSources: readonly NotificationSource[] = ['nodeseek'];
+      let appActive = true;
+      let sessionEpochs = initialForumSessionEpochs;
+      const fetcher = jest.fn(async () => new Response(JSON.stringify({ atMe: 0, reply: 0, message: 0 })));
+      const hook = await renderHook(
+        () =>
+          useNotificationsRuntime({
+            ...runtimeOptions(undefined, sessions, enabledNotificationSources),
+            appActive,
+            fetcher,
+            sessionEpochs
+          }),
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1));
+      await settleStartedRuntimeTasks(false);
+      await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:42'));
+      const snapshotKey = forumQueryKeys.notificationSnapshot({ source: 'nodeseek', identityKey: 'nodeseek:42' });
+      const previousSnapshot = appQueryClient.getQueryState(snapshotKey);
+      const otherRead = Promise.withResolvers<string>();
+      const otherSignals: AbortSignal[] = [];
+      const otherQueries = [
+        forumQueryKeys.notificationList({ source: 'nodeseek', identityKey: 'nodeseek:42', unreadOnly: false }),
+        forumQueryKeys.notificationDetail({
+          source: 'nodeseek',
+          identityKey: 'nodeseek:42',
+          notificationId: 'conversation:9'
+        })
+      ].map((queryKey) =>
+        appQueryClient
+          .fetchQuery({
+            queryKey,
+            queryFn: ({ signal }) => {
+              otherSignals.push(signal);
+              return otherRead.promise;
+            }
+          })
+          .catch(() => undefined)
+      );
+      let snapshotCanceled = false;
+      const resume = Promise.withResolvers<void>();
+      const cancelQueries = appQueryClient.cancelQueries.bind(appQueryClient);
+      const cancel = jest.spyOn(appQueryClient, 'cancelQueries').mockImplementationOnce(async (filters, options) => {
+        await cancelQueries(filters, options);
+        snapshotCanceled = true;
+        await resume.promise;
+      });
+      let refresh: ReturnType<typeof hook.result.current.refreshSnapshots> | undefined;
+      try {
+        await act(async () => {
+          refresh = hook.result.current.refreshSnapshots();
+        });
+        await waitFor(() => expect(snapshotCanceled).toBe(true));
+        expect(cancel.mock.calls[0]?.[0]).toEqual({ queryKey: snapshotKey, exact: true });
+        expect(otherSignals).toHaveLength(2);
+        expect(otherSignals.every((signal) => !signal.aborted)).toBe(true);
+        if (change === 'unmount') await hook.unmount();
+        else {
+          if (change === 'identity') sessions = nodeSeekSessions('confirmed', '84');
+          if (change === 'session-epoch') sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+          if (change === 'background') appActive = false;
+          if (change === 'source-disabled' || change === 'source-reenabled') enabledNotificationSources = [];
+          await act(async () => hook.rerender({}));
+          await settleStartedRuntimeTasks(false);
+          if (change === 'source-reenabled') {
+            enabledNotificationSources = ['nodeseek'];
+            await act(async () => hook.rerender({}));
+            await settleStartedRuntimeTasks(false);
+          }
+        }
+        const readsBeforeResume = fetcher.mock.calls.length;
+        await act(async () => {
+          resume.resolve();
+          await refresh;
+        });
+        expect(fetcher).toHaveBeenCalledTimes(readsBeforeResume);
+        if (change === 'identity')
+          expect(appQueryClient.getQueryState(snapshotKey)).toMatchObject({
+            status: 'success',
+            dataUpdatedAt: previousSnapshot?.dataUpdatedAt
+          });
+        if (change === 'source-disabled') expect(appQueryClient.getQueryState(snapshotKey)).toBeUndefined();
+      } finally {
+        await act(async () => {
+          resume.resolve();
+          await refresh;
+          otherRead.resolve('complete');
+          await Promise.all(otherQueries);
+        });
+        cancel.mockRestore();
+        await settleStartedRuntimeTasks();
+      }
+    }
+  );
+
   it('does not replay a cached snapshot when an identity returns before its refetch completes', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek.identityKey = 'nodeseek:42';

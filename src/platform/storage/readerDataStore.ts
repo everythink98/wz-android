@@ -18,6 +18,7 @@ import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import {
   readerSchema,
   readReaderBootstrap,
+  readReaderCategories,
   readReaderMeta,
   readReaderPage,
   readReaderSnapshot,
@@ -210,6 +211,13 @@ export function queryReaderPage(request: ReaderPageRequest) {
   return enqueue(async () => {
     const db = await database();
     return transaction(db, false, () => readReaderPage(db, request));
+  });
+}
+
+export function queryReaderCategories(request: Pick<ReaderPageRequest, 'collection' | 'sources'>) {
+  return enqueue(async () => {
+    const db = await database();
+    return transaction(db, false, () => readReaderCategories(db, request));
   });
 }
 

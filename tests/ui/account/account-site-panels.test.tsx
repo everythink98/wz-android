@@ -10,7 +10,8 @@ import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel';
 import { SiteLoginHost } from '@/features/account/components/SiteLoginHost';
-import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
+import { NodeSeekAttendancePanel, NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
+import type { NodeSeekAttendanceBoard } from '@/domain/forum/accountData';
 import { createSiteSessionStates, type SessionSite, type SiteSessionStatus } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
@@ -41,6 +42,7 @@ jest.mock('lucide-react-native', () => {
     LogOut: Icon,
     ShieldCheck: Icon,
     CheckCircle: Icon,
+    CalendarCheck: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,
     ChevronUp: Icon,
@@ -307,6 +309,80 @@ function linuxDoVerifyProps(
 }
 
 describe('Account site panels', () => {
+  it('offers both attendance modes only for a confirmed unsigned board and shows the reward after signing', async () => {
+    const board: NodeSeekAttendanceBoard = {
+      source: 'nodeseek',
+      userId: '42',
+      list: [],
+      record: null,
+      order: null,
+      total: 0
+    };
+    const onCheckIn = jest.fn();
+    const onRefresh = jest.fn();
+    const common = { busy: false, loading: false, error: null, styles, onCheckIn, onRefresh };
+    const view = await render(<NodeSeekAttendancePanel {...common} state={{ kind: 'idle' }} />);
+    expect(view.getByLabelText('普通签到').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByLabelText('随机签到').props.accessibilityState.disabled).toBe(true);
+
+    await view.rerender(<NodeSeekAttendancePanel {...common} board={board} state={{ kind: 'idle' }} />);
+    await fireEvent.press(view.getByLabelText('普通签到'));
+    await fireEvent.press(view.getByLabelText('随机签到'));
+    expect(onCheckIn.mock.calls).toEqual([[false], [true]]);
+    expect(view.queryByLabelText('鸡腿流水')).toBeNull();
+    expect(view.queryByText('签到')).toBeNull();
+
+    const record = {
+      id: '1',
+      memberId: '42',
+      memberName: 'Alice',
+      dayId: 1455,
+      gain: 0,
+      createdAt: '2026-10-02T01:00:00Z'
+    };
+    await view.rerender(<NodeSeekAttendancePanel {...common} board={{ ...board, record }} state={{ kind: 'idle' }} />);
+    expect(view.getByText('今日已签到 · 获得 0 鸡腿')).toBeTruthy();
+    expect(view.getByText('今日已签到 · 获得 0 鸡腿').props.accessibilityLiveRegion).toBe('polite');
+    expect(view.queryByLabelText('普通签到')).toBeNull();
+    expect(view.queryByLabelText('随机签到')).toBeNull();
+    await view.rerender(
+      <NodeSeekAttendancePanel {...common} board={board} state={{ kind: 'signed', record, order: null }} />
+    );
+    expect(view.getByText('今日已签到 · 获得 0 鸡腿')).toBeTruthy();
+    expect(view.queryByLabelText('普通签到')).toBeNull();
+    expect(view.queryByLabelText('随机签到')).toBeNull();
+
+    for (const state of [{ kind: 'confirmed-pending' }, { kind: 'result-unknown' }] as const) {
+      const readingStatus = state.kind === 'confirmed-pending' ? '签到成功，正在读取收益…' : '正在确认签到结果…';
+      await view.rerender(<NodeSeekAttendancePanel {...common} board={board} state={state} busy />);
+      expect(view.getByText(readingStatus)).toBeTruthy();
+      expect(view.getByLabelText('普通签到').props.accessibilityState.disabled).toBe(true);
+      expect(view.getByLabelText('随机签到').props.accessibilityState.disabled).toBe(true);
+      await view.rerender(<NodeSeekAttendancePanel {...common} board={board} state={state} />);
+      expect(view.queryByText(readingStatus)).toBeNull();
+      expect(view.getByLabelText('普通签到').props.accessibilityState.disabled).toBe(true);
+      expect(view.getByLabelText('随机签到').props.accessibilityState.disabled).toBe(true);
+      expect(view.queryByLabelText('刷新签到状态')).toBeNull();
+      expect(view.queryByLabelText('重试签到状态')).toBeNull();
+      expect(
+        view.getByText(
+          state.kind === 'confirmed-pending' ? '签到成功，收益暂时无法读取' : '签到结果暂未确认，请稍后查看'
+        )
+      ).toBeTruthy();
+    }
+    await view.rerender(
+      <NodeSeekAttendancePanel
+        {...common}
+        error={new Error('读取失败')}
+        board={board}
+        state={{ kind: 'result-unknown' }}
+      />
+    );
+    await fireEvent.press(view.getByLabelText('重试签到状态'));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onCheckIn).toHaveBeenCalledTimes(2);
+  });
+
   it.each(['nodeseek', 'yaohuo'] as const)(
     'keeps the latest %s error when a failed load ends in the same batch',
     async (site) => {
@@ -408,9 +484,28 @@ describe('Account site panels', () => {
     );
     expect(view.getByText('LV 1 → LV 2')).toBeTruthy();
     expect(view.getByText('5 / 10')).toBeTruthy();
+    const progress = view.getByRole('progressbar', { name: '访问天数，当前 5，要求 10，未通过' });
+    expect(progress.props.accessibilityValue).toEqual({ min: 0, max: 10, now: 5, text: '5 / 10，未通过' });
+    expect(view.getByRole('tab', { name: '等级要求' }).props.accessibilityState.selected).toBe(true);
+    expect(view.getByRole('tab', { name: '活跃数据' }).props.accessibilityState.selected).toBe(false);
+    expect(view.getByRole('tab', { name: '等级要求' })).toHaveStyle({ minHeight: 48 });
     await fireEvent.press(view.getByText('活跃数据'));
+    expect(view.getByRole('tab', { name: '活跃数据' }).props.accessibilityState.selected).toBe(true);
     expect(view.getByText('1小时1分')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('刷新等级'));
+    expect(view.queryByLabelText('刷新等级')).toBeNull();
+    await view.rerender(
+      <LinuxDoLevelPanel
+        busy={false}
+        error="等级读取失败"
+        siteSession={session('linuxdo', 'logged-in')}
+        profile={null}
+        styles={styles}
+        theme={theme}
+        onOpenLogin={onOpenLogin}
+        onRefresh={onRefresh}
+      />
+    );
+    await fireEvent.press(view.getByLabelText('重试等级'));
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
@@ -448,6 +543,36 @@ describe('Account site panels', () => {
     );
     expect(view.getByText('较上次 +1 · 变差')).toHaveStyle(styles.levelChangeDanger);
     expect(view.getByText('较上次 -1 · 改善')).toHaveStyle(styles.levelChangeSuccess);
+  });
+
+  it('announces an achieved minimum requirement with its actual value and bounded progress', async () => {
+    const view = await render(
+      <LinuxDoLevelPanel
+        busy={false}
+        error=""
+        siteSession={session('linuxdo', 'logged-in')}
+        profile={{
+          ...levelProfile,
+          requirements: [
+            {
+              ...levelProfile.requirements[0],
+              current: 12,
+              displayCurrent: '12',
+              met: true,
+              ratio: 1
+            }
+          ],
+          achievedCount: 1
+        }}
+        styles={styles}
+        theme={theme}
+        onOpenLogin={jest.fn()}
+        onRefresh={jest.fn()}
+      />
+    );
+
+    const progress = view.getByRole('progressbar', { name: '访问天数，当前 12，要求 10，已通过' });
+    expect(progress.props.accessibilityValue).toEqual({ min: 0, max: 10, now: 10, text: '12 / 10，已通过' });
   });
 
   it('bounds visual segments for a customized remote risk limit without changing its exact values', async () => {
@@ -492,27 +617,30 @@ describe('Account site panels', () => {
     const onAuthorizeNodeImageApiKey = jest.fn();
     const onSaveNodeImageApiKey = jest.fn();
     const onRecoveryThresholdChange = jest.fn();
-    const view = await render(
+    const panel = (active = true) => (
       <NodeSeekServicesPanel
+        active={active}
         apiKeyBusy={false}
         apiKeySaved={false}
         recoveryThreshold={1}
-        session={session('nodeseek', 'anonymous')}
         styles={styles}
         theme={theme}
         onAuthorizeApiKey={onAuthorizeNodeImageApiKey}
-        onCheckIn={jest.fn()}
         onClearApiKey={jest.fn()}
         onRecoveryThresholdChange={onRecoveryThresholdChange}
         onSaveApiKey={onSaveNodeImageApiKey}
       />
     );
+    const view = await render(panel());
 
     expect(view.getByText('读取通道自愈阈值')).toBeTruthy();
+    expect(view.queryByLabelText('获取 / 恢复授权', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByLabelText('NodeImage API Key 输入', { includeHiddenElements: true })).toBeNull();
     await fireEvent.press(view.getByLabelText('3 次'));
     expect(onRecoveryThresholdChange).toHaveBeenCalledWith(3);
 
-    await fireEvent.press(view.getByText('NodeImage API Key'));
+    await fireEvent.press(view.getByText('NodeImage 授权'));
+    expect(view.queryByLabelText('NodeImage API Key 输入', { includeHiddenElements: true })).toBeNull();
     await fireEvent.press(view.getByLabelText('获取 / 恢复授权'));
     expect(onAuthorizeNodeImageApiKey).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByLabelText('手动粘贴备用'));
@@ -522,6 +650,19 @@ describe('Account site panels', () => {
     expect(view.getByLabelText('保存 Key').props.accessibilityState.disabled).toBe(false);
     await fireEvent.press(view.getByLabelText('保存 Key'));
     expect(onSaveNodeImageApiKey).toHaveBeenCalledWith('local-test-key');
+    expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('local-test-key');
+    await fireEvent.press(view.getByLabelText('收起手动备用'));
+    expect(view.queryByLabelText('NodeImage API Key 输入')).toBeNull();
+    await fireEvent.press(view.getByLabelText('手动粘贴备用'));
+    expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('');
+    await fireEvent.changeText(view.getByPlaceholderText('NodeImage API Key'), 'local-test-key');
+    await view.rerender(panel(false));
+    expect(view.queryByLabelText('NodeImage API Key 输入')).toBeNull();
+    await view.rerender(panel());
+    expect(view.getByRole('button', { name: /^NodeImage 授权/ }).props.accessibilityState.expanded).toBe(false);
+    expect(view.queryByLabelText('手动粘贴备用')).toBeNull();
+    await fireEvent.press(view.getByText('NodeImage 授权'));
+    await fireEvent.press(view.getByLabelText('手动粘贴备用'));
     expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('');
   });
 

@@ -144,6 +144,7 @@ import { useContentBoundarySpacing } from '../rendering/TopicContentPresentation
 import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { createTopicTableRenderers, TopicTableScrollProvider } from '../rendering/topicTableRenderers';
 import { NodeSeekStardustCard } from './NodeSeekStardustCard';
+import { DiscoursePolicyPanel } from '@/ui/content/DiscoursePolicyPanel';
 import {
   TopicSelectionRowProvider,
   TopicSelectionSurface,
@@ -437,7 +438,14 @@ export const TopicContentList = memo(function TopicContentList({
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const { state, commands } = session;
-  const { actionBusy, decisionFor, deleteReply: onDeleteReply, editReply: onEditReply } = actions;
+  const {
+    actionBusy,
+    decisionFor,
+    deleteReply: onDeleteReply,
+    editReply: onEditReply,
+    policySubmissions,
+    setPolicyAcceptance: onSetPolicyAcceptance
+  } = actions;
   const { busy: topicBusy, error: topicError, topic, yaohuoBookmarked } = article;
   const {
     contentWidth,
@@ -528,6 +536,9 @@ export const TopicContentList = memo(function TopicContentList({
     minWidth: 104
   });
   const replyOrderLabel = replyOrder === 'newest' ? '倒序' : '正序';
+  useEffect(() => {
+    if (!active) setReplyOrderMenuOpen(false);
+  }, [active]);
   const openReplyOrderMenu = useCallback(() => {
     const trigger = replyOrderMenuTriggerRef.current;
     setReplyOrderMenuOpen(true);
@@ -1668,8 +1679,26 @@ export const TopicContentList = memo(function TopicContentList({
 
   const topicPostlude = useMemo(() => {
     void detailTopicStateKey;
+    const policy = topic?.source === 'linuxdo' ? topic.policy : undefined;
+    const policySubmission = policy ? policySubmissions[policy.postId] : undefined;
     return (
       <>
+        {policy
+          ? renderTopicListItemFrame(
+              <View style={[styles.replyListItem, topicColumnStyle]}>
+                <DiscoursePolicyPanel
+                  policy={policy}
+                  busy={actionBusy}
+                  disabled={!decisionFor({ action: 'policy' }).allowed || policySubmission?.version === policy.version}
+                  status={
+                    policySubmission?.version === policy.version ? '操作已提交，请刷新公告核对阅读状态' : undefined
+                  }
+                  onSetAcceptance={(accepted) => void onSetPolicyAcceptance(policy, accepted)}
+                />
+              </View>,
+              'topic-policy'
+            )
+          : null}
         {legacyTopicPollsVisible
           ? renderTopicListItemFrame(
               <View style={[styles.replyListItem, topicColumnStyle]}>
@@ -1843,6 +1872,8 @@ export const TopicContentList = memo(function TopicContentList({
     onNodeSeekCollection,
     onYaohuoFavorite,
     onVotePoll,
+    onSetPolicyAcceptance,
+    policySubmissions,
     pollSelections,
     renderTopicListItemFrame,
     styles,
@@ -2011,7 +2042,7 @@ export const TopicContentList = memo(function TopicContentList({
                       <PopupMenu
                         accessibilityLabel="关闭回复排序菜单"
                         placementStyle={replyOrderMenuPlacement}
-                        visible={replyOrderMenuOpen}
+                        visible={active && replyOrderMenuOpen}
                         onRequestClose={closeReplyOrderMenu}
                       >
                         <PopupMenuItem
@@ -2132,6 +2163,8 @@ export const TopicContentList = memo(function TopicContentList({
               onOpenTopic={onOpenTopic}
               onQuoteContentLayout={markReplyQuoteContentLayout}
               onVotePoll={onVotePoll}
+              onSetPolicyAcceptance={onSetPolicyAcceptance}
+              policySubmission={listItem.reply.policy ? policySubmissions[listItem.reply.policy.postId] : undefined}
               onReplyToFloor={onReplyToFloor}
               onToggleReplyQuote={onToggleReplyQuote}
               topicId={item?.id}
@@ -2156,6 +2189,7 @@ export const TopicContentList = memo(function TopicContentList({
       acceptedAnswerReply,
       acceptedAnswerViewKey,
       actionBusy,
+      active,
       endedEmpty,
       closeReplyOrderMenu,
       commentQuery,
@@ -2189,6 +2223,8 @@ export const TopicContentList = memo(function TopicContentList({
       onToggleReplyQuote,
       onOpenUser,
       onVotePoll,
+      onSetPolicyAcceptance,
+      policySubmissions,
       pollSelections,
       renderTopicContentItem,
       topicListItems,

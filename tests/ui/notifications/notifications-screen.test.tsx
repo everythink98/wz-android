@@ -1,7 +1,7 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { ScrollView, StyleSheet } from 'react-native';
+import { Image, ScrollView, StyleSheet } from 'react-native';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
@@ -12,9 +12,32 @@ import {
   NotificationSettingsScreen,
   NotificationsScreen
 } from '@/features/notifications/NotificationScreens';
-import { fireEvent, render, waitFor } from '../render';
+import { act, fireEvent, render, waitFor, within } from '../render';
 import { createTheme, lineHeightMultiplier } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+
+jest.mock('@/ui/media/ImagePreviewModal', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Pressable, Text, View } = require('react-native') as typeof import('react-native');
+  return {
+    ImagePreviewModal: ({
+      preview,
+      onClose,
+      onSelect
+    }: React.ComponentProps<typeof import('@/ui/media/ImagePreviewModal').ImagePreviewModal>) =>
+      preview
+        ? ReactModule.createElement(
+            View,
+            { testID: 'message-image-preview' },
+            ReactModule.createElement(Text, { testID: 'message-preview-data' }, JSON.stringify(preview)),
+            ReactModule.createElement(Pressable, { accessibilityLabel: '关闭图片预览', onPress: onClose }),
+            ReactModule.createElement(Pressable, { accessibilityLabel: '预览切到第一张', onPress: () => onSelect(0) })
+          )
+        : null
+  };
+});
 
 // Metro uses the source entry and React 19's JSX runtime. The CommonJS entry
 // uses createElement, which still applies defaultProps and hides missing styles.
@@ -115,6 +138,7 @@ let mockSafeAreaTop = 0;
 let mockNotificationFlashListExtraData: unknown;
 let mockNotificationFlashListData: unknown;
 let mockNotificationNestedScrollEnabled: boolean | undefined;
+const mockNotificationScrollToOffset = jest.fn();
 
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
@@ -126,6 +150,7 @@ jest.mock('@shopify/flash-list', () => {
   const { Pressable, View } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ({
+      ref,
       data = [],
       extraData,
       keyExtractor,
@@ -138,6 +163,7 @@ jest.mock('@shopify/flash-list', () => {
       renderItem,
       testID
     }: {
+      ref?: React.Ref<{ scrollToOffset: typeof mockNotificationScrollToOffset }>;
       data?: unknown[];
       extraData?: unknown;
       keyExtractor?: (item: unknown, index: number) => string;
@@ -150,6 +176,7 @@ jest.mock('@shopify/flash-list', () => {
       renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
       testID?: string;
     }) => {
+      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockNotificationScrollToOffset }));
       mockNotificationFlashListExtraData = extraData;
       mockNotificationFlashListData = data;
       mockNotificationNestedScrollEnabled = nestedScrollEnabled;
@@ -230,6 +257,474 @@ function notificationState(globalEnabled = true): NotificationState {
 }
 
 describe('notification screens', () => {
+  const imageDetail = {
+    notification: { ...notification, kind: 'private-message' as const },
+    title: '私信图片',
+    messages: [
+      {
+        id: 'photo',
+        author: 'Bob',
+        createdAt: null,
+        contentHtml:
+          '<p><img src="https://www.nodeseek.com/photo-thumb.png" data-original="https://www.nodeseek.com/photo-original.png" width="300" height="200" alt="第一张" referrerpolicy="no-referrer"></p>'
+      },
+      {
+        id: 'sticker',
+        author: 'Bob',
+        createdAt: null,
+        contentHtml:
+          '<p><img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04" width="64" height="64"></p><p>文字<img class="emoji" src="https://linux.do/images/emoji/twemoji/smile.png" alt=":smile:" width="20" height="20"></p><p><a href="https://example.com/page">外部链接</a><a href="https://linux.do/t/topic/123/4">主题链接</a></p>'
+      }
+    ]
+  };
+
+  it('displays message bitmaps from their real load when native size probing rejects the image scheme', async () => {
+    jest.spyOn(Image, 'getSize').mockImplementation((_uri, _success, failure) => {
+      failure?.(new Error('Unsupported uri scheme for encoded image fetch!'));
+    });
+    const detail = {
+      ...imageDetail,
+      messages: [
+        {
+          id: 'embedded',
+          author: 'Bob',
+          createdAt: null,
+          contentHtml: '<img src="data:image/png;base64,aW1hZ2U=" alt="嵌入图片">'
+        }
+      ]
+    };
+    const view = await render(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={detail}
+        loading={false}
+        onOpenTopic={jest.fn()}
+        onRetry={jest.fn()}
+      />
+    );
+    expect(view.queryByTestId('image-error')).toBeNull();
+    await fireEvent(view.getByLabelText('嵌入图片'), 'load', { nativeEvent: { source: { width: 960, height: 640 } } });
+    expect(StyleSheet.flatten(view.getByLabelText('嵌入图片').props.style)).toMatchObject({
+      width: 259,
+      height: (259 * 640) / 960
+    });
+    await fireEvent.press(view.getByLabelText('预览图片：嵌入图片'));
+    expect(view.getByTestId('message-image-preview')).toBeTruthy();
+  });
+
+  it('preserves small photos, bounds portrait height without cropping, and keeps failed photos previewable', async () => {
+    const view = await render(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={{
+          ...imageDetail,
+          messages: [
+            {
+              id: 'dimensions',
+              author: 'Bob',
+              createdAt: null,
+              contentHtml:
+                '<img src="https://example.com/small.png" width="48" height="32" alt="小图片"><img src="https://example.com/portrait.png" width="640" height="960" alt="竖图片">'
+            }
+          ]
+        }}
+        loading={false}
+        onOpenTopic={jest.fn()}
+        onRetry={jest.fn()}
+      />
+    );
+    await fireEvent(view.getByLabelText('小图片'), 'load', { nativeEvent: { source: { width: 960, height: 640 } } });
+    expect(StyleSheet.flatten(view.getByLabelText('小图片').props.style)).toMatchObject({ width: 48, height: 32 });
+    await fireEvent(view.getByLabelText('竖图片'), 'load', { nativeEvent: { source: { width: 640, height: 960 } } });
+    const portraitSize = StyleSheet.flatten(view.getByLabelText('竖图片').props.style);
+    expect(portraitSize.height).toBe(320);
+    expect(portraitSize.width / portraitSize.height).toBeCloseTo(640 / 960);
+    await fireEvent(view.getByLabelText('竖图片'), 'error', { nativeEvent: { error: 'decode failed' } });
+    expect(view.getByText('图片加载失败：竖图片')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('预览图片：竖图片'));
+    expect(JSON.parse(view.getByTestId('message-preview-data').props.children).index).toBe(1);
+  });
+
+  it('suspends pending and new automatic scrolling while a photo preview is open and resumes the existing follow state', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const animation = jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const scrollToEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(() => undefined);
+    const flushFrames = async () => {
+      const pending = frames.splice(0);
+      await act(() => {
+        pending.forEach((callback) => callback(0));
+      });
+    };
+    try {
+      const view = await render(
+        <NotificationDetailScreen
+          contentWidth={360}
+          detail={imageDetail}
+          loading={false}
+          onOpenTopic={jest.fn()}
+          onRetry={jest.fn()}
+        />
+      );
+      const scroll = view.getByTestId('notification-detail-scroll');
+      await fireEvent(scroll, 'contentSizeChange', 360, 1200);
+      await fireEvent.press(view.getByLabelText('预览图片：第一张'));
+      await flushFrames();
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      await fireEvent(scroll, 'contentSizeChange', 360, 1300);
+      await flushFrames();
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByLabelText('关闭图片预览'));
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      await fireEvent(scroll, 'contentSizeChange', 360, 1400);
+      await flushFrames();
+      expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    } finally {
+      animation.mockRestore();
+      scrollToEnd.mockRestore();
+    }
+  });
+
+  it('opens private-message photos and stickers in one native preview gallery without moving the conversation', async () => {
+    const onOpenExternalUrl = jest.fn();
+    const onOpenTopic = jest.fn();
+    const scrollToEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(() => undefined);
+    try {
+      const view = await render(
+        <NotificationDetailScreen
+          contentWidth={360}
+          detail={imageDetail}
+          loading={false}
+          onOpenExternalUrl={onOpenExternalUrl}
+          onOpenTopic={onOpenTopic}
+          onRetry={jest.fn()}
+        />
+      );
+      const scroll = view.getByTestId('notification-detail-scroll');
+      const imageHeaders = view.getByLabelText('第一张').props.source[0].headers;
+      expect(imageHeaders).toMatchObject({
+        'X-WZ-Forum-Media-Source': 'nodeseek',
+        'X-WZ-Forum-Media-Identity': expect.stringContaining('nodeseek:')
+      });
+      expect(imageHeaders?.Referer).toBeUndefined();
+      await fireEvent(scroll, 'scrollBeginDrag');
+      await fireEvent.press(view.getByLabelText('预览图片：第一张'));
+      const first = JSON.parse(view.getByTestId('message-preview-data').props.children);
+      expect(first).toMatchObject({
+        contentSource: 'nodeseek',
+        index: 0,
+        referrer: { documentUrl: 'https://www.nodeseek.com' }
+      });
+      expect(first.items).toHaveLength(2);
+      expect(first.items[0]).toMatchObject({
+        originalUri: 'https://www.nodeseek.com/photo-original.png',
+        referrerPolicy: 'no-referrer'
+      });
+      await fireEvent.press(view.getByLabelText('关闭图片预览'));
+      expect(view.queryByTestId('message-image-preview')).toBeNull();
+      await fireEvent.press(view.getByLabelText('预览图片：ac04'));
+      expect(JSON.parse(view.getByTestId('message-preview-data').props.children).index).toBe(1);
+      await fireEvent.press(view.getByLabelText('预览切到第一张'));
+      expect(JSON.parse(view.getByTestId('message-preview-data').props.children).index).toBe(0);
+      await fireEvent.press(view.getByLabelText('关闭图片预览'));
+      await fireEvent.press(view.getByLabelText(':smile:'));
+      expect(view.queryByTestId('message-image-preview')).toBeNull();
+      await fireEvent.press(view.getByText('外部链接'));
+      expect(onOpenExternalUrl).toHaveBeenCalledTimes(1);
+      expect(onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/page');
+      await fireEvent.press(view.getByText('主题链接'));
+      expect(onOpenTopic).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'linuxdo', id: '123' }),
+        expect.anything()
+      );
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      expect(view.getByTestId('notification-detail-scroll')).toBe(scroll);
+    } finally {
+      scrollToEnd.mockRestore();
+    }
+  });
+
+  it.each(['blur', 'identity', 'unavailable', 'conversation'] as const)(
+    'closes private image previews on %s changes',
+    async (change) => {
+      const tree = (changed: boolean) => (
+        <ForumSessionEpochProvider
+          sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: changed && change === 'identity' ? 1 : 0 }}
+        >
+          <NotificationDetailScreen
+            contentWidth={360}
+            detail={
+              changed && change === 'unavailable'
+                ? undefined
+                : changed && change === 'conversation'
+                  ? { ...imageDetail, notification: { ...imageDetail.notification, id: 'next' } }
+                  : imageDetail
+            }
+            routeActive={!(changed && change === 'blur')}
+            loading={false}
+            onOpenTopic={jest.fn()}
+            onRetry={jest.fn()}
+          />
+        </ForumSessionEpochProvider>
+      );
+      const view = await render(tree(false));
+      await fireEvent.press(view.getByLabelText('预览图片：第一张'));
+      expect(view.getByTestId('message-image-preview')).toBeTruthy();
+      await view.rerender(tree(true));
+      expect(view.queryByTestId('message-image-preview')).toBeNull();
+    }
+  );
+
+  it('shows a source history limit without inventing a next page', async () => {
+    const view = await render(
+      <NotificationsScreen
+        {...listProps()}
+        source="linuxdo"
+        historyNotices={{ linuxdo: '仅显示近期私信' }}
+        hasMore={false}
+      />
+    );
+    expect(view.getByText('仅显示近期私信')).toBeTruthy();
+    expect(view.queryByRole('button', { name: '继续加载消息' })).toBeNull();
+    expect(view.queryByTestId('notification-list-end-reached')).toBeNull();
+  });
+
+  it('explains independent source pagination without treating a failed site as complete', async () => {
+    const onLoadMore = jest.fn();
+    const props = {
+      ...listProps(),
+      pagination: { nodeseek: 'more', linuxdo: 'complete', yaohuo: 'complete' } as const,
+      errors: { yaohuo: { kind: 'ordinary', message: '连接中断' } } as const,
+      hasMore: true,
+      onLoadMore
+    };
+    const view = await render(<NotificationsScreen {...props} />);
+    expect(view.getByText('NodeSeek · 还有更多消息')).toBeTruthy();
+    expect(view.getByText('linux.do · 已到当前末尾')).toBeTruthy();
+    expect(view.getByText('妖火 · 读取中断，可重试')).toBeTruthy();
+    expect(view.queryByText('各站当前可提供的消息已加载完成')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '继续加载消息' }));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    await view.rerender(<NotificationsScreen {...props} hasMore={false} />);
+    expect(view.queryByRole('button', { name: '继续加载消息' })).toBeNull();
+    expect(view.queryByText('各站当前可提供的消息已加载完成')).toBeNull();
+    expect(view.getByRole('button', { name: '重试 妖火' })).toBeTruthy();
+    await view.rerender(
+      <NotificationsScreen
+        {...props}
+        hasMore={false}
+        errors={{}}
+        pagination={{ nodeseek: 'complete', linuxdo: 'complete', yaohuo: 'complete' }}
+      />
+    );
+    expect(view.getByText('各站当前可提供的消息已加载完成')).toBeTruthy();
+    expect(view.queryByText('linux.do · 已到当前末尾')).toBeNull();
+  });
+
+  it('resets list position only when filters change and suppresses pagination during manual refresh', async () => {
+    const props = listProps();
+    const view = await render(<NotificationsScreen {...props} hasMore />);
+    mockNotificationScrollToOffset.mockClear();
+    await view.rerender(<NotificationsScreen {...props} hasMore refreshing />);
+    expect(view.queryByTestId('notification-list-end-reached')).toBeNull();
+    expect(mockNotificationScrollToOffset).not.toHaveBeenCalled();
+    await view.rerender(<NotificationsScreen {...props} hasMore unreadOnly />);
+    expect(mockNotificationScrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
+    expect(view.getByTestId('notification-list-end-reached')).toBeTruthy();
+  });
+
+  it('lets repeated manual scrolling interrupt pending bottom-follow across new messages and return-to-latest actions', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const animation = jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const flushFrames = async () => {
+      const pending = frames.splice(0);
+      await act(() => pending.forEach((callback) => callback(0)));
+    };
+    const scrollToEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(() => undefined);
+    const message = { id: '1', author: '张三', contentText: '历史消息', createdAt: null };
+    const props = {
+      contentWidth: 360,
+      loading: false,
+      onOpenTopic: jest.fn(),
+      onRetry: jest.fn(),
+      detail: { notification, title: '会话', messages: [message] }
+    };
+    try {
+      const view = await render(<NotificationDetailScreen {...props} />);
+      const scroll = view.getByTestId('notification-detail-scroll');
+      const position = {
+        nativeEvent: {
+          contentOffset: { x: 0, y: 0 },
+          contentSize: { width: 360, height: 1200 },
+          layoutMeasurement: { width: 360, height: 600 }
+        }
+      };
+      await fireEvent.scroll(scroll, position);
+      await fireEvent(scroll, 'contentSizeChange', 360, 1200);
+      // A real drag takes ownership even if the previous content layout queued a follow frame.
+      await fireEvent(scroll, 'scrollBeginDrag');
+      await fireEvent.scroll(scroll, position);
+      await flushFrames();
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      await view.rerender(
+        <NotificationDetailScreen
+          {...props}
+          detail={{ ...props.detail, messages: [message, { ...message, id: '2', contentText: '新消息' }] }}
+        />
+      );
+      await fireEvent(view.getByTestId('notification-detail-scroll'), 'contentSizeChange', 360, 1300);
+      await flushFrames();
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByRole('button', { name: '回到最新消息' }));
+      expect(scrollToEnd).toHaveBeenCalledWith({ animated: true });
+      expect(view.queryByRole('button', { name: '回到最新消息' })).toBeNull();
+
+      await fireEvent(scroll, 'contentSizeChange', 360, 1400);
+      await fireEvent(scroll, 'scrollBeginDrag');
+      await fireEvent.scroll(scroll, position);
+      await flushFrames();
+      expect(scrollToEnd).toHaveBeenCalledTimes(1);
+      expect(view.getByRole('button', { name: '回到最新消息' })).toBeTruthy();
+      await fireEvent.press(view.getByRole('button', { name: '回到最新消息' }));
+      await fireEvent(scroll, 'contentSizeChange', 360, 1500);
+      await flushFrames();
+      expect(scrollToEnd.mock.calls.map(([options]) => options)).toEqual([
+        { animated: true },
+        { animated: true },
+        { animated: false }
+      ]);
+      expect(view.getByTestId('notification-detail-scroll')).toBe(scroll);
+      expect(view.getByText('新消息')).toBeTruthy();
+    } finally {
+      animation.mockRestore();
+      scrollToEnd.mockRestore();
+    }
+  });
+
+  it('loads earlier messages explicitly, preserves readable messages on failure and stops following the bottom', async () => {
+    const scrollToEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(() => undefined);
+    const onLoadEarlierMessages = jest.fn();
+    const onResetMessageHistory = jest.fn();
+    const message = { id: '31', author: '张三', contentText: '已看到的消息', createdAt: null };
+    const props = {
+      contentWidth: 360,
+      loading: false,
+      onOpenTopic: jest.fn(),
+      onRetry: jest.fn(),
+      onLoadEarlierMessages,
+      onResetMessageHistory,
+      detail: { notification, title: '会话', messages: [message], messageHistory: { olderCursor: '31' } }
+    };
+    try {
+      const view = await render(<NotificationDetailScreen {...props} />);
+      await fireEvent.press(view.getByRole('button', { name: '加载更早消息' }));
+      expect(onLoadEarlierMessages).toHaveBeenCalledTimes(1);
+      await view.rerender(<NotificationDetailScreen {...props} historyBusy />);
+      expect(view.getByRole('button', { name: '加载更早消息' })).toBeDisabled();
+      await view.rerender(<NotificationDetailScreen {...props} historyError="网络暂不可用" />);
+      expect(view.getByText('已看到的消息')).toBeTruthy();
+      expect(view.getByText('网络暂不可用')).toBeTruthy();
+      await fireEvent.press(view.getByRole('button', { name: '重新读取会话' }));
+      expect(onResetMessageHistory).toHaveBeenCalledTimes(1);
+      await fireEvent.press(view.getByRole('button', { name: '加载更早消息' }));
+      expect(onLoadEarlierMessages).toHaveBeenCalledTimes(2);
+      await view.rerender(
+        <NotificationDetailScreen
+          {...props}
+          detail={{
+            ...props.detail,
+            messages: [{ ...message, id: '1', contentText: '更早的消息' }, message],
+            messageHistory: { olderCursor: null }
+          }}
+        />
+      );
+      await fireEvent(view.getByTestId('notification-detail-scroll'), 'contentSizeChange', 360, 1300);
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      expect(view.getByText('已到最早消息')).toBeTruthy();
+      await view.rerender(
+        <NotificationDetailScreen
+          {...props}
+          detail={{ ...props.detail, messageHistory: { olderCursor: null } }}
+          historyError="历史游标重复，请重新读取"
+        />
+      );
+      expect(view.queryByText('已到最早消息')).toBeNull();
+      expect(view.getByRole('button', { name: '重新读取会话' })).toBeTruthy();
+      expect(view.queryByRole('button', { name: '加载更早消息' })).toBeNull();
+      expect(view.getByText('已看到的消息')).toBeTruthy();
+    } finally {
+      scrollToEnd.mockRestore();
+    }
+  });
+
+  it('distinguishes a failed empty list from an empty inbox and offers unread recovery', async () => {
+    const onChangeUnreadOnly = jest.fn();
+    const view = await render(
+      <NotificationsScreen
+        {...listProps()}
+        items={[]}
+        errors={{ nodeseek: { kind: 'ordinary', message: '网络中断' } }}
+      />
+    );
+    expect(view.getByText('消息暂未加载成功')).toBeTruthy();
+    expect(view.queryByText('暂无消息')).toBeNull();
+    await view.rerender(
+      <NotificationsScreen {...listProps()} items={[]} unreadOnly onChangeUnreadOnly={onChangeUnreadOnly} />
+    );
+    await fireEvent.press(view.getByRole('button', { name: '查看全部消息' }));
+    expect(onChangeUnreadOnly).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps account confirmation distinct from login actions', async () => {
+    const view = await render(
+      <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="nodeseek" sourceUnknown />
+    );
+    expect(view.getAllByRole('button', { name: '重试账号核对' })).toHaveLength(1);
+    expect(view.queryByRole('button', { name: '去登录 NodeSeek' })).toBeNull();
+    await view.rerender(
+      <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="nodeseek" sourcePending />
+    );
+    expect(view.queryByRole('button', { name: '去登录 NodeSeek' })).toBeNull();
+  });
+
+  it('retains a loaded conversation and exposes refresh failure and the saved draft', async () => {
+    const onRetry = jest.fn();
+    const onOpenReply = jest.fn();
+    const view = await render(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={{
+          notification,
+          title: '会话',
+          messages: [{ id: 'm1', author: '张三', contentText: '已有消息', createdAt: null }],
+          reply: { format: 'plain-text' }
+        }}
+        loading={false}
+        error="会话刷新失败"
+        replyContent="还没写完的回复"
+        onOpenReply={onOpenReply}
+        onOpenTopic={jest.fn()}
+        onRetry={onRetry}
+      />
+    );
+    expect(view.getByText('已有消息')).toBeTruthy();
+    expect(view.getByText('会话刷新失败')).toBeTruthy();
+    expect(
+      within(view.getByTestId('notification-detail-scroll')).queryByRole('button', { name: '重试读取消息' })
+    ).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '重试读取消息' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(view.getByText('草稿')).toBeTruthy();
+    expect(view.getByText('还没写完的回复')).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: '继续编辑私信草稿' }));
+    expect(onOpenReply).toHaveBeenCalledTimes(1);
+  });
+
   it('reuses visible items across loading changes and equivalent source membership', async () => {
     const props = listProps();
     const view = await render(<NotificationsScreen {...props} />);
@@ -732,17 +1227,17 @@ describe('notification screens', () => {
     expect(view.getAllByText(/第[一二]条/).map((node) => node.props.children)).toEqual(['第一条', '第二条']);
     expect(StyleSheet.flatten(view.getByTestId('notification-message-1').props.style).alignItems).toBe('flex-start');
     expect(StyleSheet.flatten(view.getByTestId('notification-message-2').props.style).alignItems).toBe('flex-end');
-    expect(StyleSheet.flatten(view.getByTestId('notification-conversation-messages').props.style).justifyContent).toBe(
-      'flex-end'
-    );
+    expect(view.getByTestId('notification-detail-scroll').props.maintainVisibleContentPosition).toEqual({
+      minIndexForVisible: 2
+    });
     expect(view.getByText(formatDateTime('2026-08-03T10:00:00Z'))).toBeTruthy();
     expect(view.getByText(formatDateTime('2026-08-03T10:01:00Z'))).toBeTruthy();
     fireEvent(view.getByTestId('notification-detail-scroll'), 'contentSizeChange', 360, 640);
     await waitFor(() => expect(scrollToEnd).toHaveBeenCalledWith({ animated: false }));
     expect(view.getByText('原站仅提供最近 20 条聊天记录。')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.press(view.getByLabelText('继续编辑私信草稿'));
     expect(onOpenReply).toHaveBeenCalledTimes(1);
-    expect(view.getByText('Markdown')).toBeTruthy();
+    expect(view.getByText('草稿')).toBeTruthy();
 
     await view.rerender(<NotificationDetailScreen {...props} replyVisible />);
     const webView = view.getByTestId('structured-composer-webview');
@@ -872,7 +1367,7 @@ describe('notification screens', () => {
         replyVisible
       />
     );
-    expect(yaohuoView.getByText('纯文本')).toBeTruthy();
+    expect(yaohuoView.getByLabelText('私信回复内容')).toBeTruthy();
     expect(yaohuoView.queryByLabelText('表情')).toBeNull();
     expect(yaohuoView.queryByLabelText('图片')).toBeNull();
     scrollToEnd.mockRestore();
@@ -1009,7 +1504,9 @@ describe('notification screens', () => {
     expect(style('斜体').fontStyle).toBe('italic');
     expect(style('下划线').textDecorationLine).toBe('underline');
     expect(style('const value = 1;').fontFamily).toBe('monospace');
-    expect(ancestorStyles('正文段落')).toContainEqual(expect.objectContaining({ marginBottom: 10 }));
+    expect(ancestorStyles('正文段落')).toContainEqual(
+      expect.objectContaining({ marginBottom: surface === 'message' ? 6 : 10 })
+    );
     expect(ancestorStyles('引用文字')).toContainEqual(expect.objectContaining({ borderLeftWidth: 3 }));
     expect(view.getByText('表情前表情后')).toBeTruthy();
     const emoji = view.getByLabelText(':face_with_peeking_eye:');

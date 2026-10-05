@@ -3,7 +3,18 @@ import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createSearchStyles, type SearchStyles } from './styles';
 import { SearchFilterSheet } from './SearchFilterSheet';
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { ActivityIndicator, Keyboard, Pressable, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Keyboard,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+  requireNativeComponent,
+  type ColorValue,
+  type ViewProps
+} from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
 import { ChevronRight, History, Search, X } from 'lucide-react-native';
 import type {
@@ -41,6 +52,9 @@ const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   minimumViewTime: 0,
   waitForInteraction: true
 };
+const NativeRecentIcon = requireNativeComponent<ViewProps & { icon: 'history' | 'close'; color: ColorValue }>(
+  'WzSearchHistoryIcon'
+);
 
 function SearchInputField({
   busy,
@@ -211,7 +225,7 @@ export const SearchScreen = memo(function SearchScreen({
   onOpenExternalSearch?: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
   onManageContentSources: () => void;
-  onLoadMoreSearchSource: (source: Source, page: number) => void;
+  onLoadMoreSearchSource: (source: Source, page: number) => void | Promise<unknown>;
   onRemoveRecentSearch: (query: string) => void;
   onQueryChange: (value: string) => void;
   onRetrySearchSource: (source: Source) => void;
@@ -238,11 +252,16 @@ export const SearchScreen = memo(function SearchScreen({
   const internalListRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const listRef = scrollRef || internalListRef;
   const autoLoadArmedRef = useRef(false);
-  const pendingAutoLoadRef = useRef<{ source: Source; page: number; previousItemCount: number } | null>(null);
+  const pendingAutoLoadRef = useRef<{
+    source: Source;
+    page: number;
+    previousItemCount: number;
+    settled: boolean;
+  } | null>(null);
   const paginationStateRef = useRef<{
     busy: boolean;
     groups: SearchGroup[];
-    onLoadMore: (source: Source, page: number) => void;
+    onLoadMore: (source: Source, page: number) => void | Promise<unknown>;
   }>({
     busy: true,
     groups: [],
@@ -293,12 +312,13 @@ export const SearchScreen = memo(function SearchScreen({
   );
   const changeSearchSource = useCallback(
     (value: string) => {
+      if (value === visibleSearchSource) return;
       if (value !== 'all' && !expectedSearchSources.includes(value as Source)) return;
       resetPaginationFeedback();
       scrollSearchToTop();
       onSearchSourceChange(value as FeedSource);
     },
-    [expectedSearchSources, onSearchSourceChange, resetPaginationFeedback, scrollSearchToTop]
+    [expectedSearchSources, onSearchSourceChange, resetPaginationFeedback, scrollSearchToTop, visibleSearchSource]
   );
   const applySearchFilter = useCallback(
     (source: Source, filter: SourceSearchFilter) => {
@@ -443,7 +463,7 @@ export const SearchScreen = memo(function SearchScreen({
   const handleSearchScrollBeginDrag = useCallback(() => {
     const state = paginationStateRef.current;
     autoLoadArmedRef.current = false;
-    if (state.busy || pendingAutoLoadRef.current) {
+    if (state.busy || (pendingAutoLoadRef.current && !pendingAutoLoadRef.current.settled)) {
       return;
     }
     autoLoadArmedRef.current = true;
@@ -456,7 +476,7 @@ export const SearchScreen = memo(function SearchScreen({
         return;
       }
       const state = paginationStateRef.current;
-      if (state.busy || pendingAutoLoadRef.current) {
+      if (state.busy || (pendingAutoLoadRef.current && !pendingAutoLoadRef.current.settled)) {
         autoLoadArmedRef.current = false;
         return;
       }
@@ -480,12 +500,18 @@ export const SearchScreen = memo(function SearchScreen({
           continue;
         }
         autoLoadArmedRef.current = false;
-        pendingAutoLoadRef.current = {
+        const pendingAutoLoad = {
           source: group.source,
           page,
-          previousItemCount: currentGroup.items.length
+          previousItemCount: currentGroup.items.length,
+          settled: false
         };
-        state.onLoadMore(group.source, page);
+        pendingAutoLoadRef.current = pendingAutoLoad;
+        const settle = () => {
+          // Keep page feedback until Query commits; only settle this request's lock.
+          pendingAutoLoad.settled = true;
+        };
+        void Promise.resolve(state.onLoadMore(group.source, page)).then(settle, settle);
         return;
       }
     },
@@ -520,7 +546,16 @@ export const SearchScreen = memo(function SearchScreen({
               style={[styles.removableChip, busy && styles.buttonDisabled]}
               onPress={() => submitSearch(item.query)}
             >
-              <History size={17} color={theme.muted} strokeWidth={1.9} style={styles.removableChipIcon} />
+              {Platform.OS === 'android' ? (
+                <NativeRecentIcon
+                  icon="history"
+                  color={theme.muted}
+                  accessible={false}
+                  style={{ width: 17, height: 17, flexShrink: 0 }}
+                />
+              ) : (
+                <History size={17} color={theme.muted} strokeWidth={1.9} style={styles.removableChipIcon} />
+              )}
               <Text numberOfLines={2} ellipsizeMode="tail" style={styles.removableChipText}>
                 {item.query}
               </Text>
@@ -531,7 +566,16 @@ export const SearchScreen = memo(function SearchScreen({
               style={styles.removableChipClose}
               onPress={() => onRemoveRecentSearch(item.query)}
             >
-              <X size={16} color={theme.muted} strokeWidth={2.2} />
+              {Platform.OS === 'android' ? (
+                <NativeRecentIcon
+                  icon="close"
+                  color={theme.muted}
+                  accessible={false}
+                  style={{ width: 16, height: 16 }}
+                />
+              ) : (
+                <X size={16} color={theme.muted} strokeWidth={2.2} />
+              )}
             </Pressable>
           </View>
         );

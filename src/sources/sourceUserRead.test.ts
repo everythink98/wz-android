@@ -43,6 +43,41 @@ import {
 } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 describe('source user read', () => {
+  it.each([8, 0, undefined])(
+    'reads LinuxDo post_count as replies without subtracting topics (%s)',
+    async (postCount) => {
+      const profile = await getUserDetails({
+        source: 'linuxdo',
+        id: 'alice',
+        fetcher: async () =>
+          Response.json({
+            user_summary: {
+              can_see_summary_stats: true,
+              can_see_user_actions: true,
+              topic_count: 2,
+              post_count: postCount,
+              days_visited: 0,
+              topics_entered: 14,
+              posts_read_count: 70,
+              time_read: 301,
+              likes_given: 0,
+              likes_received: 3
+            }
+          })
+      });
+      expect(profile).toMatchObject({
+        topicCount: 2,
+        daysVisited: 0,
+        topicsEntered: 14,
+        postsReadCount: 70,
+        timeRead: 301,
+        likesGiven: 0,
+        likesReceived: 3
+      });
+      expect(profile.replyCount).toBe(postCount);
+      expect(profile.postCount).toBeUndefined();
+    }
+  );
   it.each([false, true])(
     'keeps the requested LinuxDo identity when its summary has no profile user (related users: %s)',
     async (withRelatedUsers) => {
@@ -68,11 +103,11 @@ describe('source user read', () => {
         displayName: 'alice',
         url: 'https://linux.do/u/alice',
         topicCount: 2,
-        postCount: 8
+        replyCount: 8
       });
       expect(profile.avatar).toBeUndefined();
       expect(profile.levelLabel).toBeUndefined();
-      expect(profile.replyCount).toBeUndefined();
+      expect(profile.postCount).toBeUndefined();
       expect(sourceDiagnosticSummary(profile)).toMatchObject({ validCount: 1, isParseEmpty: false });
       await getUserTopics({ source: 'linuxdo', profile, fetcher });
       await getUserReplies({ source: 'linuxdo', profile, fetcher });
@@ -364,7 +399,7 @@ describe('source user read', () => {
       username: '我是ikun',
       url: 'https://www.nodeseek.com/space/48872'
     });
-    expect(linuxdo).toMatchObject({ source: 'linuxdo', id: 'alice', username: 'alice', postCount: 8, topicCount: 2 });
+    expect(linuxdo).toMatchObject({ source: 'linuxdo', id: 'alice', username: 'alice', replyCount: 8, topicCount: 2 });
     expect(v2ex).toMatchObject({ source: 'v2ex', id: 'neo', username: 'neo', bio: 'hello' });
     expect(yaohuo).toMatchObject({ source: 'yaohuo', id: '7', username: '火友', postCount: 12 });
     expect(sourceDiagnosticSummary(nodeseek)).toMatchObject({ parserVariant: 'api-user', partialErrorCount: 0 });
@@ -565,7 +600,7 @@ describe('source user read', () => {
         );
       }
       if (input.includes('linux.do/u/alice/summary.json')) {
-        return new Response(JSON.stringify({ user_summary: { user: { username: 'alice' }, reply_count: 31 } }));
+        return new Response(JSON.stringify({ user_summary: { user: { username: 'alice' }, post_count: 31 } }));
       }
       if (input.includes('linux.do/user_actions.json') && input.includes('offset=30') && input.includes('limit=31')) {
         return new Response(

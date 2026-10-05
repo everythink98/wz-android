@@ -39,6 +39,7 @@ import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { RequestCanceledError } from '@/platform/network/request';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { renderHook } from '@testing-library/react-native';
 import { useRecyclerViewController } from '@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController';
@@ -478,7 +479,6 @@ jest.mock('@/features/topic/components/TopicPolls', () => {
 jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({
   ReplyComposerSheet: (props: React.ComponentProps<typeof ReplyComposerSheet>) => mockReplyComposerSheet(props)
 }));
-jest.mock('@/features/topic/components/TopicMenu', () => ({ TopicMenu: () => null }));
 jest.mock('@/features/topic/components/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const {
@@ -810,6 +810,8 @@ function TopicFilterHarness({
     uploadReplyImage: async () => undefined,
     uploadReplyImageMarkup: async () => undefined,
     useLinuxDoTemplate: async () => undefined,
+    policySubmissions: {},
+    setPolicyAcceptance: async () => undefined,
     votePoll: async (poll: TopicPoll, optionIds: string[]) => onVotePoll(poll, optionIds)
   } satisfies TopicActionsController;
   const read = {
@@ -3782,7 +3784,97 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('retries an emoji catalog that failed before producing data', async () => {
+  it('automatically retries the active emoji catalog and discards an inactive request', async () => {
+    const linuxDoTopic: TopicDetail = { ...topic, source: 'linuxdo', reactionSummary: [{ id: 'heart', count: 1 }] };
+    const first = Promise.withResolvers<DiscourseEmojiUrlMap>();
+    const previous = Promise.withResolvers<DiscourseEmojiUrlMap>();
+    let attempts = 0;
+    const getDiscourseEmojiUrls = jest.fn(
+      async (_options: { signal?: AbortSignal; source: DiscourseSource }): Promise<DiscourseEmojiUrlMap> => {
+        attempts += 1;
+        if (attempts === 1) return first.promise;
+        if (attempts < 8) throw new Error('still offline');
+        if (attempts === 8) return previous.promise;
+        return { heart: 'https://linux.do/recovered-heart.png' };
+      }
+    );
+    const queryKey = forumQueryKeys.emojiUrls('linuxdo');
+    appQueryClient.removeQueries({ queryKey, exact: true });
+    const tree = (active = true) => (
+      <TopicFilterHarness
+        active={active}
+        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+        selectedTopic={linuxDoTopic}
+        topicDetail={linuxDoTopic}
+      />
+    );
+    const view = await render(tree());
+    await waitFor(() => expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1));
+    jest.useFakeTimers();
+    try {
+      await act(async () => first.reject(new Error('offline')));
+      await act(async () => jest.advanceTimersByTimeAsync(999));
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1);
+      await act(async () => jest.advanceTimersByTimeAsync(1));
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(2);
+      await act(async () => jest.advanceTimersByTimeAsync(2_000));
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(3);
+      for (const delay of [4_000, 8_000, 16_000, 30_000, 30_000]) {
+        const calls = getDiscourseEmojiUrls.mock.calls.length;
+        await act(async () => jest.advanceTimersByTimeAsync(delay - 1));
+        expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(calls);
+        await act(async () => jest.advanceTimersByTimeAsync(1));
+        expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(calls + 1);
+      }
+      const previousSignal = getDiscourseEmojiUrls.mock.calls[7]![0].signal;
+      await view.rerender(tree(false));
+      expect(previousSignal?.aborted).toBe(true);
+      await act(async () => previous.resolve({ heart: 'https://linux.do/obsolete-heart.png' }));
+      await act(async () => jest.advanceTimersByTimeAsync(60_000));
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(8);
+      expect(appQueryClient.getQueryData(queryKey)).toBeUndefined();
+      await view.rerender(tree());
+      await act(async () => jest.advanceTimersByTimeAsync(1));
+      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/recovered-heart.png');
+      await act(async () => jest.advanceTimersByTimeAsync(60_000));
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(9);
+    } finally {
+      first.resolve({});
+      previous.resolve({});
+      await view.unmount();
+      jest.useRealTimers();
+      appQueryClient.removeQueries({ queryKey, exact: true });
+    }
+  });
+
+  it('does not revive a canceled emoji catalog read', async () => {
+    const linuxDoTopic: TopicDetail = { ...topic, source: 'linuxdo' };
+    const getDiscourseEmojiUrls = jest.fn(async () => {
+      throw new RequestCanceledError();
+    });
+    const queryKey = forumQueryKeys.emojiUrls('linuxdo');
+    appQueryClient.removeQueries({ queryKey, exact: true });
+    const view = await render(
+      <TopicFilterHarness
+        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+        selectedTopic={linuxDoTopic}
+        topicDetail={linuxDoTopic}
+      />
+    );
+    await waitFor(() => expect(appQueryClient.getQueryState(queryKey)?.status).toBe('error'));
+    jest.useFakeTimers();
+    try {
+      await act(async () => jest.advanceTimersByTimeAsync(60_000));
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1);
+      expect(appQueryClient.getQueryData(queryKey)).toBeUndefined();
+    } finally {
+      await view.unmount();
+      jest.useRealTimers();
+      appQueryClient.removeQueries({ queryKey, exact: true });
+    }
+  });
+
+  it('restarts an unfinished emoji catalog after leaving and reentering the topic', async () => {
     const linuxDoTopic: TopicDetail = {
       ...topic,
       source: 'linuxdo',
@@ -3807,7 +3899,7 @@ describe('Topic reply filters', () => {
           topicDetail={linuxDoTopic}
         />
       );
-      await waitFor(() => expect(appQueryClient.getQueryState(queryKey)?.status).toBe('error'));
+      await waitFor(() => expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1));
       await first.unmount();
 
       const second = await render(
@@ -4831,6 +4923,31 @@ describe('Topic reply filters', () => {
       'reply-2-bob',
       'reply-3-alice'
     ]);
+  });
+
+  it.each([
+    ['topic actions', '更多操作', '关闭更多操作'],
+    ['reply ordering', '回复排序，当前倒序', '关闭回复排序菜单']
+  ])('dismisses %s on route inactivity without changing retained reading state', async (_menu, trigger, dismiss) => {
+    const view = await render(<TopicFilterHarness />);
+    await fireEvent.press(view.getByLabelText('只看楼主'));
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    await fireEvent.press(view.getByLabelText(trigger));
+    expect(view.getByLabelText(dismiss)).toBeTruthy();
+    const scrollCalls = [mockScrollToIndex.mock.calls.length, mockScrollToOffset.mock.calls.length];
+
+    await view.rerender(<TopicFilterHarness active={false} />);
+    await view.rerender(<TopicFilterHarness />);
+
+    expect(view.queryByLabelText(dismiss)).toBeNull();
+    expect(view.getByLabelText('只看楼主，已选择')).toBeTruthy();
+    expect(view.getByLabelText('回复排序，当前倒序')).toBeTruthy();
+    expect(view.getByTestId('active-filter').props.children).toBe('author');
+    expect(view.getByTestId('active-order').props.children).toBe('newest');
+    expect([mockScrollToIndex.mock.calls.length, mockScrollToOffset.mock.calls.length]).toEqual(scrollCalls);
+    await fireEvent.press(view.getByLabelText(trigger));
+    expect(view.getByLabelText(dismiss)).toBeTruthy();
   });
 
   it('shows newest-tail loading and a reply-level retry without stale replies', async () => {

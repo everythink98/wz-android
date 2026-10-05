@@ -2,14 +2,13 @@ import { useMemo } from 'react';
 import { FlatList, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Button, Chip, List, Searchbar } from 'react-native-paper';
 import { CheckCircle2, CheckSquare2, Circle, Search, Square, X } from 'lucide-react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { TopicTag } from '@/domain/forum/topicComposer';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import type { useTopicComposerController } from './useTopicComposerController';
 import type { useTopicTagSearch } from './useTopicTagSearch';
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     root: { flexShrink: 1, gap: 8 },

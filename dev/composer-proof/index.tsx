@@ -39,6 +39,7 @@ type Scenario = {
   entry: ComposerEntry | 'topic' | 'topic-edit';
   outcome: ComposerOutcome | 'enqueued';
   dark: boolean;
+  fontScale: number;
   stress: string;
 };
 function Proof({ scenario }: { scenario: Scenario }) {
@@ -75,6 +76,7 @@ function Proof({ scenario }: { scenario: Scenario }) {
   const [, refresh] = useState(0);
   const settings = {
     ...createEmptyReaderData().settings,
+    fontScale: scenario.fontScale,
     theme: scenario.dark ? ('dark' as const) : ('light' as const)
   };
   const theme = createTheme(settings);
@@ -178,11 +180,13 @@ function App() {
       const source = parsed.searchParams.get('source') || 'nodeseek';
       const entry = parsed.searchParams.get('entry') || 'reply';
       const outcome = parsed.searchParams.get('outcome') || 'success';
+      const fontScale = Number(parsed.searchParams.get('fontScale') || 1);
       if (
         !/^[a-f0-9]{32}$/.test(token) ||
         !['nodeseek', 'linuxdo', 'yaohuo'].includes(source) ||
         !['reply', 'floor', 'edit', 'message', 'topic', 'topic-edit'].includes(entry) ||
-        !['success', 'network-error', 'rejected', 'unconfirmed', 'refresh-error', 'enqueued'].includes(outcome)
+        !['success', 'network-error', 'rejected', 'unconfirmed', 'refresh-error', 'enqueued'].includes(outcome) ||
+        ![1, 1.3].includes(fontScale)
       )
         return;
       seen.current = url;
@@ -193,6 +197,7 @@ function App() {
         entry: entry as Scenario['entry'],
         outcome: outcome as Scenario['outcome'],
         dark: parsed.searchParams.get('theme') === 'dark',
+        fontScale,
         stress: parsed.searchParams.get('stress') || ''
       });
     }

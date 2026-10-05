@@ -1,14 +1,13 @@
-import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import { StyleSheet } from 'react-native';
+import { type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
 
-export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     actions: {
       alignItems: 'center',
       flexDirection: 'row',
-      flexWrap: 'wrap',
+      flexShrink: 0,
       gap: 8
     },
     content: {
@@ -51,30 +50,27 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
       alignItems: 'center',
       flexDirection: 'row',
       justifyContent: 'space-between',
+      minHeight: 48,
       gap: 10
     },
-    sectionTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 17,
-      fontWeight: '600'
-    },
     stack: {
-      gap: 10,
+      gap: 8,
+      paddingHorizontal: 16,
       width: '100%'
     },
     categoryFilterSlot: {
-      justifyContent: 'center',
-      minHeight: 34
+      flex: 1,
+      minWidth: 0,
+      justifyContent: 'center'
     },
     categoryFilterButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',
       flexDirection: 'row',
       gap: 4,
-      minHeight: 34,
+      minHeight: 48,
       maxWidth: '100%',
-      paddingHorizontal: 2
+      paddingHorizontal: 0
     },
     categoryFilterButtonText: {
       color: theme.primary,
@@ -86,14 +82,14 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
     categoryFilterButtonTextDisabled: {
       color: theme.muted
     },
-    hiddenCategoryFilterSlot: {
-      opacity: 0
-    },
     libraryContentInner: {
       gap: 0,
-      padding: 16,
-      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
-      paddingBottom: 96
+      paddingHorizontal: 0,
+      paddingTop: 8,
+      paddingBottom: 16
+    },
+    libraryEmpty: {
+      paddingHorizontal: 16
     },
     libraryViewportStack: {
       flex: 1
@@ -140,6 +136,7 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
       fontSize: 12,
       fontWeight: '600',
       letterSpacing: 0,
+      paddingHorizontal: 16,
       paddingTop: 12,
       paddingBottom: 2
     },
@@ -152,6 +149,8 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
       borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 10,
+      paddingHorizontal: 16,
+      paddingTop: 8,
       paddingBottom: 10
     },
     libraryUserButton: {
@@ -160,9 +159,6 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
     },
     libraryUserAction: {
       flexShrink: 0
-    },
-    libraryUserListSpacer: {
-      height: 6
     }
   });
 }

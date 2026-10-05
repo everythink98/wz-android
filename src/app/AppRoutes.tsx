@@ -36,6 +36,9 @@ const getNotificationsRoute = () =>
 const getReadingSettingsRoute = () =>
   require('@/features/more/MoreRoute')
     .ReadingSettingsRoute as typeof import('@/features/more/MoreRoute').ReadingSettingsRoute;
+const getNodeSeekCreditsRoute = () =>
+  require('@/features/more/NodeSeekCreditsRoute')
+    .NodeSeekCreditsRoute as typeof import('@/features/more/NodeSeekCreditsRoute').NodeSeekCreditsRoute;
 const getNotificationDetailRoute = () =>
   require('@/features/notifications/NotificationRoute')
     .NotificationDetailRoute as typeof import('@/features/notifications/NotificationRoute').NotificationDetailRoute;
@@ -95,6 +98,7 @@ export function AppRoutes({
                       getNotificationSettingsRoute={getNotificationSettingsRoute}
                       getNotificationsRoute={getNotificationsRoute}
                       getReadingSettingsRoute={getReadingSettingsRoute}
+                      getNodeSeekCreditsRoute={getNodeSeekCreditsRoute}
                       getSearchRoute={getSearchRoute}
                       getTopicRoute={getTopicRoute}
                       getTopicComposerRoute={getTopicComposerRoute}

@@ -72,7 +72,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
   });
   const { feedAllowsRemotePagination, loadFeed } = controller;
   const loadMore = useCallback(() => {
-    if (feedAllowsRemotePagination) void loadFeed();
+    if (feedAllowsRemotePagination) return loadFeed();
   }, [feedAllowsRemotePagination, loadFeed]);
   const openTopic = useCallback(
     (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),

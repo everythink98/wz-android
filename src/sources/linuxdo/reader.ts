@@ -22,6 +22,7 @@ import type {
   TopicDetail
 } from '@/domain/forum/models';
 import { isRecord, parsePositiveInteger, textContentFromHtml } from '@/domain/forum/html';
+import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
@@ -314,6 +315,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
   const authorLevelLabel = linuxDoLevelLabel(raw);
   return {
     ...replyFields,
+    policy: discoursePostPolicy(raw),
     ...(typeof raw.read === 'boolean' ? { serverRead: raw.read } : {}),
     authorId: fields.author || undefined,
     authorAvatar: avatarUrl(raw.avatar_template),
@@ -630,6 +632,7 @@ export async function getLinuxDoTopic(
     }).preparedContent;
   const result = {
     ...topic,
+    policy: discoursePostPolicy(firstPost),
     accessRequirement: undefined,
     mediaReferrer: { documentUrl: topic.url },
     contentHtml: preparedContent.contentHtml,
@@ -671,6 +674,59 @@ async function fetchPosts(id: string, postIds: unknown[], options: LinuxDoOption
     options
   );
   return isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
+}
+
+export async function getLinuxDoConversationPage(
+  id: string,
+  options: LinuxDoOptions & { beforePostId?: string } = {}
+): Promise<{ topic: Topic; items: Reply[]; olderCursor: string | null }> {
+  const beforePostId = options.beforePostId;
+  if (beforePostId !== undefined && (!/^[1-9]\d*$/.test(beforePostId) || !Number.isSafeInteger(Number(beforePostId)))) {
+    throw new Error('私信历史游标不正确');
+  }
+  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  const data = await topicData(id, options);
+  const rawStream = topicStreamState(data).stream;
+  const stream = rawStream.map(String);
+  if (
+    !stream.length ||
+    stream.some((postId) => !/^[1-9]\d*$/.test(postId) || !Number.isSafeInteger(Number(postId))) ||
+    new Set(stream).size !== stream.length
+  )
+    throw new Error('私信历史列表不完整，请刷新会话后重试');
+  const end = beforePostId === undefined ? stream.length : stream.indexOf(beforePostId);
+  if (end < 0) throw new Error('私信历史游标已变化，请刷新会话后重试');
+  const start = Math.max(0, end - 30);
+  const ids = stream.slice(start, end);
+  const embeddedPosts =
+    isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
+  const byId = new Map<string, unknown>();
+  for (const post of embeddedPosts) {
+    if (!isRecord(post) || !ids.includes(String(post.id))) continue;
+    if (byId.has(String(post.id))) throw new Error('私信历史内容不完整，请重试');
+    byId.set(String(post.id), post);
+  }
+  const missingIds = ids.filter((postId) => !byId.has(postId));
+  if (missingIds.length) {
+    const fetched = await fetchPosts(id, missingIds, options);
+    for (const post of fetched) {
+      if (!isRecord(post) || !missingIds.includes(String(post.id)) || byId.has(String(post.id))) {
+        throw new Error('私信历史内容不完整，请重试');
+      }
+      byId.set(String(post.id), post);
+    }
+  }
+  const items = ids.flatMap((postId) => {
+    const raw = byId.get(postId);
+    if (!isRecord(raw)) throw new Error('私信历史内容不完整，请重试');
+    if (raw.deleted_at) return [];
+    const reply = normalizePost(raw, id);
+    if (!reply || String(reply.commentId) !== postId) throw new Error('私信历史内容不完整，请重试');
+    return [reply];
+  });
+  const topic = normalizeTopic(data, categoryMapFromData(data));
+  if (!topic) throw new Error('私信会话信息不完整');
+  return { topic: { ...topic, isPrivateMessage: true }, items, olderCursor: start > 0 ? stream[start]! : null };
 }
 
 export async function getLinuxDoReplies(

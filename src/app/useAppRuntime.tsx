@@ -19,7 +19,7 @@ import { useAppLifecycleRuntime } from './useAppLifecycleRuntime';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
 import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRouteRuntime';
 import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
-import { openNotificationsRoute } from './appNavigation';
+import { navigateAppScreen, openNodeSeekCreditsRoute, openNotificationsRoute } from './appNavigation';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -33,6 +33,7 @@ export function useAppRuntime() {
     changeScreen,
     getCurrentScreen,
     height,
+    feedContentReady,
     initialForegroundReady,
     notify,
     onCatalogSettled,
@@ -46,7 +47,11 @@ export function useAppRuntime() {
   const { commitReaderData, readerData, readerDataLoaded, readerStatus, readerDataRef, importBackup, exportBackup } =
     useReaderRuntime({ notify });
 
-  const { favorites, history } = readerData;
+  const { favorites, history, followedUsers, settings } = readerData;
+  const readerView = useMemo(
+    () => ({ favorites, history, followedUsers, settings }),
+    [favorites, history, followedUsers, settings]
+  );
   const { fontScale, listDensity } = readerData.settings;
   const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
     readerData.settings,
@@ -170,9 +175,6 @@ export function useAppRuntime() {
       showYaohuoLogin
     ]
   );
-  const notificationSummary = `${notificationsRuntime.unreadTotal ? '有未读' : '暂无未读'} · ${
-    notificationsRuntime.backgroundEnabled ? '后台通知已开启' : '后台通知未开启'
-  }${notificationsRuntime.partialUnavailable ? ' · 部分站点暂不可用' : ''}`;
   const { onNavigationReady: handleNotificationNavigationReady } = notificationsRuntime;
   const onNavigationReady = useMemo(
     () => () => {
@@ -184,9 +186,8 @@ export function useAppRuntime() {
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
     active: settingsTrusted && sessionsReady && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
+    deferSecondary: screen === 'feed' && !feedContentReady,
     enabledFeedSources,
-    enabledSourcesKey,
-    notify,
     onSettled: readerDataLoaded && sessionsReady ? onCatalogSettled : undefined,
     readGateway,
     sessionEpochs: forumSessionEpochs
@@ -236,7 +237,7 @@ export function useAppRuntime() {
       notify,
       reader: {
         commit: commitReaderData,
-        data: readerData,
+        data: readerView,
         dataRef: readerDataRef
       },
       readerStyle: readerStyleContext
@@ -263,7 +264,7 @@ export function useAppRuntime() {
       onSessionExpired,
       readGateway,
       requestAccountRecheck,
-      readerData,
+      readerView,
       readerDataRef,
       readerStyleContext,
       reconcileAccountStatus,
@@ -339,7 +340,7 @@ export function useAppRuntime() {
       notify,
       reader: {
         commit: commitReaderData,
-        data: readerData,
+        data: readerView,
         dataRef: readerDataRef
       },
       topicStateIndex
@@ -353,7 +354,7 @@ export function useAppRuntime() {
       notificationsRuntime.activeSources,
       notify,
       readGateway,
-      readerData,
+      readerView,
       readerDataRef,
       reconcileAccountStatus,
       requestNodeSeekVerification,
@@ -380,7 +381,7 @@ export function useAppRuntime() {
       catalogCategories,
       notify,
       reader: {
-        data: readerData,
+        data: readerView,
         loaded: readerDataLoaded
       },
       onInitialContentReady: onFeedInitialContentReady,
@@ -395,7 +396,7 @@ export function useAppRuntime() {
       onFeedInitialContentReady,
       notify,
       readGateway,
-      readerData,
+      readerView,
       readerDataLoaded,
       requestNodeSeekVerification,
       showLinuxDoPanel,
@@ -420,7 +421,7 @@ export function useAppRuntime() {
       },
       catalogCategories,
       notify,
-      readerData,
+      readerData: readerView,
       topicStateIndex
     }),
     [
@@ -430,7 +431,7 @@ export function useAppRuntime() {
       forumSessionEpochs,
       notify,
       readGateway,
-      readerData,
+      readerView,
       reconcileAccountStatus,
       requestNodeSeekVerification,
       showLinuxDoPanel,
@@ -443,7 +444,6 @@ export function useAppRuntime() {
   const libraryRouteRuntime = useMemo<LibraryRouteRuntimeValue>(
     () => ({
       readingGateway: readGateway,
-      categories: catalogCategories,
       enabledSources,
       notify,
       reader: {
@@ -456,7 +456,6 @@ export function useAppRuntime() {
     }),
     [
       readGateway,
-      catalogCategories,
       commitReaderData,
       enabledSources,
       notify,
@@ -470,12 +469,21 @@ export function useAppRuntime() {
   const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(
     () => ({
       account: {
+        active: appActive,
         enabledSessionSources,
         read: {
+          gateway: readGateway,
+          sessionEpochs: forumSessionEpochs,
           sessions: accountRuntime.read.accountSessionViewModels,
           statusBusy: accountRuntime.read.statusBusy
         },
         center: {
+          openCredits: (currency) => {
+            const user = accountRuntime.read.accountSessionViewModels.nodeseek.currentUser;
+            if (user && accountRuntime.read.accountSessionViewModels.nodeseek.canWrite) {
+              openNodeSeekCreditsRoute({ identityKey: `nodeseek:${user.id}`, userId: user.id, currency });
+            }
+          },
           command: accountRuntime.center.handleAccountCenterCommand,
           credentials: {
             summaries: accountRuntime.center.credentials.credentialSummaries,
@@ -494,9 +502,7 @@ export function useAppRuntime() {
             save: accountRuntime.center.nodeImage.key.save,
             saved: accountRuntime.center.nodeImage.key.saved
           },
-          nodeSeek: {
-            checkIn: accountRuntime.center.checkIn
-          }
+          nodeSeek: accountRuntime.center.nodeSeek
         },
         surfaces: {
           closeAll: accountRuntime.hosts.closePanels,
@@ -510,12 +516,10 @@ export function useAppRuntime() {
         metadata: diagnosticMetadata
       },
       notify,
-      notifications: {
-        hasUnread: notificationsRuntime.unreadTotal > 0,
+      library: {
         open: () => {
-          openNotificationsRoute();
-        },
-        summary: notificationSummary
+          navigateAppScreen('library');
+        }
       },
       proxy: {
         activeProfile: networkRuntime.activeProfile,
@@ -547,6 +551,9 @@ export function useAppRuntime() {
       accountRuntime.hosts.surfaces.yaohuo,
       accountRuntime.read.accountSessionViewModels,
       accountRuntime.read.statusBusy,
+      appActive,
+      forumSessionEpochs,
+      readGateway,
       commitReaderData,
       diagnosticMetadata,
       enabledSessionSources,
@@ -561,8 +568,6 @@ export function useAppRuntime() {
       networkRuntime.summary,
       networkRuntime.testProxyProfile,
       networkRuntime.upsertProxyProfile,
-      notificationSummary,
-      notificationsRuntime.unreadTotal,
       notify,
       readerData,
       readerDataRef,

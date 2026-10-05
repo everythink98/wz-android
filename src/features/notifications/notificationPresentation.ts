@@ -25,8 +25,16 @@ export function notificationAccessibilityLabel(item: ForumNotification) {
     item.unread ? '未读' : '已读',
     item.actor.name,
     notificationActionText(item.kind),
-    item.title
-  ].join('，');
+    notificationTitleText(item)
+  ]
+    .filter(Boolean)
+    .join('，');
+}
+
+export function notificationTitleText(item: ForumNotification) {
+  return item.kind === 'private-message' && item.title.trim() === item.actor.name.trim()
+    ? item.preview || ''
+    : item.title;
 }
 
 export function notificationActionText(kind: ForumNotification['kind']) {

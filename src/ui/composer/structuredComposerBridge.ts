@@ -201,7 +201,7 @@ export const composerEditorMessageSchema = z.discriminatedUnion('type', [
     payload: strictObject({
       documentEpoch: z.number().int().nonnegative(),
       open: z.boolean(),
-      expanded: z.boolean().optional()
+      layout: z.enum(['form', 'expression']).optional()
     })
   }),
   strictObject({

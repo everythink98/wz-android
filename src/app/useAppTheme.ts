@@ -1,13 +1,14 @@
 import { useDeferredValue, useMemo } from 'react';
 import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { contentWidthValue, createTheme } from '@/ui/theme/tokens';
+import { contentWidthValue, createTheme, type ReaderStyleSettings } from '@/ui/theme/tokens';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 import { createAppStyles } from './styles';
 
 export function useAppTheme(settings: ReaderSettings, width: number) {
+  const { contentWidth, fontFamily, lineHeight, listDensity, theme: themeMode } = settings;
   const deferredFontScale = useDeferredValue(settings.fontScale);
-  const theme = useMemo(() => createTheme(settings), [settings]);
+  const theme = useMemo(() => createTheme({ theme: themeMode }), [themeMode]);
   const navigationTheme = useMemo(() => {
     const base = theme.dark ? DarkTheme : DefaultTheme;
     return {
@@ -24,7 +25,10 @@ export function useAppTheme(settings: ReaderSettings, width: number) {
       }
     };
   }, [theme]);
-  const styleSettings = useMemo(() => ({ ...settings, fontScale: deferredFontScale }), [deferredFontScale, settings]);
+  const styleSettings = useMemo<ReaderStyleSettings>(
+    () => ({ contentWidth, fontFamily, fontScale: deferredFontScale, lineHeight, listDensity, theme: themeMode }),
+    [contentWidth, deferredFontScale, fontFamily, lineHeight, listDensity, themeMode]
+  );
   const appStyles = useMemo(() => createAppStyles(theme), [theme]);
   const readerStyleContext = useMemo<ReaderStyleContextValue>(
     () => ({ settings: styleSettings, theme }),
@@ -33,7 +37,7 @@ export function useAppTheme(settings: ReaderSettings, width: number) {
 
   return {
     appStyles,
-    contentWidth: Math.min(width - 40, contentWidthValue(settings.contentWidth)),
+    contentWidth: Math.min(width - 40, contentWidthValue(contentWidth)),
     navigationTheme,
     readerStyleContext,
     theme

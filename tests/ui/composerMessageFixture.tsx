@@ -128,7 +128,10 @@ export function MessageSubmissionFixture({
       reconcileAccountStatus: async () => ({ status: 'same', session: account.sessions[source] }),
       composer: {
         ensureNodeImageApiKey: async () => 'synthetic-api-key',
-        getDiscourseEmojiUrls: async () => ({}),
+        getDiscourseEmojiUrls: async () => ({
+          smile: 'https://linux.do/images/emoji/twitter/smile.png',
+          heart: 'https://linux.do/images/emoji/twitter/heart.png'
+        }),
         ensureWritableSession: () =>
           ensureWritableSessionTicket(
             () => account.snapshot,

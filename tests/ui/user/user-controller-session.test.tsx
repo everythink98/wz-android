@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import { appQueryClient } from '@/platform/query/serverState';
+import { QueryObserver } from '@tanstack/react-query';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import { useUserController } from '@/features/user/useUserController';
@@ -343,6 +344,55 @@ describe('user query controller', () => {
 
     pending.resolve(user);
   });
+
+  it.each([
+    { cleanup: 'inactive', shared: false },
+    { cleanup: 'unmount', shared: false },
+    { cleanup: 'inactive', shared: true },
+    { cleanup: 'unmount', shared: true }
+  ] as const)(
+    'preserves a profile read only for another active observer after $cleanup, shared=$shared',
+    async ({ cleanup, shared }) => {
+      let active = true;
+      let signal: AbortSignal | undefined;
+      const pending = Promise.withResolvers<UserProfile>();
+      const getUserProfile = jest.fn<UserFixtureRead>(async (request) => {
+        signal = request.signal;
+        return pending.promise;
+      });
+      const hook = await renderUserController({ getActive: () => active, getUserProfile });
+      await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
+      const queryKey = forumQueryKeys.user({
+        source: 'nodeseek',
+        userId: user.id,
+        scope: initialForumSessionEpochs,
+        readPlanScope: 'authenticated:0'
+      });
+      const observer = new QueryObserver(appQueryClient, { queryKey, queryFn: () => pending.promise });
+      const unsubscribe = shared ? observer.subscribe(() => undefined) : undefined;
+
+      try {
+        if (cleanup === 'unmount') await hook.unmount();
+        else {
+          active = false;
+          await hook.rerender(undefined);
+        }
+        expect(signal).toBeDefined();
+        expect(signal?.aborted).toBe(!shared);
+
+        await act(async () => {
+          pending.resolve(user);
+          await pending.promise;
+        });
+        if (shared) await waitFor(() => expect(observer.getCurrentResult().data?.id).toBe(user.id));
+        expect(getUserProfile).toHaveBeenCalledTimes(1);
+      } finally {
+        pending.resolve(user);
+        unsubscribe?.();
+        if (cleanup !== 'unmount') await hook.unmount();
+      }
+    }
+  );
 
   it('resolves a username before loading the canonical NodeSeek profile', async () => {
     const reference: UserReference = {
@@ -1102,7 +1152,7 @@ describe('user query controller', () => {
       });
     });
 
-    it.each(['cancel', 'cancel-after-error', 'inactive', 'user', 'epoch', 'other-source-epoch'] as const)(
+    it.each(['cancel', 'cancel-after-error', 'inactive', 'user', 'epoch'] as const)(
       'ignores a pending refresh after %s without rebuilding cached pages',
       async (change) => {
         const pending = Promise.withResolvers<UserProfile>();
@@ -1158,7 +1208,6 @@ describe('user query controller', () => {
             resetForumSourceQueries('nodeseek', appQueryClient);
             epochs = { ...epochs, nodeseek: epochs.nodeseek + 1 };
           }
-          if (change === 'other-source-epoch') epochs = { ...epochs, linuxdo: epochs.linuxdo + 1 };
           hook.rerender(undefined);
         });
         await waitFor(() => expect(signal?.aborted).toBe(true));
@@ -1176,6 +1225,53 @@ describe('user query controller', () => {
         expect(hook.result.current.userBusy).toBe(false);
       }
     );
+
+    it('completes a pending profile refresh when an unrelated source epoch changes', async () => {
+      const pending = Promise.withResolvers<UserProfile>();
+      let epochs = initialForumSessionEpochs;
+      let signal: AbortSignal | undefined;
+      const getUserProfile = jest
+        .fn<UserFixtureRead>()
+        .mockResolvedValueOnce(firstPage)
+        .mockResolvedValueOnce({ ...firstPage, topics: [{ ...firstTopic, id: 'topic-2' }] })
+        .mockImplementationOnce(async (request) => {
+          signal = request.signal;
+          return pending.promise;
+        });
+      const hook = await renderUserController({ getUserProfile, getSessionEpochs: () => epochs });
+      try {
+        await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
+        await act(async () => {
+          await hook.result.current.loadMoreUserTopics();
+        });
+        await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(2));
+        let refreshing!: Promise<unknown>;
+        await act(async () => {
+          refreshing = hook.result.current.refreshUser();
+        });
+        await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
+        epochs = { ...epochs, linuxdo: epochs.linuxdo + 1 };
+        await hook.rerender(undefined);
+        expect(signal).toBeDefined();
+        expect(signal?.aborted).toBe(false);
+        expect(hook.result.current.userProfile?.topics).toHaveLength(2);
+
+        await act(async () => {
+          pending.resolve({
+            ...firstPage,
+            displayName: '刷新后的资料',
+            topics: [{ ...firstTopic, id: 'fresh-topic' }]
+          });
+          await expect(refreshing).resolves.toBe('completed');
+        });
+        await waitFor(() => expect(hook.result.current.userProfile?.displayName).toBe('刷新后的资料'));
+        expect(hook.result.current.userProfile?.topics?.map(({ id }) => id)).toEqual(['fresh-topic']);
+        expect(getUserProfile).toHaveBeenCalledTimes(3);
+      } finally {
+        pending.resolve(firstPage);
+        await hook.unmount();
+      }
+    });
 
     it.each(['unchanged', 'empty'] as const)(
       'applies a successful %s refresh even within the previous update millisecond',

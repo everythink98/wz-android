@@ -1,7 +1,12 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import type { NormalizedReplyImageAsset } from '@/sources/imageUpload';
+import {
+  appendFileToFormData,
+  MAX_REPLY_IMAGE_UPLOAD_BYTES,
+  type NormalizedReplyImageAsset
+} from '@/sources/imageUpload';
+import { YAOHUO_BASE_URL } from './protocol';
 
-const YAOHUO_IMAGE_BED_UPLOAD_URL = 'https://file.sang.pub/api/upload';
+const YAOHUO_IMAGE_BED_UPLOAD_URL = 'https://aapi.helioho.st/upload.php';
 
 function uploadMessage(data: unknown) {
   const message = data && typeof data === 'object' ? (data as Record<string, unknown>).msg : undefined;
@@ -13,7 +18,8 @@ export function yaohuoImageUrlFromUploadResponse(data: unknown) {
   if (record.code !== 200) {
     throw new Error(`图床上传失败：${uploadMessage(data) || '未返回成功状态'}`);
   }
-  const url = typeof record.data === 'string' ? record.data.trim() : '';
+  const image = record.data && typeof record.data === 'object' ? (record.data as Record<string, unknown>) : {};
+  const url = typeof image.url === 'string' ? image.url.trim() : '';
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password)
@@ -35,17 +41,17 @@ export async function uploadYaohuoReplyImage({
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
+  const size = file.size ?? new (await import('expo-file-system')).File(file.uri).size;
+  if (!Number.isSafeInteger(size) || size <= 0) throw new Error('图片文件为空或无法读取');
+  if (size > MAX_REPLY_IMAGE_UPLOAD_BYTES) throw new Error('图片不能超过 20MB');
+  const body = new FormData();
+  appendFileToFormData(body, 'image', file);
   const response = await fetchWithTimeout(
     YAOHUO_IMAGE_BED_UPLOAD_URL,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': file.mimeType,
-        'X-Upload-Type': 'qiyu',
-        'X-File-Name': encodeURIComponent(file.name)
-      },
-      // React Native streams this URI as the raw request body, without a multipart envelope.
-      body: { uri: file.uri } as unknown as BodyInit
+      headers: { Origin: YAOHUO_BASE_URL },
+      body
     },
     {
       fetcher,

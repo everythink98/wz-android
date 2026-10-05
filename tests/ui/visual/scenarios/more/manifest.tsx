@@ -2,6 +2,7 @@ import { useState, type PropsWithChildren } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { defaultContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
 import { ContentSourcesPanel } from '@/features/more/components/ContentSourcesPanel';
 import { MoreUpdatePanel } from '@/features/more/components/MoreUpdatePanel';
@@ -46,10 +47,8 @@ function MoreScreenFrame({ children }: PropsWithChildren) {
 function UtilityOverviewScenario() {
   const { settings } = useReaderThemeStyles(noStyles);
   const runtime: MoreUtilityCapabilities = {
-    notifications: {
-      hasUnread: false,
-      open: noop,
-      summary: '暂无未读·后台通知未开启'
+    library: {
+      open: noop
     },
     backup: {
       recovery: false,
@@ -77,7 +76,7 @@ function UtilityOverviewScenario() {
       upsertProfile: noopAsync
     },
     settings: {
-      value: settings,
+      value: { ...createEmptyReaderData().settings, ...settings },
       visible: false,
       changeVisible: noop,
       update: noop

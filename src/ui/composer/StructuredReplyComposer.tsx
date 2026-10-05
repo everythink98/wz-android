@@ -33,8 +33,7 @@ import {
 } from './structuredComposerBridge';
 import { ComposerToolbar } from './ComposerToolbar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
@@ -51,7 +50,7 @@ export type StructuredReplyComposerHandle = {
   finishImageUpload: (uploadId: string, markup?: string) => Promise<void>;
 };
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = (size: number) => Math.round(size * Math.min(settings.fontScale, 1.15));
   return StyleSheet.create({
     root: { alignSelf: 'stretch', backgroundColor: theme.surface, flex: 1, minHeight: 0, overflow: 'hidden' },
@@ -278,7 +277,9 @@ export const StructuredReplyComposer = forwardRef<
       invalidated: boolean;
       pickerStarted: boolean;
     } | null>(null);
-    const [expandedPanel, setExpandedPanel] = useState(false);
+    const [panelLayout, setPanelLayout] = useState<'compact' | 'form' | 'expression'>('compact');
+    const expandedPanel = panelLayout === 'form';
+    const expressionPanel = panelLayout === 'expression';
     const [toolbarState, setToolbarState] = useState<ComposerToolbarState | null>(null);
     const panelPresentationRef = useRef<ComposerPresentation | null>(null);
     const previousPresentationRef = useRef(presentation);
@@ -762,8 +763,9 @@ export const StructuredReplyComposer = forwardRef<
         }
         if (message.type === 'PANEL_CHANGED') {
           onPanelChange?.(message.payload.open);
-          const expanded = Boolean(message.payload.open && message.payload.expanded);
-          setExpandedPanel(expanded);
+          const layout = message.payload.open ? (message.payload.layout ?? 'compact') : 'compact';
+          const expanded = layout === 'form';
+          setPanelLayout(layout);
           if (presentation !== 'embedded') {
             if (expanded && panelPresentationRef.current === null) {
               panelPresentationRef.current = presentation;
@@ -1209,7 +1211,7 @@ export const StructuredReplyComposer = forwardRef<
               originWhitelist={['https://composer.local']}
               javaScriptEnabled
               domStorageEnabled={false}
-              cacheEnabled={false}
+              cacheEnabled
               saveFormDataDisabled
               sharedCookiesEnabled={false}
               thirdPartyCookiesEnabled={false}
@@ -1248,7 +1250,7 @@ export const StructuredReplyComposer = forwardRef<
             />
           )}
         </View>
-        {!readOnly && !expandedPanel && !rendererGone ? (
+        {!readOnly && !expandedPanel && !expressionPanel && !rendererGone ? (
           <ComposerToolbar
             state={toolbarState}
             site={intent.site}
@@ -1289,7 +1291,7 @@ export const StructuredReplyComposer = forwardRef<
             ) : null}
           </>
         )}
-        {(!embedded || readOnly) && !expandedPanel ? (
+        {(!embedded || readOnly) && !expandedPanel && !expressionPanel ? (
           <View testID="structured-composer-footer" style={styles.footer}>
             {embedded ? (
               footerActions

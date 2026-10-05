@@ -38,6 +38,7 @@ function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired'
   Object.assign(error, {
     source: 'yaohuo',
     loginRequired: true,
+    serverRejected: true,
     reason,
     loginUrl: YAOHUO_LOGIN_URL
   });
@@ -62,16 +63,17 @@ function actionMessage(html: string, reply = false): YaohuoActionResult {
 
 function messageReplyResult(html: string): YaohuoActionResult {
   const root = parseHtml(html);
-  const message = elementText(root.querySelector('.tip')) || textContentFromHtml(html);
-  assertYaohuoActionSuccess(message);
+  const tip = root.querySelector('.tip');
+  const message = elementText(tip) || textContentFromHtml(html);
+  assertYaohuoActionSuccess(message, Boolean(tip));
   return message === '发送信息成功！'
     ? { status: 'confirmed', message }
     : { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
 }
 
-function assertYaohuoActionSuccess(message: string) {
+function assertYaohuoActionSuccess(message: string, serverRejected = false) {
   if (YAOHUO_ACTION_FAILURE_PATTERN.test(message)) {
-    throw new Error(message);
+    throw Object.assign(new Error(message), { serverRejected });
   }
 }
 

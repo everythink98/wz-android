@@ -39,7 +39,9 @@ import type {
 } from '@/domain/session/sessionContracts';
 import type { Screen } from '@/ui/navigation/types';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
+import type { NodeSeekAccountOverview, NodeSeekAttendanceBoard } from '@/domain/forum/accountData';
 import {
+  assertWritableSessionReconciled,
   ensureWritableSessionTicket,
   validateWritableSessionTicket,
   type SessionRuntimeSnapshot,
@@ -78,7 +80,10 @@ export function useAccountRuntime({
   loginNavigation: AccountHostsProps['loginNavigation'];
   notify: (message: string) => void;
   nodeSeekRecoveryThreshold: number;
-  openUser: (user: Extract<AccountCenterCommand, { type: 'open-user' }>['user']) => Promise<unknown>;
+  openUser: (
+    user: Extract<AccountCenterCommand, { type: 'open-user' }>['user'],
+    initialTab?: Extract<AccountCenterCommand, { type: 'open-user' }>['initialTab']
+  ) => Promise<unknown>;
   ready: boolean;
   screen: Screen;
   webViewBlockMessage: string;
@@ -429,9 +434,10 @@ export function useAccountRuntime({
       const needsHandoff = source === 'linuxdo' && tickets.length > 0;
       const isCurrent = () =>
         enabledSourcesRef.current.includes(source) &&
-        tickets.every(
-          (ticket) => authSurfaceRegistryRef.current.active[ticket.surface]?.generation === ticket.generation
-        );
+        tickets.every((ticket) => {
+          const current = authSurfaceRegistryRef.current.active[ticket.surface];
+          return !current || current.generation === ticket.generation;
+        });
       let result: AccountReconcileResult;
       try {
         if (!isCurrent()) return { status: 'stale' };
@@ -759,7 +765,7 @@ export function useAccountRuntime({
   const handleAccountCenterCommand = useCallback(
     async (command: AccountCenterCommand) => {
       if (command.type === 'open-user') {
-        await openUser(command.user);
+        await openUser(command.user, command.initialTab);
         return;
       }
       await credentials.handleAccountCenterCommand(command);
@@ -928,11 +934,18 @@ export function useAccountRuntime({
   );
   const reconcileWritableSession = useCallback((source: SessionSite) => reconcileAccountStatusRef.current(source), []);
   const ensureWritableSession = useCallback(
-    (source: SessionSite) =>
-      ensureWritableSessionTicket(
+    async (source: SessionSite) => {
+      const surfaces = Object.values(authSurfaceRegistryRef.current.active).filter(
+        (surface) => surface?.source === source
+      );
+      if (surfaces.length && surfaces.every((surface) => surface.phase === 'reconciling')) {
+        assertWritableSessionReconciled(await reconcileWritableSession(source));
+      }
+      return ensureWritableSessionTicket(
         () => readWritableSessionSnapshot(source),
         () => reconcileWritableSession(source)
-      ),
+      );
+    },
     [readWritableSessionSnapshot, reconcileWritableSession]
   );
   const isWritableSessionTicketCurrent = useCallback(
@@ -941,14 +954,95 @@ export function useAccountRuntime({
     [readWritableSessionSnapshot]
   );
   const getNodeSeekUserAgent = useCallback(() => nodeSeekWebViewUserAgentRef.current, []);
+  const readAttendance = useCallback(
+    async (ticket: WritableSessionTicket) => {
+      if (!isWritableSessionTicketCurrent(ticket)) throw new CancelledError();
+      const userId = ticket.identityKey.slice('nodeseek:'.length);
+      const readPlanScope = `authenticated:${ticket.sessionEpoch}`;
+      const board = await readGateway.getNodeSeekAttendanceBoard({ userId }, { readPlanScope });
+      if (!isWritableSessionTicketCurrent(ticket)) throw new CancelledError();
+      appQueryClient.setQueryData(
+        forumQueryKeys.accountData({
+          source: 'nodeseek',
+          kind: 'attendance',
+          userId,
+          sessionEpoch: ticket.sessionEpoch,
+          readPlanScope
+        }),
+        board
+      );
+      return board;
+    },
+    [isWritableSessionTicketCurrent, readGateway]
+  );
+  const onAttendanceConfirmed = useCallback(
+    (ticket: WritableSessionTicket, current?: number) => {
+      if (!isWritableSessionTicketCurrent(ticket)) return;
+      const userId = ticket.identityKey.slice('nodeseek:'.length);
+      const readPlanScope = `authenticated:${ticket.sessionEpoch}`;
+      const overviewKey = forumQueryKeys.accountData({
+        source: 'nodeseek',
+        kind: 'overview',
+        userId,
+        sessionEpoch: ticket.sessionEpoch,
+        readPlanScope
+      });
+      if (current !== undefined)
+        appQueryClient.setQueryData<NodeSeekAccountOverview>(overviewKey, (previous) =>
+          previous ? { ...previous, coin: current } : previous
+        );
+      void appQueryClient.invalidateQueries({ queryKey: overviewKey, exact: true });
+      void appQueryClient.invalidateQueries({
+        queryKey: forumQueryKeys.accountData({
+          source: 'nodeseek',
+          kind: 'credits',
+          userId,
+          sessionEpoch: ticket.sessionEpoch,
+          readPlanScope
+        }),
+        exact: true
+      });
+    },
+    [isWritableSessionTicketCurrent]
+  );
+  const nodeSeekSnapshot = readWritableSessionSnapshot('nodeseek');
+  const currentSessionTicket: WritableSessionTicket | null =
+    nodeSeekSnapshot.authenticated &&
+    nodeSeekSnapshot.identityTrust === 'confirmed' &&
+    !nodeSeekSnapshot.authSurfaceOpen &&
+    nodeSeekSnapshot.sourceEnabled !== false
+      ? { source: 'nodeseek', identityKey: nodeSeekSnapshot.identityKey, sessionEpoch: nodeSeekSnapshot.sessionEpoch }
+      : null;
   const nodeSeekCheckIn = useNodeSeekCheckInController({
+    currentSessionTicket,
     ensureWritableSession,
     fetcher,
     isWritableSessionTicketCurrent,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
+    onConfirmed: onAttendanceConfirmed,
+    readAttendance,
     onSessionExpired: handleSessionExpired
   });
+  const { observeBoard: observeNodeSeekBoard } = nodeSeekCheckIn;
+  const observeAttendance = useCallback(
+    (board: NodeSeekAttendanceBoard) => {
+      const snapshot = readWritableSessionSnapshot('nodeseek');
+      if (
+        !snapshot.authenticated ||
+        snapshot.identityTrust !== 'confirmed' ||
+        snapshot.authSurfaceOpen ||
+        snapshot.sourceEnabled === false
+      )
+        return;
+      observeNodeSeekBoard(board, {
+        source: 'nodeseek',
+        identityKey: snapshot.identityKey,
+        sessionEpoch: snapshot.sessionEpoch
+      });
+    },
+    [observeNodeSeekBoard, readWritableSessionSnapshot]
+  );
   const hostElement = createElement(AccountHosts, {
     account,
     blockedMessage: webViewBlockMessage,
@@ -1016,7 +1110,12 @@ export function useAccountRuntime({
         linuxDoLevelProfile: account.linuxDoLevelProfile,
         refreshLinuxDoLevel: account.refreshLinuxDoLevel
       },
-      checkIn: nodeSeekCheckIn.checkIn,
+      nodeSeek: {
+        busy: nodeSeekCheckIn.busy,
+        state: nodeSeekCheckIn.state,
+        checkIn: nodeSeekCheckIn.checkIn,
+        observeBoard: observeAttendance
+      },
       credentials: {
         credentialSummaries: credentials.credentialSummaries,
         pendingCredentialFillSite: credentials.pendingCredentialFillSite

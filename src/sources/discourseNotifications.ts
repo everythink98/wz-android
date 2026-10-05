@@ -1,4 +1,6 @@
 import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
+import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
+import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
   annotateSourceDiagnosticSummary,
@@ -9,12 +11,13 @@ import type {
   NotificationCategory,
   NotificationDetail,
   NotificationMarkResult,
+  NotificationMessagePage,
   NotificationPage,
   NotificationReplyResult
 } from '@/domain/notifications/models';
 import type { NotificationAdapter, NotificationAdapterAccess, NotificationListOptions } from './notificationAdapter';
 import { discourseAvatarUrl } from '@/sources/discourse/content';
-import { fetchLinuxDoJson, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic } from '@/sources/linuxdo/reader';
+import { fetchLinuxDoJson, getLinuxDoConversationPage, getLinuxDoReply } from '@/sources/linuxdo/reader';
 import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
@@ -124,11 +127,24 @@ async function categoryTypeIds(categoryId: string, options: NotificationListOpti
   return notificationTypeIds(site, names);
 }
 
-function parseNotification(value: unknown): ForumNotification | null {
+function withoutOwnConversationActor(item: ForumNotification, ownUsername?: string): ForumNotification {
+  if (
+    item.target.type !== 'private-conversation' ||
+    !ownUsername ||
+    item.actor.id?.toLowerCase() !== ownUsername.trim().toLowerCase()
+  )
+    return item;
+  const { id: _id, ...actor } = item.actor;
+  return { ...item, actor };
+}
+
+function parseNotification(value: unknown, ownUsername?: string): ForumNotification | null {
   if (!isRecord(value)) return null;
   const id = text(value, 'id');
   if (!id) return null;
   const data = isRecord(value.data) ? value.data : {};
+  const actorUsername =
+    text(value, 'acting_user_name') || text(data, 'username', 'original_username', 'acting_user_name');
   const actorName =
     text(value, 'acting_user_name') ||
     text(data, 'display_username', 'username', 'original_username', 'acting_user_name') ||
@@ -162,24 +178,27 @@ function parseNotification(value: unknown): ForumNotification | null {
           ? ({ type: 'topic-post', topicId, postNumber, url: topicUrl } as const)
           : ({ type: 'topic', topicId, url: topicUrl } as const)
     : ({ type: 'information' } as const);
-  return {
-    source: 'linuxdo',
-    id,
-    kind,
-    actor: {
-      name: actorName,
-      ...(actorName !== '站内消息' ? { id: actorName } : {}),
-      ...(avatarTemplate ? { avatarUrl: discourseAvatarUrl(avatarTemplate, baseUrl) } : {})
+  return withoutOwnConversationActor(
+    {
+      source: 'linuxdo',
+      id,
+      kind,
+      actor: {
+        name: actorName,
+        ...(actorUsername ? { id: actorUsername } : {}),
+        ...(avatarTemplate ? { avatarUrl: discourseAvatarUrl(avatarTemplate, baseUrl) } : {})
+      },
+      title,
+      ...(preview ? { preview } : {}),
+      createdAt: toIsoString(createdValue) || null,
+      ...(!toIsoString(createdValue) && createdValue ? { displayTime: createdValue } : {}),
+      unread: value.read !== true,
+      target,
+      remoteGroup: String(value.notification_type ?? ''),
+      remoteReadId: id
     },
-    title,
-    ...(preview ? { preview } : {}),
-    createdAt: toIsoString(createdValue) || null,
-    ...(!toIsoString(createdValue) && createdValue ? { displayTime: createdValue } : {}),
-    unread: value.read !== true,
-    target,
-    remoteGroup: String(value.notification_type ?? ''),
-    remoteReadId: id
-  };
+    ownUsername
+  );
 }
 
 async function fetchNotifications(options: NotificationListOptions, offset: number, limit: number) {
@@ -225,10 +244,9 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
   }
   const users = data.users.filter(isRecord);
   const userById = new Map(users.map((user) => [text(user, 'id'), user]));
-  const userByUsername = new Map(users.map((user) => [text(user, 'username'), user]));
   let filteredCount = 0;
   const notifications = [...data.unread_notifications, ...data.read_notifications].flatMap((value) => {
-    const item = parseNotification(value);
+    const item = parseNotification(value, ownUsername);
     if (!item) return [];
     if (unreadOnly && !item.unread) {
       filteredCount += 1;
@@ -247,15 +265,22 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
     if (!isRecord(value)) return [];
     const id = text(value, 'id');
     if (!id) return [];
-    const participants = Array.isArray(value.participants) ? value.participants.filter(isRecord) : [];
-    const lastPosterUsername = text(value, 'last_poster_username');
-    const participant = participants
-      .map((entry) => userById.get(text(entry, 'user_id')))
-      .find((user) => user && text(user, 'username') !== ownUsername);
-    const actor = userByUsername.get(lastPosterUsername) || participant;
-    const actorUsername = actor ? text(actor, 'username') : lastPosterUsername;
-    const actorName = (actor ? text(actor, 'name') : '') || actorUsername || '站内用户';
-    const actorId = actor ? text(actor, 'id') : '';
+    const participants = Array.isArray(value.participants) ? value.participants : [];
+    const participantUsers = participants.map((entry) =>
+      isRecord(entry) ? userById.get(text(entry, 'user_id')) : undefined
+    );
+    const peers = new Map(
+      participantUsers.flatMap((user) => {
+        const username = user ? text(user, 'username').toLowerCase() : '';
+        return user && username && username !== ownUsername.toLowerCase() ? [[username, user] as const] : [];
+      })
+    );
+    const actor =
+      peers.size === 1 && participantUsers.every((user) => user && text(user, 'username'))
+        ? peers.values().next().value
+        : undefined;
+    const actorUsername = actor ? text(actor, 'username') : '';
+    const actorName = (actor ? text(actor, 'name') : '') || actorUsername || '私信会话';
     const avatarTemplate = actor ? text(actor, 'avatar_template') : '';
     const unread = boolean(value.unread) || Number(value.unread_posts) > 0;
     if (unreadOnly && !unread) {
@@ -269,7 +294,7 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
         id: `private-topic:${id}`,
         kind: 'private-message',
         actor: {
-          ...(actorId ? { id: actorId } : {}),
+          ...(actorUsername ? { id: actorUsername } : {}),
           name: actorName,
           ...(avatarTemplate ? { avatarUrl: discourseAvatarUrl(avatarTemplate, LINUXDO_BASE_URL) } : {})
         },
@@ -310,6 +335,23 @@ const readOptions = (options: NotificationAdapterAccess) => ({
   timeoutMs: options.timeoutMs,
   linuxDoAccess: { authenticated: true, userAgent: options.userAgent }
 });
+
+function conversationMessages(
+  page: Awaited<ReturnType<typeof getLinuxDoConversationPage>>,
+  ownUsername?: string
+): NotificationMessagePage {
+  const username = ownUsername?.trim().toLowerCase() || '';
+  return {
+    messages: page.items.map((reply) => ({
+      id: String(reply.commentId),
+      author: reply.author,
+      contentHtml: reply.contentHtml,
+      createdAt: reply.createdAt || null,
+      mine: Boolean(username && reply.author.toLowerCase() === username)
+    })),
+    olderCursor: page.olderCursor
+  };
+}
 
 async function runMarkRead(id: string | undefined, options: NotificationAdapterAccess) {
   if (id && !/^\d+$/.test(id)) throw new Error('站内消息标识不正确');
@@ -366,7 +408,15 @@ export const linuxDoNotificationAdapter = {
     if (options.categoryId === 'messages') {
       const data = await fetchPrivateMessageTopics(options);
       const result = privateMessageItems(data, options.username?.trim() || '', Boolean(options.unreadOnly));
-      return copySourceDiagnosticSummary({ ...result, cursor: null, hasMore: false }, result);
+      return copySourceDiagnosticSummary(
+        {
+          ...result,
+          cursor: null,
+          hasMore: false,
+          historyNotice: '此分类仅展示原站菜单提供的近期私信，不含全部历史会话。'
+        },
+        result
+      );
     }
     const selectedTypeIds = await categoryTypeIds(options.categoryId || 'all', options);
     if (selectedTypeIds?.size === 0)
@@ -381,7 +431,7 @@ export const linuxDoNotificationAdapter = {
     const rawRows = notificationRows(data);
     let filteredCount = 0;
     const items = rawRows.flatMap((row) => {
-      const item = parseNotification(row);
+      const item = parseNotification(row, options.username);
       if (!item) return [];
       if ((options.unreadOnly && !item.unread) || (selectedTypeIds && !selectedTypeIds.has(Number(item.remoteGroup)))) {
         filteredCount++;
@@ -431,57 +481,18 @@ export const linuxDoNotificationAdapter = {
 
   async loadDetail(item: ForumNotification, options: NotificationAdapterAccess): Promise<NotificationDetail> {
     if (item.target.type === 'private-conversation') {
-      const topic = await getLinuxDoTopic(item.target.conversationId, {
+      const page = await getLinuxDoConversationPage(item.target.conversationId, {
         ...readOptions(options),
-        replyLimit: 30,
         trackVisit: true
       });
-      const replies = [...topic.replies];
-      let nextPage = topic.replyNextPage;
-      let nextOffset = topic.replyNextOffset;
-      const cursors = new Set<string>();
-      let historyNotice = '';
-      while (topic.replyHasMore && nextPage) {
-        const cursor = `${nextPage}:${nextOffset ?? ''}`;
-        if (cursors.has(cursor)) {
-          historyNotice = '原站返回了重复的会话游标，较早消息未继续加载。';
-          break;
-        }
-        cursors.add(cursor);
-        const page = await getLinuxDoReplies(item.target.conversationId, {
-          ...readOptions(options),
-          limit: 30,
-          order: 'oldest',
-          position: { kind: 'cursor', page: nextPage, offset: nextOffset ?? null }
-        });
-        replies.push(...page.items);
-        if (!page.hasMore || !page.nextPage) break;
-        nextPage = page.nextPage;
-        nextOffset = page.nextOffset;
-      }
-      const ownUsername = options.username?.trim().toLowerCase() || '';
+      const history = conversationMessages(page, options.username);
       return {
-        notification: item,
-        title: topic.title,
-        messages: [
-          {
-            id: String(topic.commentId || `${topic.id}:1`),
-            author: topic.author,
-            contentHtml: topic.contentHtml,
-            createdAt: topic.createdAt,
-            mine: Boolean(ownUsername && topic.author.toLowerCase() === ownUsername)
-          },
-          ...replies.map((reply, index) => ({
-            id: String(reply.commentId || `${topic.id}:${reply.floor || index + 2}`),
-            author: reply.author,
-            contentHtml: reply.contentHtml,
-            createdAt: reply.createdAt,
-            mine: Boolean(ownUsername && reply.author.toLowerCase() === ownUsername)
-          }))
-        ],
+        notification: withoutOwnConversationActor(item, options.username),
+        title: page.topic.title,
+        messages: history.messages,
+        messageHistory: { olderCursor: history.olderCursor },
         reply: { format: 'markdown' },
-        ...(historyNotice ? { historyNotice } : {}),
-        topic: { ...topic, isPrivateMessage: true }
+        topic: page.topic
       };
     }
     if (item.target.type === 'topic') {
@@ -503,6 +514,7 @@ export const linuxDoNotificationAdapter = {
       return { notification: item, title: item.title, contentText: item.preview || item.title };
     }
     let contentHtml: string;
+    let policy: DiscoursePostPolicy | undefined;
     let author = item.actor.name;
     let createdAt = item.createdAt || '';
     if (item.target.postId) {
@@ -517,11 +529,13 @@ export const linuxDoNotificationAdapter = {
       const cooked = text(data, 'cooked');
       if (!cooked) throw new Error('站内消息对应的帖子内容未找到');
       contentHtml = sanitizeLinuxDoContentHtml(cooked, undefined);
+      policy = discoursePostPolicy(data);
       author = text(data, 'username') || author;
       createdAt = toIsoString(text(data, 'created_at')) || createdAt;
     } else if (item.target.postNumber) {
       const reply = await getLinuxDoReply(item.target.topicId, item.target.postNumber, readOptions(options));
       contentHtml = reply.contentHtml;
+      policy = reply.policy;
       author = reply.author || author;
       createdAt = reply.createdAt || createdAt;
     } else {
@@ -531,6 +545,7 @@ export const linuxDoNotificationAdapter = {
       notification: item,
       title: item.title,
       contentHtml,
+      ...(policy ? { policy } : {}),
       topic: {
         source: 'linuxdo',
         id: item.target.topicId,
@@ -541,6 +556,19 @@ export const linuxDoNotificationAdapter = {
         replyCount: 0
       }
     };
+  },
+
+  async loadEarlierMessages(
+    item: ForumNotification,
+    cursor: string,
+    options: NotificationAdapterAccess
+  ): Promise<NotificationMessagePage> {
+    if (item.target.type !== 'private-conversation') throw new Error('私信会话标识不正确');
+    const page = await getLinuxDoConversationPage(item.target.conversationId, {
+      ...readOptions(options),
+      beforePostId: cursor
+    });
+    return conversationMessages(page, options.username);
   },
 
   async replyToConversation(

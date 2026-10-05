@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ForumNotification } from '@/domain/notifications/models';
-import { notificationAccessibilityLabel, notificationTimeText, sortNotifications } from './notificationPresentation';
+import {
+  notificationAccessibilityLabel,
+  notificationTitleText,
+  notificationTimeText,
+  sortNotifications
+} from './notificationPresentation';
 
 function item(id: string, createdAt: string | null, unread = true): ForumNotification {
   return {
@@ -44,6 +49,19 @@ describe('notification presentation', () => {
 
   it('announces source, read state, actor, action and title', () => {
     expect(notificationAccessibilityLabel(item('1', null))).toBe('NodeSeek，未读，张三，回复了你，回复了你的主题');
+  });
+
+  it('shows a private-message preview instead of repeating its sender as the title', () => {
+    const message: ForumNotification = {
+      ...item('message', null),
+      kind: 'private-message',
+      title: '张三',
+      preview: '收到，谢谢'
+    };
+    expect(notificationTitleText(message)).toBe('收到，谢谢');
+    expect(notificationAccessibilityLabel(message)).toBe('NodeSeek，未读，张三，发来了私信，收到，谢谢');
+    expect(notificationTitleText({ ...message, preview: undefined })).toBe('');
+    expect(notificationTitleText({ ...message, title: '独立的会话主题' })).toBe('独立的会话主题');
   });
 
   it('uses one explicit 24-hour timestamp for parsed and site fallback values', () => {

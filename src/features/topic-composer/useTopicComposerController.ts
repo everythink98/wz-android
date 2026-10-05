@@ -58,6 +58,7 @@ import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credential
 import { fetchLinuxDoTemplates } from '@/sources/linuxdo/templates';
 import { resolveLinuxDoUpload } from '@/sources/linuxdo/uploadUrls';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { retryEmojiCatalog } from '@/sources/discourse/retryEmojiCatalog';
 import { normalizeReplyImageAsset } from '@/sources/imageUpload';
 import type { StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
@@ -637,7 +638,10 @@ export function useTopicComposerController({
     )
       return;
     const abort = new AbortController();
-    void runtimeRef.current.getEmojiUrls({ source: 'linuxdo', signal: abort.signal }).then(
+    void retryEmojiCatalog(
+      () => runtimeRef.current.getEmojiUrls({ source: 'linuxdo', signal: abort.signal }),
+      abort.signal
+    ).then(
       (urls) => {
         if (abort.signal.aborted) return;
         completedEmojis.current = contextKey;
@@ -646,7 +650,6 @@ export function useTopicComposerController({
       () => {
         if (abort.signal.aborted) return;
         setEmojiUrls({});
-        runtimeRef.current.notify('表情加载失败，仍可继续编辑和发帖');
       }
     );
     return () => abort.abort();

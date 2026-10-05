@@ -1,12 +1,11 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { TOUCH_HIT_SLOP } from './touchTarget';
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
     floating: {

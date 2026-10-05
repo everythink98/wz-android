@@ -1768,20 +1768,19 @@ function ExpressionButton({
   label,
   src,
   visible,
-  onInsert,
-  children
+  onInsert
 }: {
   label: string;
   src: string;
   visible: boolean;
   onInsert: () => void;
-  children?: React.ReactNode;
 }) {
   const [requested, setRequested] = useState(visible);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
   const current = useRef({ attempt: 0, failed: false });
   const retry = useCallback(() => {
+    if (!current.current.failed) return;
     current.current = { attempt: current.current.attempt + 1, failed: false };
     setAttempt(current.current.attempt);
     setStatus('loading');
@@ -1790,6 +1789,12 @@ function ExpressionButton({
     if (visible) setRequested(true);
     if (visible && current.current.failed) retry();
   }, [retry, visible]);
+  useEffect(() => {
+    if (!visible || status !== 'failed') return;
+    const delay = Math.min(1000 * 2 ** Math.min(attempt, 5), 30000);
+    const timer = window.setTimeout(retry, delay);
+    return () => window.clearTimeout(timer);
+  }, [attempt, retry, status, visible]);
   const settle = (next: 'loaded' | 'failed') => {
     if (current.current.attempt !== attempt) return;
     current.current.failed = next === 'failed';
@@ -1798,8 +1803,10 @@ function ExpressionButton({
   return (
     <EditorButton
       aria-label={status === 'failed' ? `${label}，加载失败，点击重试` : label}
-      aria-busy={attempt > 0 && status === 'loading'}
+      aria-busy={status === 'loading'}
+      data-image-status={status}
       type="button"
+      onPointerDown={(event) => event.preventDefault()}
       onClick={() => {
         if (status === 'failed') retry();
         else if (attempt === 0 || status === 'loaded') onInsert();
@@ -1814,7 +1821,7 @@ function ExpressionButton({
         onLoad={() => settle('loaded')}
         onError={() => settle('failed')}
       />
-      {status === 'failed' ? <span>重试</span> : children}
+      {status === 'failed' ? <span className="expression-retry">重试</span> : null}
     </EditorButton>
   );
 }
@@ -1823,20 +1830,27 @@ function BuilderPanel({
   actions,
   children,
   expanded = false,
+  navigation,
   onClose,
   title
 }: {
   actions?: React.ReactNode;
   children: React.ReactNode;
   expanded?: boolean;
+  navigation?: React.ReactNode;
   onClose: () => void;
   title: string;
 }) {
   return (
-    <div className="builder-backdrop" data-expanded={expanded || undefined} role="presentation">
+    <div
+      className="builder-backdrop"
+      data-expanded={expanded || undefined}
+      data-expression={navigation ? true : undefined}
+      role="presentation"
+    >
       <EditorCard aria-label={title} aria-modal={expanded || undefined} className="builder-panel" role="dialog">
         <EditorCardHeader className="builder-header">
-          <strong>{title}</strong>
+          {navigation ? <div className="expression-navigation">{navigation}</div> : <strong>{title}</strong>}
           <EditorButton aria-label="关闭" iconOnly type="button" onClick={onClose}>
             <EditorIcon name="close" />
           </EditorButton>
@@ -2059,22 +2073,29 @@ export function ComposerEditorRuntime() {
   }, []);
   const expandedPanel =
     builder === 'link' || builder === 'nodeseek-poll' || builder === 'linuxdo-poll' || builder === 'stardust';
+  const expressionPanel = builder === 'emoji' || builder === 'stickers';
   const [expressionsOpened, setExpressionsOpened] = useState(false);
+  const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== 'hidden');
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', updateVisibility);
+    return () => document.removeEventListener('visibilitychange', updateVisibility);
+  }, []);
   useEffect(() => {
     postMessage('PANEL_CHANGED', {
       documentEpoch: config?.documentEpoch ?? 0,
       open: builder !== null || panelPending,
-      ...(expandedPanel ? { expanded: true } : {})
+      ...(expandedPanel ? { layout: 'form' } : expressionPanel ? { layout: 'expression' } : {})
     });
-  }, [builder, config?.documentEpoch, expandedPanel, panelPending]);
+  }, [builder, config?.documentEpoch, expandedPanel, expressionPanel, panelPending]);
   useEffect(() => {
-    if (!topicEditor) return;
+    if (!topicEditor && builder !== 'emoji' && builder !== 'stickers') return;
     const closePanel = (event: FocusEvent) => {
       if ((event.target as HTMLElement)?.closest('.ProseMirror, .cm-content')) closeBuilder();
     };
     document.addEventListener('focusin', closePanel);
     return () => document.removeEventListener('focusin', closePanel);
-  }, [closeBuilder, topicEditor]);
+  }, [builder, closeBuilder, topicEditor]);
   const [builderError, setBuilderError] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
   const publishToolbarState = useCallback(
@@ -2338,6 +2359,7 @@ export function ComposerEditorRuntime() {
       panelRequestRef.current = null;
       setPanelPending(false);
       if (configRef.current?.readOnly) return;
+      closeBuilder();
       if (nextMode === modeRef.current) {
         postSnapshot(undefined, nextMode);
         return;
@@ -2388,7 +2410,7 @@ export function ComposerEditorRuntime() {
         runtimeError('markdown-parse-failed', 'Markdown 无法解析，已保留源码', revisionRef.current);
       }
     },
-    [editorRef, postSnapshot, postState, setSource, validate]
+    [closeBuilder, editorRef, postSnapshot, postState, setSource, validate]
   );
 
   const cancelHostActions = useCallback(() => {
@@ -2431,6 +2453,8 @@ export function ComposerEditorRuntime() {
       replaceRichMarkdownDocument(editorRef.current, next.markdown);
       editorRef.current?.setEditable(!next.readOnly);
       setSource(next.markdown);
+      // Identical Markdown still needs the new document intent's accessible name.
+      sourceViewRef.current?.dispatch({});
       suppressChangesRef.current = false;
       revisionRef.current = 0;
       modeRef.current = next.mode;
@@ -2599,6 +2623,12 @@ export function ComposerEditorRuntime() {
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           EditorView.lineWrapping,
           EditorView.cspNonce.of('wz-composer-runtime'),
+          EditorView.contentAttributes.of(() => ({
+            'aria-label':
+              configRef.current?.intentKind === 'create-topic' || configRef.current?.intentKind === 'edit-topic'
+                ? '主题正文源码编辑器'
+                : '回复正文源码编辑器'
+          })),
           EditorState.changeFilter.of((transaction) => {
             if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
             if (configRef.current?.readOnly) return false;
@@ -2670,7 +2700,7 @@ export function ComposerEditorRuntime() {
     postMessage('PANEL_CHANGED', {
       documentEpoch: current.documentEpoch ?? 0,
       open: true,
-      ...(expandedPanel ? { expanded: true } : {})
+      ...(expandedPanel ? { layout: 'form' } : expressionPanel ? { layout: 'expression' } : {})
     });
     const isCurrent = () => panelRequestRef.current === request && documentGenerationRef.current === generation;
     void requestHostAction('prepare-panel', { documentEpoch: current.documentEpoch ?? 0 }).then(
@@ -2724,18 +2754,17 @@ export function ComposerEditorRuntime() {
 
   const insertExpression = (raw: string) => {
     if (modeRef.current === 'source' || !editorRef.current) {
-      insertAtSelection(raw);
+      const view = sourceViewRef.current;
+      if (view) view.dispatch(view.state.replaceSelection(raw));
     } else {
       editorRef.current
         .chain()
-        .focus()
         .insertContent({
           type: 'forumExpression',
           attrs: { raw }
         })
         .run();
     }
-    closeBuilder();
   };
 
   const transformSourceSelection = (transform: (selected: string) => string, block = false) => {
@@ -3356,7 +3385,7 @@ export function ComposerEditorRuntime() {
 
   return (
     <main
-      className={`runtime${topicEditor ? ' topic-runtime' : ''}${expandedPanel ? ' form-open' : ''}`}
+      className={`runtime${topicEditor ? ' topic-runtime' : ''}${expandedPanel ? ' form-open' : ''}${expressionPanel ? ' expression-open' : ''}`}
       onInputCapture={() => builderError && setBuilderError('')}
     >
       {editor && config ? <ComposerToolbarState editor={editor} onChange={publishToolbarState} /> : null}
@@ -3828,26 +3857,38 @@ export function ComposerEditorRuntime() {
 
       {config?.site === 'nodeseek' && expressionsOpened ? (
         <div data-expression-cache="stickers" hidden={builder !== 'stickers'}>
-          <BuilderPanel title="NodeSeek 贴纸" onClose={() => closeBuilder()}>
-            <div className="category-rail">
-              {NODESEEK_STICKER_CATEGORIES.map((category) => (
-                <EditorButton
-                  active={category.label === stickerCategory}
-                  type="button"
-                  key={category.label}
-                  onClick={() => setStickerCategory(category.label)}
-                >
-                  {category.label}
-                </EditorButton>
-              ))}
-            </div>
+          <BuilderPanel
+            title="NodeSeek 贴纸"
+            onClose={() => closeBuilder()}
+            navigation={
+              <div className="category-rail">
+                {NODESEEK_STICKER_CATEGORIES.map((category) => (
+                  <EditorButton
+                    active={category.label === stickerCategory}
+                    type="button"
+                    key={category.label}
+                    onClick={(event) => {
+                      if (category.label === stickerCategory) return;
+                      setStickerCategory(category.label);
+                      const body = event.currentTarget
+                        .closest('.builder-panel')
+                        ?.querySelector<HTMLElement>('.builder-body');
+                      if (body) body.scrollTop = 0;
+                    }}
+                  >
+                    {category.label}
+                  </EditorButton>
+                ))}
+              </div>
+            }
+          >
             {NODESEEK_STICKER_CATEGORIES.map((category) => (
               <div className="expression-grid" hidden={category.label !== stickerCategory} key={category.label}>
                 {category.items.map((item) => (
                   <ExpressionButton
                     label={item.label}
                     src={item.imageUrl}
-                    visible={builder === 'stickers' && category.label === stickerCategory}
+                    visible={pageVisible && builder === 'stickers' && category.label === stickerCategory}
                     key={item.code}
                     onInsert={() => insertExpression(item.code)}
                   />
@@ -3873,29 +3914,32 @@ export function ComposerEditorRuntime() {
             }
           }}
         >
-          <BuilderPanel title="LinuxDo Emoji" onClose={() => closeBuilder()}>
-            <div className="expression-search">
-              <EditorIcon name="search" />
-              <EditorInput
-                aria-label="搜索 Emoji"
-                autoComplete="off"
-                placeholder="搜索 Emoji"
-                type="search"
-                value={emojiQuery}
-                onChange={(event) => setEmojiQuery(event.target.value)}
-              />
-            </div>
-            <div className="expression-grid">
+          <BuilderPanel
+            title="LinuxDo Emoji"
+            onClose={() => closeBuilder()}
+            navigation={
+              <div className="expression-search">
+                <EditorIcon name="search" />
+                <EditorInput
+                  aria-label="搜索 Emoji"
+                  autoComplete="off"
+                  placeholder="搜索表情"
+                  type="search"
+                  value={emojiQuery}
+                  onChange={(event) => setEmojiQuery(event.target.value)}
+                />
+              </div>
+            }
+          >
+            <div className="expression-grid emoji-grid">
               {visibleEmoji.map((item) => (
                 <ExpressionButton
                   label={item.name.replace(/_/g, ' ')}
                   src={item.url}
-                  visible={builder === 'emoji'}
+                  visible={pageVisible && builder === 'emoji'}
                   key={`${item.name}:${item.url}`}
                   onInsert={() => insertExpression(`:${item.name}:`)}
-                >
-                  <span>{item.name.replace(/_/g, ' ')}</span>
-                </ExpressionButton>
+                />
               ))}
             </div>
             {!visibleEmoji.length ? (

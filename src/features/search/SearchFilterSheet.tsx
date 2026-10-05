@@ -1,6 +1,6 @@
 import type { SearchStyles } from './styles';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Pressable, ScrollView, type ScrollViewProps, Text, useWindowDimensions, View } from 'react-native';
 import { ChevronDown, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '@/domain/forum/models';
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
@@ -33,6 +33,28 @@ function categoryOptions(categories: Category[], source: Source) {
     { value: allValue, label: allLabel },
     ...sourceCategories(categories, source).map((category) => ({ value: category.id, label: category.name }))
   ];
+}
+
+function SearchFilterBody({
+  scrollOffsetRef,
+  ...props
+}: Pick<ScrollViewProps, 'children' | 'style' | 'contentContainerStyle'> & {
+  scrollOffsetRef: RefObject<NonNullable<ScrollViewProps['contentOffset']>>;
+}) {
+  // The legacy Android KAV remounts on keyboard hide. Seed only the new native
+  // viewport; ordinary draft renders must not control an in-progress scroll.
+  const [initialOffset] = useState(() => scrollOffsetRef.current);
+  return (
+    <ScrollView
+      {...props}
+      contentOffset={initialOffset}
+      onScroll={({ nativeEvent }) => {
+        scrollOffsetRef.current = nativeEvent.contentOffset;
+      }}
+      scrollEventThrottle={16}
+      keyboardShouldPersistTaps="handled"
+    />
+  );
 }
 
 export function SearchFilterSheet({
@@ -80,6 +102,8 @@ export function SearchFilterSheet({
   );
   const [filterError, setFilterError] = useState('');
   const [visible, setVisible] = useState(false);
+  const [moreVisible, setMoreVisible] = useState(false);
+  const scrollOffsetRef = useRef({ x: 0, y: 0 });
   const nodeSeekCategoryItems = useMemo(() => categoryOptions(categories, 'nodeseek'), [categories]);
   const yaohuoCategoryItems = useMemo(() => categoryOptions(categories, 'yaohuo'), [categories]);
 
@@ -92,6 +116,7 @@ export function SearchFilterSheet({
           : { ...filter }
       );
       setFilterError('');
+      setMoreVisible(hasDiscourseAdvancedFilters(filter));
     }
   }, [searchFilters, source, visible]);
 
@@ -169,7 +194,10 @@ export function SearchFilterSheet({
         accessibilityLabel={`打开搜索筛选，当前${summary}`}
         accessibilityState={{ selected: summary !== '默认' }}
         style={[styles.searchFilterEntry, summary !== '默认' && styles.searchFilterEntryActive]}
-        onPress={() => setVisible(true)}
+        onPress={() => {
+          scrollOffsetRef.current = { x: 0, y: 0 };
+          setVisible(true);
+        }}
       >
         <View style={styles.searchFilterEntryIcon}>
           <SlidersHorizontal size={17} color={theme.primary} strokeWidth={1.9} />
@@ -200,17 +228,18 @@ export function SearchFilterSheet({
             <X size={18} color={theme.muted} strokeWidth={2} />
           </Pressable>
         </View>
-        <ScrollView
+        <SearchFilterBody
+          scrollOffsetRef={scrollOffsetRef}
           style={[styles.searchFilterBody, filterBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
-          keyboardShouldPersistTaps="handled"
         >
           <SearchFilterForm
             categoryNames={pickers.category.names}
-            discourseMoreInitiallyVisible={hasDiscourseAdvancedFilters(searchFilterForSource(searchFilters, source))}
             draftFilter={draftFilter}
             filterSheetVisible={visible}
+            moreVisible={moreVisible}
             nodeSeekCategoryItems={nodeSeekCategoryItems}
+            onMoreVisibleChange={setMoreVisible}
             openCategoryPicker={pickers.category.open}
             openTagPicker={pickers.tags.open}
             openUserPicker={pickers.users.open}
@@ -222,7 +251,7 @@ export function SearchFilterSheet({
             updateLinuxDoExpertResponse={updateLinuxDoExpertResponse}
             yaohuoCategoryItems={yaohuoCategoryItems}
           />
-        </ScrollView>
+        </SearchFilterBody>
         {filterError ? (
           <Text accessibilityRole="alert" style={styles.errorText}>
             {filterError}

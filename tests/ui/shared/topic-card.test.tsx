@@ -1,9 +1,12 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '../render';
+import { act, fireEvent, render } from '../render';
 import React from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
+import { useAppTheme } from '@/app/useAppTheme';
 import { MemoizedTopicCard, TopicCard } from '@/ui/topic/TopicCard';
+import { ReaderStyleProvider, useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { createNotificationStyles } from '@/features/notifications/styles';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import type { Topic } from '@/domain/forum/models';
@@ -12,9 +15,17 @@ jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({ getMappingKey: (key: string | number) => String(key) })
 }));
 
+const mockIconCommits = jest.fn<(name: string) => void>();
 jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return { Eye: Icon, MessageCircle: Icon };
+  const ReactModule = require('react') as typeof React;
+  function Icon({ name }: { name: string }) {
+    ReactModule.useLayoutEffect(() => mockIconCommits(name));
+    return null;
+  }
+  return {
+    Eye: () => ReactModule.createElement(Icon, { name: 'Eye' }),
+    MessageCircle: () => ReactModule.createElement(Icon, { name: 'MessageCircle' })
+  };
 });
 
 jest.mock('expo-image', () => ({ Image: () => null }));
@@ -57,6 +68,73 @@ const topic: Topic = {
 };
 
 describe('Topic card visible behavior', () => {
+  it.each([
+    {
+      identity: 'topic id',
+      replacement: { ...topic, id: 'topic-card-2', title: '回收后的另一主题', url: 'https://linux.do/t/topic-card-2' }
+    },
+    {
+      identity: 'source',
+      replacement: {
+        ...topic,
+        source: 'nodeseek' as const,
+        title: '另一来源的同号主题',
+        url: 'https://www.nodeseek.com/post-topic-card-1-1'
+      }
+    }
+  ])('accepts a new $identity when a recently pressed card instance is recycled', async ({ replacement }) => {
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      const onOpenTopic = jest.fn();
+      const commonProps = {
+        onOpenTopic,
+        readerState: { favorite: false, listDensity: 'standard' as const, read: false },
+        testID: 'recycled-topic-card'
+      };
+      const view = await render(<MemoizedTopicCard {...commonProps} topic={topic} />);
+      await fireEvent.press(view.getByTestId('recycled-topic-card'));
+      expect(onOpenTopic.mock.calls).toEqual([[topic]]);
+
+      now.mockReturnValue(1_100);
+      await view.rerender(<MemoizedTopicCard {...commonProps} topic={replacement} />);
+      expect(view.getByText(replacement.title)).toBeTruthy();
+      await fireEvent.press(view.getByTestId('recycled-topic-card'));
+      expect(onOpenTopic.mock.calls).toEqual([[topic], [replacement]]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('suppresses batched double taps and same-identity updates until the opening window ends', async () => {
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      const onOpenTopic = jest.fn();
+      const commonProps = {
+        onOpenTopic,
+        readerState: { favorite: false, listDensity: 'standard' as const, read: false },
+        testID: 'guarded-topic-card'
+      };
+      const view = await render(<MemoizedTopicCard {...commonProps} topic={topic} />);
+      await act(async () => {
+        await fireEvent.press(view.getByTestId('guarded-topic-card'));
+        await fireEvent.press(view.getByTestId('guarded-topic-card'));
+      });
+      expect(onOpenTopic.mock.calls).toEqual([[topic]]);
+
+      const updated = { ...topic, replyCount: 24 };
+      now.mockReturnValue(1_499);
+      await view.rerender(<MemoizedTopicCard {...commonProps} topic={updated} />);
+      await fireEvent.press(view.getByTestId('guarded-topic-card'));
+      expect(onOpenTopic.mock.calls).toEqual([[topic]]);
+
+      now.mockReturnValue(1_500);
+      await fireEvent.press(view.getByTestId('guarded-topic-card'));
+      expect(onOpenTopic.mock.calls).toEqual([[topic], [updated]]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('keeps an already read title dimmed while showing new replies, including memoized updates', async () => {
     const onOpenTopic = jest.fn();
     const state = { favorite: false, read: true, listDensity: 'loose' as const };
@@ -203,5 +281,124 @@ describe('Topic card visible behavior', () => {
 
     expect(onOpenTopic).toHaveBeenCalledWith(nextTopic);
     expect(onTrailingAction).toHaveBeenCalledWith(nextTopic);
+  });
+});
+
+function AppThemeHarness({
+  children,
+  settings,
+  width = 1000
+}: {
+  children: React.ReactNode;
+  settings: ReaderSettings;
+  width?: number;
+}) {
+  const appTheme = useAppTheme(settings, width);
+  return (
+    <ReaderStyleProvider value={appTheme.readerStyleContext}>
+      <Text testID="theme-content-width">{appTheme.contentWidth}</Text>
+      <Text testID="navigation-theme" style={{ color: appTheme.navigationTheme.colors.text }}>
+        Navigation
+      </Text>
+      {children}
+    </ReaderStyleProvider>
+  );
+}
+
+const ReadingStyleSample = React.memo(function ReadingStyleSample({
+  onCommit
+}: {
+  onCommit: (fontScale: number) => void;
+}) {
+  const { settings, styles } = useReaderThemeStyles(createNotificationStyles);
+  React.useLayoutEffect(() => onCommit(settings.fontScale));
+  return (
+    <Text testID="reading-body" style={styles.detailBody}>
+      正文样式
+    </Text>
+  );
+});
+
+describe('App theme propagation to real topic cards', () => {
+  function content(onCommit: (fontScale: number) => void) {
+    return (
+      <>
+        <ReadingStyleSample onCommit={onCommit} />
+        <MemoizedTopicCard
+          topic={topic}
+          readerState={{ favorite: false, listDensity: 'standard', read: false }}
+          testID="themed-topic-card"
+          onOpenTopic={jest.fn()}
+        />
+      </>
+    );
+  }
+
+  it('commits only the new font scale to cards and their icon children', async () => {
+    const settings = createEmptyReaderData().settings;
+    const onCommit = jest.fn<(fontScale: number) => void>();
+    const children = content(onCommit);
+    const view = await render(<AppThemeHarness settings={settings}>{children}</AppThemeHarness>);
+    onCommit.mockClear();
+    mockIconCommits.mockClear();
+
+    await view.rerender(<AppThemeHarness settings={{ ...settings, fontScale: 1.1 }}>{children}</AppThemeHarness>);
+
+    expect(onCommit.mock.calls.map(([scale]) => scale)).toEqual([1.1]);
+    expect(mockIconCommits.mock.calls.map(([name]) => name).sort()).toEqual(['Eye', 'MessageCircle']);
+    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontSize: 18 });
+  });
+
+  it.each(['network', 'content-sources', 'equivalent-object'] as const)(
+    'keeps card and icon commits quiet for %s settings updates',
+    async (update) => {
+      const settings = createEmptyReaderData().settings;
+      const onCommit = jest.fn<(fontScale: number) => void>();
+      const children = content(onCommit);
+      const view = await render(<AppThemeHarness settings={settings}>{children}</AppThemeHarness>);
+      onCommit.mockClear();
+      mockIconCommits.mockClear();
+      const next = {
+        ...settings,
+        ...(update === 'network' ? { nodeSeekRecoveryThreshold: settings.nodeSeekRecoveryThreshold + 1 } : {}),
+        ...(update === 'content-sources'
+          ? { contentSources: settings.contentSources.map((source) => ({ ...source, enabled: !source.enabled })) }
+          : {})
+      };
+
+      await view.rerender(<AppThemeHarness settings={next}>{children}</AppThemeHarness>);
+
+      expect(onCommit).not.toHaveBeenCalled();
+      expect(mockIconCommits).not.toHaveBeenCalled();
+      expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontSize: 16 });
+    }
+  );
+
+  it('keeps every appearance setting live through the provider and native navigation theme', async () => {
+    let settings = createEmptyReaderData().settings;
+    const children = content(jest.fn());
+    const view = await render(<AppThemeHarness settings={settings}>{children}</AppThemeHarness>);
+    const update = async (patch: Partial<ReaderSettings>) => {
+      settings = { ...settings, ...patch };
+      await view.rerender(<AppThemeHarness settings={settings}>{children}</AppThemeHarness>);
+    };
+
+    await update({ theme: 'dark' });
+    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: '#F1F1F1' });
+    expect(view.getByTestId('navigation-theme')).toHaveStyle({ color: '#F1F1F1' });
+    await update({ fontFamily: 'serif' });
+    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontFamily: 'serif' });
+    await update({ listDensity: 'loose' });
+    expect(view.getByTestId('themed-topic-card')).toHaveStyle({ paddingTop: 18 });
+    await update({ lineHeight: 'loose' });
+    expect(view.getByTestId('reading-body')).toHaveStyle({ lineHeight: 26 });
+    await update({ contentWidth: 'wide' });
+    expect(view.getByTestId('theme-content-width')).toHaveTextContent('820');
+    await view.rerender(
+      <AppThemeHarness settings={settings} width={400}>
+        {children}
+      </AppThemeHarness>
+    );
+    expect(view.getByTestId('theme-content-width')).toHaveTextContent('360');
   });
 });

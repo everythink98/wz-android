@@ -1,8 +1,7 @@
 import { StyleSheet } from 'react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
 
-export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     loginWebViewModal: {

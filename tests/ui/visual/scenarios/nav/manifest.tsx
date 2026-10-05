@@ -72,6 +72,7 @@ function NavShellScenario() {
       getNotificationSettingsRoute={() => PlaceholderRoute}
       getNotificationsRoute={() => PlaceholderRoute}
       getReadingSettingsRoute={() => PlaceholderRoute}
+      getNodeSeekCreditsRoute={() => PlaceholderRoute}
       getSearchRoute={() => SearchTabSurface}
       getTopicRoute={() => PlaceholderRoute}
       getUserRoute={() => PlaceholderRoute}

@@ -1,4 +1,5 @@
 import { MoreUtilityPanels, type MoreUtilityCapabilities } from '@/features/more/components/MoreUtilityPanels';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -18,10 +19,8 @@ function createSafeAreaMetrics() {
 function BackupScenario() {
   const { settings } = useReaderThemeStyles(noStyles);
   const runtime: MoreUtilityCapabilities = {
-    notifications: {
-      hasUnread: false,
-      open: noop,
-      summary: '暂无未读'
+    library: {
+      open: noop
     },
     backup: {
       recovery: false,
@@ -49,7 +48,7 @@ function BackupScenario() {
       upsertProfile: noopAsync
     },
     settings: {
-      value: settings,
+      value: { ...createEmptyReaderData().settings, ...settings },
       visible: false,
       changeVisible: noop,
       update: noop

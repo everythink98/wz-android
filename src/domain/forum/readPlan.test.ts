@@ -104,17 +104,54 @@ describe('forum read plans', () => {
     });
   });
 
-  it.each<ForumReadOperation>(['user-resolution', 'semantic-search', 'search-tags', 'search-users', 'level'])(
-    'keeps %s credential-required while identity is unknown',
-    (operation) => {
-      const source = operation === 'user-resolution' ? 'nodeseek' : 'linuxdo';
-      expect(resolveForumReadPlan(source, operation, true, session(source))).toEqual({
-        state: 'blocked',
-        reason: 'identity-unavailable',
-        cacheScope: 'blocked:identity-unavailable'
-      });
-    }
-  );
+  it.each<ForumReadOperation>([
+    'user-resolution',
+    'semantic-search',
+    'search-tags',
+    'search-users',
+    'level',
+    'account-data'
+  ])('keeps %s credential-required while identity is unknown', (operation) => {
+    const source = operation === 'user-resolution' ? 'nodeseek' : 'linuxdo';
+    expect(resolveForumReadPlan(source, operation, true, session(source))).toEqual({
+      state: 'blocked',
+      reason: 'identity-unavailable',
+      cacheScope: 'blocked:identity-unavailable'
+    });
+  });
+
+  it.each(['nodeseek', 'yaohuo'] as const)('requires the confirmed %s identity for private account data', (source) => {
+    expect(forumReadOperationIsPublic(source, 'account-data')).toBe(false);
+    expect(
+      resolveForumReadPlan(source, 'account-data', true, session(source, { identityTrust: 'none' }))
+    ).toMatchObject({
+      state: 'blocked',
+      reason: 'login-required'
+    });
+    expect(
+      resolveForumReadPlan(
+        source,
+        'account-data',
+        true,
+        session(source, {
+          authenticated: true,
+          identityTrust: 'confirmed',
+          authSurfaceOpen: true
+        })
+      )
+    ).toMatchObject({ state: 'blocked', reason: 'identity-pending' });
+    expect(
+      resolveForumReadPlan(
+        source,
+        'account-data',
+        true,
+        session(source, {
+          authenticated: true,
+          identityTrust: 'confirmed'
+        })
+      )
+    ).toMatchObject({ state: 'ready', lane: 'authenticated', cacheScope: 'authenticated:3' });
+  });
 
   it('keeps unknown identity terminal without blocking public reads or pretending logout', () => {
     const unknown = session('linuxdo', { identityTrust: 'unknown' });

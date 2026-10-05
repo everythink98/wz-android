@@ -93,6 +93,8 @@ import {
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
+import { QueryObserver } from '@tanstack/react-query';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
   nodeSeekPendingPollToken,
@@ -263,6 +265,7 @@ async function renderActions({
   requestAccountRecheck = jest.fn(),
   readPlanScope = '',
   refreshTopicReplies = jest.fn(async () => 'completed'),
+  refreshWholeTopic = jest.fn(async () => 'completed'),
   siteSessionViewModels,
   siteSessionStates,
   topicDetail = detail,
@@ -281,6 +284,7 @@ async function renderActions({
   requestAccountRecheck?: (source: ActionSource, requestSessionEpoch: number, parentTraceId?: string) => void;
   readPlanScope?: string;
   refreshTopicReplies?: () => Promise<unknown>;
+  refreshWholeTopic?: () => Promise<unknown>;
   showYaohuoLogin?: (message?: string) => void;
   siteSessionViewModels?: SiteSessionViewModels;
   siteSessionStates?: SiteSessionStates;
@@ -328,6 +332,7 @@ async function renderActions({
           })
         },
         refreshTopicReplies,
+        refreshWholeTopic,
         siteSessionViewModels: sessionViews,
         topicDetail: props.topicDetail ?? topicDetail,
         topicReplies: props.topicReplies ?? topicReplies,
@@ -363,6 +368,267 @@ function seedTopicCache(
 }
 
 describe('topic action query mutations', () => {
+  const policy: DiscoursePostPolicy = {
+    postId: '121',
+    version: '1',
+    acceptLabel: '我已知晓此更新内容',
+    revokeLabel: '等我再仔细阅读一番',
+    accepted: false,
+    revoked: false,
+    canAccept: true,
+    canRevoke: false
+  };
+
+  it('submits a policy once and explicitly rereads a topic whose automatic query is disabled', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { policy });
+    const { detailKey } = seedTopicCache(opening);
+    const transport = Promise.withResolvers<Response>();
+    const fetcher = jest.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/session/csrf') ? new Response('{"csrf":"token"}') : transport.promise
+    );
+    const read = jest.fn(async () => ({
+      ...opening,
+      policy: { ...policy, accepted: true, canAccept: false, canRevoke: true }
+    }));
+    const observer = new QueryObserver(appQueryClient, {
+      queryKey: detailKey,
+      queryFn: read,
+      staleTime: Infinity,
+      enabled: false
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const refreshWholeTopic = jest.fn(async () => ((await observer.refetch()).isError ? 'failed' : 'completed'));
+    const hook = await renderActions({ topicDetail: opening, fetcher, refreshWholeTopic });
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = hook.result.current.actions.setPolicyAcceptance(policy, true);
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.policy?.accepted).toBe(false);
+    expect(hook.result.current.actions.actionBusy).toBe(true);
+    await act(async () => {
+      transport.resolve(new Response('{"success":"OK"}'));
+      await pending;
+    });
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual([
+      'https://linux.do/session/csrf',
+      'https://linux.do/policy/accept'
+    ]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(refreshWholeTopic).toHaveBeenCalledTimes(1);
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.policy?.accepted).toBe(true);
+    unsubscribe();
+  });
+
+  it('keeps an unknown policy response unconfirmed without an optimistic cache change', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { policy });
+    const { detailKey } = seedTopicCache(opening);
+    const notify = jest.fn();
+    const fetcher = jest.fn(
+      async (input: RequestInfo | URL) =>
+        new Response(String(input).endsWith('/session/csrf') ? '{"csrf":"token"}' : '{}')
+    );
+    const hook = await renderActions({ topicDetail: opening, fetcher, notify });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.policy?.accepted).toBe(false);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('核对'));
+    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining('已确认阅读'));
+  });
+
+  it('blocks resubmitting a confirmed policy until a later server read matches the submitted acceptance', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { policy });
+    const { detailKey } = seedTopicCache(opening);
+    const read = jest.fn(async (): Promise<TopicDetail> => {
+      throw new Error('refresh offline');
+    });
+    const observer = new QueryObserver(appQueryClient, {
+      queryKey: detailKey,
+      queryFn: read,
+      staleTime: Infinity,
+      retry: false,
+      enabled: false
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const fetcher = jest.fn(
+      async (input: RequestInfo | URL) =>
+        new Response(String(input).endsWith('/session/csrf') ? '{"csrf":"token"}' : '{"success":true}')
+    );
+    const refreshWholeTopic = jest.fn(async () => ((await observer.refetch()).isError ? 'failed' : 'completed'));
+    const hook = await renderActions({ topicDetail: opening, fetcher, refreshWholeTopic });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    expect(hook.result.current.actions.policySubmissions[policy.postId]).toMatchObject({
+      postId: policy.postId,
+      accepted: true
+    });
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.policy?.accepted).toBe(false);
+    for (const active of [false, true]) {
+      await act(async () => {
+        await hook.rerender({ active, sessionEpochs: initialForumSessionEpochs });
+      });
+      expect(hook.result.current.actions.policySubmissions[policy.postId]).toMatchObject({ accepted: true });
+    }
+    await act(async () => {
+      await hook.rerender({
+        sessionEpochs: initialForumSessionEpochs,
+        topicDetail: { ...opening, policy: { ...policy } }
+      });
+    });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const refreshed = { ...opening, policy: { ...policy, accepted: true, canAccept: false, canRevoke: true } };
+    read.mockResolvedValue(refreshed);
+    await act(async () => {
+      await observer.refetch();
+    });
+    await act(async () => {
+      await hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: refreshed });
+    });
+    expect(hook.result.current.actions.policySubmissions).toEqual({});
+    unsubscribe();
+  });
+
+  it('rechecks the writable policy ticket after CSRF before sending the PUT', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { policy });
+    seedTopicCache(opening);
+    let current = true;
+    const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+      current = false;
+      return new Response(String(input).endsWith('/session/csrf') ? '{"csrf":"token"}' : '{"success":true}');
+    });
+    const hook = await renderActions({ topicDetail: opening, fetcher, isWritableSessionTicketCurrent: () => current });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.actions.policySubmissions).toEqual({});
+  });
+
+  it.each(['background', 'account', 'topic', 'unmount'] as const)(
+    'cancels policy transport during CSRF after %s and sends no late PUT',
+    async (change) => {
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      const opening = detailFor('linuxdo', { policy });
+      seedTopicCache(opening);
+      const csrf = Promise.withResolvers<Response>();
+      let signal: AbortSignal | null | undefined;
+      const fetcher = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        signal = init?.signal;
+        return csrf.promise;
+      });
+      const notify = jest.fn();
+      const hook = await renderActions({ topicDetail: opening, fetcher, notify });
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = hook.result.current.actions.setPolicyAcceptance(policy, true);
+      });
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        if (change === 'unmount') await hook.unmount();
+        else
+          await hook.rerender({
+            active: change !== 'background',
+            sessionEpochs: { ...initialForumSessionEpochs, linuxdo: change === 'account' ? 1 : 0 },
+            topicDetail: change === 'topic' ? { ...opening, id: '43' } : opening
+          });
+      });
+      expect(signal?.aborted).toBe(true);
+      await act(async () => {
+        csrf.resolve(new Response('{"csrf":"token"}'));
+        await pending;
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(notify).not.toHaveBeenCalled();
+    }
+  );
+
+  it('ignores a late policy PUT success after the account changes', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { policy });
+    seedTopicCache(opening);
+    const response = Promise.withResolvers<Response>();
+    const fetcher = jest.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/session/csrf') ? new Response('{"csrf":"token"}') : response.promise
+    );
+    const notify = jest.fn();
+    const hook = await renderActions({ topicDetail: opening, fetcher, notify });
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await hook.rerender({ sessionEpochs: { ...initialForumSessionEpochs, linuxdo: 1 } });
+    });
+    await act(async () => {
+      response.resolve(new Response('{"success":true}'));
+      await pending;
+    });
+    expect(hook.result.current.actions.policySubmissions).toEqual({});
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('keeps independent submitted policy markers for the opening and a reply', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const replyPolicy = { ...policy, postId: '122' };
+    const opening = detailFor('linuxdo', { policy });
+    const reply = { ...editableReply, policy: replyPolicy, commentId: 122 };
+    seedTopicCache(opening, [reply]);
+    const fetcher = jest.fn(
+      async (input: RequestInfo | URL) =>
+        new Response(String(input).endsWith('/session/csrf') ? '{"csrf":"token"}' : '{"success":true}')
+    );
+    const hook = await renderActions({ topicDetail: opening, topicReplies: [reply], fetcher });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(replyPolicy, true);
+    });
+    await act(async () => {
+      await hook.result.current.actions.setPolicyAcceptance(policy, true);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(Object.keys(hook.result.current.actions.policySubmissions)).toEqual(['121', '122']);
+    await act(async () => {
+      await hook.rerender({ sessionEpochs: { ...initialForumSessionEpochs, linuxdo: 1 } });
+    });
+    expect(hook.result.current.actions.policySubmissions).toEqual({});
+  });
+
+  it('invalidates a pending policy revoke confirmation when the route leaves the foreground', async () => {
+    const acceptedPolicy = { ...policy, accepted: true, canAccept: false, canRevoke: true };
+    const opening = detailFor('linuxdo', { policy: acceptedPolicy });
+    seedTopicCache(opening);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const hook = await renderActions({ topicDetail: opening });
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = hook.result.current.actions.setPolicyAcceptance(acceptedPolicy, false);
+    });
+    expect(alert).toHaveBeenCalledTimes(1);
+    const confirm = alert.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive')?.onPress;
+    await act(async () => {
+      await hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
+    });
+    await act(async () => {
+      confirm?.();
+      await pending;
+    });
+    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
+  });
+
   it.each(['yaohuo', 'linuxdo'] as const)(
     'updates reply permission in the same render that receives a closed %s topic',
     async (source) => {
@@ -2768,18 +3034,18 @@ describe('topic action query mutations', () => {
       const prepared = Promise.withResolvers<void>();
       let current = true;
       const transport = jest.fn(
-        async () => new Response(JSON.stringify({ code: 200, data: 'https://images.example.com/photo.png' }))
+        async () => new Response(JSON.stringify({ code: 200, data: { url: 'https://images.example.com/photo.png' } }))
       );
       const fetcher = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
         await prepared.promise;
         prepareRequestToSend(init);
-        expect(String(url)).toBe('https://file.sang.pub/api/upload');
-        expect(init?.body).toEqual({ uri: 'file:///cache/test.png' });
+        expect(String(url)).toBe('https://aapi.helioho.st/upload.php');
+        expect(init?.body).toBeInstanceOf(FormData);
         return transport();
       });
       mockGetDocument.mockResolvedValueOnce({
         canceled: false,
-        assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+        assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', size: 128, lastModified: 0 }]
       });
       const topic = detailFor('yaohuo', { categoryId: '177', polls: [] });
       seedTopicCache(topic);
@@ -2811,7 +3077,7 @@ describe('topic action query mutations', () => {
     seedTopicCache(topic);
     mockGetDocument.mockResolvedValueOnce({
       canceled: false,
-      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', size: 128, lastModified: 0 }]
     });
     const hook = await renderActions({ topicDetail: topic, fetcher, notify, onSessionExpired });
     await act(async () => hook.result.current.topicSession.commands.composer.changeContent('保留原稿'));

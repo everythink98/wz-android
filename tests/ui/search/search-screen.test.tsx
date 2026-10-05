@@ -1,8 +1,8 @@
-import { projectTestAccountSessions } from '../../helpers/accountSessions';
+import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render as renderNative, waitFor } from '../render';
 import React, { useState } from 'react';
-import { AppState, Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, DeviceEventEmitter, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { recordUserInteraction, userPresent } from '@/platform/network/userPresence';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from '@/domain/forum/searchFilters';
@@ -16,7 +16,8 @@ import { aggregateSearchSources, isSessionSource } from '@/domain/forum/sourceCa
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
-import { appQueryClient } from '@/platform/query/serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
@@ -25,14 +26,16 @@ const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: b
 const mockSearchNavigationDispatch = jest.fn();
 const mockSearchNavigation = { dispatch: mockSearchNavigationDispatch };
 const mockSearchInputCommit = jest.fn();
+let mockSearchFocused = true;
 let lastSearchListData: readonly unknown[] = [];
 let mockSearchFlashListExtraData: unknown;
+let mockSearchFlashListRenderItem: unknown;
 let lastSearchListSeparatorComponent:
   ((props: { leadingItem: unknown; trailingItem: unknown }) => React.ReactNode) | null = null;
 
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
-  useIsFocused: () => true,
+  useIsFocused: () => mockSearchFocused,
   useNavigation: () => mockSearchNavigation,
   useScrollToTop: () => undefined
 }));
@@ -86,6 +89,7 @@ jest.mock('@shopify/flash-list', () => {
     ) {
       lastSearchListData = data;
       mockSearchFlashListExtraData = extraData;
+      mockSearchFlashListRenderItem = renderItem;
       lastSearchListSeparatorComponent = ItemSeparatorComponent || null;
       ReactModule.useImperativeHandle(ref, () => ({
         recordInteraction: () => undefined,
@@ -415,7 +419,7 @@ function RecentSearchHarness({
       submittedQuery=""
       onOpenTopic={jest.fn()}
       onManageContentSources={jest.fn()}
-      onLoadMoreSearchSource={jest.fn()}
+      onLoadMoreSearchSource={jest.fn<React.ComponentProps<typeof SearchScreen>['onLoadMoreSearchSource']>()}
       onRemoveRecentSearch={onRemoveRecentSearch}
       onQueryChange={setQuery}
       onRetrySearchSource={jest.fn()}
@@ -450,7 +454,7 @@ function createSearchScreenProps(
     submittedQuery: 'codex',
     onOpenTopic: jest.fn(),
     onManageContentSources: jest.fn(),
-    onLoadMoreSearchSource: jest.fn(),
+    onLoadMoreSearchSource: jest.fn<React.ComponentProps<typeof SearchScreen>['onLoadMoreSearchSource']>(),
     onRemoveRecentSearch: jest.fn(),
     onQueryChange: jest.fn(),
     onRetrySearchSource: jest.fn(),
@@ -474,6 +478,275 @@ function renderSearchScreen(
 }
 
 describe('Search state', () => {
+  it('keeps the Search list renderer stable across unchanged route renders', async () => {
+    const enabledSources = ['v2ex'] as const;
+    const sessionViewModels = projectTestAccountSessions(createSiteSessionStates({}));
+    const readGateway = {
+      getReadPlan: (source: Source, operation: ForumReadOperation) =>
+        routeReadPlan(source, operation, enabledSources, sessionViewModels),
+      searchTopics: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      searchTagOptions: jest.fn(async () => []),
+      searchUserOptions: jest.fn(async () => [])
+    } as unknown as ReadGateway;
+    const runtime = createSearchRouteRuntime({
+      readGateway,
+      readerData: contentSourceReaderData(enabledSources),
+      sessionViewModels
+    });
+    const route = () => (
+      <SearchRouteRuntimeProvider value={runtime}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+    const view = await render(route());
+    await act(async () => undefined);
+    const renderItem = mockSearchFlashListRenderItem;
+    expect(renderItem).toBeDefined();
+    for (let index = 0; index < 5; index += 1) {
+      await view.rerender(route());
+      expect(mockSearchFlashListRenderItem).toBe(renderItem);
+    }
+    expect(readGateway.searchTopics).not.toHaveBeenCalled();
+  });
+
+  it('waits for the requested search page to commit before another drag can advance its Query cursor', async () => {
+    const enabledSources = ['nodeseek'] as const;
+    const sessionViewModels = projectTestAccountSessions(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session-present'],
+          isVerifying: false,
+          currentUser: testAccountUser('nodeseek')
+        }
+      })
+    );
+    const first: Topic = { ...firstTopic, source: 'nodeseek' };
+    const second: Topic = { ...secondTopic, source: 'nodeseek' };
+    const third: Topic = { ...second, id: 'search-3', title: '第三页主题' };
+    const searchTopics = jest
+      .fn<ReadGateway['searchTopics']>()
+      .mockResolvedValueOnce({ items: [first], errors: {}, hasMore: true, nextPage: 2 })
+      .mockResolvedValueOnce({ items: [second], errors: {}, hasMore: true, nextPage: 3 })
+      .mockResolvedValue({ items: [third], errors: {}, hasMore: false, nextPage: null });
+    const readGateway = {
+      getReadPlan: (source: Source, operation: ForumReadOperation) =>
+        routeReadPlan(source, operation, enabledSources, sessionViewModels),
+      searchTopics,
+      searchTagOptions: jest.fn(async () => []),
+      searchUserOptions: jest.fn(async () => [])
+    } as unknown as ReadGateway;
+    const runtime = createSearchRouteRuntime({
+      readGateway,
+      readerData: contentSourceReaderData(enabledSources),
+      sessionViewModels
+    });
+    const view = await render(
+      <SearchRouteRuntimeProvider value={runtime}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+    const notifications: (() => void)[] = [];
+    try {
+      await fireEvent.press(view.getByTestId('search-source-nodeseek'));
+      await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
+      await fireEvent.press(view.getByLabelText('提交搜索'));
+      await waitFor(() => expect(view.getByTestId('search-load-more-nodeseek-page-2')).toBeTruthy());
+      const group: SearchGroup = {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [first],
+        hasMore: true,
+        nextPage: 2
+      };
+      const sentinel = visibleLoadMore(group, 2, 1);
+      const list = view.getByTestId('search-complete');
+      notifyManager.setScheduler((callback) => notifications.push(callback));
+      await act(async () => {
+        list.props.onScrollBeginDrag();
+        list.props.onViewableItemsChanged({ viewableItems: [sentinel], changed: [sentinel] });
+        // Query can settle before its scheduled observer notifications commit the new list props.
+        for (let index = 0; index < 40; index += 1) await Promise.resolve();
+        list.props.onScrollBeginDrag();
+        list.props.onViewableItemsChanged({ viewableItems: [sentinel], changed: [sentinel] });
+        for (let index = 0; index < 40; index += 1) await Promise.resolve();
+      });
+      expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+      notifyManager.setScheduler(defaultScheduler);
+      await act(async () => notifications.splice(0).forEach((notify) => notify()));
+      await waitFor(() => expect(view.getByTestId('search-load-more-nodeseek-page-3')).toBeTruthy());
+      expect(view.getByText('第一页主题')).toBeTruthy();
+      expect(view.getByText('第二页主题')).toBeTruthy();
+      const nextSentinel = visibleLoadMore({ ...group, items: [first, second], nextPage: 3 }, 3, 3);
+      await fireEvent(view.getByTestId('search-complete'), 'scrollBeginDrag');
+      await fireEvent(view.getByTestId('search-complete'), 'viewableItemsChanged', {
+        viewableItems: [nextSentinel],
+        changed: [nextSentinel]
+      });
+      await waitFor(() => expect(view.getByText('第三页主题')).toBeTruthy());
+      expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 3]);
+    } finally {
+      notifyManager.setScheduler(defaultScheduler);
+      await act(async () => {
+        notifications.splice(0).forEach((notify) => notify());
+        await appQueryClient.cancelQueries();
+      });
+      await view.unmount();
+    }
+  });
+
+  it.each(['network failure', 'focus cancellation'] as const)(
+    'resumes NodeSeek pagination after %s without losing loaded results',
+    async (interruption) => {
+      const enabledSources = ['nodeseek'] as const;
+      const sessionViewModels = projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: {
+            site: 'nodeseek',
+            status: 'logged-in',
+            cookieSummary: ['session-present'],
+            isVerifying: false,
+            currentUser: testAccountUser('nodeseek')
+          }
+        })
+      );
+      const first: Topic = { ...firstTopic, source: 'nodeseek', url: 'https://www.nodeseek.com/post-1-1' };
+      const second: Topic = { ...secondTopic, source: 'nodeseek', url: 'https://www.nodeseek.com/post-2-1' };
+      const pendingPage = Promise.withResolvers<Awaited<ReturnType<ReadGateway['searchTopics']>>>();
+      const searchTopics = jest
+        .fn<ReadGateway['searchTopics']>()
+        .mockResolvedValueOnce({ items: [first], errors: {}, hasMore: true, nextPage: 2 })
+        .mockImplementationOnce(async ({ signal }) => {
+          const abort = () => pendingPage.reject(new Error('request canceled'));
+          signal?.addEventListener('abort', abort, { once: true });
+          try {
+            return await pendingPage.promise;
+          } finally {
+            signal?.removeEventListener('abort', abort);
+          }
+        })
+        .mockResolvedValue({ items: [second], errors: {}, hasMore: false, nextPage: null });
+      const readGateway = {
+        getReadPlan: (source: Source, operation: ForumReadOperation) =>
+          routeReadPlan(source, operation, enabledSources, sessionViewModels),
+        searchTopics,
+        searchTagOptions: jest.fn(async () => []),
+        searchUserOptions: jest.fn(async () => [])
+      } as unknown as ReadGateway;
+      const runtime = createSearchRouteRuntime({
+        readGateway,
+        readerData: contentSourceReaderData(enabledSources),
+        sessionViewModels
+      });
+      const route = () => (
+        <SearchRouteRuntimeProvider value={runtime}>
+          <SearchRoute />
+        </SearchRouteRuntimeProvider>
+      );
+      const view = await render(route());
+      try {
+        await fireEvent.press(view.getByTestId('search-source-nodeseek'));
+        await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
+        await fireEvent.press(view.getByLabelText('提交搜索'));
+        await waitFor(() => expect(view.getByTestId('search-load-more-nodeseek-page-2')).toBeTruthy());
+        const group: SearchGroup = {
+          source: 'nodeseek',
+          label: 'NodeSeek',
+          items: [first],
+          hasMore: true,
+          nextPage: 2
+        };
+        const sentinel = visibleLoadMore(group, 2, 1);
+        const drag = async () => {
+          const list = view.getByTestId('search-complete');
+          await fireEvent(list, 'scrollBeginDrag');
+          await fireEvent(list, 'viewableItemsChanged', { viewableItems: [sentinel], changed: [sentinel] });
+        };
+        await drag();
+        await waitFor(() => expect(view.getByText('正在加载更多 NodeSeek')).toBeTruthy());
+        expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+        if (interruption === 'network failure') {
+          await act(async () => pendingPage.reject(new Error('第二页临时网络失败')));
+          await waitFor(() => expect(view.getByText('重试加载 NodeSeek')).toBeTruthy());
+          await fireEvent.press(view.getByText('重试加载 NodeSeek'));
+        } else {
+          mockSearchFocused = false;
+          await view.rerender(route());
+          await waitFor(() => expect(view.getByText('继续下滑加载更多 NodeSeek')).toBeTruthy());
+          expect(searchTopics.mock.calls[1][0].signal?.aborted).toBe(true);
+          mockSearchFocused = true;
+          await view.rerender(route());
+          expect(view.queryByText('重试加载 NodeSeek')).toBeNull();
+          expect(view.queryByTestId('search-page-loaded-nodeseek-page-2')).toBeNull();
+          await drag();
+        }
+        expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 2]);
+        await waitFor(() => expect(view.getByText('第二页主题')).toBeTruthy());
+        expect(view.getByText('第一页主题')).toBeTruthy();
+        if (interruption === 'focus cancellation') {
+          expect(view.getByTestId('search-page-loaded-nodeseek-page-2')).toBeTruthy();
+        }
+      } finally {
+        await act(async () => {
+          await appQueryClient.cancelQueries();
+        });
+        await view.unmount();
+        mockSearchFocused = true;
+      }
+    }
+  );
+
+  it.each(['stale', 'rejected'] as const)(
+    'releases a %s pagination attempt and keeps an older settlement from unlocking its replacement',
+    async (outcome) => {
+      const oldRequest = Promise.withResolvers<unknown>();
+      const currentRequest = Promise.withResolvers<unknown>();
+      void currentRequest.promise.catch(() => undefined);
+      const onLoadMoreSearchSource = jest
+        .fn<(source: Source, page: number) => Promise<unknown>>()
+        .mockReturnValueOnce(oldRequest.promise)
+        .mockReturnValueOnce(currentRequest.promise)
+        .mockResolvedValue('stale');
+      const group: SearchGroup = {
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        hasMore: true,
+        nextPage: 2
+      };
+      const props = createSearchScreenProps({ onLoadMoreSearchSource, searchSource: 'v2ex', searchGroups: [group] });
+      const view = await render(<SearchScreen {...props} />);
+      const sentinel = visibleLoadMore(group, 2, 1);
+      const drag = async () => {
+        const list = view.getByTestId('search-complete');
+        await fireEvent(list, 'scrollBeginDrag');
+        await fireEvent(list, 'viewableItemsChanged', { viewableItems: [sentinel], changed: [sentinel] });
+      };
+      try {
+        await drag();
+        await view.rerender(<SearchScreen {...props} query="new query" submittedQuery="new query" />);
+        await drag();
+        expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(2);
+        await act(async () => oldRequest.resolve('stale'));
+        await drag();
+        expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(2);
+        await act(async () => {
+          if (outcome === 'stale') currentRequest.resolve('stale');
+          else currentRequest.reject(new Error('request interrupted'));
+        });
+        expect(view.queryByTestId('search-page-loaded-v2ex-page-2')).toBeNull();
+        await drag();
+        expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(3);
+      } finally {
+        await act(async () => {
+          oldRequest.resolve('stale');
+          currentRequest.resolve('stale');
+        });
+      }
+    }
+  );
+
   it('counts native text input as activity but not controlled value updates', async () => {
     const previous = AppState.currentState;
     AppState.currentState = 'active';
@@ -731,53 +1004,92 @@ describe('Search state', () => {
   });
 
   it('submits a recent search immediately and removes only the selected entry', async () => {
-    const onRemoveRecentSearch = jest.fn<(query: string) => void>();
-    const onSearch = jest.fn<(queryOverride?: string) => void>();
-    const view = await render(<RecentSearchHarness onRemoveRecentSearch={onRemoveRecentSearch} onSearch={onSearch} />);
+    for (const platformName of [Platform.OS, 'android'] as const) {
+      const platform = jest.replaceProperty(Platform, 'OS', platformName);
+      try {
+        const onRemoveRecentSearch = jest.fn<(query: string) => void>();
+        const onSearch = jest.fn<(queryOverride?: string) => void>();
+        const lightSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'light' };
+        const darkSettings: ReaderSettings = { ...lightSettings, theme: 'dark' };
+        const themedHistory = (settings: ReaderSettings) => (
+          <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+            <RecentSearchHarness onRemoveRecentSearch={onRemoveRecentSearch} onSearch={onSearch} />
+          </ReaderStyleProvider>
+        );
+        const view = await render(themedHistory(lightSettings));
 
-    expect(lastSearchListData).toEqual([
-      { type: 'recentHeader' },
-      { type: 'recentSearch', query: 'codex' },
-      { type: 'recentSearch', query: 'react native' }
-    ]);
-    const recentSearchButton = view.getByLabelText('搜索最近记录 codex');
-    expect(StyleSheet.flatten(recentSearchButton.props.style).minHeight).toBe(48);
-    expect(StyleSheet.flatten(recentSearchButton.parent?.props.style)).toMatchObject({
-      borderTopLeftRadius: 10,
-      borderTopRightRadius: 10,
-      borderTopWidth: StyleSheet.hairlineWidth
-    });
-    expect(view.getByText('codex').props.numberOfLines).toBe(2);
-    await fireEvent.press(recentSearchButton);
-    expect(onSearch).toHaveBeenCalledTimes(1);
-    expect(onSearch).toHaveBeenCalledWith('codex');
+        for (const settings of [lightSettings, darkSettings]) {
+          if (settings === darkSettings) await view.rerender(themedHistory(settings));
+          for (const [label, iconName, size] of [
+            ['搜索最近记录 codex', 'history', 17],
+            ['删除最近搜索 react native', 'close', 16]
+          ] as const) {
+            const icon = view
+              .getByLabelText(label)
+              .children.filter((node) => typeof node !== 'string')
+              .find((node) => node.type === 'WzSearchHistoryIcon');
+            if (platformName === 'android') {
+              expect(icon?.props).toMatchObject({
+                accessible: false,
+                icon: iconName,
+                color: createTheme(settings).muted
+              });
+              expect(StyleSheet.flatten(icon?.props.style)).toMatchObject({ width: size, height: size });
+            } else {
+              expect(icon).toBeUndefined();
+            }
+          }
+          expect(view.queryAllByRole('image')).toHaveLength(0);
+        }
 
-    const deleteButton = view.getByLabelText('删除最近搜索 react native');
-    expect(StyleSheet.flatten(deleteButton.props.style).minHeight).toBe(48);
-    expect(StyleSheet.flatten(deleteButton.parent?.props.style)).toMatchObject({
-      borderBottomLeftRadius: 10,
-      borderBottomRightRadius: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderTopWidth: StyleSheet.hairlineWidth
-    });
-    expect(StyleSheet.flatten(deleteButton.parent?.props.style)).not.toHaveProperty('marginTop');
-    expect(
-      lastSearchListSeparatorComponent?.({
-        leadingItem: lastSearchListData[1],
-        trailingItem: lastSearchListData[2]
-      })
-    ).toBeNull();
-    expect(
-      lastSearchListSeparatorComponent?.({
-        leadingItem: lastSearchListData[0],
-        trailingItem: lastSearchListData[1]
-      })
-    ).not.toBeNull();
-    await fireEvent.press(deleteButton);
-    expect(onRemoveRecentSearch).toHaveBeenCalledTimes(1);
-    expect(onRemoveRecentSearch).toHaveBeenCalledWith('react native');
-    expect(view.getByLabelText('搜索关键词').props.value).toBe('');
-    expect(onSearch).toHaveBeenCalledTimes(1);
+        expect(lastSearchListData).toEqual([
+          { type: 'recentHeader' },
+          { type: 'recentSearch', query: 'codex' },
+          { type: 'recentSearch', query: 'react native' }
+        ]);
+        const recentSearchButton = view.getByLabelText('搜索最近记录 codex');
+        expect(StyleSheet.flatten(recentSearchButton.props.style).minHeight).toBe(48);
+        expect(StyleSheet.flatten(recentSearchButton.parent?.props.style)).toMatchObject({
+          borderTopLeftRadius: 10,
+          borderTopRightRadius: 10,
+          borderTopWidth: StyleSheet.hairlineWidth
+        });
+        expect(view.getByText('codex').props.numberOfLines).toBe(2);
+        await fireEvent.press(recentSearchButton);
+        expect(onSearch).toHaveBeenCalledTimes(1);
+        expect(onSearch).toHaveBeenCalledWith('codex');
+
+        const deleteButton = view.getByLabelText('删除最近搜索 react native');
+        expect(StyleSheet.flatten(deleteButton.props.style).minHeight).toBe(48);
+        expect(StyleSheet.flatten(deleteButton.parent?.props.style)).toMatchObject({
+          borderBottomLeftRadius: 10,
+          borderBottomRightRadius: 10,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderTopWidth: StyleSheet.hairlineWidth
+        });
+        expect(StyleSheet.flatten(deleteButton.parent?.props.style)).not.toHaveProperty('marginTop');
+        expect(
+          lastSearchListSeparatorComponent?.({
+            leadingItem: lastSearchListData[1],
+            trailingItem: lastSearchListData[2]
+          })
+        ).toBeNull();
+        expect(
+          lastSearchListSeparatorComponent?.({
+            leadingItem: lastSearchListData[0],
+            trailingItem: lastSearchListData[1]
+          })
+        ).not.toBeNull();
+        await fireEvent.press(deleteButton);
+        expect(onRemoveRecentSearch).toHaveBeenCalledTimes(1);
+        expect(onRemoveRecentSearch).toHaveBeenCalledWith('react native');
+        expect(view.getByLabelText('搜索关键词').props.value).toBe('');
+        expect(onSearch).toHaveBeenCalledTimes(1);
+        await view.unmount();
+      } finally {
+        platform.restore();
+      }
+    }
   });
 
   it('keeps successful source results available while retrying only the failed source', async () => {
@@ -1115,7 +1427,7 @@ describe('Search state', () => {
     expect(onSearchSourceChange).toHaveBeenCalledTimes(1);
   });
 
-  it('loads the active source after a user scroll and never from initial render', async () => {
+  it('loads after user scroll and preserves pagination when reselecting the current source', async () => {
     const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
     const onSearch = jest.fn<(queryOverride?: string) => void>();
     const searchGroups: SearchGroup[] = [
@@ -1162,6 +1474,12 @@ describe('Search state', () => {
     );
     expect(view.getByTestId('search-page-loaded-v2ex-page-2')).toBeTruthy();
     expect(view.getByText('已载入 2 条')).toBeTruthy();
+
+    mockSearchScrollToOffset.mockClear();
+    await fireEvent.press(view.getByTestId('search-source-v2ex'));
+    expect(view.getByTestId('search-page-loaded-v2ex-page-2')).toBeTruthy();
+    expect(mockSearchScrollToOffset).not.toHaveBeenCalled();
+    expect(props.onSearchSourceChange).not.toHaveBeenCalled();
 
     await fireEvent.press(view.getByLabelText('提交搜索'));
     expect(onSearch).toHaveBeenCalledTimes(1);
@@ -1490,6 +1808,115 @@ describe('Search state', () => {
     expect(view.getByLabelText('标签 新候选')).toBeTruthy();
   });
 
+  it.each(['', 'old'])(
+    'cancels closed tag candidates for query "%s" before reopening with a fresh request',
+    async (query) => {
+      const oldResponse = Promise.withResolvers<{ name: string }[]>();
+      const freshResponse = Promise.withResolvers<{ name: string }[]>();
+      const onSearchDiscourseTags = jest
+        .fn<React.ComponentProps<typeof SearchScreen>['onSearchDiscourseTags']>()
+        .mockImplementationOnce(() => oldResponse.promise)
+        .mockImplementation(() => freshResponse.promise);
+      const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
+      try {
+        await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+        await fireEvent.press(view.getByLabelText('选择标签'));
+        if (query) await fireEvent.changeText(view.getByLabelText('搜索标签'), query);
+        await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledTimes(1));
+        const oldSignal = onSearchDiscourseTags.mock.calls[0][0].signal;
+        expect(oldSignal?.aborted).toBe(false);
+
+        await fireEvent.press(view.getAllByLabelText('关闭标签选择')[1]);
+        expect(oldSignal?.aborted).toBe(true);
+        expect(view.queryByLabelText('搜索标签')).toBeNull();
+        await fireEvent.press(view.getByLabelText('选择标签'));
+        if (query) await fireEvent.changeText(view.getByLabelText('搜索标签'), query);
+        await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledTimes(2));
+
+        await act(async () => oldResponse.resolve([{ name: '已关闭候选' }]));
+        expect(view.queryByLabelText('标签 已关闭候选')).toBeNull();
+        await act(async () => freshResponse.resolve([{ name: '本次候选' }]));
+        await waitFor(() => expect(view.getByLabelText('标签 本次候选')).toBeTruthy());
+        expect(view.queryByLabelText('标签 已关闭候选')).toBeNull();
+      } finally {
+        await act(async () => {
+          oldResponse.resolve([]);
+          freshResponse.resolve([]);
+        });
+      }
+    }
+  );
+
+  it('keeps another source candidate request alive when this search screen is inactive', async () => {
+    const otherResponse = Promise.withResolvers<{ name: string }[]>();
+    let otherSignal: AbortSignal | undefined;
+    const otherRequest = appQueryClient
+      .fetchQuery({
+        queryKey: forumQueryKeys.searchTags({
+          source: 'nodeseek',
+          query: '',
+          scope: initialForumSessionEpochs,
+          selectedTags: [],
+          readPlanScope: 'independent-picker'
+        }),
+        queryFn: ({ signal }) => {
+          otherSignal = signal;
+          return otherResponse.promise;
+        }
+      })
+      .catch(() => undefined);
+    try {
+      await renderSearchScreen({ searchSource: 'linuxdo', requestsEnabled: false });
+      expect(otherSignal?.aborted).toBe(false);
+    } finally {
+      await act(async () => {
+        otherResponse.resolve([{ name: '独立候选' }]);
+        await otherRequest;
+      });
+    }
+  });
+
+  it('keeps picker input and draft fields through keyboard dismissal and discards them only when the sheet is cancelled', async () => {
+    const platform = jest.replaceProperty(Platform, 'OS', 'android');
+    try {
+      const view = await render(<SearchHarness initialSource="linuxdo" />);
+      await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+      await fireEvent.press(view.getByLabelText('展开更多筛选'));
+      await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '3');
+      await fireEvent.press(view.getByLabelText('选择作者'));
+      await act(() =>
+        DeviceEventEmitter.emit('keyboardDidShow', {
+          duration: 250,
+          easing: 'keyboard',
+          endCoordinates: { height: 300, width: 400, screenX: 0, screenY: 500 }
+        })
+      );
+      await fireEvent.changeText(view.getByLabelText('搜索作者'), 'ali');
+      await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
+      await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+      expect(view.getByLabelText('搜索作者').props.value).toBe('ali');
+      expect(view.getByLabelText('用户 alice')).toBeTruthy();
+      await fireEvent.press(view.getByLabelText('用户 alice'));
+      expect(view.getByLabelText('帖子数最小值').props.value).toBe('3');
+      expect(view.getByText('alice')).toBeTruthy();
+
+      await fireEvent.press(view.getByLabelText('选择标签'));
+      await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
+      await fireEvent.press(view.getByLabelText('标签 人工智能'));
+      await fireEvent.press(view.getByText('完成'));
+      await fireEvent.press(view.getAllByLabelText('关闭筛选')[1]);
+      await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+      expect(view.queryByLabelText('移除标签 人工智能')).toBeNull();
+      expect(view.queryByLabelText('帖子数最小值')).toBeNull();
+      await fireEvent.press(view.getByLabelText('展开更多筛选'));
+      expect(view.getByLabelText('帖子数最小值').props.value).toBe('');
+      expect(view.queryByText('alice')).toBeNull();
+    } finally {
+      await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+      platform.restore();
+    }
+  });
+
   it('removes visible tag and author candidates as soon as their query changes', async () => {
     const onSearchDiscourseTags = jest.fn(async ({ query: term }: { query: string }) =>
       term === 'old' ? [{ name: '旧标签' }] : [{ name: '新标签' }]
@@ -1515,6 +1942,69 @@ describe('Search state', () => {
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'fresh');
     expect(view.queryByLabelText('用户 old-user')).toBeNull();
     await waitFor(() => expect(view.getByLabelText('用户 new-user')).toBeTruthy());
+  });
+
+  it.each([
+    { kind: 'tag', field: '搜索标签', loading: '正在加载标签...', settled: '没有匹配标签', candidate: '标签 稳定候选' },
+    {
+      kind: 'user',
+      field: '搜索作者',
+      loading: '正在加载作者...',
+      settled: '作者候选加载失败',
+      candidate: '用户 stable-candidate'
+    }
+  ])('keeps a shrinkable $kind candidate viewport through loading and result changes', async (picker) => {
+    const candidate = { id: '7', username: 'stable-candidate', name: '稳定候选' };
+    const firstRead = Promise.withResolvers<(typeof candidate)[]>();
+    const readCandidates = jest.fn((term: string) =>
+      term === 'first' ? firstRead.promise : Promise.resolve([candidate])
+    );
+    const view = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      onSearchDiscourseTags: ({ query: term }) => readCandidates(term),
+      onSearchDiscourseUsers: ({ term }) => readCandidates(term)
+    });
+    try {
+      await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+      if (picker.kind === 'user') await fireEvent.press(view.getByLabelText('展开更多筛选'));
+      await fireEvent.press(view.getByLabelText(picker.kind === 'tag' ? '选择标签' : '选择作者'));
+      const input = view.getByLabelText(picker.field);
+      await fireEvent.changeText(input, 'first');
+      await waitFor(() => expect(readCandidates).toHaveBeenCalledWith('first'));
+      const candidateBody = (text: string) => {
+        let node = view.getByText(text).parent;
+        while (node && node.type !== 'RCTScrollView') node = node.parent;
+        if (!node) throw new Error('Candidate states must belong to a native ScrollView');
+        return node;
+      };
+      const body = candidateBody(picker.loading);
+      const viewportStyle = StyleSheet.flatten(body.props.style);
+      // This is the native layout constraint; device replay owns the resulting pixel positions.
+      expect(viewportStyle.height).toEqual(expect.any(Number));
+      expect(viewportStyle.height).toBeGreaterThan(0);
+      expect(viewportStyle).toMatchObject({ flexGrow: 0, flexShrink: 1 });
+      expect(viewportStyle.minHeight ?? 0).toBe(0);
+
+      await act(async () => {
+        if (picker.kind === 'tag') firstRead.resolve([]);
+        else firstRead.reject(new Error('Candidate read failed'));
+      });
+      await waitFor(() => expect(view.getByText(picker.settled)).toBeTruthy());
+      expect(candidateBody(picker.settled)).toBe(body);
+      expect(StyleSheet.flatten(body.props.style)).toEqual(viewportStyle);
+      expect(view.getByLabelText(picker.field)).toBe(input);
+
+      await fireEvent.changeText(input, 'next');
+      await waitFor(() => expect(view.getByLabelText(picker.candidate)).toBeTruthy());
+      expect(StyleSheet.flatten(body.props.style)).toEqual(viewportStyle);
+      expect(view.getByLabelText(picker.field)).toBe(input);
+      expect(input.props.value).toBe('next');
+      if (picker.kind === 'tag') await fireEvent.press(view.getByText('完成'));
+      else await fireEvent.press(view.getByLabelText(picker.candidate));
+      expect(view.queryByLabelText(picker.field)).toBeNull();
+    } finally {
+      await act(async () => firstRead.resolve([]));
+    }
   });
 
   it('shows the empty-author prompt without a permanent loading state', async () => {
@@ -1754,6 +2244,83 @@ describe('Search state', () => {
 
     expect(view.getByLabelText('打开搜索筛选，当前相关 · qna · alice · 全部关键词 · 30天')).toBeTruthy();
   });
+
+  it.each([
+    {
+      source: 'v2ex',
+      expand: '展开 V2EX 更多筛选',
+      collapse: '收起 V2EX 更多筛选',
+      field: '作者',
+      value: 'alice',
+      scrollY: 0
+    },
+    {
+      source: 'linuxdo',
+      expand: '展开更多筛选',
+      collapse: '收起更多筛选，已设置',
+      field: '帖子数最小值',
+      value: '3',
+      scrollY: 640
+    }
+  ] as const)(
+    'preserves $source expanded filters, draft fields and scroll position when Android dismisses the keyboard',
+    async ({ source, expand, collapse, field, value, scrollY }) => {
+      const platform = jest.replaceProperty(Platform, 'OS', 'android');
+      try {
+        const view = await render(<SearchHarness initialSource={source} />);
+        await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+        await fireEvent.press(view.getByLabelText(expand));
+        const filterBody = () => {
+          let node = view.getByText('排序').parent;
+          while (node && node.type !== 'RCTScrollView') node = node.parent;
+          if (!node) throw new Error('The filter fields must belong to a native ScrollView');
+          return node;
+        };
+
+        for (let cycle = 0; cycle < 2; cycle += 1) {
+          const body = filterBody();
+          const initialOffset = body.props.contentOffset ?? { x: 0, y: 0 };
+          const offset = { x: 0, y: scrollY ? scrollY + cycle * 80 : 0 };
+          await act(() =>
+            DeviceEventEmitter.emit('keyboardDidShow', {
+              duration: 250,
+              easing: 'keyboard',
+              endCoordinates: { height: 300, width: 400, screenX: 0, screenY: 500 }
+            })
+          );
+          await fireEvent.scroll(body, {
+            nativeEvent: {
+              contentOffset: offset,
+              contentSize: { width: 400, height: 1600 },
+              layoutMeasurement: { width: 400, height: 400 }
+            }
+          });
+          await fireEvent.changeText(view.getByLabelText(field), value);
+          // Editing must not issue a new controlled scroll offset to the existing native view.
+          expect(filterBody()).toBe(body);
+          expect(body.props.contentOffset ?? { x: 0, y: 0 }).toEqual(initialOffset);
+          await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+
+          const restoredBody = filterBody();
+          expect(restoredBody).not.toBe(body);
+          // The native ScrollView consumes this starting offset after the KAV remount.
+          expect(restoredBody.props.contentOffset ?? { x: 0, y: 0 }).toEqual(offset);
+          expect(view.getByLabelText(collapse).props.accessibilityState.expanded).toBe(true);
+          expect(view.getByLabelText(field).props.value).toBe(value);
+        }
+
+        await fireEvent.press(view.getByTestId('search-filter-close'));
+        await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+        expect(filterBody().props.contentOffset ?? { x: 0, y: 0 }).toEqual({ x: 0, y: 0 });
+        expect(view.getByLabelText(expand)).toBeTruthy();
+        await fireEvent.press(view.getByLabelText(expand));
+        expect(view.getByLabelText(field).props.value).toBe('');
+      } finally {
+        await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+        platform.restore();
+      }
+    }
+  );
 
   it('keeps low-frequency Discourse filters behind progressive disclosure', async () => {
     const view = await render(<SearchHarness initialSource="linuxdo" />);

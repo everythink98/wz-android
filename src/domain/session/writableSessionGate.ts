@@ -39,6 +39,26 @@ function canIssueTicket(snapshot: WritableSessionSnapshot) {
   return snapshot.sourceEnabled !== false && snapshot.authenticated && snapshot.identityTrust === 'confirmed';
 }
 
+export function assertWritableSessionReconciled(result: WritableSessionReconcileResult) {
+  if (result.status === 'same') return;
+  const reason =
+    result.status === 'changed'
+      ? 'identity_changed'
+      : result.status === 'anonymous'
+        ? 'login_required'
+        : result.status === 'stale'
+          ? 'stale'
+          : 'identity_unavailable';
+  throw new WritableSessionBlockedError(
+    result.status === 'changed'
+      ? '账号已切换，请确认当前页面后重试'
+      : result.status === 'anonymous'
+        ? '当前账号已退出登录'
+        : '登录状态暂时无法确认，请重试',
+    reason
+  );
+}
+
 export async function ensureWritableSessionTicket(
   readSnapshot: () => WritableSessionSnapshot,
   reconcile: () => Promise<WritableSessionReconcileResult>
@@ -58,26 +78,7 @@ export async function ensureWritableSessionTicket(
   }
 
   const result = await reconcile();
-  if (result.status !== 'same') {
-    const reason =
-      result.status === 'changed'
-        ? 'identity_changed'
-        : result.status === 'anonymous'
-          ? 'login_required'
-          : result.status === 'stale'
-            ? 'stale'
-            : result.status === 'unknown'
-              ? 'identity_unavailable'
-              : 'identity_pending';
-    throw new WritableSessionBlockedError(
-      result.status === 'changed'
-        ? '账号已切换，请确认当前页面后重试'
-        : result.status === 'anonymous'
-          ? '当前账号已退出登录'
-          : '登录状态暂时无法确认，请重试',
-      reason
-    );
-  }
+  assertWritableSessionReconciled(result);
 
   const after = readSnapshot();
   if (!after.authenticated && after.identityTrust === 'none') {

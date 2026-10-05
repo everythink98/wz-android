@@ -1,4 +1,14 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction
+} from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -40,7 +50,6 @@ import {
   Upload,
   X
 } from 'lucide-react-native';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import type {
   TopicCreationSource,
@@ -57,7 +66,7 @@ import { StructuredReplyComposer } from '@/ui/composer/StructuredReplyComposer';
 import { YaohuoReplyComposer } from '@/ui/composer/YaohuoReplyComposer';
 import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useKeyboardHandoff } from '@/ui/hooks/useKeyboardHandoff';
@@ -65,7 +74,7 @@ import type { useTopicComposerController } from './useTopicComposerController';
 import { TopicSelectionPanel } from './TopicSelectionPanel';
 import { useTopicTagSearch } from './useTopicTagSearch';
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const font = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: theme.surface },
@@ -123,6 +132,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     error: { color: theme.danger, fontFamily: font, fontSize: Math.round(13 * settings.fontScale) },
     meta: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4, gap: 4 },
+    yaohuoMeta: { paddingTop: 12, paddingBottom: 8, gap: 8 },
     metaViewport: { maxHeight: '42%', flexGrow: 0, flexShrink: 1 },
     metadataRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     metadataBar: {
@@ -147,6 +157,15 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       backgroundColor: theme.surface2
     },
     settingsLabel: { fontWeight: '500', fontSize: Math.round(13 * settings.fontScale) },
+    yaohuoMetadataBar: { paddingVertical: 4, gap: 16 },
+    yaohuoSettingsControl: { backgroundColor: 'transparent', minHeight: 48, paddingHorizontal: 4, paddingVertical: 4 },
+    yaohuoAttachmentLabel: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    attachmentCount: {
+      color: theme.primary,
+      fontFamily: font,
+      fontSize: Math.round(12 * settings.fontScale),
+      fontWeight: '600'
+    },
     row: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
     spread: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
     title: {
@@ -159,6 +178,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       minHeight: 48,
       maxHeight: 104,
       textAlignVertical: 'top'
+    },
+    yaohuoTitle: {
+      fontSize: Math.round(20 * settings.fontScale),
+      lineHeight: Math.round(28 * settings.fontScale),
+      paddingVertical: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.line
     },
     input: {
       color: theme.ink,
@@ -378,15 +404,16 @@ const IMAGE_EXTENSIONS = new Set([
   'ico'
 ]);
 type Controller = ReturnType<typeof useTopicComposerController>;
+type KeyboardSource = ReturnType<typeof useAnimatedKeyboard>;
 
 function TopicComposerKeyboardObserver({
   bottomInset,
-  padding,
+  publish,
   pickerReady,
   onOpened
 }: {
   bottomInset: number;
-  padding: SharedValue<number>;
+  publish: Dispatch<SetStateAction<KeyboardSource | null>>;
   pickerReady: SharedValue<boolean>;
   onOpened: () => void;
 }) {
@@ -394,15 +421,14 @@ function TopicComposerKeyboardObserver({
     isStatusBarTranslucentAndroid: true,
     isNavigationBarTranslucentAndroid: true
   });
-  useAnimatedReaction(
-    () => Math.max(0, keyboard.height.value - bottomInset),
-    (height) => padding.set(height)
-  );
+  useLayoutEffect(() => {
+    publish(keyboard);
+    return () => publish((current) => (current === keyboard ? null : current));
+  }, [keyboard, publish]);
   useAnimatedReaction(
     () =>
       keyboard.height.value === 0 &&
-      (keyboard.state.value === KeyboardState.CLOSED || keyboard.state.value === KeyboardState.UNKNOWN) &&
-      padding.value === 0,
+      (keyboard.state.value === KeyboardState.CLOSED || keyboard.state.value === KeyboardState.UNKNOWN),
     (ready) => pickerReady.set(ready)
   );
   // A positive height can belong to the previous hide; only a new OPEN confirms the return.
@@ -414,10 +440,9 @@ function TopicComposerKeyboardObserver({
   );
   useEffect(
     () => () => {
-      padding.set(0);
       pickerReady.set(false);
     },
-    [padding, pickerReady]
+    [pickerReady]
   );
   return null;
 }
@@ -459,7 +484,7 @@ export function TopicComposerScreen({
     setEditorPanelOpen(open);
     if (open) setEditorFocusPending(false);
   }, []);
-  const keyboardPadding = useSharedValue(0);
+  const [keyboard, setKeyboard] = useState<KeyboardSource | null>(null);
   const pickerReady = useSharedValue(false);
   const keyboardHost = useRef<ComposerKeyboardHostHandle>(null);
   const modalKeyboardHost = useRef<ComposerKeyboardHostHandle>(null);
@@ -467,18 +492,20 @@ export function TopicComposerScreen({
   // reuse the handoff's UI-frame check without subscribing the Activity again.
   const modalPickerReady = useSharedValue(true);
   useAnimatedReaction(
-    () => keyboardPadding.value > 0,
+    () => (keyboard?.height.value ?? 0) > insets.bottom,
     (shown, previous) => {
       if (shown !== previous) runOnJS(setKeyboardShown)(shown);
     }
   );
-  const keyboardStyle = useAnimatedStyle(() => ({ paddingBottom: keyboardPadding.value }));
+  const keyboardStyle = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(0, (keyboard?.height.value ?? 0) - insets.bottom)
+  }));
   const metadataCollapsed = !titleEditing && (keyboardShown || editorPanelOpen || editorFocusPending);
   const [panel, setPanel] = useState<
     'sites' | 'more' | 'options' | 'categories' | 'tags' | 'attachments' | 'images' | 'latest' | null
   >(null);
   const panelOwner = useCommittedRef({ active, panel, busy: c.busy, draftId: c.draft?.id });
-  const awaitKeyboardSettled = useKeyboardHandoff(pickerReady, active && panel === null, keyboardHost);
+  const settleKeyboard = useKeyboardHandoff(pickerReady, active && panel === null, keyboardHost);
   const awaitModalKeyboardSettled = useKeyboardHandoff(modalPickerReady, active && panel !== null, modalKeyboardHost);
   const [preview, setPreview] = useState(false);
   const togglePreview = () => {
@@ -492,6 +519,13 @@ export function TopicComposerScreen({
   const [insertionError, setInsertionError] = useState('');
   const [descriptionFileId, setDescriptionFileId] = useState<string | null>(null);
   const titleRef = useRef<TextInput>(null);
+  const awaitKeyboardSettled = useCallback(async () => {
+    await settleKeyboard();
+    if (titleEditing) {
+      titleRef.current?.blur();
+      setTitleEditing(false);
+    }
+  }, [settleKeyboard, titleEditing]);
   const { draft, context, searchTags } = c;
   const rulesLoading = c.contextLoading && !context;
   const editorObscured = Boolean(
@@ -709,7 +743,7 @@ export function TopicComposerScreen({
         {active && panel === null ? (
           <TopicComposerKeyboardObserver
             bottomInset={insets.bottom}
-            padding={keyboardPadding}
+            publish={setKeyboard}
             pickerReady={pickerReady}
             onOpened={keyboardOpened}
           />
@@ -838,7 +872,7 @@ export function TopicComposerScreen({
                   style={[styles.metaViewport, metadataCollapsed && { maxHeight: 0 }]}
                   accessibilityElementsHidden={metadataCollapsed}
                   importantForAccessibility={metadataCollapsed ? 'no-hide-descendants' : 'auto'}
-                  contentContainerStyle={styles.meta}
+                  contentContainerStyle={[styles.meta, draft.source === 'yaohuo' && styles.yaohuoMeta]}
                   keyboardShouldPersistTaps="handled"
                 >
                   {!c.session?.canWrite ? (
@@ -932,7 +966,7 @@ export function TopicComposerScreen({
                     onBlur={() => setTitleEditing(false)}
                     editable={!c.busy && allowed('title')}
                     multiline
-                    style={styles.title}
+                    style={[styles.title, draft.source === 'yaohuo' && styles.yaohuoTitle]}
                   />
                   {c.errors.title ? <Text style={styles.error}>{c.errors.title}</Text> : null}
                   {[categoryError, rankError, tagsError].filter(Boolean).map((error) => (
@@ -950,7 +984,7 @@ export function TopicComposerScreen({
                     </View>
                   ) : null}
                 </ScrollView>
-                <View style={styles.metadataBar}>
+                <View style={[styles.metadataBar, draft.source === 'yaohuo' && styles.yaohuoMetadataBar]}>
                   {metadataCollapsed ? (
                     <Pressable
                       accessibilityRole="button"
@@ -973,12 +1007,21 @@ export function TopicComposerScreen({
                       accessibilityHint={settingsSummary}
                       accessibilityState={{ disabled: c.busy || !context, busy: rulesLoading }}
                       disabled={c.busy || !context}
-                      style={[styles.settingsControl, (c.busy || !context) && styles.disabled]}
+                      style={[
+                        styles.settingsControl,
+                        draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
+                        (c.busy || !context) && styles.disabled
+                      ]}
                       onPress={() => openPanel('options')}
                     >
                       <View style={styles.flex}>
-                        <Text style={[styles.text, styles.settingsLabel]}>帖子设置</Text>
-                        <Text numberOfLines={1} style={styles.muted}>
+                        {draft.source !== 'yaohuo' ? (
+                          <Text style={[styles.text, styles.settingsLabel]}>帖子设置</Text>
+                        ) : null}
+                        <Text
+                          numberOfLines={1}
+                          style={draft.source === 'yaohuo' ? [styles.text, styles.settingsLabel] : styles.muted}
+                        >
                           {rulesLoading ? '加载规则…' : settingsSummary}
                         </Text>
                       </View>
@@ -990,14 +1033,26 @@ export function TopicComposerScreen({
                     accessibilityLabel="附件与草稿"
                     accessibilityState={{ disabled: c.busy }}
                     disabled={c.busy}
-                    style={[styles.settingsControl, c.busy && styles.disabled]}
+                    accessibilityHint="管理图片、附件和本机草稿"
+                    style={[
+                      styles.settingsControl,
+                      draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
+                      c.busy && styles.disabled
+                    ]}
                     onPress={() => openPanel('more')}
                   >
                     <View style={styles.flex}>
-                      <Text style={[styles.text, styles.settingsLabel]}>附件与草稿</Text>
-                      <Text numberOfLines={1} style={styles.muted}>
-                        {draft.attachments.length ? draft.attachments.length + ' 个附件 · 管理' : '上传与草稿管理'}
-                      </Text>
+                      <View style={draft.source === 'yaohuo' && styles.yaohuoAttachmentLabel}>
+                        <Text style={[styles.text, styles.settingsLabel]}>附件与草稿</Text>
+                        {draft.source === 'yaohuo' && draft.attachments.length ? (
+                          <Text style={styles.attachmentCount}>{draft.attachments.length}</Text>
+                        ) : null}
+                      </View>
+                      {draft.source !== 'yaohuo' ? (
+                        <Text numberOfLines={1} style={styles.muted}>
+                          {draft.attachments.length ? draft.attachments.length + ' 个附件 · 管理' : '上传与草稿管理'}
+                        </Text>
+                      ) : null}
                     </View>
                     <ChevronRight size={16} color={theme.muted} />
                   </Pressable>

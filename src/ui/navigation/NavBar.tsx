@@ -1,14 +1,13 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { Home, MoreHorizontal, Search, Star, type LucideIcon } from 'lucide-react-native';
-import type { Screen } from './types';
-import type { ReaderSettings } from '@/domain/reader/readerData';
+import { Bell, Home, MoreHorizontal, Search, type LucideIcon } from 'lucide-react-native';
+import type { MainTabParamList } from './appRouteTypes';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
-export const tabNavItems: { value: Screen; label: string; icon: LucideIcon }[] = [
+export const tabNavItems: { value: keyof MainTabParamList; label: string; icon: LucideIcon }[] = [
   { value: 'feed', label: '首页', icon: Home },
   { value: 'search', label: '搜索', icon: Search },
-  { value: 'library', label: '收藏', icon: Star },
+  { value: 'notifications', label: '消息', icon: Bell },
   { value: 'more', label: '更多', icon: MoreHorizontal }
 ];
 
@@ -39,7 +38,7 @@ export function TabBarIcon({
   );
 }
 
-export function createNavBarStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createNavBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, minHeight: 48, borderRadius: 6 },
     navIconPill: {

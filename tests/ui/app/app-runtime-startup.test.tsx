@@ -4,7 +4,7 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import { useAppRuntime } from '@/app/useAppRuntime';
 import { useInitialForegroundRuntime } from '@/app/useInitialForegroundRuntime';
 import type { ReaderData } from '@/domain/reader/readerData';
-import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
+import { createEmptyReaderState, type ReaderChange, type ReaderCommand } from '@/domain/reader/readerRecordState';
 import { useFeedController } from '@/features/feed/useFeedController';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
@@ -18,9 +18,11 @@ const mockUseNotificationsRuntime = jest.fn();
 let mockActualReader = false;
 const mockLoadReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
 const mockImportReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
+const mockCommitReader = jest.fn<(command: ReaderCommand) => Promise<ReaderChange>>();
 jest.mock('@/platform/storage/readerDataStore', () => ({
   loadReaderState: () => mockLoadReader(),
-  importReaderDataBackup: () => mockImportReader()
+  importReaderDataBackup: () => mockImportReader(),
+  commitReaderCommand: (command: ReaderCommand) => mockCommitReader(command)
 }));
 const renderHook: typeof renderNativeHook = (callback, options) =>
   renderNativeHook(callback, { wrapper: QueryTestWrapper, ...options });
@@ -32,6 +34,7 @@ let mockReaderData: ReaderData | undefined;
 let mockReaderDataLoaded = true;
 let mockSessionsReady = true;
 let mockInitialForegroundReady = false;
+let mockFeedContentReady = false;
 let mockScreen = 'feed';
 const mockReadGateway = {
   getEmojiUrls: jest.fn(),
@@ -42,6 +45,7 @@ const mockReadGateway = {
 const mockForumSessionEpochs = { linuxdo: 7, nodeseek: 7, yaohuo: 7 };
 const mockOnFeedInitialContentReady = jest.fn(() => {
   mockInitialForegroundReady = true;
+  mockFeedContentReady = true;
 });
 
 jest.mock('@/app/useAppLifecycleRuntime', () => ({
@@ -51,6 +55,7 @@ jest.mock('@/app/useAppLifecycleRuntime', () => ({
     getCurrentScreen: jest.fn(() => 'feed'),
     height: 800,
     initialForegroundReady: mockInitialForegroundReady,
+    feedContentReady: mockFeedContentReady,
     loginNavigation: {},
     notify: mockNotify,
     onCatalogSettled: jest.fn(),
@@ -197,9 +202,11 @@ jest.mock('@/app/useContentSourceQueryCleanup', () => ({ useContentSourceQueryCl
 describe('app runtime startup', () => {
   beforeEach(() => {
     mockActualReader = false;
+    mockReaderData = undefined;
     mockReaderDataLoaded = true;
     mockSessionsReady = true;
     mockInitialForegroundReady = false;
+    mockFeedContentReady = false;
     mockScreen = 'feed';
     mockOnFeedInitialContentReady.mockClear();
     mockHandleNavigationReady.mockClear();
@@ -208,7 +215,74 @@ describe('app runtime startup', () => {
     mockShowLinuxDoVerification.mockClear();
     mockUseAppUpdateRuntime.mockClear();
     mockUseForumCatalogRuntime.mockClear();
+    mockCommitReader.mockReset();
   });
+
+  it.each(['visit', 'topic-summary'] as const)(
+    'keeps reading page inputs stable when %s only updates stored history metadata',
+    async (type) => {
+      mockActualReader = true;
+      const state = createEmptyReaderState();
+      state.history = { 'nodeseek:1': true };
+      state.counts.history = 1;
+      mockLoadReader.mockResolvedValue(state);
+      const saved = Promise.withResolvers<ReaderChange>();
+      mockCommitReader.mockReturnValueOnce(saved.promise);
+      const hook = await renderHook(() => useAppRuntime());
+      await waitFor(() => expect(hook.result.current.routes).not.toBeNull());
+      const views = () => {
+        const routes = hook.result.current.routes!;
+        return [
+          routes.feedRouteRuntime.reader.data,
+          routes.searchRouteRuntime.readerData,
+          routes.topicRouteRuntime.reader.data,
+          routes.userRouteRuntime.reader.data
+        ];
+      };
+      const before = views();
+      const topic = {
+        source: 'nodeseek' as const,
+        id: '1',
+        title: 'Already read',
+        author: 'alice',
+        url: 'https://www.nodeseek.com/post-1-1',
+        createdAt: '2026-01-01T00:00:00Z'
+      };
+      const command: ReaderCommand = type === 'visit' ? { type, topic, at: '2026-09-30T00:00:00Z' } : { type, topic };
+      await act(async () => hook.result.current.routes!.topicRouteRuntime.reader.commit(command));
+      expect(mockCommitReader).toHaveBeenCalledWith(command);
+      expect(views().map((view, index) => view === before[index])).toEqual([true, true, true, true]);
+      await act(async () => {
+        saved.resolve({
+          membership: [{ collection: 'history', key: 'nodeseek:1', present: true }],
+          counts: { history: 1 },
+          changed: ['history']
+        });
+      });
+      expect(hook.result.current.routes!.libraryRouteRuntime.reader.data.revisions.history).toBe(1);
+      expect(hook.result.current.routes!.topicRouteRuntime.reader.dataRef.current).toBe(
+        hook.result.current.routes!.libraryRouteRuntime.reader.data
+      );
+      expect(views().map((view, index) => view === before[index])).toEqual([true, true, true, true]);
+      mockCommitReader.mockResolvedValueOnce({
+        membership: [{ collection: 'history', key: 'nodeseek:2', present: true }],
+        counts: { history: 2 },
+        changed: ['history']
+      });
+      await act(async () => {
+        hook.result.current.routes!.topicRouteRuntime.reader.commit({
+          type: 'visit',
+          topic: { ...topic, id: '2', url: 'https://www.nodeseek.com/post-2-1' },
+          at: '2026-09-30T00:01:00Z'
+        });
+      });
+      for (const view of views()) {
+        expect(view.history).toEqual({ 'nodeseek:1': true, 'nodeseek:2': true });
+        expect(view).not.toBe(before[0]);
+      }
+      expect(hook.result.current.routes!.libraryRouteRuntime.reader.data.counts.history).toBe(2);
+    }
+  );
 
   it('forwards the exact create-topic read recovery to the existing linux.do verification host', async () => {
     const hook = await renderHook(() => useAppRuntime());
@@ -355,31 +429,42 @@ describe('app runtime startup', () => {
     );
     const routes = hook.result.current.routes!;
     const feedIndex = (routes.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex;
+    const readerView = routes.feedRouteRuntime.reader.data;
 
     expect(feedIndex).toBeDefined();
+    expect(routes.searchRouteRuntime.readerData).toBe(readerView);
+    expect(routes.topicRouteRuntime.reader.data).toBe(readerView);
+    expect(routes.userRouteRuntime.reader.data).toBe(readerView);
     expect((routes.searchRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex).toBe(feedIndex);
     expect((routes.libraryRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex).toBe(feedIndex);
     expect((routes.userRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex).toBe(feedIndex);
 
     mockReaderData = { ...mockReaderData!, followedUsers: { ...mockReaderData!.followedUsers } };
     await act(async () => hook.rerender({ revision: 1 }));
+    expect(hook.result.current.routes!.userRouteRuntime.reader.data.followedUsers).toBe(mockReaderData.followedUsers);
     expect(
       (hook.result.current.routes!.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex
     ).toBe(feedIndex);
 
     mockReaderData = { ...mockReaderData!, favorites: { ...mockReaderData!.favorites } };
     await act(async () => hook.rerender({ revision: 2 }));
+    expect(hook.result.current.routes!.topicRouteRuntime.reader.data.favorites).toBe(mockReaderData.favorites);
     expect(
       (hook.result.current.routes!.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex
     ).not.toBe(feedIndex);
+    mockReaderData = { ...mockReaderData!, settings: { ...mockReaderData!.settings, theme: 'dark' } };
+    await act(async () => hook.rerender({ revision: 3 }));
+    expect(hook.result.current.routes!.topicRouteRuntime.reader.data.settings.theme).toBe('dark');
   });
 
   it('settles only after Feed and Categories reach terminal state', async () => {
     const hook = await renderHook(() => useInitialForegroundRuntime());
 
     expect(hook.result.current.initialForegroundReady).toBe(false);
+    expect(hook.result.current.feedContentReady).toBe(false);
     await act(async () => hook.result.current.onFeedInitialContentReady());
     expect(hook.result.current.initialForegroundReady).toBe(false);
+    expect(hook.result.current.feedContentReady).toBe(true);
     await act(async () => hook.result.current.onCatalogSettled(true));
     expect(hook.result.current.initialForegroundReady).toBe(true);
     await act(async () => hook.result.current.onCatalogSettled(false));
@@ -416,7 +501,9 @@ describe('app runtime startup', () => {
       { initialProps: { revision: 0 } }
     );
 
-    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }));
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: true, deferSecondary: true })
+    );
     expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
       expect.objectContaining({ readGateway: mockReadGateway, sessionEpochs: mockForumSessionEpochs })
     );
@@ -436,8 +523,17 @@ describe('app runtime startup', () => {
       ).onInitialContentReady?.()
     );
     await act(async () => hook.rerender({ revision: 1 }));
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ deferSecondary: false }));
     expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
     expect(mockUseAppUpdateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ autoCheck: true }));
+  });
+
+  it('loads Search categories even before the initial Feed is visible', async () => {
+    mockScreen = 'search';
+    await renderHook(() => useAppRuntime());
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: true, deferSecondary: false })
+    );
   });
 
   it('withholds routes and remote queries until local account sessions are restored', async () => {

@@ -1,8 +1,15 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View, useWindowDimensions } from 'react-native';
-import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  Text,
+  View,
+  useWindowDimensions,
+  type ListRenderItem
+} from 'react-native';
 import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react-native';
 import type { SourceErrorInfo, Topic, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
@@ -14,20 +21,18 @@ import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
-import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import {
   createUserListItems,
   userListItemKey,
-  userListItemType,
   type UserActivityTab,
   type UserListItem,
   type UserProfileView
 } from './userScreenItems';
 
-const USER_LIST_POSITION_PROPS = { disabled: true };
-const USER_STICKY_HEADER_INDICES = [0];
-const USER_STICKY_HEADER_CONFIG = { hideRelatedCell: true };
+// The profile is child 0. Keep the activity rail itself mounted and translated
+// by the native scroll animation, without handing off to a JS-selected copy.
+const USER_STICKY_HEADER_INDICES = [1];
 const EMPTY_TOPICS: Topic[] = [];
 const EMPTY_REPLIES: UserReplyActivity[] = [];
 const EMPTY_LIST_ITEMS: UserListItem[] = [];
@@ -149,6 +154,7 @@ function UserReplyCard({
 }
 
 export const UserScreen = memo(function UserScreen({
+  initialTab = 'topics',
   busy,
   error,
   topicsError,
@@ -173,6 +179,7 @@ export const UserScreen = memo(function UserScreen({
   onRefresh,
   onToggleFollow
 }: {
+  initialTab?: UserActivityTab;
   busy: boolean;
   error: SourceErrorInfo | null;
   topicsError?: SourceErrorInfo | null;
@@ -203,7 +210,7 @@ export const UserScreen = memo(function UserScreen({
   const user = profile || requestedUser;
   const topics = profile?.topics || EMPTY_TOPICS;
   const replies = profile?.replies || EMPTY_REPLIES;
-  const [userTab, setUserTab] = useState<UserActivityTab>('topics');
+  const [userTab, setUserTab] = useState<UserActivityTab>(initialTab);
   const activityError = userTab === 'topics' ? topicsError : repliesError;
   const activityBusy = userTab === 'topics' ? topicsBusy : repliesBusy;
   const activityData = userTab === 'topics' ? profile?.topics : profile?.replies;
@@ -238,7 +245,7 @@ export const UserScreen = memo(function UserScreen({
   const topicItems = useMemo(() => createUserListItems('topics', topics, EMPTY_REPLIES), [topics]);
   const replyItems = useMemo(() => createUserListItems('replies', EMPTY_TOPICS, replies), [replies]);
   const listItems = profile ? (userTab === 'topics' ? topicItems : replyItems) : EMPTY_LIST_ITEMS;
-  const listRef = useRef<FlashListRef<UserListItem> | null>(null);
+  const listRef = useRef<FlatList<UserListItem> | null>(null);
   const autoLoadArmedRef = useRef(false);
   const pendingScrollTopRef = useRef(false);
   const userAuthNotice = useMemo(() => (error ? authNoticeForSourceError(error) : null), [error]);
@@ -247,8 +254,8 @@ export const UserScreen = memo(function UserScreen({
   }, [userIdentity]);
   useEffect(() => {
     autoLoadArmedRef.current = false;
-    setUserTab('topics');
-  }, [user?.id, user?.source, user?.username]);
+    setUserTab(initialTab);
+  }, [initialTab, user?.id, user?.source, user?.username]);
   const scrollListToTop = useCallback(() => {
     if (!listRef.current) {
       pendingScrollTopRef.current = true;
@@ -518,7 +525,7 @@ export const UserScreen = memo(function UserScreen({
           ) : null}
         </ScreenTopBarActions>
       </ScreenTopBar>
-      <FlashList
+      <FlatList
         testID={profile ? 'user-screen-loaded' : undefined}
         key={userIdentity}
         ref={listRef}
@@ -526,13 +533,11 @@ export const UserScreen = memo(function UserScreen({
         contentContainerStyle={styles.userContentInner}
         data={listItems}
         keyExtractor={userListItemKey}
-        getItemType={userListItemType}
         ListHeaderComponent={profileHeader}
         stickyHeaderIndices={profile ? USER_STICKY_HEADER_INDICES : undefined}
-        stickyHeaderConfig={USER_STICKY_HEADER_CONFIG}
+        // Keep native clipping disabled before the async profile adds its sticky rail.
+        removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
-        maintainVisibleContentPosition={USER_LIST_POSITION_PROPS}
-        {...TOPIC_LIST_PERFORMANCE_PROPS}
         ListFooterComponent={
           <>
             {profile && activityError ? (

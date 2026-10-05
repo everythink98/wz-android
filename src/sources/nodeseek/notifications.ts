@@ -428,13 +428,12 @@ export const nodeSeekNotificationAdapter = {
     detail: NotificationDetail,
     options: NotificationAdapterAccess
   ): Promise<NotificationMarkResult> {
-    const ids =
-      item.remoteGroup === 'message' ? detail.unreadMessageIds || [] : item.remoteReadId ? [item.remoteReadId] : [];
+    const group = item.target.type === 'private-conversation' ? 'message' : item.remoteGroup;
+    const ids = group === 'message' ? detail.unreadMessageIds || [] : item.remoteReadId ? [item.remoteReadId] : [];
     if (!ids.length) return { confirmed: false, message: '原站没有返回可确认的未读标识' };
     if (!ids.every((id) => /^\d+$/.test(id))) {
       return { confirmed: false, message: '原站返回的未读标识不正确' };
     }
-    const group = item.remoteGroup;
     const field =
       group === 'at-me' ? 'atMe' : group === 'reply-to-me' ? 'replys' : group === 'message' ? 'messages' : '';
     if (!field) return { confirmed: false, message: '该消息类型暂不支持标记已读' };

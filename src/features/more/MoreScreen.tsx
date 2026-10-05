@@ -33,9 +33,8 @@ export const MoreScreen = memo(function MoreScreen({
       contentContainerStyle={styles.moreContentInner}
       keyboardShouldPersistTaps="always"
     >
-      <View style={styles.stack}>
+      <View>
         <Text style={styles.sectionTitle}>更多</Text>
-        <MoreUpdatePanel runtime={update} />
         <MoreAccountPanel
           nodeSeekRecoveryThreshold={utilities.settings.value.nodeSeekRecoveryThreshold}
           runtime={account}
@@ -48,6 +47,7 @@ export const MoreScreen = memo(function MoreScreen({
           onExpandedChange={onContentSourcesExpandedChange}
         />
         <MoreUtilityPanels runtime={utilities} />
+        <MoreUpdatePanel runtime={update} />
       </View>
     </ScrollView>
   );

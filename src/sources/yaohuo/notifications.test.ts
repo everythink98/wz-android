@@ -10,7 +10,85 @@ function html(value: string) {
   });
 }
 
+function messageListRow({
+  id = '41',
+  title = '消息',
+  actor = '张三',
+  actorId,
+  unread = false,
+  time = '2026/10/4 13:46',
+  displayTime = '今天'
+}: {
+  id?: string;
+  title?: string;
+  actor?: string;
+  actorId?: string;
+  unread?: boolean;
+  time?: string;
+  displayTime?: string;
+} = {}) {
+  return `<ul class="msglist-rows"><li><a class="msglist-row${unread ? ' is-unread' : ''}" href="/bbs/messagelist_view.aspx?id=${id}" data-message-id="${id}">
+    <span class="msglist-main"><span class="msglist-text">${title}</span><span class="msglist-meta">
+    <span class="msglist-from">${actor}</span>${actorId === undefined ? '' : `<span class="msglist-uid">(${actorId})</span>`}
+    <time class="msglist-time" title="${time}">${displayTime}</time></span></span>
+  </a></li></ul>`;
+}
+
 describe('Yaohuo notifications', () => {
+  it.each([false, true])(
+    'reads the current inbox fields, unread state and pagination with unreadOnly=%s',
+    async (unreadOnly) => {
+      const page = await yaohuoNotificationAdapter.listPage({
+        identityKey: 'yaohuo:7',
+        userId: '7',
+        unreadOnly,
+        fetcher: async () =>
+          html(`
+        <div class="msglist-page has-unread">
+          <ul class="msglist-rows">
+            <li><a class="msglist-row is-unread" data-message-id="41" href="/bbs/messagelist_view.aspx?types=0&id=41&page=1">
+              <span class="msglist-dot" aria-hidden="true"></span>
+              <span class="msglist-main"><span class="msglist-text">回复通知</span><span class="msglist-meta">
+                <span class="msglist-from">系统</span><time class="msglist-time" title="2026/10/4 13:46">今天</time>
+              </span></span>
+            </a></li>
+            <li><a class="msglist-row" data-message-id="42" href="/bbs/messagelist_view.aspx?types=0&id=42&page=1">
+              <span class="msglist-main"><span class="msglist-text">私信正文</span><span class="msglist-meta">
+                <span class="msglist-from">张三</span><span class="msglist-uid">(9)</span>
+                <time class="msglist-time" title="2026/10/3 21:30">昨天</time>
+              </span></span>
+            </a></li>
+          </ul>
+          <div class="showpage">第 1/2 页，共 30 条</div>
+        </div>
+      `)
+      });
+      expect(page).toMatchObject({ quality: 'complete', cursor: '2', hasMore: true });
+      expect(page.items).toEqual([
+        expect.objectContaining({
+          id: '41',
+          kind: 'system',
+          actor: { name: '系统' },
+          title: '回复通知',
+          unread: true,
+          createdAt: '2026-10-04T05:46:00.000Z'
+        }),
+        ...(unreadOnly
+          ? []
+          : [
+              expect.objectContaining({
+                id: '42',
+                kind: 'private-message',
+                actor: { name: '张三', id: '9' },
+                title: '私信正文',
+                unread: false,
+                createdAt: '2026-10-03T13:30:00.000Z'
+              })
+            ])
+      ]);
+    }
+  );
+
   it.each([10, 20])(
     'only reports an exact unread total when the final %i rows fit the scan budget',
     async (lastPageSize) => {
@@ -19,10 +97,8 @@ describe('Yaohuo notifications', () => {
         const count = secondPage ? lastPageSize : 50;
         const offset = secondPage ? 50 : 0;
         return html(
-          Array.from(
-            { length: count },
-            (_, index) =>
-              `<div class="listmms"><img src="/NetImages/new.gif"><a href="/bbs/messagelist_view.aspx?id=${offset + index + 1}">消息</a></div>`
+          Array.from({ length: count }, (_, index) =>
+            messageListRow({ id: String(offset + index + 1), unread: true })
           ).join('') + `<div class="showpage">${secondPage ? 2 : 1}/2 页</div>`
         );
       });
@@ -39,9 +115,7 @@ describe('Yaohuo notifications', () => {
       userId: '7',
       unreadOnly: true,
       fetcher: async () =>
-        html(
-          '<div class="listmms"><a href="/bbs/messagelist_view.aspx?id=41">消息</a></div><div class="listmms">损坏行</div>'
-        )
+        html(messageListRow() + '<ul class="msglist-rows"><li><a class="msglist-row">损坏行</a></li></ul>')
     });
     expect(page.items).toEqual([]);
     expect(sourceDiagnosticSummary(page)).toMatchObject({
@@ -59,7 +133,9 @@ describe('Yaohuo notifications', () => {
       { id: 'system', label: '系统' },
       { id: 'chat', label: '聊天' }
     ]);
-    const fetcher = vi.fn(async (_input: string) => html('<div class="tip">暂无消息</div>'));
+    const fetcher = vi.fn(async (_input: string) =>
+      html('<div class="msglist-page"><div class="msglist-empty">暂无消息</div></div>')
+    );
 
     await yaohuoNotificationAdapter.listPage({
       categoryId: 'system',
@@ -82,9 +158,7 @@ describe('Yaohuo notifications', () => {
   });
 
   it('rejects a message row without a valid detail target', async () => {
-    const fetcher = vi.fn(async () =>
-      html('<div class="listmms"><a href="/bbs/messagelist_view.aspx?id=bad">损坏消息</a></div>')
-    );
+    const fetcher = vi.fn(async () => html(messageListRow({ id: 'bad' })));
 
     await expect(yaohuoNotificationAdapter.listPage({ fetcher, identityKey: 'yaohuo:7', userId: '7' })).rejects.toThrow(
       '妖火消息列表格式不正确'
@@ -100,104 +174,42 @@ describe('Yaohuo notifications', () => {
   });
 
   it('accepts an explicit empty message-list state', async () => {
-    const fetcher = vi.fn(async () => html('<div class="tip">暂无消息</div>'));
+    const fetcher = vi.fn(async () =>
+      html('<div class="msglist-page"><div class="msglist-empty">暂无消息</div></div>')
+    );
 
     await expect(
       yaohuoNotificationAdapter.listPage({ fetcher, identityKey: 'yaohuo:7', userId: '7' })
     ).resolves.toEqual({ quality: 'complete' as const, items: [], cursor: null, hasMore: false });
   });
 
-  it('ignores the trailing delete action when parsing the list timestamp', async () => {
-    const fetcher = vi.fn(async () =>
-      html(`
-        <div class="listmms">
-          <a href="/bbs/messagelist_view.aspx?id=41">回复内容</a>
-          来自张三 [2026-08-02 10:30]
-          [<a href="/bbs/messagelist_del.aspx?id=41">删除</a>]
-        </div>
-      `)
-    );
-
+  it('preserves relative display time when the original absolute timestamp is absent', async () => {
     const page = await yaohuoNotificationAdapter.listPage({
-      fetcher,
       identityKey: 'yaohuo:7',
-      userId: '7'
+      userId: '7',
+      fetcher: async () => html(messageListRow({ time: '', displayTime: '昨天', actor: '张三' }))
     });
-
-    expect(page.items[0]).toMatchObject({
-      id: '41',
-      createdAt: '2026-08-02T02:30:00.000Z'
-    });
-    expect(page.items[0]?.displayTime).not.toBe('删除');
+    expect(page.items[0]).toMatchObject({ actor: { name: '张三' }, createdAt: null, displayTime: '昨天' });
   });
 
-  it('separates an unbracketed timestamp from the actor name', async () => {
-    const fetcher = vi.fn(async () =>
-      html(`
-        <div class="listmms">
-          <a href="/bbs/messagelist_view.aspx?id=41">回复内容</a>
-          来自 Clover 2026/7/3 13:46
-          [<a href="/bbs/messagelist_del.aspx?id=41">删除</a>]
-        </div>
-      `)
-    );
-
+  it.each([
+    ['9', '9'],
+    ['12', '12'],
+    ['0', undefined],
+    ['bad', undefined]
+  ])('reads the sender identity from its original UID field %s', async (actorId, id) => {
     const page = await yaohuoNotificationAdapter.listPage({
-      fetcher,
       identityKey: 'yaohuo:7',
-      userId: '7'
+      userId: '7',
+      fetcher: async () => html(messageListRow({ actorId }))
     });
-
-    expect(page.items[0]).toMatchObject({
-      actor: { name: 'Clover' },
-      createdAt: '2026-07-03T05:46:00.000Z'
-    });
-  });
-
-  it('parses chat and system rows, unread icons, and page count from the original HTML', async () => {
-    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) =>
-      html(`
-        <div class="listmms">
-          <img src="/NetImages/new.gif">
-          <a href="/bbs/messagelist_view.aspx?siteid=1000&id=41&classid=0">回复内容</a>
-          来自张三 [2026-08-02 10:30]
-        </div>
-        <div class="listmms">
-          <a href="/bbs/messagelist_view.aspx?siteid=1000&id=42&classid=0">维护公告</a>
-          来自系统通知 [昨天]
-        </div>
-        <div class="showpage">1/2 页</div>
-      `)
-    );
-
-    const page = await yaohuoNotificationAdapter.listPage({
-      fetcher,
-      identityKey: 'yaohuo:7',
-      userId: '7'
-    });
-
-    expect(page).toMatchObject({ hasMore: true, cursor: '2' });
-    expect(page.items).toEqual([
-      expect.objectContaining({
-        id: '41',
-        kind: 'private-message',
-        unread: true,
-        createdAt: '2026-08-02T02:30:00.000Z'
-      }),
-      expect.objectContaining({ id: '42', kind: 'system', unread: false, createdAt: null, displayTime: '昨天' })
-    ]);
-    expect(page.items[0]?.target).toEqual({
-      type: 'message-detail',
-      messageId: '41',
-      url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=41'
-    });
-    expect(new URL(fetcher.mock.calls[0]?.[0] || '').searchParams.get('page')).toBe('1');
+    expect(page.items[0]?.actor).toEqual({ name: '张三', ...(id ? { id } : {}) });
   });
 
   it('separates the clicked body from the original recent chat bubbles', async () => {
     const calls: string[] = [];
     const listHtml = `
-      <div class="listmms"><img src="/NetImages/new.gif"><a href="/bbs/messagelist_view.aspx?id=41&siteid=1000">回复内容</a>来自张三 [昨天]</div>
+      ${messageListRow({ title: '回复内容', unread: true })}
       <div class="showpage">1/1 页</div>
     `;
     const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
@@ -232,6 +244,7 @@ describe('Yaohuo notifications', () => {
     const result = await yaohuoNotificationAdapter.markRead(item, detail, access);
 
     expect(calls).toEqual(['/bbs/messagelist.aspx', '/bbs/messagelist_view.aspx', '/bbs/messagelist.aspx']);
+    expect(detail.notification.actor).toEqual({ name: '张三', id: '9' });
     expect(detail.contentHtml).toContain('点击的消息正文');
     expect(detail.contentHtml).not.toMatch(/回复\/转发|删除本条|对方历史|我的历史/);
     expect(detail.messages).toEqual([
@@ -243,14 +256,45 @@ describe('Yaohuo notifications', () => {
     expect(result).toEqual({ confirmed: false, message: '原站仍显示为未读，请稍后重试' });
   });
 
+  it('does not use a profile link in message content as the sender identity', async () => {
+    const item = {
+      source: 'yaohuo' as const,
+      id: '41',
+      kind: 'private-message' as const,
+      actor: { name: '张三' },
+      title: '回复内容',
+      createdAt: null,
+      unread: false,
+      target: {
+        type: 'message-detail' as const,
+        messageId: '41',
+        url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=41'
+      }
+    };
+    const detail = await yaohuoNotificationAdapter.loadDetail(item, {
+      identityKey: 'yaohuo:7',
+      userId: '7',
+      fetcher: async () =>
+        html(`
+        <div class="content">
+          <b>发件人：</b>张三<br/>
+          <b>内容：</b><span>转发名片</span><br/>
+          <b>发件人：</b><a href="/bbs/userinfo.aspx?touserid=99">另一个用户</a>
+        </div>
+      `)
+    });
+
+    expect(detail.notification.actor).toEqual({ name: '张三' });
+  });
+
   it('rechecks the exact Yaohuo category page after opening a detail', async () => {
     const listUrls: URL[] = [];
     const unreadHtml = `
-      <div class="listmms"><img src="/NetImages/new.gif"><a href="/bbs/messagelist_view.aspx?id=41">系统消息</a>来自系统管理员 [昨天]</div>
+      ${messageListRow({ title: '系统消息', actor: '系统', unread: true })}
       <div class="showpage">2/2 页</div>
     `;
     const readHtml = `
-      <div class="listmms"><a href="/bbs/messagelist_view.aspx?id=41">系统消息</a>来自系统管理员 [昨天]</div>
+      ${messageListRow({ title: '系统消息', actor: '系统' })}
       <div class="showpage">2/2 页</div>
     `;
     const fetcher = vi.fn(async (input: string) => {
@@ -260,7 +304,13 @@ describe('Yaohuo notifications', () => {
       }
       listUrls.push(url);
       const exactOrigin = url.searchParams.get('issystem') === '1' && url.searchParams.get('page') === '2';
-      return html(listUrls.length === 1 ? unreadHtml : exactOrigin ? readHtml : '<div class="tip">暂无消息</div>');
+      return html(
+        listUrls.length === 1
+          ? unreadHtml
+          : exactOrigin
+            ? readHtml
+            : '<div class="msglist-page"><div class="msglist-empty">暂无消息</div></div>'
+      );
     });
     const access = { fetcher, identityKey: 'yaohuo:7', userId: '7' };
     const item = (await yaohuoNotificationAdapter.listPage({ ...access, categoryId: 'system', cursor: '2' })).items[0]!;
@@ -280,7 +330,7 @@ describe('Yaohuo notifications', () => {
       .spyOn(Date, 'parse')
       .mockImplementation((value) => (String(value).includes('/') ? Number.NaN : nativeDateParse(value)));
     const listHtml = `
-      <div class="listmms"><a href="/bbs/messagelist_view.aspx?id=41">安全邮箱绑定功能已上线</a>来自 Clover 2026/6/17 21:30</div>
+      ${messageListRow({ title: '安全邮箱绑定功能已上线', actor: 'Clover', time: '2026/6/17 21:30' })}
       <div class="showpage">1/1 页</div>
     `;
     const fetcher = vi.fn(async (url: string) =>

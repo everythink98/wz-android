@@ -13,7 +13,7 @@ import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 
 import { topicKey } from '@/domain/reader/readerData';
-import type { TopicLocationTarget, Topic, UserReference } from '@/domain/forum/models';
+import type { TopicLocationTarget, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
@@ -26,6 +26,8 @@ import { useImagePreviewController } from './media/useImagePreviewController';
 import { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
 import { shareTopicWithClipboardFallback } from './shareTopic';
 import { TopicScreen } from './TopicScreen';
+import { TopicShareSheet } from './components/TopicShareSheet';
+import { TopicShareOptions } from './components/TopicShareOptions';
 import type { TopicListItem } from './model/topicListModel';
 import { useStableTopicLayoutDetail } from './useStableTopicLayoutDetail';
 import { useTopicController } from './useTopicController';
@@ -36,6 +38,13 @@ import { useTopicRouteRuntime, type TopicRouteRuntimeValue } from './TopicRouteR
 export { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from './TopicRouteRuntime';
 
 type TopicRouteProps = NativeStackScreenProps<RootStackParamList, 'Topic'>;
+type TopicShareState = ({ kind: 'options'; topic: Topic } | { kind: 'image'; topic: TopicDetail }) & {
+  sessionIdentity: string;
+};
+
+async function copyTopicLink(url: string) {
+  if (!(await Clipboard.setStringAsync(url))) throw new Error('无法复制链接，请重试。');
+}
 
 export function TopicRoute({ navigation, route }: TopicRouteProps) {
   const runtime = useTopicRouteRuntime();
@@ -182,6 +191,12 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   });
   useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
   const [displayedPreview, setDisplayedPreview] = useState<ImagePreviewItem | null>(null);
+  const [sharingTopic, setSharingTopic] = useState<TopicShareState | null>(null);
+  const shareableDetail = topicDetail?.id === topic.id && topicDetail.source === topic.source ? topicDetail : null;
+  const closeTopicShare = useCallback(() => setSharingTopic(null), []);
+  useEffect(() => {
+    setSharingTopic(null);
+  }, [focused, mediaSessionIdentity, topic.id, topic.source]);
   const previewOrigin = imagePreviewController.imagePreview ? displayedPreview?.readingOrigin : undefined;
   const previewInteractionRef = useRef<(() => void) | null>(null);
   const interactWithPreview = useCallback(() => previewInteractionRef.current?.(), []);
@@ -218,6 +233,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     readGateway: runtime.account.readGateway,
     refreshTopicReplies,
     siteSessionViewModels: runtime.account.sessionViewModels,
+    refreshWholeTopic,
     topicDetail,
     topicReplies,
     topicSession
@@ -242,18 +258,24 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
       resume: refreshWholeTopic
     });
   }, [isReadRecoveryCurrent, refreshWholeTopic, runtime, topic.source, topicError?.message, topicQueryKey]);
-  const shareTopic = useCallback(async () => {
-    const current = topicDetail || topic;
-    await shareTopicWithClipboardFallback({
-      copy: async () => {
-        await Clipboard.setStringAsync(current.url);
-      },
-      notify: runtime.notify,
-      share: async () => {
-        await Share.share({ title: current.title, message: `${current.title}\n${current.url}`, url: current.url });
-      }
+  const shareTopic = useCallback(
+    async (current: Topic) => {
+      await shareTopicWithClipboardFallback({
+        copy: () => copyTopicLink(current.url),
+        notify: runtime.notify,
+        share: async () => {
+          await Share.share({ title: current.title, message: `${current.title}\n${current.url}`, url: current.url });
+        }
+      });
+    },
+    [runtime.notify]
+  );
+  const openTopicShare = () =>
+    setSharingTopic({
+      kind: 'options',
+      topic: topicDetail || topic,
+      sessionIdentity: mediaSessionIdentity
     });
-  }, [runtime.notify, topic, topicDetail]);
   const handleTopicScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => topicView.rememberScrollY(event.nativeEvent.contentOffset.y),
     [topicView]
@@ -317,13 +339,13 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
               openUser: stableOpenUser,
               refreshReplies: stableRefreshReplies,
               refreshTopic: stableRefreshWholeTopic,
-              share: shareTopic,
+              share: openTopicShare,
               toggleFavorite: toggleTopicFavorite,
               verifyLinuxDo,
               verifyNodeSeek
             }}
             currentNodeSeekUser={runtime.account.sessionViewModels.nodeseek.currentUser}
-            bodyMediaPaused={Boolean(imagePreviewController.imagePreview)}
+            bodyMediaPaused={Boolean(imagePreviewController.imagePreview || sharingTopic)}
             html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
             nodeSeekUserId={runtime.account.nodeSeekUserId}
             onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
@@ -342,6 +364,43 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             onVisibleImageChange={setDisplayedPreview}
             onInteraction={interactWithPreview}
           />
+          {focused &&
+          sharingTopic?.kind === 'options' &&
+          sharingTopic.sessionIdentity === mediaSessionIdentity &&
+          sharingTopic.topic.id === topic.id &&
+          sharingTopic.topic.source === topic.source ? (
+            <TopicShareOptions
+              topic={sharingTopic.topic}
+              onClose={closeTopicShare}
+              onShareLink={() => shareTopic(sharingTopic.topic)}
+              onCopyLink={() => copyTopicLink(sharingTopic.topic.url)}
+              onShareImage={
+                shareableDetail
+                  ? () => {
+                      setSharingTopic({
+                        kind: 'image',
+                        topic: shareableDetail,
+                        sessionIdentity: mediaSessionIdentity
+                      });
+                    }
+                  : undefined
+              }
+            />
+          ) : null}
+          {focused &&
+          sharingTopic?.kind === 'image' &&
+          sharingTopic.sessionIdentity === mediaSessionIdentity &&
+          sharingTopic.topic.id === topic.id &&
+          sharingTopic.topic.source === topic.source ? (
+            <TopicShareSheet
+              key={`${mediaSessionIdentity}:${sharingTopic.topic.source}:${sharingTopic.topic.id}`}
+              topic={sharingTopic.topic}
+              mediaContext={html.mediaContext}
+              nodeSeekUserAgent={runtime.nodeSeekMediaUserAgent}
+              onClose={closeTopicShare}
+              onBack={openTopicShare}
+            />
+          ) : null}
         </View>
       </OriginalImageUpgradeBoundary>
     </TopicRouteBackBoundary>

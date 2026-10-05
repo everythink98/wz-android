@@ -6,6 +6,7 @@ import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
 import { highlightTextParts } from '@/ui/text/highlight';
 import {
+  type ReaderStyleSettings,
   sourceBadgeColorStyle,
   topicTagColorStyle,
   topicTagTextColorStyle,
@@ -15,8 +16,8 @@ import {
 } from '@/ui/theme/tokens';
 import type { TopicListItemState } from '@/domain/forum/topicListItemState';
 import { Avatar } from '@/ui/avatar/Avatar';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { topicKey } from '@/domain/reader/readerData';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 const TOPIC_OPEN_GUARD_MS = 500;
@@ -82,11 +83,12 @@ export function TopicCard({
 }: TopicCardProps) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const { getMappingKey } = useMappingHelper();
-  const lastOpenAt = useRef(Number.NEGATIVE_INFINITY);
+  const lastOpen = useRef<{ key: string; at: number } | null>(null);
   const openTopicPress = useCallback(() => {
     const now = Date.now();
-    if (now - lastOpenAt.current < TOPIC_OPEN_GUARD_MS) return;
-    lastOpenAt.current = now;
+    const key = topicKey(topic);
+    if (lastOpen.current?.key === key && now - lastOpen.current.at < TOPIC_OPEN_GUARD_MS) return;
+    lastOpen.current = { key, at: now };
     onOpenTopic(topic);
   }, [onOpenTopic, topic]);
   const authorMeta = [topic.author || '未知作者', topic.authorLevelLabel || '', readerState.favorite ? '已收藏' : '']
@@ -194,7 +196,7 @@ export function TopicCard({
 
 export const MemoizedTopicCard = memo(TopicCard, topicCardPropsAreEqual);
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;

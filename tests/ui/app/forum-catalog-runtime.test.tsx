@@ -4,9 +4,42 @@ import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 
-const allSourcesKey = 'v2ex,linuxdo,nodeseek,yaohuo';
-
 describe('forum catalog runtime', () => {
+  it('keeps post metadata ready while deferring unrelated catalogs until the first Feed is visible', async () => {
+    const getCategories = jest.fn(async ({ source }: { source: Source }) => ({
+      items: [{ source, id: 'general', name: `${source} category` }],
+      errors: {}
+    }));
+    const readGateway = {
+      getReadPlan: (source: Source) => ({
+        state: 'ready',
+        lane: source === 'yaohuo' ? 'local' : 'public',
+        transport: source === 'yaohuo' ? 'none' : 'native-no-cookie',
+        cacheScope: 'public:omit'
+      }),
+      getCategories
+    } as unknown as ReadGateway;
+    let deferSecondary = true;
+    const hook = await renderHook(
+      () =>
+        useForumCatalogRuntime({
+          active: true,
+          deferSecondary,
+          enabledFeedSources: sourceValues,
+          readGateway
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    await waitFor(() => expect(hook.result.current.categories).toHaveLength(2));
+    expect(getCategories.mock.calls.map(([request]) => request.source).sort()).toEqual(['linuxdo', 'yaohuo']);
+    expect(hook.result.current.settled).toBe(false);
+    deferSecondary = false;
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(hook.result.current.categories).toHaveLength(4));
+    expect(getCategories).toHaveBeenCalledTimes(4);
+    expect(hook.result.current.settled).toBe(true);
+  });
+
   it('owns shared categories on Search and cancels them after leaving both readers', async () => {
     const signals: AbortSignal[] = [];
     const readGateway = {
@@ -30,15 +63,13 @@ describe('forum catalog runtime', () => {
         useForumCatalogRuntime({
           active,
           enabledFeedSources: sourceValues,
-          enabledSourcesKey: allSourcesKey,
-          notify: jest.fn(),
           readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(1));
-    expect(signals[0]?.aborted).toBe(false);
+    await waitFor(() => expect(signals).toHaveLength(4));
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
 
     active = false;
     await act(async () => {
@@ -46,11 +77,11 @@ describe('forum catalog runtime', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(signals[0]?.aborted).toBe(true));
+    await waitFor(() => expect(signals.every((signal) => signal.aborted)).toBe(true));
   });
 
-  it('replaces aggregate categories with the same enabled-source snapshot', async () => {
-    const requests: { context?: { includedSources?: readonly string[] }; signal: AbortSignal }[] = [];
+  it('cancels only disabled sources while retaining the other catalog requests', async () => {
+    const requests: { source: Source; signal: AbortSignal }[] = [];
     const readGateway = {
       getReadPlan: jest.fn(() => ({
         state: 'ready',
@@ -59,42 +90,36 @@ describe('forum catalog runtime', () => {
         cacheScope: 'public:omit',
         authenticated: false
       })),
-      getCategories: jest.fn(
-        ({ signal }: { signal: AbortSignal }, context?: { includedSources?: readonly string[] }) => {
-          requests.push({ context, signal });
-          return new Promise<{ items: never[]; errors: Record<string, never> }>((_resolve, reject) => {
-            signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
-          });
-        }
-      )
+      getCategories: jest.fn(({ source, signal }: { source: Source; signal: AbortSignal }) => {
+        requests.push({ source, signal });
+        return new Promise<{ items: never[]; errors: Record<string, never> }>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+        });
+      })
     } as unknown as ReadGateway;
     let enabledFeedSources: readonly Source[] = ['v2ex', 'nodeseek'];
-    let enabledSourcesKey = 'v2ex,nodeseek';
     const hook = await renderHook(
       () =>
         useForumCatalogRuntime({
           active: true,
           enabledFeedSources,
-          enabledSourcesKey,
-          notify: jest.fn(),
           readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0].context?.includedSources).toEqual(['v2ex', 'nodeseek']);
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests.map(({ source }) => source).sort()).toEqual(['nodeseek', 'v2ex']);
 
     enabledFeedSources = ['v2ex'];
-    enabledSourcesKey = 'v2ex';
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(requests).toHaveLength(2));
-    expect(requests[0].signal.aborted).toBe(true);
-    expect(requests[1].context?.includedSources).toEqual(['v2ex']);
+    await waitFor(() => expect(requests.find(({ source }) => source === 'nodeseek')?.signal.aborted).toBe(true));
+    expect(requests.find(({ source }) => source === 'v2ex')?.signal.aborted).toBe(false);
+    expect(requests).toHaveLength(2);
   });
 
   it('does not read aggregate categories for an empty source set', async () => {
@@ -113,8 +138,6 @@ describe('forum catalog runtime', () => {
         useForumCatalogRuntime({
           active: true,
           enabledFeedSources: [],
-          enabledSourcesKey: '',
-          notify: jest.fn(),
           readGateway
         }),
       { wrapper: QueryTestWrapper }
@@ -126,7 +149,7 @@ describe('forum catalog runtime', () => {
     expect(hook.result.current.categories).toEqual([]);
   });
 
-  it('keeps aggregate categories on the same query when only source order changes', async () => {
+  it('reuses catalogs when only source order changes', async () => {
     const readGateway = {
       getReadPlan: jest.fn(() => ({
         state: 'ready',
@@ -143,13 +166,11 @@ describe('forum catalog runtime', () => {
         useForumCatalogRuntime({
           active: true,
           enabledFeedSources,
-          enabledSourcesKey: 'v2ex,nodeseek',
-          notify: jest.fn(),
           readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
-    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(2));
 
     enabledFeedSources = ['nodeseek', 'v2ex'];
     await act(async () => {
@@ -157,6 +178,6 @@ describe('forum catalog runtime', () => {
       await Promise.resolve();
     });
 
-    expect(readGateway.getCategories).toHaveBeenCalledTimes(1);
+    expect(readGateway.getCategories).toHaveBeenCalledTimes(2);
   });
 });

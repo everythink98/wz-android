@@ -7,9 +7,8 @@ import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 
 import type { Source } from '@/domain/forum/models';
-import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
 const MAX_IMAGE_RETRY_COUNT = 1;
 
@@ -110,7 +109,7 @@ export function Avatar({
   );
 }
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     avatar: {
       alignItems: 'center',

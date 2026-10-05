@@ -875,14 +875,20 @@ describe('feed read', () => {
       diagnosticEvents.push(JSON.parse(line) as Record<string, unknown>);
     });
     const diagnosticTrace = beginDiagnosticTrace('feed', 'load', { source: 'all' });
-    const fetcher = vi.fn(
-      (_input: string, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
-            once: true
-          });
-        })
-    );
+    const fetcher = vi.fn((input: string, init?: RequestInit) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return Promise.resolve(
+          new Response(
+            '<div class="cell item"><a class="topic-link" href="/t/901#reply0">V2EX ready</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>'
+          )
+        );
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+          once: true
+        });
+      });
+    });
     const request = getFeed({
       source: 'all',
       diagnosticTrace,
@@ -891,20 +897,22 @@ describe('feed read', () => {
       unavailableSources: ['linuxdo', 'yaohuo']
     });
 
-    await Promise.resolve();
-    controller.abort();
-
     try {
+      await vi.waitFor(() =>
+        expect(diagnosticEvents).toContainEqual(
+          expect.objectContaining({ phase: 'transport', source: 'v2ex', state: 'success' })
+        )
+      );
+      controller.abort();
       await expect(request).rejects.toThrow('请求已取消');
       expect(
         diagnosticEvents.filter(
           (event) => event.phase === 'transport' && event.state === 'canceled' && event.source !== 'all'
         )
-      ).toEqual([
-        expect.objectContaining({ source: 'nodeseek', reason: 'canceled' }),
-        expect.objectContaining({ source: 'v2ex', reason: 'canceled' })
-      ]);
+      ).toEqual([expect.objectContaining({ source: 'nodeseek', reason: 'canceled' })]);
     } finally {
+      controller.abort();
+      await request.catch(() => undefined);
       setDiagnosticWriter(null);
     }
   });

@@ -3,6 +3,7 @@ import type {
   NotificationCategory,
   NotificationDetail,
   NotificationMarkResult,
+  NotificationMessagePage,
   NotificationPage,
   NotificationReplyResult,
   NotificationUnreadSnapshot
@@ -31,6 +32,11 @@ export interface NotificationAdapter {
   listPage(options: NotificationListOptions): Promise<NotificationPage>;
   readUnreadSnapshot(options: NotificationAdapterAccess): Promise<NotificationUnreadSnapshot>;
   loadDetail(item: ForumNotification, options: NotificationAdapterAccess): Promise<NotificationDetail>;
+  loadEarlierMessages?(
+    item: ForumNotification,
+    cursor: string,
+    options: NotificationAdapterAccess
+  ): Promise<NotificationMessagePage>;
   replyToConversation(
     item: ForumNotification,
     content: string,

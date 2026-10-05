@@ -154,10 +154,17 @@ export async function runNodeSeekAction({
 
   if (!response.ok) {
     let confirmedRejection: boolean | undefined;
+    const attendanceRequest = /^\/api\/attendance\?random=(?:true|false)$/.test(request.path);
     if (
       request.method === 'POST' &&
-      ['/api/vote/info', '/api/content/edit-discussion', '/api/content/new-discussion'].includes(request.path) &&
-      [408, 409].includes(response.status)
+      ([
+        '/api/vote/info',
+        '/api/content/edit-discussion',
+        '/api/content/new-discussion',
+        '/api/notification/message/send'
+      ].includes(request.path) ||
+        attendanceRequest) &&
+      ([408, 409].includes(response.status) || (attendanceRequest && response.status >= 500))
     ) {
       const payload =
         data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null;

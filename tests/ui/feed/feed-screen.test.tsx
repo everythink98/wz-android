@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, fireEvent, render, within, waitFor } from '../render';
 import React, { useState } from 'react';
 import { Animated, Platform, StyleSheet } from 'react-native';
+import { getAnimatedStyle } from 'react-native-reanimated';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { useFeedController } from '@/features/feed/useFeedController';
 import { createReadGateway, type ReadGateway } from '@/sources/readGateway';
 import { appQueryClient } from '@/platform/query/serverState';
+import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { createTheme } from '@/ui/theme/tokens';
@@ -37,14 +39,16 @@ let mockPagerPosition: Animated.Value;
 let mockFlashListMountCount = 0;
 const mockFlashListRenderItemByTopicId = new Map<string, unknown>();
 const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
+const mockActionOpacityTiming = jest.fn<(value: unknown, options?: unknown) => unknown>((value) => value);
 
 jest.mock('react-native-reanimated', () => ({
   __esModule: true,
   ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
-  withTiming: (value: unknown) => value
+  withTiming: (value: unknown, options?: unknown) => mockActionOpacityTiming(value, options)
 }));
 
 beforeEach(() => {
+  mockActionOpacityTiming.mockReset().mockImplementation((value) => value);
   mockPagerPosition = new Animated.Value(0);
   jest.spyOn(global, 'requestAnimationFrame').mockImplementation(() => 0);
   jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
@@ -266,7 +270,7 @@ function renderFeed(
       onFeedFilterChange={jest.fn()}
       onFeedSourceChange={jest.fn()}
       onManageContentSources={jest.fn()}
-      onLoadMore={jest.fn()}
+      onLoadMore={jest.fn<() => void>()}
       onOpenTopic={jest.fn()}
       onReadingFilterChange={jest.fn()}
       onRefresh={jest.fn()}
@@ -321,6 +325,7 @@ function ControllerFeed({ gateway }: { gateway: ReadGateway }) {
     onFeedFilterChange: controller.setFeedFilter,
     onCategoryChange: controller.setCategoryFilter,
     onReadingFilterChange: controller.setReadingFilter,
+    onLoadMore: controller.loadFeed,
     onRefresh: controller.refreshFeed
   });
 }
@@ -483,7 +488,7 @@ function FeedFilterHarness() {
       onFeedFilterChange={changeFeedFilter}
       onFeedSourceChange={changeSource}
       onManageContentSources={jest.fn()}
-      onLoadMore={jest.fn()}
+      onLoadMore={jest.fn<() => void>()}
       onOpenTopic={jest.fn()}
       onReadingFilterChange={setReadingFilter}
       onRefresh={jest.fn()}
@@ -916,7 +921,10 @@ describe('Feed loading', () => {
 
   it('hides creation on downward scrolling, reveals it upward and restores it when returning', async () => {
     const onCreateTopic = jest.fn();
+    mockActionOpacityTiming.mockImplementation(() => 0.4);
     const view = await render(renderFeed(false, [topic], { onCreateTopic }));
+    const actionOpacity = () =>
+      getAnimatedStyle(view.getByTestId('feed-create-topic-action', { includeHiddenElements: true })).opacity;
     const scroll = async (y: number) =>
       act(async () => {
         view.getByTestId('feed-outcome-data-all-default').props.onScroll({
@@ -932,6 +940,7 @@ describe('Feed loading', () => {
     expect(view.queryByText('发帖')).toBeNull();
     await scroll(0);
     await scroll(500);
+    await waitFor(() => expect(mockActionOpacityTiming).toHaveBeenCalledWith(0, { duration: 160 }));
     expect(view.queryByLabelText('发帖')).toBeNull();
     const hiddenButton = view.getByLabelText('发帖', { includeHiddenElements: true });
     expect(hiddenButton).toBeDisabled();
@@ -946,15 +955,51 @@ describe('Feed loading', () => {
     await scroll(495);
     expect(view.queryByLabelText('发帖')).toBeNull();
     await scroll(470);
+    await waitFor(() => expect(mockActionOpacityTiming).toHaveBeenCalledWith(1, { duration: 160 }));
     await fireEvent.press(view.getByLabelText('发帖'));
     expect(onCreateTopic).toHaveBeenCalledTimes(1);
     await scroll(550);
     expect(view.queryByLabelText('发帖')).toBeNull();
+    await waitFor(() => expect(actionOpacity()).toBe(0.4));
     await view.rerender(renderFeed(false, [topic], { active: false, onCreateTopic }));
     expect(view.queryByLabelText('发帖')).toBeNull();
+    await waitFor(() => expect(actionOpacity()).toBe(0));
+    await fireEvent.press(view.getByLabelText('发帖', { includeHiddenElements: true }));
+    expect(onCreateTopic).toHaveBeenCalledTimes(1);
     await view.rerender(renderFeed(false, [topic], { active: true, onCreateTopic }));
     expect(view.getByLabelText('发帖')).toBeTruthy();
+    await waitFor(() => expect(actionOpacity()).toBe(0.4));
   });
+
+  it.each([
+    { direction: 'upward', initialOffsets: [0], offsets: [500, 470], hidden: false },
+    { direction: 'downward', initialOffsets: [0, 500], offsets: [470, 500], hidden: true }
+  ])(
+    'follows the final $direction scroll when direction changes before a render commits',
+    async ({ initialOffsets, offsets, hidden }) => {
+      const view = await render(renderFeed(false, [topic]));
+      const scrollEvent = (y: number) => ({
+        nativeEvent: {
+          contentOffset: { y },
+          contentSize: { height: 3000 },
+          layoutMeasurement: { height: 1000 }
+        }
+      });
+      for (const offset of initialOffsets) {
+        await fireEvent.scroll(view.getByTestId('feed-outcome-data-all-default'), scrollEvent(offset));
+      }
+
+      await act(() => {
+        const onScroll = view.getByTestId('feed-outcome-data-all-default').props.onScroll;
+        for (const offset of offsets) onScroll(scrollEvent(offset));
+      });
+
+      expect(Boolean(view.queryByLabelText('发帖'))).toBe(!hidden);
+      expect(view.getByTestId('feed-create-topic-action', { includeHiddenElements: true }).props.pointerEvents).toBe(
+        hidden ? 'none' : 'box-none'
+      );
+    }
+  );
 
   it('hides creation for V2EX and restores it when switching to a supported source', async () => {
     const view = await render(renderFeed(false, [topic]));
@@ -1101,7 +1146,8 @@ describe('Feed loading', () => {
   });
 
   it('requests each next page once and unlocks only after the page advances', async () => {
-    const onLoadMore = jest.fn<() => void>();
+    const request = Promise.withResolvers<void>();
+    const onLoadMore = jest.fn(() => request.promise);
     const view = await render(
       renderFeed(false, [topic], {
         feedHasMore: true,
@@ -1133,7 +1179,105 @@ describe('Feed loading', () => {
     );
     await fireEvent.press(view.getByText('加载第 3 页'));
     expect(onLoadMore).toHaveBeenCalledTimes(2);
+    await act(async () => request.resolve());
   });
+
+  it.each(['failure', 'cancellation', 'success'] as const)(
+    'resumes feed pagination after %s before observer state commits without skipping its cursor',
+    async (outcome) => {
+      appQueryClient.clear();
+      const fetcher = jest.fn(async () => Response.json({ topic_list: { topics: [] } }));
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo'],
+        nodeSeekUserAgent: () => 'test',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          sourceEnabled: true,
+          authenticated: true,
+          authSurfaceOpen: false,
+          identityKey: `${source}:7`,
+          identityTrust: 'confirmed',
+          sessionEpoch: 0
+        })
+      });
+      const page = Promise.withResolvers<Awaited<ReturnType<ReadGateway['getFeed']>>>();
+      const secondPage = {
+        items: [{ ...topic, id: '2', title: '第二页主题' }],
+        errors: {},
+        hasMore: true,
+        nextPage: 3
+      };
+      const getFeed = jest
+        .spyOn(gateway, 'getFeed')
+        .mockResolvedValueOnce({ items: [topic], errors: {}, hasMore: true, nextPage: 2 })
+        .mockImplementationOnce(() => page.promise)
+        .mockResolvedValue({
+          items: [{ ...topic, id: '3', title: '恢复后的主题' }],
+          errors: {},
+          hasMore: false,
+          nextPage: null
+        });
+      const view = await render(
+        <QueryTestWrapper>
+          <ControllerFeed gateway={gateway} />
+        </QueryTestWrapper>
+      );
+      const notifications: (() => void)[] = [];
+      const nearEndEvent = {
+        nativeEvent: {
+          contentOffset: { y: 900 },
+          contentSize: { height: 1800 },
+          layoutMeasurement: { height: 1000 }
+        }
+      };
+      try {
+        await waitFor(() => expect(view.getByText('加载第 2 页')).toBeTruthy());
+        notifyManager.setScheduler((callback) => notifications.push(callback));
+        await fireEvent(view.getByLabelText('列表，支持下拉刷新'), 'scrollBeginDrag');
+        await fireEvent.scroll(view.getByLabelText('列表，支持下拉刷新'), nearEndEvent);
+        await act(async () => {
+          if (outcome === 'failure') page.reject(new Error('第二页快速失败'));
+          else if (outcome === 'cancellation') await appQueryClient.cancelQueries();
+          else page.resolve(secondPage);
+          for (let index = 0; index < 40; index += 1) await Promise.resolve();
+        });
+        expect(getFeed.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+        if (outcome === 'success') {
+          await fireEvent.press(view.getByText('加载第 2 页'));
+          expect(getFeed.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+        } else if (outcome === 'failure') {
+          await fireEvent.scroll(view.getByLabelText('列表，支持下拉刷新'), {
+            nativeEvent: { ...nearEndEvent.nativeEvent, contentOffset: { y: 1000 } }
+          });
+          expect(getFeed.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+        }
+        notifyManager.setScheduler(defaultScheduler);
+        await act(async () => notifications.splice(0).forEach((notify) => notify()));
+        if (outcome === 'success') await fireEvent.press(view.getByText('加载第 3 页'));
+        else {
+          await fireEvent(view.getByLabelText('列表，支持下拉刷新'), 'scrollBeginDrag');
+          await fireEvent.scroll(view.getByLabelText('列表，支持下拉刷新'), nearEndEvent);
+        }
+        expect(getFeed.mock.calls.map(([request]) => request.page)).toEqual([1, 2, outcome === 'success' ? 3 : 2]);
+        await waitFor(() => expect(view.getByText('恢复后的主题')).toBeTruthy());
+        if (outcome === 'cancellation') {
+          await act(async () => page.resolve(secondPage));
+          expect(view.queryByText('第二页主题')).toBeNull();
+        }
+        expect(view.getByText(topic.title)).toBeTruthy();
+      } finally {
+        notifyManager.setScheduler(defaultScheduler);
+        await act(async () => {
+          notifications.splice(0).forEach((notify) => notify());
+          await appQueryClient.cancelQueries();
+          page.resolve(secondPage);
+        });
+        await view.unmount();
+      }
+    }
+  );
 
   it('pauses automatic pagination after failure until the user drags the list again', async () => {
     const onLoadMore = jest.fn<() => void>();
@@ -1165,6 +1309,27 @@ describe('Feed loading', () => {
     await act(async () => list.props.onScrollBeginDrag());
     await act(async () => list.props.onScroll(nearEndEvent));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an old feed settlement from unlocking a replacement source request', async () => {
+    const oldRequest = Promise.withResolvers<unknown>();
+    const currentRequest = Promise.withResolvers<unknown>();
+    const onLoadMore = jest
+      .fn<() => Promise<unknown>>()
+      .mockReturnValueOnce(oldRequest.promise)
+      .mockReturnValueOnce(currentRequest.promise)
+      .mockResolvedValue('stale');
+    const view = await render(renderFeed(false, [topic], { feedHasMore: true, onLoadMore }));
+    await fireEvent.press(view.getByText('加载第 2 页'));
+    await view.rerender(renderFeed(false, [topic], { feedSource: 'linuxdo', feedHasMore: true, onLoadMore }));
+    await fireEvent.press(view.getByText('加载第 2 页'));
+    expect(onLoadMore).toHaveBeenCalledTimes(2);
+    await act(async () => oldRequest.resolve('failed'));
+    await fireEvent.press(view.getByText('加载第 2 页'));
+    expect(onLoadMore).toHaveBeenCalledTimes(2);
+    await act(async () => currentRequest.reject(new Error('replacement canceled')));
+    await fireEvent.press(view.getByText('加载第 2 页'));
+    expect(onLoadMore).toHaveBeenCalledTimes(3);
   });
 
   it('distinguishes an empty feed from a filter with no matching topics', async () => {

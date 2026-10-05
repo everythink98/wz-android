@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import { useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import { useAnimatedStyle, useDerivedValue, withTiming } from 'react-native-reanimated';
 
 /** Keep the primary action available while reading up, without reacting to edge bounce. */
 export function useScrollActionVisibility({
@@ -47,13 +47,14 @@ export function useScrollActionVisibility({
       scrollRef.current = { ...previous, offset, anchor, direction };
       if (offset > 12 && Math.abs(offset - anchor) < 12) return;
       const nextVisible = offset <= 12 || direction < 0;
-      if (nextVisible !== visible) setVisible(nextVisible);
+      setVisible(nextVisible);
     },
-    [active, paused, visible]
+    [active, paused]
   );
   const hidden = !active || paused || !visible;
+  const opacity = useDerivedValue(() => withTiming(visible ? 1 : 0, { duration: 160 }), [visible]);
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(hidden ? 0 : 1, { duration: 160 })
+    opacity: !active || paused ? 0 : opacity.value
   }));
   return { hidden, onScroll, animatedStyle, reset };
 }

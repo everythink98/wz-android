@@ -22,7 +22,7 @@ export type TopicActionDecision = {
 };
 
 export type TopicActionDecisionRequest = {
-  action: TopicActionCapability;
+  action: TopicActionCapability | 'policy';
   actionKey?: string;
   alreadyComplete?: boolean;
   interaction?: InteractionType;
@@ -74,7 +74,7 @@ export function decideTopicAction({
   topic
 }: {
   account?: SiteSessionViewModel;
-  action: TopicActionCapability;
+  action: TopicActionDecisionRequest['action'];
   alreadyComplete?: boolean;
   objectAllowed?: boolean;
   pending?: boolean;
@@ -83,7 +83,9 @@ export function decideTopicAction({
   topic: TopicDetail | null;
 }): TopicActionDecision {
   if (!topic?.id) return { allowed: false, reason: 'missing-target' };
-  if (!sourceSupportsTopicAction(topic.source, action)) return { allowed: false, reason: 'unsupported' };
+  if (action === 'policy' ? topic.source !== 'linuxdo' : !sourceSupportsTopicAction(topic.source, action)) {
+    return { allowed: false, reason: 'unsupported' };
+  }
   if (
     topic.closed &&
     (action === 'reply' || (action === 'upload' && !(topic.source === 'linuxdo' && reply?.canEdit === true)))

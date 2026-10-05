@@ -1,12 +1,12 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Keyboard, StyleSheet, type StyleProp, type ViewStyle, useWindowDimensions } from 'react-native';
+import { BackHandler, Keyboard, type StyleProp, type ViewStyle, useWindowDimensions } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Portal } from '@gorhom/portal';
 import type { ComposerPresentation } from '@/domain/forum/structuredComposer';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useKeyboardHandoff } from '@/ui/hooks/useKeyboardHandoff';
-import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
+import type { ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
 import { FixedComposerPanel } from './FixedComposerPanel';
 
 export function ComposerBottomSheet({
@@ -36,6 +36,10 @@ export function ComposerBottomSheet({
 }) {
   const insets = useSafeAreaInsets();
   const presented = visible && active;
+  const [hasPresented, setHasPresented] = useState(presented);
+  useEffect(() => {
+    if (presented) setHasPresented(true);
+  }, [presented]);
   const { height } = useWindowDimensions();
   const committedVisible = useCommittedRef(presented);
   const [focusSignal, setFocusSignal] = useState(0);
@@ -102,35 +106,30 @@ export function ComposerBottomSheet({
     return () => back.remove();
   }, [awaitKeyboardSettled, onOpenChange, onPresentationChange, presentation, presented]);
 
+  if (!presented && !hasPresented) return null;
   return (
     <Portal>
-      <ComposerKeyboardHost
-        ref={keyboardHost}
-        enabled={presented}
-        pointerEvents="box-none"
-        style={StyleSheet.absoluteFill}
+      <FixedComposerPanel
+        backgroundStyle={resolvedBackgroundStyle}
+        containerStyle={containerStyle}
+        contentStyle={fixedContent ? contentStyle : paddedContentStyle}
+        dark={dark}
+        height={height}
+        insets={insets}
+        keyboardActive={keyboardActive}
+        keyboardHostRef={keyboardHost}
+        maxDynamicContentHeight={
+          fixedContent ? undefined : Math.round(availableContentHeight * (presentation === 'fullscreen' ? 1 : 0.75))
+        }
+        pickerReady={pickerReady}
+        presentation={presentation}
+        presented={presented}
+        sheetHeight={fixedSheetHeight}
+        onClose={close}
+        onOpenReady={handleSheetChange}
       >
-        <FixedComposerPanel
-          backgroundStyle={resolvedBackgroundStyle}
-          containerStyle={containerStyle}
-          contentStyle={fixedContent ? contentStyle : paddedContentStyle}
-          dark={dark}
-          height={height}
-          insets={insets}
-          keyboardActive={keyboardActive}
-          maxDynamicContentHeight={
-            fixedContent ? undefined : Math.round(availableContentHeight * (presentation === 'fullscreen' ? 1 : 0.75))
-          }
-          pickerReady={pickerReady}
-          presentation={presentation}
-          presented={presented}
-          sheetHeight={fixedSheetHeight}
-          onClose={close}
-          onOpenReady={handleSheetChange}
-        >
-          {children(focusSignal, awaitKeyboardSettled)}
-        </FixedComposerPanel>
-      </ComposerKeyboardHost>
+        {children(focusSignal, awaitKeyboardSettled)}
+      </FixedComposerPanel>
     </Portal>
   );
 }

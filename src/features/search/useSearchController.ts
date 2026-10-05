@@ -439,15 +439,26 @@ export function useSearchController({
     submittedSearch?.query || '',
     singleSearchPlan
   );
-  const singleSearchKey = forumQueryKeys.search({
-    source: submittedSource,
-    lane: 'pages',
-    query: submittedSearch?.query || '',
-    readPlanScope: singleSearchPlan.cacheScope,
-    sort: submittedSort,
-    filter: submittedFilter,
-    scope: sessionEpochs
-  });
+  const singleSearchKey = useMemo(
+    () =>
+      forumQueryKeys.search({
+        source: submittedSource,
+        lane: 'pages',
+        query: submittedSearch?.query || '',
+        readPlanScope: singleSearchPlan.cacheScope,
+        sort: submittedSort,
+        filter: submittedFilter,
+        scope: sessionEpochs
+      }),
+    [
+      submittedSource,
+      submittedSearch?.query,
+      singleSearchPlan.cacheScope,
+      submittedSort,
+      submittedFilter,
+      sessionEpochs
+    ]
+  );
 
   const aggregatePlans = aggregateSources.map((source) => readGateway.getReadPlan(source, 'search'));
   const externalSearchSources = aggregateSources.filter((source, index) =>
@@ -843,28 +854,29 @@ export function useSearchController({
         !searchActive ||
         !enabledSearchSourcesRef.current.includes(source) ||
         submittedSearch?.source === 'all' ||
-        source !== submittedSource ||
-        singleSearchQuery.isFetchingNextPage
+        source !== submittedSource
       ) {
         return 'stale';
       }
-      const last = singleSearchQuery.data?.pages.at(-1);
+      const current = queryClient.getQueryState<InfiniteData<RemoteSearchSourceResult, number>>(singleSearchKey);
+      if (!current || current.fetchStatus !== 'idle') return 'stale';
+      const last = current.data?.pages.at(-1);
       const group = last ? groupFromRemoteSearchResult(last) : null;
       const retryPage =
-        singleSearchQuery.isFetchNextPageError && singleSearchQuery.error instanceof SearchPageError
-          ? singleSearchQuery.error.page
+        current.status === 'error' &&
+        current.fetchMeta?.fetchMore?.direction === 'forward' &&
+        current.error instanceof SearchPageError
+          ? current.error.page
           : group?.nextPage;
       if (retryPage !== page) return 'stale';
       const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
       return result.isError ? 'failed' : 'completed';
     },
     [
+      queryClient,
       searchActive,
-      singleSearchQuery.data?.pages,
-      singleSearchQuery.error,
+      singleSearchKey,
       singleSearchQuery.fetchNextPage,
-      singleSearchQuery.isFetchNextPageError,
-      singleSearchQuery.isFetchingNextPage,
       submittedSearch?.source,
       submittedSource
     ]

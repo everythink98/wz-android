@@ -1,9 +1,15 @@
-import type { Topic, UserReplyActivity, UserDetails, UserTopicsPage, UserRepliesPage } from '@/domain/forum/models';
+import type {
+  Topic,
+  UserReplyActivity,
+  UserDetails,
+  UserTopicsPage,
+  UserRepliesPage,
+  UserActivityTab
+} from '@/domain/forum/models';
+export type { UserActivityTab } from '@/domain/forum/models';
 
 // Local presentation data: a missing lane has not produced a trustworthy result yet.
 export type UserProfileView = UserDetails & Partial<UserTopicsPage> & UserRepliesPage;
-
-export type UserActivityTab = 'topics' | 'replies';
 
 export type UserListItem =
   | { type: 'tabs'; key: string }
@@ -41,8 +47,4 @@ export function createUserListItems(
 
 export function userListItemKey(item: UserListItem) {
   return item.key;
-}
-
-export function userListItemType(item: UserListItem) {
-  return item.type;
 }

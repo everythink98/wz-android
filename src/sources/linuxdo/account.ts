@@ -129,8 +129,14 @@ export async function getLinuxDoUserDetails(
             ? user.bio_excerpt
             : undefined,
       topicCount: discourseAccountCount(summary.topic_count),
-      replyCount: discourseAccountCount(summary.reply_count),
-      postCount: discourseAccountCount(summary.post_count),
+      // Discourse counts regular non-first posts here; first posts belong to topic_count.
+      replyCount: discourseAccountCount(summary.post_count),
+      daysVisited: discourseAccountCount(summary.days_visited),
+      topicsEntered: discourseAccountCount(summary.topics_entered),
+      postsReadCount: discourseAccountCount(summary.posts_read_count),
+      timeRead: discourseAccountCount(summary.time_read),
+      likesGiven: discourseAccountCount(summary.likes_given),
+      likesReceived: discourseAccountCount(summary.likes_received),
       ...(levelLabel ? { levelLabel } : {})
     },
     { parserVariant: 'discourse-user', candidateCount: 1, validCount: hasProfile ? 1 : 0, isParseEmpty: !hasProfile }

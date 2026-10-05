@@ -1,23 +1,21 @@
 export type ConversationAutoScrollController = {
-  contentChanged: (conversationKey: string) => boolean;
+  contentChanged: (contentKey: string) => boolean;
   userScrolled: () => void;
+  viewportChanged: (distanceFromEnd: number) => void;
 };
 
 export function createConversationAutoScrollController(): ConversationAutoScrollController {
-  let activeConversationKey = '';
   let userControlsPosition = false;
 
   return {
-    contentChanged(conversationKey) {
-      if (!conversationKey) return false;
-      if (activeConversationKey !== conversationKey) {
-        activeConversationKey = conversationKey;
-        userControlsPosition = false;
-      }
-      return !userControlsPosition;
+    contentChanged(contentKey) {
+      return Boolean(contentKey) && !userControlsPosition;
     },
     userScrolled() {
       userControlsPosition = true;
+    },
+    viewportChanged(distanceFromEnd) {
+      userControlsPosition = distanceFromEnd > 80;
     }
   };
 }

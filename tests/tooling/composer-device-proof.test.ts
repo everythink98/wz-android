@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import {
+  assertComposerExpressionGeometry,
+  assertComposerExpressionInsets
+} from '../../scripts/composer-expression-geometry.mjs';
+import {
   assertComposerClosed,
   assertComposerFullscreen,
   assertTopicCreationKeyboardGeometry,
@@ -25,6 +29,55 @@ import {
 } from '../../scripts/run-composer-device-proof.mjs';
 
 describe('composer device evidence', () => {
+  it('checks the actual native picker bottom against the real IME and navigation frames', () => {
+    const insets =
+      'type=ime frame=[0,1517][1080,2400] visible=true\n' + 'type=navigationBars frame=[0,2274][1080,2400]';
+    const nodes = [{ identifier: 'structured-composer-editor-frame', rect: { y: 521, height: 997 } }];
+    expect(() => assertComposerExpressionInsets(nodes, insets, true)).not.toThrow();
+    expect(() => assertComposerExpressionInsets(nodes, insets, false)).toThrow('not settled');
+    expect(() =>
+      assertComposerExpressionInsets([{ ...nodes[0], rect: { y: 1200, height: 997 } }], insets, true)
+    ).toThrow('covers');
+  });
+  it('rejects squeezed expression grids, moving tabs and images leaking above the grid', () => {
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, width: 400, height });
+    const value = {
+      runtime: rect(0, 380),
+      header: rect(0, 50),
+      navigation: rect(0, 50),
+      body: rect(50, 330),
+      close: { width: 48, height: 48 },
+      rowCapacity: 4,
+      itemHeight: 60,
+      navigationInScroller: false,
+      leakedGrid: false,
+      missingLoadingFeedback: false,
+      editorHidden: true
+    };
+    expect(() => assertComposerExpressionGeometry(value)).not.toThrow();
+    expect(() => assertComposerExpressionGeometry({ ...value, missingLoadingFeedback: true })).toThrow(
+      'loading feedback'
+    );
+    expect(() => assertComposerExpressionGeometry({ ...value, rowCapacity: 1 })).toThrow('complete rows');
+    expect(() => assertComposerExpressionGeometry({ ...value, navigationInScroller: true })).toThrow('overlap');
+    expect(() => assertComposerExpressionGeometry({ ...value, leakedGrid: true })).toThrow('overlap');
+    expect(() => assertComposerExpressionGeometry({ ...value, editorHidden: false })).toThrow('shares');
+    expect(() => assertComposerExpressionGeometry({ ...value, header: rect(105, 50) })).toThrow('fill');
+    expect(() => assertComposerExpressionGeometry({ ...value, navigation: rect(8, 50) }, value)).toThrow('moves');
+    expect(() => assertComposerExpressionGeometry({ ...value, close: { width: 40, height: 40 } })).toThrow('touch');
+    const tall = {
+      ...value,
+      runtime: rect(0, 800),
+      header: rect(440, 50),
+      body: rect(490, 310),
+      editor: rect(0, 440),
+      editorHidden: false,
+      editorAccessible: true
+    };
+    expect(() => assertComposerExpressionGeometry(tall)).not.toThrow();
+    expect(() => assertComposerExpressionGeometry({ ...tall, editorHidden: true })).toThrow('draft preview');
+    expect(() => assertComposerExpressionGeometry({ ...tall, header: rect(0, 50) })).toThrow('draft preview');
+  });
   it('recognizes a base-URL composer whose DevTools URL is about:blank and rejects unrelated pages', () => {
     const dom = new JSDOM('<base href="https://composer.local/"><div class="ProseMirror composer-document"></div>');
     try {
@@ -328,12 +381,14 @@ describe('composer device evidence', () => {
   });
   it('rejects visible native residue or a remaining backdrop independently of settlement', () => {
     expect(() => assertComposerClosed([], screen, screen)).not.toThrow();
-    expect(() => assertComposerClosed([{ label: 'Bottom Sheet', rect: { height: 9 } }], screen, screen)).toThrow();
+    expect(() =>
+      assertComposerClosed([{ identifier: 'composer-bottom-sheet', rect: { height: 9 } }], screen, screen)
+    ).toThrow();
     expect(() => assertComposerClosed([], screen, { ...screen, data: Buffer.alloc(screen.data.length, 0) })).toThrow();
   });
   it('rejects a top gap, unsafe toolbar or discontinuous status-bar background', () => {
     const nodes = [
-      { label: 'Bottom Sheet', rect: { y: 0 } },
+      { identifier: 'composer-bottom-sheet', rect: { y: 0 } },
       { label: '收起回复', rect: { y: 3 } }
     ];
     expect(() => assertComposerFullscreen(nodes, screen, 3)).not.toThrow();

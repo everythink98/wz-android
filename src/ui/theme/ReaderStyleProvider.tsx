@@ -1,14 +1,14 @@
 import { createContext, type ReactNode, useContext, useMemo } from 'react';
 import { DarkTheme, LightTheme, PaperProvider } from 'react-native-paper';
-import type { ReaderSettings } from '@/domain/reader/readerData';
-import type { ReaderTheme } from './tokens';
+import type { ReaderStyleSettings, ReaderTheme } from './tokens';
 
 export type ReaderStyleContextValue = {
-  settings: ReaderSettings;
+  settings: ReaderStyleSettings;
   theme: ReaderTheme;
 };
 
 const ReaderStyleContext = createContext<ReaderStyleContextValue | null>(null);
+const paperSettings = { rippleEffectEnabled: false };
 
 export function ReaderStyleProvider({ children, value }: { children: ReactNode; value: ReaderStyleContextValue }) {
   const paperTheme = useMemo(() => {
@@ -35,12 +35,14 @@ export function ReaderStyleProvider({ children, value }: { children: ReactNode; 
   }, [value.theme]);
   return (
     <ReaderStyleContext.Provider value={value}>
-      <PaperProvider theme={paperTheme}>{children}</PaperProvider>
+      <PaperProvider theme={paperTheme} settings={paperSettings}>
+        {children}
+      </PaperProvider>
     </ReaderStyleContext.Provider>
   );
 }
 
-export function useReaderThemeStyles<T>(createStyles: (theme: ReaderTheme, settings: ReaderSettings) => T) {
+export function useReaderThemeStyles<T>(createStyles: (theme: ReaderTheme, settings: ReaderStyleSettings) => T) {
   const context = useContext(ReaderStyleContext);
   const styles = useMemo(
     () => (context ? createStyles(context.theme, context.settings) : undefined),

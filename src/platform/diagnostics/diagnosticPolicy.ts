@@ -145,7 +145,9 @@ const operationValues = closedValues(
   'notification-categories',
   'notification-unread',
   'notification-detail',
+  'notification-history',
   'notification-mark-read',
+  'notification-policy',
   'notification-reply',
   'notification-upload',
   'notification-mark-all-read',
@@ -260,7 +262,7 @@ export type DiagnosticOperation = ClosedValue<typeof operationValues>;
 
 const sourceValues = closedValues('all', ...registeredSources, 'unknown');
 
-const screenValues = closedValues('feed', 'library', 'more', 'search', 'topic', 'user', 'unknown');
+const screenValues = closedValues('feed', 'library', 'more', 'notifications', 'search', 'topic', 'user', 'unknown');
 
 const sessionStateValues = closedValues(
   'anonymous',

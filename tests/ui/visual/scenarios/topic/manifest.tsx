@@ -211,6 +211,8 @@ function TopicScenarioScreen({
         uploadReplyImage: async () => undefined,
         uploadReplyImageMarkup: async () => undefined,
         useLinuxDoTemplate: async () => undefined,
+        policySubmissions: {},
+        setPolicyAcceptance: async () => undefined,
         votePoll: async (_poll: TopicPoll, _optionIds: string[]) => undefined
       }) satisfies TopicActionsController,
     [decisionFor, state]

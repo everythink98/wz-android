@@ -106,9 +106,7 @@ export function createSiteAccountViews(
 }
 
 export function accountCenterSummary(views: SiteAccountView[]) {
-  const needsReconcile = views.filter((view) => view.identityTrust === 'unknown').length;
-  const needsAttention = views.filter((view) => view.needsAttention && view.identityTrust !== 'unknown').length;
+  const needsAttention = views.filter((view) => view.needsAttention).length;
   const loggedIn = views.filter((view) => view.isLoggedIn && view.identityTrust === 'confirmed').length;
-  const saved = views.filter((view) => view.credential.hasCredential).length;
-  return `${needsReconcile ? `待核对 ${needsReconcile} · ` : ''}待处理 ${needsAttention} · 网站登录 ${loggedIn}/${views.length} · 自动填入 ${saved}/${views.length}`;
+  return `${needsAttention ? `待处理 ${needsAttention} · ` : ''}已登录 ${loggedIn}/${views.length}`;
 }

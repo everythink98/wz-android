@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { sanitizeLinuxDoContentHtml } from './parser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic } from './reader';
 
@@ -72,6 +73,35 @@ function deletedReplyFetcher() {
 }
 
 describe('linux.do reader', () => {
+  it('keeps the declaration while removing site-injected policy controls and user statistics', () => {
+    const html = sanitizeLinuxDoContentHtml(
+      '<p>原始公告</p><div class="policy"><div class="policy-body"><p>请确认已知晓</p></div><div class="policy-footer"><button>已阅读</button><span>私密用户列表</span></div><span class="policy-preview">PREVIEW</span></div><p>后续说明</p>',
+      undefined
+    );
+    expect(html).toContain('请确认已知晓');
+    expect(html).toContain('原始公告');
+    expect(html).toContain('后续说明');
+    expect(html).not.toMatch(/已阅读|私密用户列表|PREVIEW/);
+  });
+  it('keeps policy state on the opening, replies and an exact notification post read', async () => {
+    const data = deletedReplyTopic();
+    const policyFields = {
+      cooked: '<div class="policy" data-accept="已阅读" data-revoke="取消确认">我已知晓此更新内容</div>',
+      policy_accepted: false,
+      policy_revoked: false,
+      policy_can_accept: true,
+      policy_can_revoke: false
+    };
+    data.post_stream.posts = data.post_stream.posts.map((post) => ({ ...post, ...policyFields }));
+    const fetcher = vi.fn(async () => json(data));
+    const detail = await getLinuxDoTopic('2835903', { fetcher });
+    expect(detail.policy).toMatchObject({ postId: '1', canAccept: true, accepted: false });
+    expect(detail.replies[0]?.policy).toMatchObject({ postId: '2', canAccept: true, accepted: false });
+    await expect(getLinuxDoReply('2835903', 2, { fetcher })).resolves.toMatchObject({
+      policy: { postId: '2', accepted: false }
+    });
+  });
+
   it('locates a quoted post by its floor when the stream has a deleted gap', async () => {
     const posts = Array.from({ length: 30 }, (_, index) => ({
       ...deletedReply,

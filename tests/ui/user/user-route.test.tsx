@@ -66,6 +66,20 @@ describe('NodeSeek profile private conversation', () => {
     setProfile(profile);
   });
 
+  it('passes the requested reply activity from the profile route to its screen', async () => {
+    await render(
+      <UserRouteRuntimeProvider value={runtime()}>
+        <NavigationContainer>
+          <UserRoute
+            navigation={{ goBack: jest.fn() } as never}
+            route={{ key: 'user', name: 'User', params: { user: profile, initialTab: 'replies' } }}
+          />
+        </NavigationContainer>
+      </UserRouteRuntimeProvider>
+    );
+    expect(screenProps().initialTab).toBe('replies');
+  });
+
   it('opens a transient conversation with the resolved UID and latest account, preserving the profile stack', async () => {
     const push = jest.fn();
     const firstRuntime = runtime();

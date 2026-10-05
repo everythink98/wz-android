@@ -1,5 +1,5 @@
 import { resolveLinuxDoUpload as fetchLinuxDoUploadUrl } from '@/sources/linuxdo/uploadUrls';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useMutation, useMutationState, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
@@ -46,6 +46,8 @@ import {
   type InteractionType
 } from '@/domain/forum/topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
+import { setLinuxDoPolicyAcceptance } from '@/sources/linuxdo/policy';
 import type { ReplyEditTarget, ReplyRefreshCommand, ReplyRefreshTarget } from '../model/types';
 import { topicKey } from '@/domain/reader/readerData';
 import {
@@ -127,12 +129,15 @@ type MutationVariables = {
   task: (ticket: WritableSessionTicket) => Promise<unknown>;
   topicId: string;
   trace: DiagnosticTrace;
+  isCurrent?: () => boolean;
   editTarget?: ReplyEditTarget;
   applyOptimistic?: () => void | (() => void);
   applyResult?: (result: unknown, variables: MutationVariables) => void;
   afterSuccess?: (result: unknown, variables: MutationVariables) => Promise<boolean>;
   successMessage?: string | ((result: unknown, refreshed: boolean | undefined) => string);
 };
+
+type PolicySubmission = { scope: string; postId: string; version: string; accepted: boolean };
 
 const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE = 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
 
@@ -299,6 +304,7 @@ export function useTopicActionsController({
   requestAccountRecheck,
   readGateway,
   refreshTopicReplies,
+  refreshWholeTopic,
   siteSessionViewModels,
   topicDetail,
   topicReplies,
@@ -318,6 +324,7 @@ export function useTopicActionsController({
   requestAccountRecheck: RequestAccountRecheck;
   readGateway: Pick<ReadGateway, 'getReadPlan'>;
   refreshTopicReplies: (command?: ReplyRefreshCommand, trace?: DiagnosticTrace) => Promise<unknown>;
+  refreshWholeTopic: () => Promise<unknown>;
   siteSessionViewModels: SiteSessionViewModels;
   topicDetail: TopicDetail | null;
   topicReplies: Reply[];
@@ -333,12 +340,44 @@ export function useTopicActionsController({
   } = topicSession;
   const replyOrderRef = useCommittedRef(replyOrder);
   const refreshTopicRepliesRef = useCommittedRef(refreshTopicReplies);
+  const refreshWholeTopicRef = useCommittedRef(refreshWholeTopic);
   const replyComposerIntentRef = useCommittedRef(replyComposerIntent);
   const authenticatedFetcher = useMemo(() => rejectUnauthorizedResponse(fetcher), [fetcher]);
   const nodeSeekUserId = nodeSeekUserIdForSession(siteSessionViewModels.nodeseek);
   const detachReplyEdit = topicComposer.detachEdit;
   const openReplyEditor = topicComposer.editReply;
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+  const policyContentRef = useCommittedRef({ topicDetail, topicReplies });
+  const policyActionRef = useRef<AbortController | null>(null);
+  const [policyBusy, setPolicyBusy] = useState(false);
+  const [policySubmissions, setPolicySubmissions] = useState<Record<string, PolicySubmission>>({});
+  const policySubmissionsRef = useRef<Record<string, PolicySubmission>>({});
+  const policyScope = `${detail?.source}:${detail?.id}:${sessionEpochs.linuxdo}:${siteSessionViewModels.linuxdo.currentUser?.id}`;
+  const policyScopeRef = useCommittedRef(policyScope);
+  useLayoutEffect(() => {
+    setPolicyBusy(false);
+    return () => {
+      policyActionRef.current?.abort();
+      policyActionRef.current = null;
+    };
+  }, [active, policyScope, siteSessionViewModels.linuxdo.canWrite]);
+  useLayoutEffect(() => {
+    const submissions = Object.values(policySubmissionsRef.current);
+    if (!submissions.length) return;
+    const policies = [topicDetail?.policy, ...topicReplies.map((reply) => reply.policy)];
+    const remaining = submissions.filter((submitted) => {
+      const current = policies.find((policy) => policy?.postId === submitted.postId);
+      return (
+        submitted.scope === policyScope &&
+        (!current || (current.version === submitted.version && current.accepted !== submitted.accepted))
+      );
+    });
+    if (remaining.length !== submissions.length) {
+      const next = Object.fromEntries(remaining.map((submission) => [submission.postId, submission]));
+      policySubmissionsRef.current = next;
+      setPolicySubmissions(next);
+    }
+  }, [policyScope, topicDetail, topicReplies]);
   const mutationSource = detail?.source || 'nodeseek';
   const mutationTopicId = detail?.id || 'global';
   const mutationKey = useMemo(
@@ -402,6 +441,7 @@ export function useTopicActionsController({
     mutationKey,
     scope: { id: mutationScope },
     mutationFn: async (variables) => {
+      if (variables.isCurrent?.() === false) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
       const decision = baseDecisionFor(variables.decision);
       if (!decision.allowed) {
         throw new HandledMutationError(
@@ -451,7 +491,11 @@ export function useTopicActionsController({
           rollbackOptimistic();
           markDiagnosticStage(variables.trace, 'rollback', { source: variables.source, state: 'local' });
         }
-        if (isRawUnauthorized(error) && isWritableSessionTicketCurrent(variables.ticket)) {
+        if (
+          isRawUnauthorized(error) &&
+          isWritableSessionTicketCurrent(variables.ticket) &&
+          variables.isCurrent?.() !== false
+        ) {
           const message = errorMessage(error);
           notify(message);
           onSessionExpired(variables.ticket.source, variables.ticket.sessionEpoch);
@@ -460,7 +504,8 @@ export function useTopicActionsController({
         if (
           variables.source === 'linuxdo' &&
           errorRequiresAccountRecheck(error) &&
-          isWritableSessionTicketCurrent(variables.ticket)
+          isWritableSessionTicketCurrent(variables.ticket) &&
+          variables.isCurrent?.() !== false
         ) {
           requestAccountRecheck(variables.ticket.source, variables.ticket.sessionEpoch, variables.trace.traceId);
         }
@@ -468,7 +513,7 @@ export function useTopicActionsController({
       }
     },
     onSuccess: async (result, variables) => {
-      if (!isWritableSessionTicketCurrent(variables.ticket)) {
+      if (!isWritableSessionTicketCurrent(variables.ticket) || variables.isCurrent?.() === false) {
         finishDiagnosticTrace(variables.trace, 'stale', {
           source: variables.source,
           reason: 'stale',
@@ -478,7 +523,7 @@ export function useTopicActionsController({
       }
       variables.applyResult?.(result, variables);
       const refreshed = await variables.afterSuccess?.(result, variables);
-      if (!isWritableSessionTicketCurrent(variables.ticket)) {
+      if (!isWritableSessionTicketCurrent(variables.ticket) || variables.isCurrent?.() === false) {
         finishDiagnosticTrace(variables.trace, 'stale', {
           source: variables.source,
           reason: 'stale',
@@ -499,7 +544,7 @@ export function useTopicActionsController({
     },
     onError: (error, variables) => {
       const failure = mutationFailure(error);
-      const credentialIsCurrent = isWritableSessionTicketCurrent(variables.ticket);
+      const credentialIsCurrent = isWritableSessionTicketCurrent(variables.ticket) && variables.isCurrent?.() !== false;
       if (credentialIsCurrent && !(error instanceof HandledMutationError)) notify(failure.message);
       finishDiagnosticTrace(variables.trace, credentialIsCurrent ? failure.outcome : 'stale', {
         source: variables.source,
@@ -738,6 +783,10 @@ export function useTopicActionsController({
         }
         const ticket = await ensureWritableSession(actionTopic.source);
         const keys = cacheKeys(actionTopic, ticket);
+        if (variables.isCurrent?.() === false) {
+          finishDiagnosticTrace(variables.trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
+          return false;
+        }
         if (variables.editTarget) {
           if (
             !replyEditTargetIsCurrent(
@@ -766,7 +815,9 @@ export function useTopicActionsController({
         });
         return true;
       } catch (error) {
-        if (error instanceof HandledMutationError) {
+        if (variables.isCurrent?.() === false) {
+          finishDiagnosticTrace(variables.trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
+        } else if (error instanceof HandledMutationError) {
           // Mutation callbacks already own diagnostics and user feedback.
         } else if (error instanceof WritableSessionBlockedError) {
           notify(error.message);
@@ -853,7 +904,7 @@ export function useTopicActionsController({
     [assertWritableTicket, authenticatedFetcher, getNodeSeekUserAgent, notify]
   );
 
-  const actionBusy = pendingVariables.some((variables) => variables?.busy !== false);
+  const actionBusy = policyBusy || pendingVariables.some((variables) => variables?.busy !== false);
   const replyImageUploading = pendingVariables.some((variables) => variables?.decision.action === 'upload');
 
   const materializeNodeSeekPolls = useCallback(
@@ -1986,6 +2037,153 @@ export function useTopicActionsController({
     ]
   );
 
+  const setPolicyAcceptance = useCallback(
+    async (policy: DiscoursePostPolicy, accepted: boolean) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      if (!activeRef.current || actionTopic?.source !== 'linuxdo' || policyActionRef.current) return;
+      const scope = policyScope;
+      if (scope !== policyScopeRef.current) return;
+      const submitted = policySubmissionsRef.current[policy.postId];
+      if (submitted?.scope === scope && submitted.postId === policy.postId && submitted.version === policy.version) {
+        notify('操作已提交，请刷新公告核对阅读状态');
+        return;
+      }
+      const decision = decisionForRef.current({
+        action: 'policy',
+        objectAllowed: accepted ? policy.canAccept : policy.canRevoke,
+        targetPresent: /^[1-9]\d*$/.test(policy.postId)
+      });
+      if (!decision.allowed) {
+        notify(topicActionDecisionMessage(decision));
+        return;
+      }
+      const controller = new AbortController();
+      policyActionRef.current = controller;
+      setPolicyBusy(true);
+      const isCurrent = () =>
+        policyActionRef.current === controller &&
+        !controller.signal.aborted &&
+        activeRef.current &&
+        policyScopeRef.current === scope;
+      const assertCurrent = (ticket: WritableSessionTicket, beforeSend = false) => {
+        if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
+        assertWritableTicket(ticket);
+        if (!beforeSend) return;
+        const current = [
+          policyContentRef.current.topicDetail?.policy,
+          ...policyContentRef.current.topicReplies.map((reply) => reply.policy)
+        ].find((candidate) => candidate?.postId === policy.postId);
+        if (current?.version !== policy.version || !(accepted ? current.canAccept : current.canRevoke)) {
+          throw new HandledMutationError('公告状态已变化，请刷新后重试', 'blocked', 'permission_denied');
+        }
+      };
+      try {
+        if (!accepted) {
+          const confirmed = await new Promise<boolean>((resolve) => {
+            let settled = false;
+            const finish = (value: boolean) => {
+              if (settled) return;
+              settled = true;
+              controller.signal.removeEventListener('abort', cancel);
+              resolve(value);
+            };
+            const cancel = () => finish(false);
+            controller.signal.addEventListener('abort', cancel, { once: true });
+            Alert.alert(
+              '撤销阅读确认？',
+              '撤销后将恢复为尚未确认阅读。',
+              [
+                { text: '取消', style: 'cancel', onPress: cancel },
+                { text: '撤销确认', style: 'destructive', onPress: () => finish(true) }
+              ],
+              { cancelable: true, onDismiss: cancel }
+            );
+          });
+          if (!confirmed || !isCurrent()) return;
+        }
+        const trace = beginDiagnosticTrace('topic', 'apply', { source: 'linuxdo' });
+        await executeMutation(actionTopic as TopicDetail, {
+          actionKey: `policy:${policy.postId}:${policy.version}`,
+          busy: true,
+          decision: { action: 'policy', objectAllowed: accepted ? policy.canAccept : policy.canRevoke },
+          trace,
+          isCurrent,
+          task: async (ticket) => {
+            assertCurrent(ticket, true);
+            try {
+              const result = await setLinuxDoPolicyAcceptance({
+                policy,
+                accepted,
+                signal: controller.signal,
+                userAgent: linuxDoUserAgent(),
+                fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
+                  assertCurrent(ticket, true)
+                )
+              });
+              assertCurrent(ticket);
+              if (!result.confirmed) {
+                const message = result.message || '操作结果尚未确认，请刷新公告核对';
+                notify(message);
+                throw new HandledMutationError(message, 'failure', 'invalid_response');
+              }
+              const submission = { scope, postId: policy.postId, version: policy.version, accepted };
+              const submissions = { ...policySubmissionsRef.current, [policy.postId]: submission };
+              policySubmissionsRef.current = submissions;
+              setPolicySubmissions(submissions);
+              return result;
+            } catch (error) {
+              if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
+              if (
+                error instanceof HandledMutationError ||
+                isRawUnauthorized(error) ||
+                errorRequiresAccountRecheck(error)
+              )
+                throw error;
+              const message = errorMessage(error);
+              if (isLoginRequiredError(error)) showLinuxDoVerification(message);
+              else notify(message);
+              throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
+            }
+          },
+          afterSuccess: async () => {
+            if (!isCurrent()) return false;
+            try {
+              const result = await refreshWholeTopicRef.current();
+              return result === 'completed' || result === true;
+            } catch {
+              return false;
+            }
+          },
+          successMessage: (_result, refreshed) =>
+            refreshed === false
+              ? '提交已由原站确认，但阅读状态刷新失败，请刷新公告核对'
+              : '提交已由原站确认，阅读状态以刷新后的公告为准'
+        });
+      } finally {
+        if (policyActionRef.current === controller) {
+          policyActionRef.current = null;
+          setPolicyBusy(false);
+        }
+      }
+    },
+    [
+      activeRef,
+      assertWritableTicket,
+      authenticatedFetcher,
+      decisionForRef,
+      executeMutation,
+      linuxDoUserAgent,
+      notify,
+      policyContentRef,
+      policyScope,
+      policyScopeRef,
+      refreshWholeTopicRef,
+      selectedTopic,
+      showLinuxDoVerification,
+      topicDetail
+    ]
+  );
+
   const votePoll = useCallback(
     async (poll: TopicPoll, optionIds: string[]) => {
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -2257,6 +2455,8 @@ export function useTopicActionsController({
     loadLinuxDoPollCapabilities,
     loadLinuxDoTemplates,
     resolveLinuxDoUpload,
+    policySubmissions,
+    setPolicyAcceptance,
     lockNodeSeekPoll,
     payNodeSeekStardust,
     submitReply,

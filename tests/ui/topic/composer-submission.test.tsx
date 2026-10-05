@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
@@ -118,6 +119,7 @@ describe('composer submission through the production controller and sheet', () =
   });
   afterEach(async () => {
     await act(async () => transports.splice(0).forEach((transport) => transport.dispose()));
+    jest.restoreAllMocks();
   });
   it('provides the real Yaohuo upload response through the isolated composer fixture', async () => {
     const transport = createComposerTransport('success', false, 0, true);
@@ -125,7 +127,7 @@ describe('composer submission through the production controller and sheet', () =
     const realNetwork = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected real network'));
     try {
       const imageUrl = await uploadYaohuoReplyImage({
-        file: { uri: 'file:///cache/composer-proof.png', name: 'composer-proof.png', mimeType: 'image/png' },
+        file: { uri: 'file:///cache/composer-proof.png', name: 'composer-proof.png', mimeType: 'image/png', size: 128 },
         fetcher: transport.fetcher
       });
       const markup = replyImageMarkupForSource('yaohuo', imageUrl, 'composer-proof.png');
@@ -144,13 +146,13 @@ describe('composer submission through the production controller and sheet', () =
     const disabled = createComposerTransport();
     const enabled = createComposerTransport('success', false, 0, true);
     transports.push(disabled, enabled);
-    await expect(disabled.fetcher('https://file.sang.pub/api/upload', { method: 'POST' })).rejects.toThrow(
+    await expect(disabled.fetcher('https://aapi.helioho.st/upload.php', { method: 'POST' })).rejects.toThrow(
       'Unmatched mock request'
     );
     for (const [url, method] of [
-      ['https://file.sang.pub/api/upload', 'GET'],
-      ['https://file.sang.pub/api/upload/other', 'POST'],
-      ['https://file.sang.pub/api/upload?other=1', 'POST'],
+      ['https://aapi.helioho.st/upload.php', 'GET'],
+      ['https://aapi.helioho.st/upload.php/other', 'POST'],
+      ['https://aapi.helioho.st/upload.php?other=1', 'POST'],
       ['https://unknown.invalid/api/upload', 'POST']
     ] as const) {
       await expect(enabled.fetcher(url, { method })).rejects.toThrow('Unmatched mock request');
@@ -476,6 +478,7 @@ describe('composer submission through the production controller and sheet', () =
       (['network-error', 'rejected', 'unconfirmed'] as const).map((outcome) => ({ source, outcome }))
     )
   )('$source private message preserves the draft after $outcome until explicit retry', async ({ source, outcome }) => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     const transport = createComposerTransport(outcome);
     transports.push(transport);
     const view = await render(<MessageSubmissionFixture source={source} transport={transport} />, {
@@ -515,6 +518,18 @@ describe('composer submission through the production controller and sheet', () =
       expect(view.getByLabelText('私信回复内容').props.value).toBe(COMPOSER_DRAFT);
       await fireEvent.press(view.getByLabelText('发送回复'));
     } else await submit(view);
+    if (outcome === 'unconfirmed') {
+      expect(sheetOpen(view)).toBe(true);
+      expect(transport.requests.map((request) => request.body)).toEqual([COMPOSER_DRAFT]);
+      expect(transport.confirmations).toBe(0);
+      expect(alert).toHaveBeenCalledWith('私信可能已发送', expect.any(String), expect.any(Array));
+      const confirm = alert.mock.calls.at(-1)?.[2]?.find((button) => button.text === '仍要重发');
+      expect(confirm).toBeDefined();
+      await act(async () => confirm?.onPress?.());
+    } else {
+      // This fixture's network failure happens before transport dispatch; real dispatched failures have a Route owner.
+      expect(alert).not.toHaveBeenCalled();
+    }
     await waitFor(() => expect(sheetOpen(view)).toBe(false));
     expect(transport.requests.map((request) => request.body)).toEqual([COMPOSER_DRAFT, COMPOSER_DRAFT]);
     expect(transport.confirmations).toBe(1);
@@ -578,8 +593,8 @@ describe('composer submission through the production controller and sheet', () =
     await waitFor(() => expect(transport.requests).toHaveLength(1));
     await submit(view, COMPOSER_DRAFT, '取消', 2);
     await waitFor(() => expect(sheetOpen(view)).toBe(false));
-    expect(view.getByLabelText('发私信').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText('发私信'));
+    expect(view.getByLabelText('继续编辑私信草稿').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('继续编辑私信草稿'));
     expect(sheetOpen(view)).toBe(false);
     await act(async () => transport.release());
     await waitFor(() => expect(transport.confirmations).toBe(1));

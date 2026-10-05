@@ -530,6 +530,8 @@ function ProductionContentList({
         uploadReplyImage: unexpected,
         uploadReplyImageMarkup: unexpected,
         useLinuxDoTemplate: unexpected,
+        policySubmissions: {},
+        setPolicyAcceptance: unexpected,
         votePoll: unexpected,
         ...actions
       }}
@@ -695,6 +697,43 @@ describe('topic rich-text selection', () => {
     expect(view.getByRole('button', { name: '结果待确认' })).toBeDisabled();
     await fireEvent.press(view.getByRole('button', { name: '结果待确认' }));
     expect(actions.payNodeSeekStardust).not.toHaveBeenCalled();
+  });
+
+  it('shows the opening policy after the article and keeps acceptance tied to server state', async () => {
+    const policy = {
+      postId: '121',
+      version: '1',
+      accepted: false,
+      revoked: false,
+      canAccept: true,
+      canRevoke: false,
+      acceptLabel: '我已知晓此更新内容',
+      revokeLabel: '等我再仔细阅读一番'
+    };
+    const topic = prepareTopicContent({ ...selectionTopic, source: 'linuxdo', url: 'https://linux.do/t/42', policy });
+    const setPolicyAcceptance = jest.fn(async () => {});
+    const actions = { decisionFor: () => ({ allowed: true, reason: 'allowed' as const }), setPolicyAcceptance };
+    const tree = (submitted: boolean) => (
+      <QueryTestWrapper>
+        <ProductionContentList
+          topic={topic}
+          quotedReplies={{}}
+          actions={{
+            ...actions,
+            policySubmissions: submitted
+              ? { '121': { scope: 'linuxdo:42:0:7', postId: '121', version: '1', accepted: true } }
+              : {}
+          }}
+        />
+      </QueryTestWrapper>
+    );
+    const view = await render(tree(false));
+    expect(view.getAllByTestId('discourse-policy-121')).toHaveLength(1);
+    await fireEvent.press(view.getByRole('button', { name: policy.acceptLabel }));
+    expect(setPolicyAcceptance).toHaveBeenCalledWith(policy, true);
+    await view.rerender(tree(true));
+    expect(view.getByRole('button', { name: policy.acceptLabel })).toBeDisabled();
+    expect(view.getByText('尚未确认阅读当前版本')).toBeTruthy();
   });
 
   it('keeps table hosts mounted across background and foreground action updates', async () => {
