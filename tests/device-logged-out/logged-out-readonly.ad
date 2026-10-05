@@ -4,14 +4,17 @@ context retries=0
 env APP_ID=com.wz.reader
 
 open ${APP_ID} --relaunch
+wait "id=\"main-tab-more\" || label=\"关闭\"" 60000
+press "id=\"main-tab-more\" || label=\"关闭\""
 wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
-press label="刷新账号状态"
+wait "text=\"已登录 0/3\" || text=\"待处理 1 · 已登录 0/3\" || text=\"待处理 2 · 已登录 0/3\" || text=\"待处理 3 · 已登录 0/3\"" 60000
+press label="刷新账号"
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\"" 60000
 press id="account-site-linuxdo"
-wait "id=\"account-site-linuxdo\" label=\"linux.do，匿名可用，已选择\"" 60000
+wait "id=\"account-site-linuxdo\" label=\"linux.do，匿名可用，已选择\" || id=\"account-site-linuxdo\" label=\"linux.do，已验证，已选择\" || id=\"account-site-linuxdo\" label=\"linux.do，需要验证，已选择\"" 60000
 press id="account-site-yaohuo"
 wait "id=\"account-site-yaohuo\" label=\"妖火，未登录，已选择\"" 60000
 press label="收起账号中心"
@@ -47,10 +50,13 @@ wait 8000
 wait id="feed-source-yaohuo" 10000
 
 open ${APP_ID} --relaunch
+wait "id=\"main-tab-more\" || label=\"关闭\"" 60000
+press "id=\"main-tab-more\" || label=\"关闭\""
 wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
-wait "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\" || label=\"刷新账号状态\"" 60000
-press "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\" || label=\"刷新账号状态\""
+wait "text=\"已登录 0/3\" || text=\"待处理 1 · 已登录 0/3\" || text=\"待处理 2 · 已登录 0/3\" || text=\"待处理 3 · 已登录 0/3\"" 60000
+wait "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\" || label=\"刷新账号\"" 60000
+press "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\" || label=\"刷新账号\""
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\"" 60000

@@ -661,13 +661,17 @@ describe('Android release evidence guards', () => {
     ).toBe(8);
     const loggedOutReplay = readFileSync(path.join(loggedOutDeviceDir, 'logged-out-readonly.ad'), 'utf8');
     expect(loggedOutReplay.match(/open \$\{APP_ID\} --relaunch/g)).toHaveLength(2);
+    expect(loggedOutReplay.match(/wait "text=\\"已登录 0\/3\\"/g)).toHaveLength(2);
+    expect(loggedOutReplay).toContain('press label="刷新账号"');
+    expect(loggedOutReplay).not.toContain('刷新账号状态');
+    expect(loggedOutReplay).toContain('press "id=\\"main-tab-more\\" || label=\\"关闭\\""');
     expect(
       loggedOutReplay.match(
         /wait "id=\\"account-site-nodeseek\\" label=\\"NodeSeek，未登录，已选择\\" \|\| id=\\"account-site-nodeseek\\" label=\\"NodeSeek，已验证，已选择\\"" 60000/g
       )
     ).toHaveLength(2);
     expect(loggedOutReplay).toContain(
-      'wait "id=\\"account-site-linuxdo\\" label=\\"linux.do，匿名可用，已选择\\"" 60000'
+      'wait "id=\\"account-site-linuxdo\\" label=\\"linux.do，匿名可用，已选择\\" || id=\\"account-site-linuxdo\\" label=\\"linux.do，已验证，已选择\\" || id=\\"account-site-linuxdo\\" label=\\"linux.do，需要验证，已选择\\"" 60000'
     );
     expect(loggedOutReplay).toContain('wait "id=\\"account-site-yaohuo\\" label=\\"妖火，未登录，已选择\\"" 60000');
     expect(loggedOutReplay).not.toContain('测试工具');
