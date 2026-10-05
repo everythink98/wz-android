@@ -45,7 +45,8 @@ jest.mock('expo-file-system', () => {
 jest.mock('react-native-reanimated', () => ({
   ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
   __esModule: true,
-  useAnimatedKeyboard: () => ({ height: { value: 0 } }),
+  useAnimatedKeyboard: () =>
+    jest.requireActual<typeof import('react')>('react').useRef({ height: { value: 0 }, state: { value: 0 } }).current,
   useAnimatedReaction: () => {}
 }));
 
