@@ -1,5 +1,16 @@
 # 回归语料库
 
+## `REG-NOTIFY-085` 妖火消息列表可读但详情正文无法打开
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`，共享 `NOTIFY-01` 的条目身份与 `TOPIC-03` 的回复链接 |
+| 历史症状与根因 | 2026-10-06 用户报告此前修复的妖火列表可显示，但点进详情仍报“妖火消息对应的正文未找到”。主模拟器已读消息稳定复现；同一 App 原站会话 GET 为 200。当前详情已改为 `.msgview-page` 与 `.chat-list .chat-msg`，目标消息由页面 ID 和 `is-anchor` 的消息 ID 标识，旧“内容”字段已不存在。此前列表 Live 仅验收列表，没有打开详情。 |
+| 当前 owner | `src/sources/yaohuo/notifications.test.ts` 维护当前协议的私信/系统正文、消息身份、相同正文的不同消息、日期排序、清洗和控件排除；`tests/ui/notifications/notifications-route.test.tsx` 通过真实 adapter 与受控 HTTP 响应验证正文链接进入 Topic 的楼层定位。旧协议行为沿用同一来源 owner。 |
+| 修复与红绿证据 | 新增的 6 项最低 oracle 修前全部失败，修后来源 owner 28 项通过，seed 1791219000000。精确提取目标气泡；系统消息不因页面包含发送表单而变成私信，聊天按稳定 ID 排除目标并保留其他同文消息；日期按北京时间转换，历史提示改为当前原站返回范围。新版身份异常不会回退到旧内容或邻近气泡。 |
+| 真实入口证据与边界 | 普通 Release APK SHA-256 `c1f5073dfa0668540dca0ba491319227e4510b056fe957dfcb7d67ccb158134c` 同签名覆盖安装主 `WZ_Pixel_API_35` 后，按 runbook 排空安装队列并无快照冷启动，`firstInstallTime=2026-07-26 16:51:37` 不变。实际点击 3 条已读系统消息与 1 条已读私信均进入有正文的详情，无正文错误或重试；带主题链接的系统消息及私信保留链接，系统没有输入入口，私信有输入入口，为 `LIVE_PASS`。相关 route/screen 177 项 `UI_PASS`，seed 210606；最终全量门禁 3403 项 `UNIT_PASS`（seed 1791217114845）、2382 项 `UI_PASS`（seed 1863645707），类型及静态检查为 `STATIC_PASS`，主模拟器消息中心只读 Replay 为 `DEVICE_REPLAY_PASS`。脱敏回执位于 ignored `.codex-tmp/yaohuo-message-detail-fix/live-main.json`。未执行私信发送、删除、上传或未读消息点击；更多历史和真实写入仍为 `NOT_VERIFIED`。 |
+
 ## `REG-WRITE-128` 妖火标题输入时正文工具按钮无响应
 
 | 字段 | 内容 |
@@ -5239,7 +5250,7 @@
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`MORE-05` |
 | 历史症状与根因 | 在 More 重排来源后返回首页，顶部仍像是原来源，但内容区一直显示“正在读取主题”；再切一次来源才恢复；根因：PagerView 的页面适配是位置语义，而来源顺序是可变的；在同一 Feed 会话内热更新 children 后，旧数字位置不能稳定表示来源身份。inactive scene 又只允许 controller 当前来源渲染真实列表，因此错位物理页会永久显示 Loading。2026-09-06 设备复测进一步发现，新建原生 Pager 的 initialPage 为 0，Compose 却从共享 View.NO_ID 保存槽恢复旧页 1，导致一级蓝标为“全部”而分类、列表属于 linux.do。React 会话重建已存在，重复加 key 无效；现以独立 ComposeView ID 隔离新实例的保存状态，保留上游 settledPage 选择事件，重排后导航与内容统一回到“全部”。 |
 | 当前 owner | `tests/ui/app/content-source-navigation.test.tsx`、`tests/live/feed-source-reorder.ad` |
-
+| 2026-10-06 再次复现与修复 | 用户确认重排返回首页应为“全部”，但首次翻页会回到上次选中项。主安装包与全新 API 35 隔离设备均复现；匹配当前源码的定位包记录新 host `initialPage=0`，首次却派发末页 `position=4`。现有 React key 和唯一 ComposeView ID 已在包内，禁用 `rememberPagerState` 的保存恢复仍失败，排除该方向。隐藏首页重建时，原生 host 在有效视口出现前创建 composition；零尺寸首测量将 Pager 推进到末项。修复将首次 ComposeView 创建移到已有测量/布局入口，要求已附着且尺寸为正，保留原保存状态、稳定 Lifecycle 与已有实例。修复前回放在返回“全部”处失败；移除临时日志后的普通入口 Release APK（SHA-256 `ff681b03a636d82e786efc10515a13d05aab190525b67a144574a63664e05675`）在主 API 35 设备通过完整双向重排、首次横滑与阅读筛选/结果归属回放，隔离设备亦通过该链路（关闭来源安全验证后续跑）；相关 UI 54 项、原生 Lifecycle 3 项通过。 |
 
 ## `REG-FEED-018` 未登录妖火关闭登录页后无限重开
 
@@ -7361,3 +7372,14 @@
 | 当前 owner | `tests/ui/more/more-screen.test.tsx` 承接三站首次占位、分批返回、真实零值、失败导航、缓存刷新及相同统计宿主；同 owner 的失败重试与回复数缺失入口统一到占位统计项。`tests/ui/more/account-overview.test.tsx` 继续拥有缓存与手动刷新生命周期。 |
 | 修复与证据 | 固定四项统计，未知值显示浅灰色“—”，无障碍区分加载中和暂无数据；数值 0 正常显示，数据返回或刷新只更新同一项内容。删除独立备用按钮，入口在占位时仍可用。相关 UI 35/35（seed -1442577342）、typecheck、定向 lint/format、architecture/docs 与 diff check 通过。未取得新增用例修前 RED；修前最低 oracle 为上述真实设备首次加载。 |
 | 验收与边界 | 正常 Release/Hermes APK SHA-256 `b3265479ff9b3305cfbeace9ff20e303a52be84840b1810fe000251ad01e789d` 同签名覆盖安装，`APK_SANITY`、More 只读旅程 `DEVICE_REPLAY_PASS`。三站首次资料读取 `LIVE_PASS`：NS/L 首帧四项占位，妖火首帧两项数值及两项占位；读取完成后各四项坐标和尺寸保持一致，NS 缓存返回和手动刷新保留四项数值。占位只属于呈现，不落盘、不改变 Query 读取、身份和签到门禁；可选资料与会员字段不在固定统计位置契约内。实体机和真实签到 POST 为 `NOT_VERIFIED`。 |
+
+## `REG-WRITE-129` 回复提交后立即重开被旧失焦操作清掉焦点
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/04/05/07`、`NOTIFY-02` |
+| 历史症状与根因 | 2026-10-06 全面测试的隔离 mock 回复已确认提交一次、立即重开为空稿且可见，但真实 Gboard 保持隐藏。匹配修前 APK 的 DOM 观察顺序为 INIT → blur → focus，随后 focusout；Tiptap 的 blur 在 requestAnimationFrame 执行，而 focus 对已有焦点立即返回，旧失焦因此清掉新请求。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts` 在受控下一帧前执行关闭或只读往返及重新聚焦，核对实际 DOM 焦点与正文；富文本两条修前失败，源码两条通过。同步 DOM blur 统一覆盖关闭、只读和工具交接，不清选区、不增延迟、不改变连续选表情。 |
+| 修复与证据 | 修前设备 buildId `ab723f8f736345b79c0e730f7fc55387`；修前 oracle `focus-red.log` 两项失败，修后相关 runtime/bridge/tooling 185 项 `UNIT_PASS`，seed `1791241000007`。匹配修复包 buildId `f450c52665ea42cb8512f77ca3d3aa2a`、sourceHash `9b7c450f01ed89d5b978b43c06219ae26e42cde64b3b1ca69d67c4ac3e96e637` 的 13 项设备定向回归全部 `DEVICE_REPLAY_PASS`，覆盖提交后立即重开、连续开合、两站富文本/源码/私信/新帖表情、新帖键盘交接与 linux.do 模拟提交；立即重开的空稿可见、keyboardShown=true、请求及确认均恰好一次。普通入口 APK SHA-256 `80ba29ddf97133c69f54f3220894e3acfcce70728f5f8c3d796a46872202ccdd` 同签名覆盖主模拟器，首次安装时间及三站会话状态保持，实际 NodeSeek 空回复两次打开均显示真实 Gboard，为此范围 `LIVE_PASS`。本机证据位于 ignored `.codex-tmp/keyboard-recheck-20261006/`。真实提交、完整 79 项最终矩阵与物理设备 `NOT_VERIFIED`。 |
+| 同轮误报纠正 | linux.do 新帖 Emoji 搜索无键盘由 agent-device 默认切到无界面测试 IME 造成。仅修复 runner 在表情验收前恢复真实 IME，同一修前 APK 的原场景即通过；未修改搜索框产品行为。该测试 owner 为 `scripts/run-composer-device-proof.mjs`，证据为 `search-real-ime/`，不得将测试误报记为第二个产品 Bug。 |

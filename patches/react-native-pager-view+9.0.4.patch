@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt b/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
-index 5eaa606..d21eb9d 100644
+index 5eaa606..116245f 100644
 --- a/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
 +++ b/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
 @@ -9,7 +9,10 @@ import android.widget.FrameLayout
@@ -50,7 +50,22 @@ index 5eaa606..d21eb9d 100644
        layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
        isSaveEnabled = false
        layoutDirection = androidLayoutDirection()
-@@ -142,12 +151,16 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -107,14 +116,6 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+     // Fragment view-tree replacement while still following pause/stop events
+     // from the currently active host.
+     composeLifecycleOwner.attach(findViewTreeLifecycleOwner()?.lifecycle)
+-    if (composeView == null) {
+-      val view = createComposeView()
+-      composeView = view
+-      super.addView(view)
+-      view.setContent {
+-        PagerContent()
+-      }
+-    }
+     post {
+       measureAndLayoutComposeView()
+     }
+@@ -142,12 +143,16 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
        MotionEvent.ACTION_DOWN -> {
          initialTouchX = event.x
          initialTouchY = event.y
@@ -67,7 +82,7 @@ index 5eaa606..d21eb9d 100644
          didDelegateGestureToAncestor = false
          updateSameOrientationAncestorsGestureState(false)
        }
-@@ -155,6 +168,23 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -155,6 +160,23 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
      return super.dispatchTouchEvent(event)
    }
  
@@ -91,7 +106,23 @@ index 5eaa606..d21eb9d 100644
    override fun canScrollHorizontally(direction: Int): Boolean {
      if (orientationState.value != Orientation.Horizontal) {
        return false
-@@ -546,6 +576,22 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -189,6 +211,15 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+   private fun measureAndLayoutComposeView() {
+     val width = width.takeIf { it > 0 } ?: measuredWidth
+     val height = height.takeIf { it > 0 } ?: measuredHeight
++    // A newly rebuilt, inactive screen can attach before it has a viewport.
++    // Measuring Pager pages at zero width advances Compose's first page to the last item.
++    if (!isAttachedToWindow || width <= 0 || height <= 0) return
++    if (composeView == null) {
++      val view = createComposeView()
++      composeView = view
++      super.addView(view)
++      view.setContent { PagerContent() }
++    }
+     if (measureComposeView(width, height)) {
+       composeView?.layout(0, 0, width, height)
+     }
+@@ -546,6 +577,22 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
      }
  
      val pageSpacing = pageMarginState.value.dp
@@ -114,7 +145,7 @@ index 5eaa606..d21eb9d 100644
      val beyondViewportPageCount = getBeyondViewportPageCount()
      val userScrollEnabled = scrollEnabledState.value && !sameOrientationChildGestureState.value
      val overscrollConfiguration = if (overScrollModeState.value == OverScrollMode.Never) {
-@@ -558,6 +604,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -558,6 +605,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
        if (orientationState.value == Orientation.Vertical) {
          VerticalPager(
            state = pagerState,
@@ -122,7 +153,7 @@ index 5eaa606..d21eb9d 100644
            modifier = Modifier.fillMaxSize(),
            pageSpacing = pageSpacing,
            userScrollEnabled = userScrollEnabled,
-@@ -569,6 +616,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -569,6 +617,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
        } else {
          HorizontalPager(
            state = pagerState,
@@ -130,7 +161,7 @@ index 5eaa606..d21eb9d 100644
            modifier = Modifier.fillMaxSize(),
            pageSpacing = pageSpacing,
            userScrollEnabled = userScrollEnabled,
-@@ -586,7 +634,14 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -586,7 +635,14 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
      AndroidView(
        modifier = Modifier.fillMaxSize(),
        factory = { context ->

@@ -17,6 +17,7 @@ import type {
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { ReplyFilter } from '@/features/topic/model/types';
 import { useTopicSessionController, type TopicSessionController } from '@/features/topic/useTopicSessionController';
+import * as forumText from '@/domain/forum/text';
 import type { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { discoursePollPlaceholder, prepareReplyContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
@@ -956,6 +957,82 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
+    'reuses %s search text through real debounced input and releases it on route/scope changes',
+    async (source) => {
+      jest.useFakeTimers();
+      const detail = { ...topic, source };
+      const replies = sourceReplies.map((reply) => prepareReplyContent({ ...reply }, source));
+      const searchedHtml = new Set(replies.map((reply) => reply.contentHtml));
+      const normalize = jest.spyOn(forumText, 'stripHtml');
+      const bodyCalls = () => normalize.mock.calls.filter(([html]) => searchedHtml.has(html || '')).length;
+      function Harness({
+        active = true,
+        epoch = 0,
+        id = detail.id,
+        window = replies
+      }: {
+        active?: boolean;
+        epoch?: number;
+        id?: string;
+        window?: Reply[];
+      }) {
+        const selected = { ...detail, id };
+        const session = useTopicSessionController({ notify: () => undefined, topic: selected });
+        return (
+          <TopicFilterHarness
+            active={active}
+            selectedTopic={selected}
+            topicDetail={selected}
+            topicReplies={window}
+            prepareContent={false}
+            sessionOverride={session}
+            mediaSessionIdentity={`${source}:${epoch}`}
+          />
+        );
+      }
+      const view = await render(<Harness />);
+      try {
+        const query = async (value: string) => {
+          await fireEvent.changeText(view.getByLabelText('评论内查找'), value);
+          await act(async () => jest.advanceTimersByTime(180));
+        };
+        const start = bodyCalls();
+        await query('needle');
+        expect(bodyCalls() - start).toBe(replies.length);
+        expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual([
+          'reply-2-bob',
+          'reply-3-alice'
+        ]);
+        await query('Needle -ignored');
+        expect(bodyCalls() - start).toBe(replies.length);
+        await fireEvent.press(view.getByLabelText('只看楼主'));
+        expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual(['reply-3-alice']);
+        await fireEvent.press(view.getByLabelText('全部'));
+        await view.rerender(<Harness window={replies.slice(0, 2)} />);
+        await view.rerender(<Harness />);
+        expect(bodyCalls() - start).toBe(replies.length + 1);
+        const beforeScope = bodyCalls();
+        await view.rerender(<Harness epoch={1} />);
+        expect(bodyCalls() - beforeScope).toBe(replies.length);
+        const beforeTopic = bodyCalls();
+        await view.rerender(<Harness epoch={1} id="another-topic" />);
+        expect(bodyCalls() - beforeTopic).toBe(replies.length);
+        await view.rerender(<Harness epoch={1} id="another-topic" active={false} />);
+        const beforeReturn = bodyCalls();
+        await view.rerender(<Harness epoch={1} id="another-topic" />);
+        expect(bodyCalls() - beforeReturn).toBe(replies.length);
+        expect(view.getByLabelText('评论内查找').props.value).toBe('Needle -ignored');
+        await fireEvent.press(view.getByLabelText('清空查找'));
+        await act(async () => jest.advanceTimersByTime(180));
+        expect(view.getAllByText(/^reply-/)).toHaveLength(3);
+      } finally {
+        await view.unmount();
+        normalize.mockRestore();
+        jest.useRealTimers();
+      }
+    }
+  );
   it('marks new rows using the fixed entry watermark across arbitrary windows and never infers it from the count', async () => {
     const replies = jest.requireMock<typeof import('@/features/topic/components/ReplyItem')>(
       '@/features/topic/components/ReplyItem'

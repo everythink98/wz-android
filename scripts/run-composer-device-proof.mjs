@@ -872,6 +872,8 @@ async function main() {
     throw closeError;
   };
   const verifyExpressions = async (scenario, token, directory, restoredLabel) => {
+    // A topic open may select agent-device's headless IME. Geometry uses the real keyboard.
+    adb('shell', 'ime', 'set', ime);
     const waitForKeyboard = async (shown) => {
       const deadline = Date.now() + 30000;
       do {
@@ -954,19 +956,26 @@ async function main() {
         capture(directory, 'expressions-mode-return');
         agent(['press', `label="${scenario.mode === 'source' ? '源码' : '富文本'}"`]);
         await receipt(token, (value) => value.keyboardShown === true);
-        if (scenario.source === 'nodeseek') {
-          replay('expressions-open', restoredLabel);
-          agent(['press', 'label="ac01"']);
-          await receipt(token, (value) => value.keyboardShown === true);
-          const inserted = await dom.evaluate(
-            `Boolean(document.querySelector('.ProseMirror [data-composer-node="forum-expression"][aria-label="ac01"]')) || Boolean(document.querySelector('.cm-content')?.textContent.includes(':ac01:'))`
+      }
+      if (scenario.source === 'nodeseek' && scenario.entry !== 'topic') {
+        replay('expressions-open', restoredLabel);
+        const countStickers = () =>
+          dom.evaluate(
+            `document.querySelector('.source-pane.active .cm-content')
+              ? (document.querySelector('.source-pane.active .cm-content').textContent.match(/:ac01:/g) || []).length
+              : document.querySelectorAll('.editor-pane.active [data-composer-node="forum-expression"][aria-label="ac01"]').length`
           );
-          if (!inserted) throw new Error('Selected sticker did not enter the actual editor document');
-          const selected = snapshot(directory, 'expressions-selected');
-          if (selected.some((node) => node.label === '关闭'))
-            throw new Error('Selected expression did not return to the editor');
-          capture(directory, 'expressions-selected');
+        const before = await countStickers();
+        for (let inserted = 1; inserted <= 2; inserted += 1) {
+          agent(['press', 'label="ac01"']);
+          await waitForKeyboard(false);
+          if ((await countStickers()) !== before + inserted)
+            throw new Error('Each sticker selection must insert exactly once into the actual editor document');
+          if (!snapshot(directory, `expressions-selected-${inserted}`).some((node) => node.label === '关闭'))
+            throw new Error('Expression picker closed before consecutive selections finished');
         }
+        capture(directory, 'expressions-selected');
+        replay('expressions-close', restoredLabel);
       }
     } finally {
       dom.close();
@@ -1016,6 +1025,9 @@ async function main() {
           agent(['fill', `@${focusedTitle.ref}`, title]);
           // Restore the real IME after the automation keyboard finishes entering Chinese text.
           adb('shell', 'ime', 'set', ime);
+          await receipt(token, (value) => value.topic?.edit?.title === title);
+          adb('shell', 'input', 'keyevent', 'KEYCODE_ESCAPE');
+          await receipt(token, (value) => value.keyboardShown === false);
           const editedInput = snapshot(directory, 'title-entered').find(
             (node) => node.type === 'android.widget.EditText' && node.value === title
           );
@@ -1283,7 +1295,7 @@ async function main() {
             adb('shell', 'ime', 'set', ime);
             adb('shell', 'input', 'keyevent', 'KEYCODE_ESCAPE');
             await receipt(token, (value) => value.keyboardShown === false);
-            agent(['press', 'id="structured-composer-webview"']);
+            agent(['press', scenario.source === 'yaohuo' ? 'editable=true' : 'id="structured-composer-webview"']);
             await receipt(token, (value) => value.keyboardShown);
           }
           if (scenario.presentation === 'fullscreen') replay('fullscreen', submitLabel);
@@ -1486,7 +1498,7 @@ async function main() {
             replay('manual-close', submitLabel, launcher, closeLabel);
             await receipt(token, (value) => !value.keyboardShown && (message || !value.visible));
             agent(['press', 'text="下一次成功"']);
-            replay('open-editor', submitLabel, launcher);
+            replay('open-editor', submitLabel, message ? '继续编辑' : launcher);
             await receipt(token, (value) => value.keyboardShown);
             const retained = snapshot(directory, 'retained');
             if (!retained.some((node) => node.label?.includes('Local mock reply; never sent.')))

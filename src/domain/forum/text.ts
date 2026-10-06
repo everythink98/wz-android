@@ -21,15 +21,16 @@ export function searchTerms(query: string) {
     .sort((left, right) => right.length - left.length);
 }
 
+function isHtmlTagStart(html: string, start: number) {
+  const first = html[start + 1];
+  const second = html[start + 2];
+  return Boolean(first && (/[A-Za-z!?]/.test(first) || (first === '/' && second && /[A-Za-z]/.test(second))));
+}
+
 function htmlTagEnd(html: string, start: number) {
   if (html.startsWith('<!--', start)) {
     const commentEnd = html.indexOf('-->', start + 4);
     return commentEnd < 0 ? -1 : commentEnd + 3;
-  }
-  const first = html[start + 1];
-  const second = html[start + 2];
-  if (!first || !(/[A-Za-z!?]/.test(first) || (first === '/' && Boolean(second) && /[A-Za-z]/.test(second)))) {
-    return -1;
   }
   let quote = '';
   for (let index = start + 1; index < html.length; index += 1) {
@@ -45,6 +46,33 @@ function htmlTagEnd(html: string, start: number) {
   return -1;
 }
 
+function htmlSuffixEnds(html: string) {
+  const tags = new Uint32Array(html.length + 1);
+  const comments = new Uint32Array(html.length + 1);
+  let singleQuoteEnd = 0;
+  let doubleQuoteEnd = 0;
+  let commentEnd = 0;
+  // Each state describes scanning from this offset with that quote already open.
+  // Only the unquoted results need an array; the quote states advance together.
+  for (let index = html.length - 1; index >= 0; index -= 1) {
+    const character = html[index];
+    const nextTagEnd = tags[index + 1];
+    tags[index] =
+      character === '>'
+        ? index + 1
+        : character === "'"
+          ? singleQuoteEnd
+          : character === '"'
+            ? doubleQuoteEnd
+            : nextTagEnd;
+    if (character === "'") singleQuoteEnd = nextTagEnd;
+    if (character === '"') doubleQuoteEnd = nextTagEnd;
+    if (html.startsWith('-->', index)) commentEnd = index + 3;
+    comments[index] = commentEnd;
+  }
+  return { tags, comments };
+}
+
 export function transformHtmlSegments(
   html: string,
   transformText: (text: string) => string,
@@ -53,13 +81,17 @@ export function transformHtmlSegments(
   let output = '';
   let textStart = 0;
   let index = 0;
+  let suffixEnds: ReturnType<typeof htmlSuffixEnds> | undefined;
   while (index < html.length) {
-    if (html[index] !== '<') {
+    if (html[index] !== '<' || !isHtmlTagStart(html, index)) {
       index += 1;
       continue;
     }
-    const tagEnd = htmlTagEnd(html, index);
+    const tagEnd = suffixEnds
+      ? (html.startsWith('<!--', index) ? suffixEnds.comments[index + 4] : suffixEnds.tags[index + 1]) || -1
+      : htmlTagEnd(html, index);
     if (tagEnd < 0) {
+      suffixEnds ??= htmlSuffixEnds(html);
       index += 1;
       continue;
     }

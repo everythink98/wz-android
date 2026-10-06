@@ -142,6 +142,35 @@ function activateToolbarUpload(
 
 describe('Composer editor runtime codec', () => {
   it.each(
+    (['rich', 'source'] as const).flatMap((mode) =>
+      (['close', 'read-only'] as const).map((reason) => ({ mode, reason }))
+    )
+  )('keeps the new $mode focus when $reason and reopening occur before the next frame', async ({ mode, reason }) => {
+    const { host, send } = await mountRuntime({ mode, markdown: '保留正文', waitForFrame: false });
+    const input = host.querySelector<HTMLElement>(mode === 'rich' ? '.ProseMirror' : '.cm-content')!;
+    await act(async () => input.focus());
+    expect(document.activeElement).toBe(input);
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    try {
+      if (reason === 'close') await send({ type: 'COMMAND', payload: { name: 'blur' } });
+      else {
+        await send({ type: 'SET_READ_ONLY', payload: { readOnly: true } });
+        await send({ type: 'SET_READ_ONLY', payload: { readOnly: false } });
+      }
+      await send({ type: 'COMMAND', payload: { name: 'focus' } });
+      await act(async () => frames.splice(0).forEach((callback) => callback(performance.now())));
+    } finally {
+      requestFrame.mockRestore();
+    }
+    expect(document.activeElement).toBe(input);
+    expect(input.textContent).toBe('保留正文');
+  });
+
+  it.each(
     (['linuxdo', 'nodeseek'] as const).flatMap((site) =>
       (
         [

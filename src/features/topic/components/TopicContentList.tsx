@@ -97,6 +97,7 @@ import type { TopicActionsController } from '../actions/useTopicActionsControlle
 import { markCurrentNodeSeekOwnRepliesUnlikable } from '../actions/actionHelpers';
 import type { useHtmlRenderingController } from '../rendering/useHtmlRenderingController';
 import { filterTopicSessionReplies, type TopicSessionController } from '../useTopicSessionController';
+import { createReplySearchCache } from '../model/replySearch';
 import type { useTopicController } from '../useTopicController';
 import {
   buildAcceptedAnswerContentItems,
@@ -459,6 +460,13 @@ export const TopicContentList = memo(function TopicContentList({
     mediaSessionIdentity,
     nodeSeekMediaUserAgent
   } = html;
+  const searchCache = useMemo(
+    () => createReplySearchCache(),
+    // Scope changes must replace the cache before filtering this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [active, mediaSessionIdentity, state.selectedTopic.id, state.selectedTopic.source]
+  );
+  useEffect(() => () => searchCache.clear(), [searchCache]);
   const filteredReplies = useMemo(
     () =>
       filterTopicSessionReplies({
@@ -466,9 +474,18 @@ export const TopicContentList = memo(function TopicContentList({
         replyFilter: state.replyFilter,
         source: state.selectedTopic.source,
         topicDetail: topic,
-        topicReplies: read.topicReplies
+        topicReplies: read.topicReplies,
+        searchCache: active ? searchCache : undefined
       }),
-    [read.topicReplies, state.debouncedCommentQuery, state.replyFilter, state.selectedTopic.source, topic]
+    [
+      active,
+      read.topicReplies,
+      searchCache,
+      state.debouncedCommentQuery,
+      state.replyFilter,
+      state.selectedTopic.source,
+      topic
+    ]
   );
   const replies = useMemo(
     () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, currentNodeSeekUser, nodeSeekUserId),

@@ -163,6 +163,47 @@ function chatContent(value: string, detailUrl: string) {
   return sanitizeContentHtmlWithRoot(content, detailUrl);
 }
 
+function currentChatContent(row: ReturnType<typeof parseHtml>, detailUrl: string) {
+  const html = row.querySelector('.chat-bubble')?.innerHTML || '';
+  return row.classList.contains('chat-msg--notice')
+    ? chatContent(html, detailUrl)
+    : sanitizeContentHtmlWithRoot(html, detailUrl);
+}
+
+function currentChatMessages(
+  page: ReturnType<typeof parseHtml>,
+  detailUrl: string,
+  otherAuthor: string,
+  originalId: string
+): NotificationMessage[] {
+  return page
+    .querySelectorAll('.chat-list .chat-msg')
+    .flatMap((row) => {
+      const id = row.getAttribute('data-message-id') || '';
+      if (!/^\d+$/.test(id) || id === originalId) return [];
+      const mine = row.classList.contains('chat-msg--out');
+      const notice = row.classList.contains('chat-msg--notice');
+      if (!mine && !notice && !row.classList.contains('chat-msg--in')) return [];
+      const content = currentChatContent(row, detailUrl);
+      if (!hasRenderableHtmlContent(content.contentHtml, content.root)) return [];
+      const time = `${row.getAttribute('data-date') || ''} ${elementText(row.querySelector('.chat-time'))}`;
+      return [
+        {
+          id: `chat:${id}`,
+          author: mine ? '我' : notice ? '系统' : otherAuthor,
+          contentHtml: content.contentHtml,
+          createdAt: toIsoString(time, '+08:00') || null,
+          mine
+        }
+      ];
+    })
+    .sort(
+      (left, right) =>
+        (left.createdAt ? Date.parse(left.createdAt) : Number.POSITIVE_INFINITY) -
+        (right.createdAt ? Date.parse(right.createdAt) : Number.POSITIVE_INFINITY)
+    );
+}
+
 function messageContentKey(root: ReturnType<typeof parseHtml>) {
   const text = elementText(root).replace(/\s+/g, ' ').trim();
   const images = root
@@ -314,6 +355,38 @@ export const yaohuoNotificationAdapter = {
       timeoutMs: options.timeoutMs
     });
     const root = parseHtml(result.html);
+    const page = root.querySelector('.msgview-page');
+    if (page) {
+      const anchors = page.querySelectorAll('.chat-list .chat-msg.is-anchor');
+      const anchor = anchors[0];
+      const id = item.target.messageId;
+      if (
+        page.getAttribute('data-message-id') !== id ||
+        anchors.length !== 1 ||
+        anchor?.getAttribute('data-message-id') !== id
+      )
+        throw new Error('妖火消息对应的正文未找到');
+      const content = currentChatContent(anchor, detailUrl);
+      if (!hasRenderableHtmlContent(content.contentHtml, content.root)) throw new Error('妖火消息对应的正文未找到');
+      const replyable = item.kind === 'private-message';
+      const partnerId = page.getAttribute('data-partner-id') || '';
+      const actorId =
+        replyable && /^\d+$/.test(partnerId) && Number.isSafeInteger(Number(partnerId)) && Number(partnerId) > 0
+          ? partnerId
+          : undefined;
+      return {
+        notification: actorId ? { ...item, actor: { ...item.actor, id: actorId } } : item,
+        title: item.title,
+        contentHtml: content.contentHtml,
+        ...(replyable
+          ? {
+              messages: currentChatMessages(page, detailUrl, item.actor.name, id),
+              reply: { format: 'plain-text' as const },
+              historyNotice: '仅展示原站当前返回的聊天记录。'
+            }
+          : {})
+      };
+    }
     const content = detailContent(root, detailUrl);
     if (!content) throw new Error('妖火消息对应的正文未找到');
     const actorId = detailActorId(root);

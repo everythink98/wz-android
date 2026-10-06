@@ -4,6 +4,11 @@ context platform=android
 context timeout=180000
 context retries=0
 env APP_ID=com.wz.reader
+# Pixel API 35; override for another viewport.
+env RIGHT_X=850
+env LEFT_X=220
+env PAGE_DX=630
+env PAGE_Y=1300
 
 open ${APP_ID} --relaunch
 wait id="feed-source-v2ex" 15000
@@ -22,6 +27,13 @@ wait label="未读" 10000
 wait label="已读" 10000
 wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000
 
+# The first swipe must follow the new order, without restoring the previous V2EX page.
+gesture pan ${RIGHT_X} ${PAGE_Y} -${PAGE_DX} 0 600
+wait "id=\"feed-source-linuxdo\" label=\"linux.do，已选择\"" 10000
+gesture pan ${LEFT_X} ${PAGE_Y} ${PAGE_DX} 0 600
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
+wait label="未读" 10000
+
 press id="feed-source-v2ex"
 wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 10000
 press id="main-tab-more"
@@ -33,3 +45,10 @@ wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
 wait label="未读" 10000
 wait label="已读" 10000
 wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000
+
+gesture pan ${RIGHT_X} ${PAGE_Y} -${PAGE_DX} 0 600
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 10000
+gesture pan ${LEFT_X} ${PAGE_Y} ${PAGE_DX} 0 600
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
+wait label="未读" 10000
+wait label="已读" 10000

@@ -3,7 +3,7 @@ import { groupLibraryRecordsByTime, libraryCategoryFilterItems } from '@/feature
 import { filterRepliesByQuery } from '@/features/topic/model/replySearch';
 import { highlightHtml, highlightTextParts } from '@/ui/text/highlight';
 import { domNodeCount as htmlDomNodeCount } from '../helpers/domNodeCount';
-import { stripHtml } from '@/domain/forum/text';
+import { stripHtml, transformHtmlSegments } from '@/domain/forum/text';
 import type { Category, Reply, Topic } from '@/domain/forum/models';
 import type { TopicRecord } from '@/domain/reader/readerData';
 
@@ -34,7 +34,97 @@ function record(patch: Partial<TopicRecord> & { id: string; savedAt: string }): 
   };
 }
 
+// Frozen forward-scanning oracle for the existing malformed-HTML policy.
+function previousHtmlSegments(html: string) {
+  const segments: [string, string][] = [];
+  let textStart = 0;
+  for (let start = 0; start < html.length; start++) {
+    if (html[start] !== '<') continue;
+    let end = -1;
+    if (html.startsWith('<!--', start)) {
+      const close = html.indexOf('-->', start + 4);
+      if (close >= 0) end = close + 3;
+    } else if (
+      /[A-Za-z!?]/.test(html[start + 1] || '') ||
+      (html[start + 1] === '/' && /[A-Za-z]/.test(html[start + 2] || ''))
+    ) {
+      let quote = '';
+      for (let index = start + 1; index < html.length; index++) {
+        const character = html[index];
+        if (quote) {
+          if (character === quote) quote = '';
+        } else if (character === '"' || character === "'") quote = character;
+        else if (character === '>') {
+          end = index + 1;
+          break;
+        }
+      }
+    }
+    if (end < 0) continue;
+    segments.push(['text', html.slice(textStart, start)], ['tag', html.slice(start, end)]);
+    textStart = end;
+    start = end - 1;
+  }
+  segments.push(['text', html.slice(textStart)]);
+  return segments;
+}
+
 describe('Android feature helpers', () => {
+  it('preserves malformed tags, comments and callback order across seeded HTML inputs', () => {
+    let seed = 2026100501;
+    const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+    const tokens = [
+      '<a ',
+      '<b x=',
+      '<a title="',
+      "<a title='",
+      '<!--',
+      '-->',
+      '>',
+      '"',
+      "'",
+      '<',
+      '</b>',
+      '😀',
+      '&amp;',
+      'x',
+      '\n',
+      '<pre>',
+      '</pre>',
+      '<script>',
+      '</script>',
+      '<img alt="图示">'
+    ];
+    const fixtures = [
+      '',
+      '<a '.repeat(1000),
+      '<!--'.repeat(1000),
+      '<a x="<b >',
+      "<a x='<'<b >",
+      '<p>good</p>',
+      '<a '.repeat(1000) + '>'
+    ];
+    for (let index = 0; index < 10_000; index++) {
+      fixtures.push(Array.from({ length: random() % 80 }, () => tokens[random() % tokens.length]).join(''));
+    }
+    for (const [caseIndex, html] of fixtures.entries()) {
+      const actual: [string, string][] = [];
+      const output = transformHtmlSegments(
+        html,
+        (text) => {
+          actual.push(['text', text]);
+          return `T${text}`;
+        },
+        (tag) => {
+          actual.push(['tag', tag]);
+          return `G${tag}`;
+        }
+      );
+      const expected = previousHtmlSegments(html);
+      expect(actual, `seed=2026100501 case=${caseIndex}`).toEqual(expected);
+      expect(output).toBe(expected.map(([kind, value]) => `${kind === 'text' ? 'T' : 'G'}${value}`).join(''));
+    }
+  });
   it('builds plain text highlight parts from positive search terms', () => {
     expect(highlightTextParts('Hello VPS blocked', 'hello -blocked vps')).toEqual([
       { text: 'Hello', highlighted: true },

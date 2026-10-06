@@ -310,9 +310,10 @@ try {
         )
           assert.notEqual(tab, `feed-source-${source}`, 'A horizontal swipe or short fast flick must switch source.');
         if (tab !== `feed-source-${source}`)
-          assert(
+          assert.equal(
             after.some((node) => node.label === '发帖'),
-            'A new source must restore the create-topic action after the previous list hid it.'
+            tab !== 'feed-source-v2ex',
+            'The create-topic action must match the new source capability.'
           );
         result.status = 'pass';
         writeFileSync(path.join(evidence, 'results.json'), JSON.stringify(results, null, 2));

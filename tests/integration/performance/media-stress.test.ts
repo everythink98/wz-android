@@ -2,6 +2,8 @@ import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
 import { sourceCatalog, sourceValues } from '@/domain/forum/sourceCatalog';
 import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
+import { stripHtml } from '@/domain/forum/text';
+import { highlightHtml } from '@/ui/text/highlight';
 import { cachedCompatibleSvgArtifact, recoverCompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
 import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
 import {
@@ -57,6 +59,26 @@ const renderPoster = async (_base64: string, key: string) => ({
 });
 
 describe('media preparation and lifecycle under synthetic pressure', () => {
+  it.each(sourceValues)('keeps %s sanitized/compiler text identical through highlighting and copy', (source) => {
+    const html =
+      '<p>Visible Needle &amp; 😀<a title="quote > Needle">link</a></p>' +
+      '<pre>line one\n\nline two</pre><script>Hidden Needle</script><!-- hidden -->' +
+      '<img src="https://example.test/image.png" alt="diagram &gt; label">';
+    const plan = prepareSanitizedForumContent(html, {
+      baseUrl: sourceCatalog[source].baseUrl,
+      role: 'opening',
+      source
+    });
+    const serialized = plan.contentPlan.rows.map((row) => ('html' in row ? row.html : '')).join('\n');
+    const text = stripHtml(plan.contentHtml);
+    expect(text).toContain('Visible Needle & 😀');
+    expect(text).toContain('line one\n\nline two');
+    expect(text).not.toContain('Hidden Needle');
+    expect(stripHtml(highlightHtml(plan.contentHtml, 'Needle link'))).toBe(text);
+    expect(stripHtml(serialized)).toContain('Visible Needle & 😀');
+    expect(normalizedWhitespace(ownerText(plan.contentPlan))).toContain('Visible Needle & 😀');
+    expect(normalizedWhitespace(ownerText(plan.contentPlan))).toContain('line one line two');
+  });
   it.each(sourceValues)(
     'preserves ordered text and 1000 image previews for %s across content roles',
     async (source) => {

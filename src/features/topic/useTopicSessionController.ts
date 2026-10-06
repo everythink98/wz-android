@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
-import { filterRepliesByQuery } from './model/replySearch';
+import { createReplySearchCache, filterRepliesByQuery } from './model/replySearch';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages } from './model/topicDerivedData';
@@ -81,21 +81,24 @@ export function filterTopicSessionReplies({
   replyFilter,
   source,
   topicDetail,
-  topicReplies
+  topicReplies,
+  searchCache
 }: {
   commentQuery: string;
   replyFilter: ReplyFilter;
   source: Source;
   topicDetail: TopicDetail | null;
   topicReplies: Reply[];
+  searchCache?: ReturnType<typeof createReplySearchCache>;
 }) {
+  searchCache?.retain(topicReplies);
   let replies = topicReplies;
   if (replyFilter === 'author') {
     replies = topicDetail ? replies.filter((reply) => reply.author === topicDetail.author) : replies;
   } else if (replyFilter === 'images') {
     replies = filterRepliesWithImages(replies, source);
   }
-  return filterRepliesByQuery(replies, commentQuery);
+  return filterRepliesByQuery(replies, commentQuery, searchCache);
 }
 
 export function useTopicSessionController({ notify, topic }: { notify: (message: string) => void; topic: Topic }) {

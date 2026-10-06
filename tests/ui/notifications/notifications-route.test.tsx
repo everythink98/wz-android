@@ -3575,12 +3575,17 @@ describe('notification routes', () => {
       }
     };
     const gateway = {
-      loadDetail: jest.fn(async () => ({
-        notification: item,
-        title: '妖火私信',
-        contentHtml:
-          '<a href="https://www.yaohuo.me/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;tofloor=90&amp;fromuserid=1000">查看完整回复</a>'
-      })),
+      loadDetail: jest.fn(async () =>
+        notificationAdapters.yaohuo.loadDetail(item, {
+          identityKey: 'yaohuo:7',
+          userId: '7',
+          fetcher: async () =>
+            new Response(`<div class="msgview-page" data-message-id="41" data-partner-id="9">
+              <div class="chat-list"><div class="chat-msg chat-msg--in is-anchor" data-message-id="41">
+                <div class="chat-bubble"><a href="/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;tofloor=90&amp;fromuserid=1000">查看完整回复</a></div>
+              </div></div></div>`)
+        })
+      ),
       markRead: jest.fn(async () => ({ confirmed: true }))
     } as unknown as NotificationRouteRuntimeValue['gateway'];
     const runtime = {

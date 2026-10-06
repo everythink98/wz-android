@@ -8,7 +8,7 @@ import { Linking, Text, View } from 'react-native';
 import { createEmptyReaderData, MAX_DELETED_RECORDS, type ReaderData } from '@/domain/reader/readerData';
 import type { Topic } from '@/domain/forum/models';
 import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
-import { readReaderMeta, readReaderSnapshot, utf8Bytes } from '@/platform/storage/readerDatabase';
+import { readReaderMeta, readReaderPage, readReaderSnapshot, utf8Bytes } from '@/platform/storage/readerDatabase';
 import * as store from '@/platform/storage/readerDataStore';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
 import { exercisePollJournal, verifyReopenedPollJournal } from './pollJournal';
@@ -224,12 +224,47 @@ async function execute(mode: string, profile: string, token: string, status: (te
         'Cursor omitted/repeated/reordered rows'
       );
       const queryMs = performance.now() - queryStarted;
-      const plans = await db.getAllAsync<{ detail: string }>(
-        "EXPLAIN QUERY PLAN SELECT value FROM reader_records WHERE kind='history' ORDER BY time DESC, ordinal ASC LIMIT 51"
+      const captured: { query: string; params: (string | number)[] }[] = [];
+      const getAll = db.getAllAsync;
+      db.getAllAsync = new Proxy(getAll, {
+        apply(target, receiver, args) {
+          const [query, ...argsRest] = args;
+          if (typeof query === 'string' && query.startsWith('SELECT value, time, ordinal')) {
+            const params = argsRest
+              .flatMap((value) => (Array.isArray(value) ? value : [value]))
+              .map((value) => {
+                if (typeof value !== 'string' && typeof value !== 'number') throw new Error('Unexpected page bind');
+                return value;
+              });
+            captured.push({ query, params });
+          }
+          return Reflect.apply(target, receiver, args);
+        }
+      });
+      try {
+        const first = await readReaderPage(db, { ...request, after: undefined });
+        check(first.next, 'Missing first-page cursor');
+        const next = await readReaderPage(db, { ...request, after: first.next });
+        check(
+          JSON.stringify(next.records) === JSON.stringify(Object.values(expected.history).slice(50, 100)),
+          'Native cursor page mismatch'
+        );
+      } finally {
+        db.getAllAsync = getAll;
+      }
+      const queryPlans: string[][] = [];
+      for (const { query, params } of captured) {
+        const plan = await db.getAllAsync<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+        queryPlans.push(plan.map((row) => row.detail));
+      }
+      check(
+        queryPlans[0].some((detail) => detail.includes('reader_order')),
+        'Missing indexed ordering'
       );
       check(
-        plans.some((row) => row.detail.includes('reader_order')),
-        'Missing indexed ordering'
+        queryPlans[1].some((detail) => detail.includes('reader_order') && detail.includes('time=? AND ordinal>?')) &&
+          queryPlans[1].some((detail) => detail.includes('reader_order') && detail.includes('time<?')),
+        'Missing native cursor range seeks'
       );
       await db.execAsync(
         "CREATE TRIGGER proof_fail BEFORE UPDATE ON reader_records WHEN NEW.kind='favorites' BEGIN SELECT RAISE(ABORT, 'injected failure'); END"
@@ -344,7 +379,8 @@ async function execute(mode: string, profile: string, token: string, status: (te
         clearMs,
         clearedHistoryCount: historyKeys.length,
         counts: state.counts,
-        plans,
+        queryPlans,
+        sqliteVersion: (await db.getFirstAsync<{ version: string }>('SELECT sqlite_version() AS version'))?.version,
         backupQueuePassed: true
       });
     } finally {

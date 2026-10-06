@@ -13,6 +13,7 @@ const harness = vi.hoisted(() => ({
   connections: [] as { close(): void }[],
   legacy: new Map<string, string>(),
   queries: [] as string[],
+  pagePlans: [] as string[][],
   fail: ''
 }));
 vi.mock('expo-sqlite', async () => {
@@ -41,6 +42,14 @@ vi.mock('expo-sqlite', async () => {
         },
         getAllAsync: async (sql: string, ...args: unknown[]) => {
           check(sql);
+          if (sql.startsWith('SELECT value, time, ordinal')) {
+            harness.pagePlans.push(
+              db
+                .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+                .all(...parameters(args))
+                .map((row) => String(row.detail))
+            );
+          }
           return db.prepare(sql).all(...parameters(args));
         },
         getFirstAsync: async (sql: string, ...args: unknown[]) => {
@@ -98,6 +107,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   harness.fail = '';
   harness.queries = [];
+  harness.pagePlans = [];
   harness.legacy.clear();
   harness.directory = mkdtempSync(join(tmpdir(), 'reader-store-'));
 });
@@ -522,6 +532,48 @@ describe('reader data storage authority', () => {
     });
     expect(page).toMatchObject({ total: 1, visibleTotal: 1 });
     expect(harness.queries.some((sql) => /COUNT\(/.test(sql))).toBe(false);
+  });
+
+  it('seeks both cursor ranges in the existing index and preserves deleted-boundary paging', async () => {
+    const data = createEmptyReaderData();
+    for (let index = 0; index < 151; index++) {
+      const item = { ...topic, id: String(index) };
+      data.history[topicKey(item)] = { topic: item, savedAt: at };
+    }
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    const request = {
+      collection: 'history',
+      sources: ['nodeseek', 'linuxdo', 'yaohuo', 'v2ex'],
+      source: 'all',
+      category: 'all'
+    } satisfies import('@/domain/reader/readerRecordState').ReaderPageRequest;
+    const first = await store.queryReaderPage(request);
+    expect(first.records.map((record) => 'topic' in record && record.topic.id)).toEqual(
+      Array.from({ length: 50 }, (_, index) => String(index))
+    );
+    expect(first.next).toBeDefined();
+    await store.commitReaderCommand({
+      type: 'delete',
+      collection: 'history',
+      keys: ['nodeseek:49', 'nodeseek:51'],
+      at
+    });
+    harness.pagePlans = [];
+    harness.queries = [];
+    const next = await store.queryReaderPage({ ...request, after: first.next });
+    expect(next.records.map((record) => 'topic' in record && record.topic.id)).toEqual(
+      Array.from({ length: 51 }, (_, index) => String(index + 50)).filter((id) => id !== '51')
+    );
+    expect(next.total).toBe(149);
+    expect(next.visibleTotal).toBe(149);
+    const plan = harness.pagePlans.flat();
+    expect(plan.some((detail) => detail.includes('reader_order') && detail.includes('time=? AND ordinal>?'))).toBe(
+      true
+    );
+    expect(plan.some((detail) => detail.includes('reader_order') && detail.includes('time<?'))).toBe(true);
+    expect(harness.queries).toHaveLength(4); // BEGIN, counts, page, COMMIT; no extra read bridge.
   });
 
   it('updates history and existing favorite summary atomically while preserving favorite time', async () => {

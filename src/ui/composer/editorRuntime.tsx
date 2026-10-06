@@ -2502,7 +2502,7 @@ export function ComposerEditorRuntime() {
         editorRef.current?.setEditable(!readOnly, false);
         if (readOnly) {
           closeBuilder();
-          editorRef.current?.commands.blur();
+          editorRef.current?.view.dom.blur();
           sourceViewRef.current?.contentDOM.blur();
         }
         return;
@@ -2558,7 +2558,8 @@ export function ComposerEditorRuntime() {
         else sourceViewRef.current?.focus();
       } else if (command.name === 'blur') {
         closeBuilder();
-        editorRef.current?.commands.blur();
+        // Tiptap defers blur to the next frame, which can clear a newer focus request.
+        editorRef.current?.view.dom.blur();
         sourceViewRef.current?.contentDOM.blur();
       } else if (command.name === 'undo') {
         if (modeRef.current === 'rich') editorRef.current?.commands.undo();
@@ -2688,7 +2689,7 @@ export function ComposerEditorRuntime() {
     const open = () => {
       if (next === 'emoji' || next === 'stickers') setExpressionsOpened(true);
       setBuilderError('');
-      editorRef.current?.commands.blur();
+      editorRef.current?.view.dom.blur();
       sourceViewRef.current?.contentDOM.blur();
       setBuilder(next);
     };

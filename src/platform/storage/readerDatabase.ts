@@ -180,13 +180,12 @@ export async function readReaderPage(sql: ReaderSql, request: ReaderPageRequest)
             params
           )
         )?.count || 0;
-  if (request.after) {
-    where.push('(time < ? OR (time = ? AND ordinal > ?))');
-    params.push(request.after.time, request.after.time, request.after.ordinal);
-  }
+  const select = `SELECT value, time, ordinal FROM reader_records WHERE ${where.join(' AND ')}`;
+  // Disjoint ranges let SQLite seek both branches in the existing order index.
+  const query = request.after ? `${select} AND time = ? AND ordinal > ? UNION ALL ${select} AND time < ?` : select;
   const rows = await sql.getAllAsync<RecordRow>(
-    `SELECT value, time, ordinal FROM reader_records WHERE ${where.join(' AND ')} ORDER BY time DESC, ordinal ASC LIMIT 51`,
-    params
+    `${query} ORDER BY time DESC, ordinal ASC LIMIT 51`,
+    request.after ? [...params, request.after.time, request.after.ordinal, ...params, request.after.time] : params
   );
   const page = rows.slice(0, 50);
   const last = page[page.length - 1];

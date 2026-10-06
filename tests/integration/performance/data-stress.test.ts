@@ -5,7 +5,13 @@ import { join } from 'node:path';
 import type { Topic } from '@/domain/forum/models';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { sourceCatalog, sourceValues } from '@/domain/forum/sourceCatalog';
-import { createEmptyReaderData, MAX_HISTORY_RECORDS, topicKey, type ReaderData } from '@/domain/reader/readerData';
+import {
+  createEmptyReaderData,
+  MAX_HISTORY_RECORDS,
+  sanitizeReaderData,
+  topicKey,
+  type ReaderData
+} from '@/domain/reader/readerData';
 import { MAX_BACKUP_JSON_BYTES } from '@/domain/reader/readerBackup';
 import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
 import { sortNotifications } from '@/features/notifications/notificationPresentation';
@@ -134,6 +140,66 @@ afterEach(() => {
 });
 
 describe('production data stress (host SQLite timings, not Android frame or bridge timings)', () => {
+  it.each([0, 1, 49, 50, 51, 100, 1000, 5000])(
+    'preserves cursor boundaries, source/category filters and counts with %i tied records',
+    async (count) => {
+      const data = sanitizeReaderData(dataset(count));
+      for (const records of [data.history, data.favorites]) {
+        for (const record of Object.values(records)) record.savedAt = date(0);
+      }
+      for (const record of Object.values(data.followedUsers)) record.followedAt = date(0);
+      const store = await import('@/platform/storage/readerDataStore');
+      await store.loadReaderState();
+      await store.importReaderDataBackup(JSON.stringify(data));
+      const before = await store.exportReaderDataBackup();
+      for (const collection of ['history', 'favorites', 'followedUsers'] as const) {
+        for (const sources of [sourceValues, ['linuxdo', 'nodeseek'] as const, []]) {
+          const all = Object.values(data[collection]).filter((record) =>
+            sources.some((source) => source === ('topic' in record ? record.topic.source : record.user.source))
+          );
+          for (const filter of [
+            { source: 'all', category: 'all' },
+            { source: 'linuxdo', category: 'all' },
+            { source: 'all', category: 'linuxdo:1' },
+            { source: 'all', category: '分区 1' }
+          ] satisfies Pick<ReaderPageRequest, 'source' | 'category'>[]) {
+            const expected = all.filter((record) => {
+              const source = 'topic' in record ? record.topic.source : record.user.source;
+              if (filter.source !== 'all' && filter.source !== source) return false;
+              return (
+                collection === 'followedUsers' ||
+                filter.category === 'all' ||
+                ('topic' in record &&
+                  (filter.category === `${source}:${record.topic.categoryId}` ||
+                    filter.category === record.topic.category))
+              );
+            });
+            const request: ReaderPageRequest = { collection, sources: [...sources], ...filter };
+            const actual: typeof expected = [];
+            let pages = 0;
+            do {
+              const page = await store.queryReaderPage(request);
+              const offset = pages * 50;
+              expect(page.records).toEqual(expected.slice(offset, offset + 50));
+              expect(page.total).toBe(expected.length);
+              expect(page.visibleTotal).toBe(all.length);
+              if (expected.length > offset + 50) {
+                expect(page.next?.time).toBe(Date.parse(date(0)));
+                if (request.after) expect(page.next?.ordinal).toBeGreaterThan(request.after.ordinal);
+              } else expect(page.next).toBeUndefined();
+              actual.push(...page.records);
+              request.after = page.next;
+              pages++;
+              expect(pages).toBeLessThanOrEqual(Math.ceil(count / 50) + 1);
+            } while (request.after);
+            expect(actual).toEqual(expected);
+          }
+        }
+      }
+      expect(await store.exportReaderDataBackup()).toBe(before);
+    },
+    30_000
+  );
   it.each([100, 1000, MAX_HISTORY_RECORDS])(
     'preserves all three collections, stable filtered pages and backups with %i history records',
     async (count) => {
