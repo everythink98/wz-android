@@ -1,12 +1,12 @@
-# Search history icons
+# 搜索历史图标
 
-These SVG sources preserve the Lucide 1.39.0 History and X paths and the existing search row stroke widths. Their license is in `modules/forum-platform/lucide.LICENSE`.
+这些 SVG 源文件保留 Lucide 1.39.0 的 History 和 X 图标路径，以及搜索行现有的描边宽度。许可证见 `modules/forum-platform/lucide.LICENSE`。
 
-Export transparent PNGs at the SVG's declared size into `modules/forum-platform/android/src/main/res/drawable-xxxhdpi/`:
+按 SVG 声明的尺寸导出透明背景 PNG，保存到 `modules/forum-platform/android/src/main/res/drawable-xxxhdpi/`：
 
-| Source | PNG size | Display size |
+| 源文件 | PNG 尺寸 | 显示尺寸 |
 | --- | --- | --- |
-| `wz_search_history.svg` | 68 × 68 | 17dp |
-| `wz_search_close.svg` | 64 × 64 | 16dp |
+| `wz_search_history.svg` | 68 × 68 | 17 dp |
+| `wz_search_close.svg` | 64 × 64 | 16 dp |
 
-Keep the black alpha mask; `SearchHistoryIconViewManager` applies the current theme color. These resources use the Android `ImageView` directly, without an asynchronous image loader.
+保留黑色 Alpha 蒙版，由 `SearchHistoryIconViewManager` 应用当前主题颜色。这些资源直接使用 Android `ImageView`，不经过异步图片加载器。

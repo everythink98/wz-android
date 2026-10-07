@@ -8,17 +8,19 @@
 
 ## 文档职责
 
-本文件只定义测试 owner、证据层、隔离规则、授权边界和不同改动的验证强度。当前产品行为与 canonical evidence 在 `docs/product-map.md`；历史事故在 `docs/regression-corpus.md`；设备、Replay、Smoke 和发布命令在 `docs/operator-runbook.md`；真实 App 场景在 `tests/live/agent-live.md`。
+本文规定测试归属、证据层、隔离规则、授权边界和不同改动的验证强度。当前产品行为与主要验证证据见 `docs/product-map.md`；历史事故见 `docs/regression-corpus.md`；设备、Replay、Smoke 和发布命令见 `docs/operator-runbook.md`；真实 App 场景见 `tests/live/agent-live.md`。
 
-测试证明当前契约，REG 记录历史，两者不再一一绑定。测试数量、覆盖率和历史事故数量都不是目标；目标是用最少且可靠的 owner 阻止当前行为倒退。
+测试证明当前行为契约，REG 记录历史事故，两者不一一绑定。测试应以尽量少且可靠的用例阻止行为回退，不以测试数量、覆盖率或事故数量为目标。
 
 ## 一、Canonical owner 模型
 
-一个行为格由以下五项定义：
+Canonical owner 指在最低可靠层负责证明某项行为的主要测试。下文的 oracle 指判断行为是否符合预期的可观察结果或断言；production seam 指测试实际经过的生产代码接口或实现边界；wiring 指模块之间的调用和连接关系。
+
+一个行为格，也就是一项需要独立验证的行为，由以下五项定义：
 
 `capability + 前置状态 + 用户动作 + 可观察结果 + production seam`
 
-同一行为格只保留一个最低可靠层 owner。只有跨层 wiring 可以独立损坏时，才额外保留一个 wiring test；不得因为一个 Bug 曾经过多个文件，就在每层永久复制同一预期。
+同一行为格只保留一个最低可靠层的主要测试。只有跨层连接可能独立出错时，才额外保留一个连接测试；不得因为一个 Bug 涉及多个文件，就在每层永久复制同一预期。
 
 审计测试时，每个既有用例必须归入一类：
 
@@ -31,9 +33,9 @@
 | `FIX_ISOLATION` | 共享 mock、cache、timer、DOM、module 或异步任务污染其他用例。 |
 | `OPEN_BUG` | 当前产品确有缺陷；只保留最小 expected-failure，不修改未授权产品行为。 |
 
-同一行为格出现不同预期时，按“用户最新要求 → 当前运行事实 → product map → 历史事故”裁决。仍不能裁决则在 corpus 标记 `EVIDENCE_GAP`，不得让两套相反预期同时通过。
+同一行为格出现不同预期时，按「用户最新要求 → 当前运行事实 → product map → 历史事故」裁决。仍不能裁决则在 corpus 标记 `EVIDENCE_GAP`，不得让两套相反预期同时通过。
 
-删除或合并高风险 owner 前做一次临时负向控制：破坏其 production seam 后，canonical test 必须转红；若仍为绿，先补强 owner。负向控制只用于证明测试灵敏度，不进入长期产品代码。
+删除或合并高风险测试前，先做一次临时负向控制：故意破坏对应的生产实现，确认主要测试失败。测试若仍通过，必须先补强断言。负向控制只用于证明测试能识别缺陷，不进入长期产品代码。
 
 账号 fixture 经真实 observation → Account snapshot → view model 投影，合法登录显式提供用户身份，不用测试工厂放行未知身份。选择 wiring 由 `tests/ui/topic/topic-rich-text-selection.test.tsx` 挂载真实 `TopicContentList → TopicSelectionSurface → TopicContentBlock`，保留该业务链，仅隔离平台与昂贵第三方边界；全树 marker 必须与 manifest 一一相等，并检查实际代码文字的 selectable。查询清理归 integration owner，Callout 初始化归真实 `forum-callout` UI owner；bootstrap 检查执行调用顺序，缺失或颠倒初始化都必须失败。
 
@@ -45,7 +47,11 @@ Native tooling owner `tests/tooling/native-test-plan.test.ts` 维护路径到既
 
 ## 二、证据层
 
-Composer 的 Mock 成功结算不等于原生面板关闭。UI owner 必须从生产发送按钮经过 snapshot、校验、controller/gateway、响应确认和草稿结算；只能在 HTTP/adapter 边界注入结果，不直接调用 `completeSubmission()`。WebView mock 按 INIT/documentEpoch、READY、REQUEST_SNAPSHOT 和 SNAPSHOT 协议工作，初始模式存储与受控 Promise 按用例隔离。BottomSheet mock 隐藏时仍保留子组件，不能用卸载替代生产的关闭动画；关闭从真实按钮触发，不能把动画 onClose 当成用户手势。RNTL 的动画 mock 不能证明实际几何：必须由带新 token、匹配源码/APK/buildId 的 Android replay 另外检查面板与可见屏幕无交集、遮罩消失、底层可点击、重开为空，以及包含生产根布局/状态栏的全屏背景与内部 Insets。立即/延迟成功、失败保稿、未确认、刷新失败、防重、快照超时/迟到、换主题/账号/会话、根 Portal 随路由隐藏分别取证；真实系统 IME、WebView、Insets 和物理设备边界独立报告。
+Composer 的 Mock 成功结算不等于原生面板关闭。UI owner 必须从生产发送按钮经过 snapshot、校验、controller/gateway、响应确认和草稿结算；只能在 HTTP/adapter 边界注入结果，不直接调用 `completeSubmission()`。
+
+WebView mock 按 INIT/documentEpoch、READY、REQUEST_SNAPSHOT 和 SNAPSHOT 协议工作，初始模式存储与受控 Promise 按用例隔离。BottomSheet mock 隐藏时仍保留子组件，不能用卸载替代生产的关闭动画；关闭从真实按钮触发，不能把动画 onClose 当成用户手势。
+
+RNTL 的动画 mock 不能证明实际几何：必须由带新 token、匹配源码/APK/buildId 的 Android replay 另外检查面板与可见屏幕无交集、遮罩消失、底层可点击、重开为空，以及包含生产根布局/状态栏的全屏背景与内部 Insets。立即/延迟成功、失败保稿、未确认、刷新失败、防重、快照超时/迟到、换主题/账号/会话、根 Portal 随路由隐藏分别取证；真实系统 IME、WebView、Insets 和物理设备边界独立报告。
 
 | 证据 | 只证明 |
 | --- | --- |
@@ -58,7 +64,7 @@ Composer 的 Mock 成功结算不等于原生面板关闭。UI owner 必须从�
 | `NOT_VERIFIED` | 当前证据不足，不推断成功或失败。 |
 | `BLOCKED_BY_ENV` | 被签名、设备、来源或登录态阻碍，且不能安全改变环境。 |
 
-按“最低但可靠”选择证据：纯数据和确定性协议优先 Vitest；必须经过 React state、布局投影或用户交互才可观察的行为使用 RNTL；真实 Android 生命周期、登录态、WebView、原站动态数据或原生手势才进入设备/Live。源码字符串、App 能启动、snapshot 或 mock 调用本身不能替代用户可见 oracle。
+选择能够可靠证明目标行为的最低证据层。纯数据和确定性协议优先使用 Vitest；必须经过 React 状态、布局投影或用户交互才能观察的行为使用 RNTL；真实 Android 生命周期、登录态、WebView、原站动态数据或原生手势使用设备或 Live 验收。源码字符串、App 启动、快照或 mock 调用本身不能替代用户可观察结果的断言。
 
 Vitest 默认使用 Node 环境；真正执行编辑器 DOM 或 WebView 注入脚本的文件通过 `@vitest-environment jsdom` 单独声明浏览器环境。Library 排序/筛选由真实 SQLite store 与 Route 查询接线证明，不能用测试自建的内存筛选页面或已无生产调用的 helper 替代；版本与 Gradle 配置分别执行实际 CLI 和 Expo mod，不以源码包含某个常量作为成功条件。
 
@@ -88,13 +94,13 @@ Topic 内容守恒由共享 compiler 的 Vitest 契约拥有：同一 fixture �
 
 Android 主楼正文连续选择的 canonical evidence 分三层且互不替代：compiler Vitest 固定 UTF-16 logical tape、table row-major、媒体标签和 revision/recycle 逻辑，其中 block/inline 公式以原始 TeX 进入 version 1 media tape，block 保留 boundary，inline 对应 `ReplacementSpan` 插入点，`forum-inline-media-line` 保持段落边界；RNTL 固定横向 Pan 只阻塞后代内容 Native gesture，且仅在确认横向接管后调用 route 级原生选择 owner 既有的 `cancelSelection`，纵向让行不得调用取消；同时固定 manifest 直接来自 visible opening collection，只有这些 opening row 根 View 获得 marker，全部 opening renderer 为 `selectable=false`，并让一个主楼逻辑 document 跨 `richText → heading → table → emoji/sticker → code → trailing text`，当前显示的展开引用/details、签名和 terminal Tab 进入该 document，回复、评论与已采纳答案零 marker 且原有整条长按复制可用。Native JVM 与独立 AVD instrumentation 固定 marker 是唯一 selection 身份，`isTextSelectable`、`isLaidOut` 或全 mounted window owner/fingerprint 完整匹配都不是入口门槛；Layout 只用于当前端点和 mounted `TextView` 的视觉投影，每个可见高亮由对应 `TextView.overlay` 持有，两个端点由同一 ViewRoot 内的列表 viewport overlay 或 fallback `TopicSelectionSurface.overlay` 持有平台 handle wrapper，瞬态映射缺失只跳过当前帧而不取消逻辑选区。TextView/marked-row host 的遮挡 falsifier 必须固定：零底部余量与相邻 row 仍能完整显示行底以下的手柄主体，且 production surface 不依赖关闭 `clipChildren/clipToPadding`。instrumentation 还必须固定无 row-wide double-tap detector/`TextView` long-click patch、普通链接 tap 不被吞、正反向手柄、静止长按唯一入口、双击零原生局部选区、活动选区上静止短按取消但越过选择意图阈值的滚动保留、跨三个 viewport、至少一次 cell recycle、自动滚动和剪贴板顺序；公式 `ReplacementSpan` 的复制顺序必须与 tape 一致，公式 fallback 保持 `selectable=false`，不得形成第二个选择 owner；多行、软换行、LTR/RTL 和 `TextView` 内部 scroll 场景必须证明 start/end 方向、`getLineBottom(line, false)`、primary/secondary horizontal 及平台 1/4、3/4 hotspot 规则，手柄主体不得进入端点字形行，触控目标至少 `48dp`，按下后的细微移动不得让端点跳到手指中心，且手柄拖动始终无放大镜。主要 draw-time oracle 使用生产等价的 `ScrollView + absolute cells`，包含多个 `TextView`、嵌套横向 scroller 与 inline `ReplacementSpan`；纵向或横向 offset 在 coordinator pre-draw 后的同一次 draw 内正反向改变时，TextView-local 高亮与 viewport/surface handle wrapper 必须各自以 `<=2px` 误差出现在当前文字 Path/caret，wrapper 必须在 draw 时读取 source/host 屏幕位置、host scroll 与 source scroll，不能消费缓存的最终 screen 坐标；旧位置至多残留 `2` 个差异像素，取消后实际 host 的 drawable 消失且全部文字 bounds/baseline 不变。端点 owner 仍 mounted 但离开 viewport 时还必须证明 route 命中点消失而 wrapper 不解绑；不经过新 pre-draw 把该 source 移回可见区的同一次 draw 必须立即同时绘出文字与手柄。JVM 必须固定重复选择为 no-op；Android 27+ instrumentation 必须证明只有逻辑端点实际变化才请求 `TEXT_HANDLE_MOVE`，重复 motion、自动滚动但端点未变和程序重绑均不请求。真实 RecyclerView proof 只辅助固定 cell recycle/rebind 后逻辑选区、手柄、复制顺序和视觉投影恢复，不再作为同帧时序的主要证明；源码字符串、mock scroll call 或 mounted owner 计数不能替代这些 oracle。模拟器事件日志只证明触感请求，实际手感与系统关闭触感后的静默必须在物理设备验证，缺少物理设备时记 `NOT_VERIFIED`。compiler 为其他 role 生成 tape 只是内容协议证据，不授权 UI marker 或回复 document。
 
-ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Select all 并把可执行 Copy 留在一级菜单，端点缩回后 Select all 恢复；oracle 不得依赖系统是否提供浮动菜单返回箭头，也不得用菜单阶段状态机代替从逻辑范围直接派生。平台动作另以可控 Android seam 固定三类来源及顺序：首个 enabled classifier action、Copy、Share、Select all、其余 classifier actions、`PROCESS_TEXT` 依次使用 order 0/5/7/8/50+/100+，其中首个 classifier action 和 Copy 为 always，Share/Select all/`PROCESS_TEXT` 为 if-room，其余 classifier actions 为 overflow。标准 Share 必须验证 `ACTION_SEND`、`text/plain`、`EXTRA_TEXT` 与 chooser；超长选区按 100,000 UTF-16 字符 parcel-safe 裁剪且不劈 surrogate，成功 launch 结束选区，`ActivityNotFoundException`/`SecurityException` 保留选区。API 23+ `ACTION_PROCESS_TEXT` 必须按当前 query 结果和 AOSP same-package/exported/permission 规则生成显式 Component，验证 Manifest `<queries>`、resolver label、只读 extra 与点击时的当前 canonical 文本，不能断言设备一定存在“翻译”。classifier seam 必须分别证明 API 24–25 零 classifier 动作；API 26–27 fake legacy classification 只产生一个一级动作并复用 label/icon，点击优先调用 onClick listener、缺失时才启动 intent；API 28+ fake TextClassifier classification 不在主线程、只接收选区纯文本、首个/次级 enabled `RemoteAction` 排序正确。API 26+ 都必须证明选择变化、取消、destroy 或 generation 过期后不回填，点击只执行仍匹配 snapshot 的 legacy callback/intent 或 `PendingIntent`。测试还必须覆盖无 handler、重复 Component/PendingIntent identity、相同标题但不同身份、query/classifier/launch/send 失败；失败不得移除 Copy/Select all 或崩溃。Intent/classifier capture 还必须断言未携带 Cookie、凭据、来源 URL、HTML、marker、manifest、logical tape 或布局诊断；不以 JS mock、硬编码 Translate/第三方 Share 或真实外部数据披露代替该 owner。
+ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Select all 并把可执行 Copy 留在一级菜单，端点缩回后 Select all 恢复；oracle 不得依赖系统是否提供浮动菜单返回箭头，也不得用菜单阶段状态机代替从逻辑范围直接派生。平台动作另以可控 Android seam 固定三类来源及顺序：首个 enabled classifier action、Copy、Share、Select all、其余 classifier actions、`PROCESS_TEXT` 依次使用 order 0/5/7/8/50+/100+，其中首个 classifier action 和 Copy 为 always，Share/Select all/`PROCESS_TEXT` 为 if-room，其余 classifier actions 为 overflow。标准 Share 必须验证 `ACTION_SEND`、`text/plain`、`EXTRA_TEXT` 与 chooser；超长选区按 100,000 UTF-16 字符 parcel-safe 裁剪且不劈 surrogate，成功 launch 结束选区，`ActivityNotFoundException`/`SecurityException` 保留选区。API 23+ `ACTION_PROCESS_TEXT` 必须按当前 query 结果和 AOSP same-package/exported/permission 规则生成显式 Component，验证 Manifest `<queries>`、resolver label、只读 extra 与点击时的当前 canonical 文本，不能断言设备一定存在「翻译」。classifier seam 必须分别证明 API 24–25 零 classifier 动作；API 26–27 fake legacy classification 只产生一个一级动作并复用 label/icon，点击优先调用 onClick listener、缺失时才启动 intent；API 28+ fake TextClassifier classification 不在主线程、只接收选区纯文本、首个/次级 enabled `RemoteAction` 排序正确。API 26+ 都必须证明选择变化、取消、destroy 或 generation 过期后不回填，点击只执行仍匹配 snapshot 的 legacy callback/intent 或 `PendingIntent`。测试还必须覆盖无 handler、重复 Component/PendingIntent identity、相同标题但不同身份、query/classifier/launch/send 失败；失败不得移除 Copy/Select all 或崩溃。Intent/classifier capture 还必须断言未携带 Cookie、凭据、来源 URL、HTML、marker、manifest、logical tape 或布局诊断；不以 JS mock、硬编码 Translate/第三方 Share 或真实外部数据披露代替该 owner。
 
 ### 发布版事后诊断
 
 `MORE-02` 按可独立损坏的边界选择 owner：`src/platform/diagnostics/diagnostics.test.ts` 验证真实 schema、脱敏、Hermes 坐标、并发/复制 RequestInit 关联；gateway 与 `src/sources/forumSourceReadAttempt.test.ts` 验证真实 fallback/恢复门禁、证据结算和终态。不能只断言写入函数被调用；要读取序列化事件，确认阶段和值没有被变成 unknown/redacted、没有丢失关联，也没有泄露 fixture secret。
 
-`src/platform/diagnostics/diagnosticFileStore.test.ts` 负责导出窗口、原 build/process 身份、超过旧 512 条 ring 的持久事件、损坏行、各来源覆盖状态/首尾时间、不可用/超时通道与临时分享文件清理；必须固定单个在写 batch、合并待写事件及合计 128 KiB 上限；超时只记录健康错误，底层调用未结算时不得启动下一批，导出仍按五秒 deadline 返回，并证明致命摘要保存尚未批量落盘的最后 JS 阶段。`src/platform/diagnostics/diagnosticRuntime.test.ts` 负责 RN listener、legacy ExceptionsManager/ErrorUtils 委派、重复安装和发布版 Promise 观察。模块内 `DiagnosticLogStoreTest` 用实际文件证明分段容量、过期、重启读取、健康计数跨进程保存和写失败；过期淘汰、读取失败和崩溃读取失败分别报告。`NetworkProxyRuntimeTest` 用真实 OkHttp/受控服务证明同一 session/trace 下多个 request 的关联与所有内部 header 出网前消失。mock Native module 不能证明真实进程退出后的存活，Native 致命路径最多等待 250ms flush 仍需隔离真实进程证据。
+`src/platform/diagnostics/diagnosticFileStore.test.ts` 负责导出窗口、原 build/process 身份、超过旧 512 条 ring 的持久事件、损坏行、各来源覆盖状态/首尾时间、不可用/超时通道与临时分享文件清理；必须固定单个在写 batch、合并待写事件及合计 128 KiB 上限；超时只记录健康错误，底层调用未结算时不得启动下一批，导出仍按五秒 deadline 返回，并证明致命摘要保存尚未批量落盘的最后 JS 阶段。`src/platform/diagnostics/diagnosticRuntime.test.ts` 负责 RN listener、legacy ExceptionsManager/ErrorUtils 委派、重复安装和发布版 Promise 观察。模块内 `DiagnosticLogStoreTest` 用实际文件证明分段容量、过期、重启读取、健康计数跨进程保存和写失败；过期淘汰、读取失败和崩溃读取失败分别报告。`NetworkProxyRuntimeTest` 用真实 OkHttp/受控服务证明同一 session/trace 下多个 request 的关联与所有内部 header 出网前消失。mock Native module 不能证明真实进程退出后的存活，Native 致命路径最多等待 250 ms flush 仍需隔离真实进程证据。
 
 `tests/tooling/diagnostic-symbols.test.ts` 固定 bootstrap 顺序、构建身份、exact source map/R8/APK 归档校验及 Hermes/RN parsed 坐标约定；Native 使用 SDK 官方 Retrace 的小型 fixture 验证类名、源码行、内联帧和错误 mapping 拒绝，CLI 另验证混合 build 只还原目标并准确报告跳过计数。真实 Retrace fixture 形成 tooling `UNIT_PASS`，对应源码文本检查只证明生成结构。`scripts/run-diagnostic-device-proof.mjs` 在唯一隔离 `WZ_ImageRuntime_Test_API35` 验证发布模式 Hermes 的 JS、renderer、Promise 和 Native 故障后重启读取、脱敏、前一进程归属及匹配 source map 还原。该 proof 使用开发签名、保留 R8/minify/resource shrink 和独立随机 buildId 的隔离构建，必须与恢复正常入口 APK 的 buildId 分离，并归档该 APK 实际生成的 source map/mapping；Java 栈用这份 mapping 经 SDK Retrace 还原。先前未混淆 proof 与 SDK fixture 的通过不能代表这条设备链；proof 仍不代替正式签名 APK、系统分享 UI、真实 ANR 或 OOM，故障注入不得在保留登录态设备运行。只有实际执行并取得相应产物才报告通过，未运行分支记 `NOT_VERIFIED`，缺少隔离环境记 `BLOCKED_BY_ENV`。
 
@@ -118,11 +124,11 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 
 ## 三、测试设计
 
-- 标题描述当前行为，不写 `[REG-*]`、修复过程、实现函数名或“should work”。
+- 标题描述当前行为，不写 `[REG-*]`、修复过程、实现函数名或「should work」。
 - 通过 public interface、可访问文案、role/label、稳定 `testID`、持久化结果或请求契约断言；除非内部 seam 本身就是安全、协议或性能合同，不读取私有状态。
 - mock 只放在真实外部边界：网络、时间、随机数、文件系统、平台 API 和昂贵第三方组件。不要 mock 被测业务函数，也不要复制 production 算法计算 expected value。
 - call count、精确样式、对象 identity 和时序只有在 single-flight、安全、无障碍、用户可见布局或协议本身要求时才是合同。
-- 一个测试只拥有一个主要失败原因；参数化适合相同状态机的等价输入，不用一个 300 行场景绑定多个无关行为。
+- 一个测试只验证一个主要失败原因。相同状态机的等价输入适合参数化，不用一个 300 行场景绑定多个无关行为。
 - 异步更新必须在测试生命周期内等待完成或显式取消；React 更新使用 `act`/`waitFor`，不得屏蔽 warning。fake timer、mock 实现、module cache、DOM/React root 和全局变量在每例结束后恢复。
 - 普通用例的数据 identity 默认逐测试唯一；只有验证缓存复用、single-flight 或同会话连续行为时才显式共享。不得为测试向 production 暴露 reset API。
 - 测试 fixture 使用最小语义数据，但必须保留被测边界需要的合法身份、权限、生命周期和错误形状；不要用类型断言掩盖无效 fixture。
@@ -131,7 +137,7 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 
 楼层导航的 canonical oracle 必须经过真实编译与 renderer 点击：普通 mention 进入 User，V2EX 明确楼层携带作者约束，代码/数学/已有链接和解析 fallback 不信任伪造内部属性。adapter 测同 ID 冲突不被去重掩盖，包括初始/cursor 的已加载捷径：正文可读但带冲突标记的回复不能精确定位，完全一致重复仍去重；作者与楼层反例分别只改变一个字段。controller 测未加载目标的错误作者、重复楼层、缺失与迟到结果不替换窗口，已加载可信目标零请求；列表测 NodeSeek 本人权限投影克隆后仍能定位。其他 adapter 已确认 partial target 的原契约保留，不能为统一谓词改写既有测试预期。
 
-双向续读不能只检查 `maintainVisibleContentPosition` 配置值：`topic-reply-filters` 使用实际安装的 FlashList recycler controller，按线性非重叠布局、offset 与 viewport 派生实际可见范围，证明控制行与回复同屏时的最后一次前插、新插入行自身晚测高及多轮异步高度变化均保持内容的屏幕坐标。覆盖原生像素取整、超过旧 100ms 窗口的迟到确认、拖动打断惯性、过期结束事件、显式/动画/零距离命令、底部 padding 与数据行上界不同；真实滚动接管后不能继续维护旧内容。正文优先、仅控制行可见时清旧锚点、默认选择策略与有界候选读取仍保留，不能直接让 mock 返回预设锚点。匹配 APK 的设备另测四站正/倒序、主动定位、上下续读及失败重试，记录同一回复坐标；JS hook 与桌面工作量证明不冒充设备像素或帧率证据。返回边界由 `app-navigator` 与真实 `TopicSelectionSurface` 分别证明优先级、旧 revision、停用/重建与正文零额外提交；Native instrumentation 证明活动事件只报告所属 document 且重复取消不重复发事件。宽度由实际 ancestor→HTML/code consumer 证明，不在 mock 中复算期待布局。共享 NS/linux.do 表情用真实 Runtime DOM 触发失败、重试、旧回调和重新进入，核对零误插入、成功节点与滚动位置保留。
+双向续读不能只检查 `maintainVisibleContentPosition` 配置值：`topic-reply-filters` 使用实际安装的 FlashList recycler controller，按线性非重叠布局、offset 与 viewport 派生实际可见范围，证明控制行与回复同屏时的最后一次前插、新插入行自身晚测高及多轮异步高度变化均保持内容的屏幕坐标。覆盖原生像素取整、超过旧 100 ms 窗口的迟到确认、拖动打断惯性、过期结束事件、显式/动画/零距离命令、底部 padding 与数据行上界不同；真实滚动接管后不能继续维护旧内容。正文优先、仅控制行可见时清旧锚点、默认选择策略与有界候选读取仍保留，不能直接让 mock 返回预设锚点。匹配 APK 的设备另测四站正/倒序、主动定位、上下续读及失败重试，记录同一回复坐标；JS hook 与桌面工作量证明不冒充设备像素或帧率证据。返回边界由 `app-navigator` 与真实 `TopicSelectionSurface` 分别证明优先级、旧 revision、停用/重建与正文零额外提交；Native instrumentation 证明活动事件只报告所属 document 且重复取消不重复发事件。宽度由实际 ancestor→HTML/code consumer 证明，不在 mock 中复算期待布局。共享 NS/linux.do 表情用真实 Runtime DOM 触发失败、重试、旧回调和重新进入，核对零误插入、成功节点与滚动位置保留。
 
 自动续读独立于按钮测试：四站分别覆盖正/倒序的拖动、上一窗口预取、下端触边、重复 viewability 与同手势不重复请求，静置不凭空发起加载；还要先让主动定位消费一次下端通知，再仅发送真实拖动事件，证明无需新的触边回调仍能续读。设备必须实际执行不点按钮的上下滑动。楼层定位与排序后定位使用真实 Topic 产生的命令进入实际 FlashList controller，断言短行→暖态超高回复的 header 在 viewport 内，并覆盖首次布局未就绪、最终命令后晚测高、布局提交与 Native 确认的两种先后次序，不能仅检查 `viewPosition` 常量。异步投影必须真正排队到下一次 layout commit，验证新命令/拖动取消旧回调、惯性不能抢占，以及目标 key 移位/删除；同步 no-op manager 不替代这组 oracle。
 
@@ -143,11 +149,11 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 
 纯算法优化必须以固定输入对照原输出，包括顺序、重复项、权限、错误和删除保护；已授权的 Bug 修正单列，不能伪称等价。随机差分需保存 seed 与输入范围，不宣称穷尽证明。Search 覆盖较新/较旧预览都不截断已有分页，以及首屏重复项的权限合并；User 两 lane 必须并发并分别先完成，不能用顺序请求代替。通知调度组合 owner 运行真实 worker/store，只 mock 外部读取与 Native acknowledgement，证明两来源慢投递期间的重复触发有界合并，未读总数相同但消息 ID 替换仍会投递。NS 内容 owner 使用不同主楼/回复全文，覆盖空/部分/完整终端的 bridge/rendered 链路、两侧身份歧义与块数量不符；无源码的无 class xterm 行也须保持完整文本、ANSI 和邻接内容。
 
-原生媒体循环由 `dev/media-pressure-proof` 与 `scripts/run-media-pressure-device-proof.mjs` 取证：本地合成音视频经过生产组件、共享播放器与 Native 解码；全屏首个 ownership 事件后立即回收内联行，必须仍能打开实际全屏 Activity、保持独立 player 并正常退出释放。首个事件不等于 Activity 已展示，须同时取得真实全屏控件和后续 Native 回执。fixture 保留生产页面的全屏播放例外；回收后持有至少 600ms，起点须真实播放，同一 Native player 的位置前进至少 0.3 秒，并人工核对持有前后两张全屏图。退出生命周期允许正常暂停，不以退出事件时 playing=false 判失败。独立 Activity 暂停 RN timer 时，fixture 由 Native 事件和 React 提交唤醒，不用固定延时躲开回收竞态。系统 HOME 与恢复须由设备操作发生；播放器释放调用和 JS 注册归零只证明相应生命周期，不能替代 native heap、实际音频输出或每帧连续性证据。命令、构建和设备隔离见 operator runbook。
+原生媒体循环由 `dev/media-pressure-proof` 与 `scripts/run-media-pressure-device-proof.mjs` 取证：本地合成音视频经过生产组件、共享播放器与 Native 解码；全屏首个 ownership 事件后立即回收内联行，必须仍能打开实际全屏 Activity、保持独立 player 并正常退出释放。首个事件不等于 Activity 已展示，须同时取得真实全屏控件和后续 Native 回执。fixture 保留生产页面的全屏播放例外；回收后持有至少 600 ms，起点须真实播放，同一 Native player 的位置前进至少 0.3 秒，并人工核对持有前后两张全屏图。退出生命周期允许正常暂停，不以退出事件时 playing=false 判失败。独立 Activity 暂停 RN timer 时，fixture 由 Native 事件和 React 提交唤醒，不用固定延时躲开回收竞态。系统 HOME 与恢复须由设备操作发生；播放器释放调用和 JS 注册归零只证明相应生命周期，不能替代 native heap、实际音频输出或每帧连续性证据。命令、构建和设备隔离见 operator runbook。
 
 ## 四、随机顺序与可重放性
 
-`npm test` 使用 Vitest shuffled sequence；`npm run test:ui` 使用 Jest randomize 并输出 seed；`npm run verify` 自然继承两者。随机顺序是常规隔离门禁，不再称为“确定性门禁”。
+`npm test` 使用 Vitest shuffled sequence；`npm run test:ui` 使用 Jest randomize 并输出 seed；`npm run verify` 自然继承两者。随机顺序是常规隔离门禁，不再称为「确定性门禁」。
 
 失败时先复制输出 seed 重放同一文件或套件：Vitest 使用 `--sequence.shuffle --sequence.seed=<seed>`，Jest 使用 `--randomize --seed=<seed> --showSeed`。固定 seed 转绿后还必须运行一次默认随机 seed；只在固定顺序通过不能证明隔离完成。
 
@@ -201,7 +207,7 @@ Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证
 
 私信图片 proof fixture 的凭据与 HTTP 隔离由 `tests/ui/notifications/notifications-route.test.tsx` 沿真实 `MessageSubmissionFixture → NotificationDetailRoute` 验证：使用合成 NodeImage key，实际进入 picker，再由现有隔离 transport mock 上传并插入草稿；取消保留草稿，真实网络及私信发送均为零。因 fixture 缺少凭据而在 picker 前退出的录像不能计为选择器去返程通过；该 UI oracle 也不替代匹配 APK 的实际选择器和像素验收。
 
-共享原生键盘交接由 `tests/native/ComposerKeyboardHostTest.kt` 验证：在真实 attached RN 容器和焦点子输入框上，驱动平台 Insets 控制回调，核对完整 Back 按键对、重复 Back 不重开 IME、当前 Insets 起点、控制完成回执、请求取消、焦点与窗口归属、disable/detach、零动画缩放及旧 Android 回退。该 owner 另固定 API 30+ Modal 本地 Insets：prepare 后的目标隐藏布局不得提前发布零高度，progress 与最后一个动画结束按实际高度更新；使用真实 root/Host 屏幕矩形扣除已完成的布局避让；普通 Host、关闭跟踪、禁用及 detach 不继续发送逐帧值，旧 API 不启用此事件。`tests/ui/topic/composer-keyboard-host.test.tsx` 拥有命令/回执、Abort 接线，以及本地 native event → UI worklet padding、提前 `keyboardDidHide` 不清 padding 或重挂输入、API 30 以下 KAV 回退；`tests/ui/topic/composer-keyboard-handoff.test.tsx` 拥有原生成功后才开始现有两帧 viewport 等待及后台/超时取消。`src/ui/composer/editorRuntime.test.ts` 用实际 MutationObserver 与 DOM Selection 写入观测，验证富文本/源码先保留不可见且可映射的上传锚点；交接前的图片请求动作只允许当前编辑根节点的 `virtualkeyboardpolicy` 属性变化，不改内容或 DOM Selection，不提前调用 focus/blur。原生 toolbar-action 经异步 Bridge 进入上传 owner，临时 manual 在 runtime 发送宿主请求前生效。激活时 blur 仍处于 manual，随后恢复原策略、安装占位并 ACK。源码通过 CodeMirror 的公开 contentAttributes 随事务持有该属性，不能放宽 DOM oracle 来容纳直接属性写入引发的额外 style 变更。取消保留正文/选区，原属性缺失或显式值均原样恢复；finish、INIT、DESTROY、unmount 释放策略，旧 id/epoch 回执不能激活新请求或恢复它的策略，直接 visible begin 不创建手势策略。`tests/ui/topic/structured-reply-composer.test.tsx` 拥有原生交接、激活 ACK、picker 的顺序，以及错误或迟到 ACK、超时清理和两个等待阶段的文档/生命周期失效；还须覆盖关闭、只读、忙碌及回复/新帖后台状态短暂变化后恢复同 intent/epoch，旧交接仍作废且新请求可成功。已启动 picker 的正常后台/上传忙碌须保留合法结果，Topic 的后台监听不接管草稿 snapshot owner。设备另核系统 Back 已收键盘但 DOM 仍有焦点时点图片，不以已由前次 picker blur 的无键盘样本代替；同时核实际系统手势 Back、原生标题、独立 Modal 窗口和快速重开。Modal 须分别核说明输入 Back 与选文件的完整去程，不能用 picker 返程保留内容证明面板未在 IME 退完前落底。这些 DOM/UI oracle 证明应用交接顺序，fake controller 的测试通过不能证明键盘 Surface 保留或 OEM 回退行为。
+共享原生键盘交接由 `tests/native/ComposerKeyboardHostTest.kt` 验证：在真实 attached RN 容器和焦点子输入框上，驱动平台 Insets 控制回调，核对完整 Back 按键对、重复 Back 不重开 IME、当前 Insets 起点、控制完成回执、请求取消、焦点与窗口归属、disable/detach、零动画缩放及旧 Android 回退。该 owner 另固定 API 30+ Modal 本地 Insets：prepare 后的目标隐藏布局不得提前发布零高度，progress 与最后一个动画结束按实际高度更新；使用真实 root/Host 屏幕矩形扣除已完成的布局避让；普通 Host、关闭跟踪、禁用及 detach 不继续发送逐帧值，旧 API 不启用此事件。`tests/ui/topic/composer-keyboard-host.test.tsx` 拥有命令/回执、Abort 接线，以及本地 native event → UI worklet padding、提前 `keyboardDidHide` 不清 padding 或重挂输入、API 30 以下 KAV 回退；`tests/ui/topic/composer-keyboard-handoff.test.tsx` 拥有原生成功后才开始现有两帧 viewport 等待及后台/超时取消。`src/ui/composer/editorRuntime.test.ts` 用实际 MutationObserver 与 DOM Selection 写入观测，验证富文本/源码先保留不可见且可映射的上传锚点；交接前的图片请求动作只允许当前编辑根节点的 `virtualkeyboardpolicy` 属性变化，不改内容或 DOM Selection，不提前调用 focus/blur。原生 toolbar-action 经异步 Bridge 进入上传 owner，临时 manual 在 runtime 发送宿主请求前生效。激活时 blur 仍处于 manual，随后恢复原策略、安装占位并 ACK。源码通过 CodeMirror 的公开 contentAttributes 随事务持有该属性，不能放宽 DOM oracle 来容纳直接属性写入引发的额外 style 变更。取消保留正文/选区，原属性缺失或显式值均原样恢复；finish、INIT、DESTROY、unmount 释放策略，旧 `id/epoch` 回执不能激活新请求或恢复它的策略，直接 visible begin 不创建手势策略。`tests/ui/topic/structured-reply-composer.test.tsx` 拥有原生交接、激活 ACK、picker 的顺序，以及错误或迟到 ACK、超时清理和两个等待阶段的文档/生命周期失效；还须覆盖关闭、只读、忙碌及回复/新帖后台状态短暂变化后恢复同 intent/epoch，旧交接仍作废且新请求可成功。已启动 picker 的正常后台/上传忙碌须保留合法结果，Topic 的后台监听不接管草稿 snapshot owner。设备另核系统 Back 已收键盘但 DOM 仍有焦点时点图片，不以已由前次 picker blur 的无键盘样本代替；同时核实际系统手势 Back、原生标题、独立 Modal 窗口和快速重开。Modal 须分别核说明输入 Back 与选文件的完整去程，不能用 picker 返程保留内容证明面板未在 IME 退完前落底。这些 DOM/UI oracle 证明应用交接顺序，fake controller 的测试通过不能证明键盘 Surface 保留或 OEM 回退行为。
 
 编辑器返回预热的 canonical owner 为 `tests/native/ComposerWebViewPrewarmTest.kt`：在真实 Activity 内、具有有效尺寸的实际 `RNCWebView` 上驱动窗口生命周期，只控制硬件层构建及 visual callback 的完成；覆盖默认关闭、首次可见、返回等待、关闭开关、再次隐藏、detach/destroy、迟到回调、失败释放、原 layer 恢复，以及真实 `ReactViewGroup` 下 GONE 祖先和整个屏幕外 translate 后回屏的可见范围。实际 GPU 资源重建、alpha 或其他视图遮挡不在这些 Robolectric 证据范围。`tests/ui/topic/structured-reply-composer.test.tsx` 固定编辑器恒定 opt-in，即使 `visible=false` 仍保留身份标记；`tests/tooling/native-test-plan.test.ts` 固定 native 报告 owner 和受影响编辑器的任务路由。同一有效 harness 的原行为 red 与修后 green 必须分开留存。设备须用最终无探针构建分别验证 Photos/Browse、有/无实际停靠键盘、取消/成功的八条路径，并独立检查 Topic 附件面板下仍可见的正文与私信入口；分别报告去程与返程，最终视觉验收不与构建或测试并行。返回无白帧不能覆盖收键盘末端的灰色间距，生命周期测试不能替代逐帧绘制或真机证据。
 
@@ -218,7 +224,7 @@ Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证
 - 测试治理任务的前后文件数、实际用例数、测试 LOC、同 seed 时长，以及六类处置数量；
 - 本任务进程与 scratch 是否回到基线。
 
-不使用覆盖率、mutation、LOC、测试数量或文档长度作为门禁。只有测试证明不了关键行为时才增加工具，不为“治理”创建新的长期框架。
+不使用覆盖率、mutation、LOC、测试数量或文档长度作为门禁。只有测试证明不了关键行为时才增加工具，不为「治理」创建新的长期框架。
 
 
 ### 设备 proof 与视觉结果结算
@@ -227,11 +233,11 @@ Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证
 
 `tests/tooling/review-proof-checkpoint.test.ts` 是隔离备份/恢复的唯一 tooling owner。runner 在固定隔离 AVD 取得 OS 排他租约，安装后再次停止 App，备份 Reader、AsyncStorage 与 WAL/SHM 的六个固定文件；校验隔离 owner、安装身份、存在性、字节哈希及独立 SQLite 逻辑内容。业务失败、回放失败、超时或 App 中断仍由 runner 恢复，业务与恢复分别记录，双方通过才整体通过。旧 `running` 必须阻断新运行；只有 `restoring` 且当前文件匹配已记录的原始或待恢复哈希、安装身份一致时才允许显式续接。App 不以固定等待后自行还原作为完成证明。
 
-无效导入必须是合法 JSON 的错误版本，回放观察生产代码实际发出的格式不兼容提示；proof 壳只把该短 Toast 留存为可观察文本，结束断言还要求该回调恰好一次。取消文件选择或漏掉回调不能通过。通知 proof 的计数称为“对账请求次数”，实际摘要读取与持久化仍归既有 runtime owner。
+无效导入必须是合法 JSON 的错误版本，回放观察生产代码实际发出的格式不兼容提示；proof 壳只把该短 Toast 留存为可观察文本，结束断言还要求该回调恰好一次。取消文件选择或漏掉回调不能通过。通知 proof 的计数称为「对账请求次数」，实际摘要读取与持久化仍归既有 runtime owner。
 
-视觉 catalog 测试独自比较实际能力集合与 product map 的非 RELEASE 集合，另保留场景 ID 唯一、分类及双主题挂载。静态守卫扫描视觉目录全部非测试运行源码及 helper；它只是直接 I/O 守卫，不能宣称完整网络隔离。`NativeModules` 测试必须恢复原属性描述符，原来不存在则删除。图片尺寸、顺序与预览仍由原 owner 证明，不保留只重复编译同一输入的伪“动态加载”测试。`verify` 在 `check:unused` 执行一次严格类型检查，独立 `typecheck` 入口保留。
+视觉 catalog 测试独自比较实际能力集合与 product map 的非 RELEASE 集合，另保留场景 ID 唯一、分类及双主题挂载。静态守卫扫描视觉目录全部非测试运行源码及 helper；它只是直接 I/O 守卫，不能宣称完整网络隔离。`NativeModules` 测试必须恢复原属性描述符，原来不存在则删除。图片尺寸、顺序与预览仍由原 owner 证明，不保留只重复编译同一输入的伪「动态加载」测试。`verify` 在 `check:unused` 执行一次严格类型检查，独立 `typecheck` 入口保留。
 
-`tests/tooling/visual-device.test.ts` 拥有视觉结果判定合同，实际像素 oracle 由 `npm run test:visual:device` 调用 agent-device CLI。首批六场景双主题及两帧 140% 字号共 14 帧，标准密度；专用 API35、1080×2400、420dpi、系统字号1、en-US，记录系统镜像/工具/APK/代码身份。基准须同构建连续三次像素一致并审阅后显式批准；缺基准、环境不符、尺寸变化、基准被改写或非零差异均失败。颜色阈值固定0.1，不自动放宽；截图差异是待分析证据，不自动宣称产品 Bug。Gallery 仅证明模拟器上生产组件的固定视觉状态，不替代业务 E2E、真实来源或设备生命周期。
+`tests/tooling/visual-device.test.ts` 拥有视觉结果判定合同，实际像素 oracle 由 `npm run test:visual:device` 调用 agent-device CLI。首批六场景双主题及两帧 140% 字号共 14 帧，标准密度；专用 API35、1080×2400、420dpi、系统字号 1、en-US，记录系统镜像/工具/APK/代码身份。基准须同构建连续三次像素一致并审阅后显式批准；缺基准、环境不符、尺寸变化、基准被改写或非零差异均失败。颜色阈值固定 0.1，不自动放宽；截图差异是待分析证据，不自动宣称产品 Bug。Gallery 仅证明模拟器上生产组件的固定视觉状态，不替代业务 E2E、真实来源或设备生命周期。
 
 
 ## 审查修复的行为 owner

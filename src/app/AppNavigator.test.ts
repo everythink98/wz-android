@@ -9,22 +9,12 @@ const navigation = vi.hoisted(() => ({
 }));
 
 vi.mock('@react-navigation/native', () => ({
-  NavigationContainer: () => null,
   StackActions: {
     popTo: (name: string, params: object) => ({ type: 'POP_TO', payload: { name, params } }),
     push: (name: string, params?: object) => ({ type: 'PUSH', payload: { name, params } })
   },
   createNavigationContainerRef: () => navigation
 }));
-vi.mock('@react-navigation/bottom-tabs', () => ({
-  createBottomTabNavigator: () => ({ Navigator: () => null, Screen: () => null })
-}));
-vi.mock('@react-navigation/native-stack', () => ({
-  createNativeStackNavigator: () => ({ Navigator: () => null, Screen: () => null })
-}));
-vi.mock('lucide-react-native', () => ({ Settings: () => null }));
-vi.mock('react-native', () => ({ View: () => null }));
-vi.mock('@/ui/navigation/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 
 import {
   isNativeStackScreen,
@@ -46,7 +36,7 @@ const topic: Topic = {
 };
 const user: UserReference = { source: 'linuxdo', id: '7', username: 'alice', url: 'https://linux.do/u/alice' };
 
-describe('AppNavigator', () => {
+describe('route change projection', () => {
   it('publishes only real route changes', () => {
     expect(shouldUpdateAppRootScreen('feed', 'topic')).toBe(true);
     expect(shouldUpdateAppRootScreen('topic', 'user')).toBe(true);

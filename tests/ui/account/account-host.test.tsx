@@ -1,11 +1,15 @@
 import { jest } from '@jest/globals';
 import { act, render } from '@testing-library/react-native';
-import { createRef } from 'react';
+import { createRef, type ComponentProps } from 'react';
 import type { WebView } from 'react-native-webview';
+import { createAccountSessionSnapshot, createAccountSessionViewModel } from '@/domain/session/siteSessionState';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createAccountHostStyles } from '@/features/account/accountHostStyles';
+import { createTheme } from '@/ui/theme/tokens';
 
-let nodeImageWebViewProps: Record<string, any> = {};
+let nodeImageWebViewProps: Record<string, unknown> = {};
 let nodeImageWebViewMounts = 0;
-let nodeImageModalProps: Record<string, any> = {};
+let nodeImageModalProps: Record<string, unknown> = {};
 
 jest.mock('react-native-webview', () => {
   const React = require('react');
@@ -20,9 +24,6 @@ jest.mock('react-native-webview', () => {
     })
   };
 });
-jest.mock('@/ui/controls/ButtonControls', () => ({
-  AppButton: () => null
-}));
 jest.mock('@/ui/navigation/LoginWebViewModal', () => {
   const React = require('react');
   const ReactNative = require('react-native');
@@ -33,9 +34,6 @@ jest.mock('@/ui/navigation/LoginWebViewModal', () => {
     }
   };
 });
-jest.mock('@/ui/media/ImagePreviewModal', () => ({
-  ImagePreviewModal: () => null
-}));
 jest.mock('@/features/account/components/LinuxDoVerifyModal', () => ({
   MemoizedLinuxDoVerifyModal: () => null
 }));
@@ -52,25 +50,22 @@ describe('AccountHost NodeImage authorization boundary', () => {
   it('mounts one authorization script and removes it while WebViews are blocked', async () => {
     const baseProps = {
       checking: false,
-      closeImagePreview: jest.fn(),
       closeNodeImageAuthPanel: jest.fn(),
       credentialFillAttempt: 0,
       credentialFillPending: false,
-      handleCredentialLoginFormMessage: jest.fn(),
+      handleCredentialLoginFormMessage: jest.fn(() => false),
       handleLinuxDoMessage: jest.fn(),
-      handleLinuxDoNavigation: jest.fn(),
+      handleLinuxDoNavigation: jest.fn(() => false),
       handleNodeImageAuthMessage: jest.fn(),
-      handleNodeImageAuthNavigation: jest.fn(),
-      imagePreview: null,
+      handleNodeImageAuthNavigation: jest.fn(() => false),
       linuxDoCredentialSaved: false,
       linuxDoLoginFormMode: false,
-      linuxDoSession: {},
+      linuxDoSession: createAccountSessionViewModel(createAccountSessionSnapshot('linuxdo')),
       linuxDoWebViewError: '',
       linuxDoWebViewKey: 0,
       linuxDoWebViewRef: createRef<WebView>(),
       loadingLinuxDoPage: false,
       loadingNodeImageAuthPage: false,
-      mediaSessionIdentity: 'nodeseek:0',
       mountLinuxDoWebView: false,
       nodeImageAuthDocument: {
         injectedJavaScript: 'session-script',
@@ -81,22 +76,19 @@ describe('AccountHost NodeImage authorization boundary', () => {
       nodeImageAuthWebViewRef: createRef<WebView>(),
       requestLinuxDoCredentialFill: jest.fn(),
       resetLinuxDoWebView: jest.fn(),
-      savePreviewImage: jest.fn(),
-      selectPreviewImage: jest.fn(),
       setLinuxDoWebViewErrorForSession: jest.fn(),
       setLoadingLinuxDoPageForSession: jest.fn(),
       setLoadingNodeImageAuthPage: jest.fn(),
       setNodeImageAuthError: jest.fn(),
       showLinuxDoPanel: false,
       showNodeImageAuthPanel: true,
-      styles: { actions: {}, webViewErrorPlaceholder: {} },
-      theme: {},
+      styles: createAccountHostStyles(createTheme({ theme: 'light' }), createEmptyReaderData().settings),
       webViewBlockMessage: '',
       changeLinuxDoPanel: jest.fn(),
       checkLinuxDoCookie: jest.fn(),
       clearLinuxDoCookie: jest.fn()
-    };
-    const view = await render(<AccountHost {...(baseProps as any)} />);
+    } satisfies ComponentProps<typeof AccountHost>;
+    const view = await render(<AccountHost {...baseProps} />);
 
     expect(nodeImageWebViewProps.source).toEqual({ uri: 'https://www.nodeimage.com/' });
     expect(nodeImageWebViewProps.injectedJavaScript).toBe('session-script');
@@ -107,14 +99,12 @@ describe('AccountHost NodeImage authorization boundary', () => {
     await act(async () => {
       view.rerender(
         <AccountHost
-          {...({
-            ...baseProps,
-            nodeImageAuthDocument: {
-              injectedJavaScript: 'connect-script',
-              key: '1:nodeseek-cauth',
-              url: 'https://www.nodeseek.com/connect?target=NodeImage'
-            }
-          } as any)}
+          {...baseProps}
+          nodeImageAuthDocument={{
+            injectedJavaScript: 'connect-script',
+            key: '1:nodeseek-cauth',
+            url: 'https://www.nodeseek.com/connect?target=NodeImage'
+          }}
         />
       );
     });
@@ -128,14 +118,12 @@ describe('AccountHost NodeImage authorization boundary', () => {
     await act(async () => {
       view.rerender(
         <AccountHost
-          {...({
-            ...baseProps,
-            nodeImageAuthDocument: {
-              injectedJavaScript: 'verify-script',
-              key: '1:nodeimage-verify',
-              url: 'https://www.nodeimage.com/'
-            }
-          } as any)}
+          {...baseProps}
+          nodeImageAuthDocument={{
+            injectedJavaScript: 'verify-script',
+            key: '1:nodeimage-verify',
+            url: 'https://www.nodeimage.com/'
+          }}
         />
       );
     });
@@ -145,7 +133,7 @@ describe('AccountHost NodeImage authorization boundary', () => {
     expect(nodeImageWebViewMounts).toBe(3);
     expect(nodeImageModalProps.actions).toBeUndefined();
 
-    await view.rerender(<AccountHost {...({ ...baseProps, webViewBlockMessage: '代理状态切换中' } as any)} />);
+    await view.rerender(<AccountHost {...baseProps} webViewBlockMessage="代理状态切换中" />);
     expect(nodeImageModalProps.error).toBe('代理状态切换中');
     expect(view.queryByTestId('nodeimage-webview', { includeHiddenElements: true })).toBeNull();
     expect(nodeImageWebViewMounts).toBe(3);

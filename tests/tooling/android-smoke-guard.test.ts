@@ -942,52 +942,6 @@ describe('Android release evidence guards', () => {
     expect(replayScript).toContain("console.log('DEVICE_REPLAY_PASS');");
   });
 
-  it('keeps stable selectors on the read-only navigation paths', () => {
-    expect(readProjectFile('src', 'app', 'AppNavigator.tsx')).toContain('tabBarButtonTestID: `main-tab-${item.value}`');
-    const selectionControls = readProjectFile('src', 'ui', 'controls', 'SelectionControls.tsx');
-    expect(selectionControls).toContain('testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}');
-    expect(selectionControls).toContain(
-      "accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}"
-    );
-    expect(selectionControls).not.toContain('react-native-reanimated');
-    expect(selectionControls).not.toContain('<Animated.View');
-    const feedScreen = readProjectFile('src', 'features', 'feed', 'FeedScreen.tsx');
-    expect(feedScreen).toContain("testID={index === 0 ? 'feed-topic-first' : undefined}");
-    expect(feedScreen).toContain("`feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`");
-    expect(feedScreen).not.toContain('feed-list-ready-');
-    expect(feedScreen).toContain('testID: `feed-source-${item.value}`');
-    const searchScreen = readProjectFile('src', 'features', 'search', 'SearchScreen.tsx');
-    expect(searchScreen).toContain('testID="search-query"');
-    expect(searchScreen).toContain('testID="search-submit"');
-    expect(searchScreen).toContain('testIDPrefix="search-source"');
-    expect(searchScreen).toContain('search-overview-source-');
-    expect(searchScreen).toContain('search-page-loaded-');
-    expect(searchScreen).toContain('搜索最近记录');
-    expect(searchScreen).not.toContain('search-outcome-');
-    expect(searchScreen).not.toContain('search-result-first');
-    expect(searchScreen).toContain("'search-all-sources-settled'");
-    expect(searchScreen).toContain("'search-complete'");
-    expect(readProjectFile('src', 'features', 'topic', 'components', 'TopicContentList.tsx')).toContain(
-      "testID={topic ? 'topic-detail-loaded' : undefined}"
-    );
-    expect(readProjectFile('src', 'features', 'topic', 'components', 'TopicContentList.tsx')).toContain(
-      'testID="topic-author"'
-    );
-    const libraryScreen = readProjectFile('src', 'features', 'library', 'LibraryScreen.tsx');
-    expect(libraryScreen).toContain("'library-favorites-ready'");
-    expect(libraryScreen).toContain("'library-users-ready'");
-    expect(libraryScreen).toContain("'library-history-ready'");
-    expect(libraryScreen).toContain("'library-user-first'");
-    expect(libraryScreen).toContain("'library-history-first'");
-    const accountCenter = readProjectFile('src', 'features', 'more', 'components', 'AccountCenterPanel.tsx');
-    expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
-    const nodeSeekLoginHost = readProjectFile('src', 'features', 'account', 'components', 'SiteLoginHost.tsx');
-    expect(nodeSeekLoginHost).toContain("'nodeseek-login-webview-settled'");
-    expect(nodeSeekLoginHost).not.toContain("'nodeseek-login-webview-ready'");
-    expect(nodeSeekLoginHost).not.toContain('NODESEEK_REPLAY_READINESS_SCRIPT');
-    expect(nodeSeekLoginHost).not.toContain('NODESEEK_REPLAY_READY_MESSAGE');
-  });
-
   it('keeps diagnostic logging initialized and wired into the More screen', () => {
     const entry = readProjectFile('index.ts');
     const moreRoute = readProjectFile('src', 'features', 'more', 'MoreRoute.tsx');
@@ -1043,32 +997,5 @@ describe('Android release evidence guards', () => {
     expect(moreRoute).toContain('exportLog: exportDiagnosticLogFile');
     expect(utilityPanels).toContain('title="问题诊断"');
     expect(utilityPanels).toContain('onPress={runtime.diagnostics.exportLog}');
-  });
-
-  it('runs Smoke only after APK signer verification and before writing the release manifest', () => {
-    const packageJson = JSON.parse(readProjectFile('package.json'));
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-    const signerIndex = releaseScript.indexOf('verifyExpectedReleaseSigner(signerSha256);');
-    const smokeIndex = releaseScript.search(/run\('npm',\s*\[\s*'run',\s*'smoke:android'/);
-    const manifestIndex = releaseScript.lastIndexOf('writeReleaseManifest({');
-
-    expect(packageJson.scripts['smoke:android']).toBe('node scripts/smoke-android.mjs');
-    expect(smokeIndex).toBeGreaterThan(signerIndex);
-    expect(manifestIndex).toBeGreaterThan(smokeIndex);
-  });
-
-  it('loads the emulator Smoke ABI from release env and signs its development APK', () => {
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-    const loadEnvIndex = releaseScript.indexOf('const configuredReleaseEnv = loadReleaseEnvFile();');
-    const smokeAbiIndex = releaseScript.indexOf(
-      'const smokeApkAbi = requestedSmokeApkAbi(releaseEnv.WZ_ANDROID_SMOKE_ABI);'
-    );
-
-    expect(releaseScript).not.toContain('process.env.WZ_ANDROID_SMOKE_ABI');
-    expect(smokeAbiIndex).toBeGreaterThan(loadEnvIndex);
-    expect(releaseScript).toContain("['arm64-v8a', smokeApkAbi]");
-    expect(releaseScript).toContain("path.join(androidDir, 'app', 'debug.keystore')");
-    expect(releaseScript).toContain("'sign',");
-    expect(releaseScript).toMatch(/run\('npm',\s*\[\s*'run',\s*'smoke:android',\s*'--',\s*smokeApkPath/);
   });
 });

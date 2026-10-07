@@ -1,41 +1,43 @@
 # 2026-09-16 代码审查修复取证记录
 
-本文记录本次修复与验证，不替代产品地图、架构说明和维护手册。原始基线为 `c89787f13e2c0862179edbd1694b87c750a99dfd`，叠加开工时 15 个未提交文件；保留原修改，不提交、发布或上传。日志、原送审包和设备资料仅在本机 ignored 目录保存。
+本文按批次记录修复、取证和验收边界，不替代产品地图、架构说明和维护手册。记录中的「本轮」「最终包」指对应批次，不能直接作为当前工作区的状态。阅读某项结论时，需同时核对该批次的源码、APK、设备和未验证范围。
+
+原始基线为 `c89787f13e2c0862179edbd1694b87c750a99dfd`，叠加开工时 15 个未提交文件；保留原修改，不提交、发布或上传。日志、原送审包和设备资料仅保存在本机由 Git 忽略的目录中。
 
 ## 2026-09-20 持续复审与性能核对
 
-基线仍为 revision `69cdedf94392ba2570459492cb7dfdad33f27545` 叠加完整已有 WIP。沿用全仓906个文件清点，按来源/领域、平台/Native、页面/生命周期三个独立方向检查真实调用链，再交叉复核本轮修改。860个代码、测试、脚本、补丁及 CI/Replay 文件中，本轮只改变6个生产文件、6个既有测试文件和1个既有设备 proof，其余847个文件与开工哈希一致。文件清点不等同所有分支、来源和设备的穷尽证明。
+基线仍为 revision `69cdedf94392ba2570459492cb7dfdad33f27545` 叠加完整已有 WIP。沿用全仓 906 个文件清点，按来源/领域、平台/Native、页面/生命周期三个独立方向检查真实调用链，再交叉复核本轮修改。860 个代码、测试、脚本、补丁及 CI/Replay 文件中，本轮只改变 6 个生产文件、6 个既有测试文件和 1 个既有设备 proof，其余 847 个文件与开工哈希一致。文件清点不等同所有分支、来源和设备的穷尽证明。
 
-本轮新确认并修复6项，最后交叉复核没有新增可确认问题；既有 OPEN 事故不因此关闭。格局判断落实为减少重复工作、明确数据和异步结果的归属，保留完整数据语义，不引入新的缓存层、依赖、框架或通用抽象。
+本轮新确认并修复 6 项，最后交叉复核没有新增可确认问题；既有 OPEN 事故不因此关闭。格局判断落实为减少重复工作、明确数据和异步结果的归属，保留完整数据语义，不引入新的缓存层、依赖、框架或通用抽象。
 
 | 能力 / 事故 | 根因与实际改动 | 修复前失败与修复后证据 |
 | --- | --- | --- |
-| `DATA-02`、`LIBRARY-01/02/03` / `REG-PERF-026` | SQLite 清理逐条跨 JS/native 边界读写。复用已读 key/bytes，按50条批量读写，仍按原命令顺序分配 ordinal、维护字节数和 tombstone。 | 清5000条历史的 SQL 调用从28008降至488（减少98.26%）；50/500条分别从207/2007降至11/47。复杂度仍为 O(n)，收益是边界调用和 SQL 数量下降。现有 owner 普通红转绿，旧/新真实 SQLite 对三个 collection 的逐指令差分一致。 |
-| `TOPIC-02` / `REG-PERF-027` | 正文图片提取对每层 block 再遍历其所有后代。祖先扫描在已有独立 owner 的嵌套 block 处停止。 | 深度30/60/120/240的 tag 访问由1485/5670/22140/87480降至209/419/839/1679，退化路径由 O(n²) 收敛为 O(n)。500个固定 seed 混合树的 HTML/preview 输出逐值相同；240层桌面交错采样中位6.366→0.927ms，不冒充设备帧耗时。 |
-| `WRITE-01/04/05`、`NOTIFY-02` / `REG-WRITE-093` | 旧编辑文档的上传或模板异步结果在新稿 INIT 后仍可修改内容、错误和 busy 状态。统一取消 host action，并用文档 generation 丢弃旧结果。 | rich/source 模式均先复现旧图污染新稿。交叉复核又发现相同 upload:// 图片复用旧 NodeView 的 sibling；新稿同步替换节点且抑制中间事件，同稿切换保持图片节点。真实 Tiptap/CodeMirror owner 62项通过，关闭/重开宿主链64项通过。 |
-| `USER-01` / `REG-USER-016` | V2EX 活动链接的 replyN 是主题回复数量，被误当单条回复身份和楼层，controller 会吞掉不同活动。 | 使用对应完整正文、主题、页码、日期与同身份 occurrence 形成短指纹，取消伪造楼层；补齐原站相邻正文结构。已保存匿名原站样本的12行活动全部保留，当前最终 parser 回放通过。原站无永久 reply ID，跨页移动的完全相同回复仍受协议限制。 |
+| `DATA-02`、`LIBRARY-01/02/03` / `REG-PERF-026` | SQLite 清理逐条跨 JS/native 边界读写。复用已读 key/bytes，按 50 条批量读写，仍按原命令顺序分配 ordinal、维护字节数和 tombstone。 | 清 5000 条历史的 SQL 调用从 28008 降至 488（减少 98.26%）；50/500 条分别从 207/2007 降至 11/47。复杂度仍为 O(n)，收益是边界调用和 SQL 数量下降。现有 owner 普通红转绿，旧/新真实 SQLite 对三个 collection 的逐指令差分一致。 |
+| `TOPIC-02` / `REG-PERF-027` | 正文图片提取对每层 block 再遍历其所有后代。祖先扫描在已有独立 owner 的嵌套 block 处停止。 | 深度 30/60/120/240 的 tag 访问由 1485/5670/22140/87480 降至 209/419/839/1679，退化路径由 O(n²) 收敛为 O(n)。500 个固定 seed 混合树的 HTML/preview 输出逐值相同；240 层桌面交错采样中位 6.366→0.927 ms，不冒充设备帧耗时。 |
+| `WRITE-01/04/05`、`NOTIFY-02` / `REG-WRITE-093` | 旧编辑文档的上传或模板异步结果在新稿 INIT 后仍可修改内容、错误和 busy 状态。统一取消 host action，并用文档 generation 丢弃旧结果。 | rich/source 模式均先复现旧图污染新稿。交叉复核又发现相同 upload:// 图片复用旧 NodeView 的 sibling；新稿同步替换节点且抑制中间事件，同稿切换保持图片节点。真实 Tiptap/CodeMirror owner 62 项通过，关闭/重开宿主链 64 项通过。 |
+| `USER-01` / `REG-USER-016` | V2EX 活动链接的 replyN 是主题回复数量，被误当单条回复身份和楼层，controller 会吞掉不同活动。 | 使用对应完整正文、主题、页码、日期与同身份 occurrence 形成短指纹，取消伪造楼层；补齐原站相邻正文结构。已保存匿名原站样本的 12 行活动全部保留，当前最终 parser 回放通过。原站无永久 reply ID，跨页移动的完全相同回复仍受协议限制。 |
 | `TOPIC-02` / `REG-TOPIC-182` | 表格拆分只重建 tr，合法 caption 被丢弃。caption 内容复用现有 semantic row 编译。 | 文字、链接、媒体、selection 顺序和分表均有普通行为断言；交叉复核修复 caption/cell 内 typed poll 触发重复编译的 sibling，确保内容、预览与 poll 各一次。 |
 | `USER-01` / `REG-USER-017` | Discourse summary 不保证带目标 profile，关联 users 又可包含颁发徽章者；取 users[0] 会改错后续查询身份，无 profile 的合法响应会被拒绝。 | 移除任意用户 fallback；合法 summary 使用请求身份，缺失 profile 字段保持未知，空坏响应仍失败。真实 reader→topics/replies 链始终查询原用户。协议依据为官方 [UserSummarySerializer](https://raw.githubusercontent.com/discourse/discourse/main/app/serializers/user_summary_serializer.rb) 和 [UserBadgeSerializer](https://raw.githubusercontent.com/discourse/discourse/main/app/serializers/user_badge_serializer.rb)。 |
 
 测试继续并入原 canonical owner，没有新增测试文件或框架。工作量计数约束真实 SQLite 调用和 parser 遍历，不以不稳定的毫秒阈值作为普通单测门禁；独立旧/新实现差分与性能探针仅留在 ignored 目录。编辑器沿用原宿主关闭/重开测试增加 busy 条件，没有复制页面算法；两个临时 undo 探针通过后不另立重复 owner。本轮没有证据支持继续整批删除现有测试，已有真实编排/产物/UI owner 尚未完全替代的源码断言继续保留。
 
-定向验证包括来源/内容6个 owner 共260项固定与随机顺序通过（seed `20260920` / `1789874522616`），ReaderStore 32项固定及组合76项随机通过（seed `1789873564739`）。编辑器62项固定与随机通过（seed `20260920` / `1789889912741`）；一次与 Gradle 并发的随机运行触发既有500-details用例5秒超时并造成 act 连锁，保存失败日志，停止并发构建后按同一 seed 完整重放通过，没有提高 timeout 或缩小样本。caption 的一次中间 oracle 曾错误地把 src 和 metadata 中相同 URL 当成重复节点，改为实际节点、预览和 selection 断言；该失败日志不算通过证据。
+定向验证包括来源/内容 6 个 owner 共 260 项固定与随机顺序通过（seed `20260920` / `1789874522616`），ReaderStore 32 项固定及组合 76 项随机通过（seed `1789873564739`）。编辑器 62 项固定与随机通过（seed `20260920` / `1789889912741`）；一次与 Gradle 并发的随机运行触发既有 500-details 用例 5 秒超时并造成 act 连锁，保存失败日志，停止并发构建后按同一 seed 完整重放通过，没有提高 timeout 或缩小样本。caption 的一次中间 oracle 曾错误地把 src 和 metadata 中相同 URL 当成重复节点，改为实际节点、预览和 selection 断言；该失败日志不算通过证据。
 
 最终源码冻结后的验证：
 
 | 证据层 | 本轮实际范围 |
 | --- | --- |
-| `STATIC_PASS` | Node22.23.2 下 `npm run typecheck` 和单次最终 `npm run verify` 均退出0；lint、格式、架构、文档、unused、版本全部通过，架构工具25项、文档工具29项。文档收口后另核对引用和 `git diff --check`。 |
-| `UNIT_PASS` | Vitest 211文件、2771项，seed `1789874587336`；另有 `npm run test:native:forum-selection` 的27项 JVM 测试通过。 |
-| `UI_PASS` | Jest 79套件、1652项，seed `-885599725`。12条既有 act 告警保留，没有屏蔽 console。 |
-| `DEVICE_REPLAY_PASS` | 隔离 API35 Release Hermes 的真实 SQLite seed/迁移/新进程核对/exercise 完成，清5002条旧超额历史约795.073ms，其他 collection、删除标记与字节数保持正确；无旧版同设备耗时对照，不宣称设备提速倍数。checkpoint 六文件 hash 与逻辑快照恢复。最终普通 APK 的 account-readonly、search-multi-source 各一次通过，零自动修复；允许错误分支的 Replay 不代表所有原站读取成功。 |
+| `STATIC_PASS` | Node22.23.2 下 `npm run typecheck` 和单次最终 `npm run verify` 均退出 0；lint、格式、架构、文档、unused、版本全部通过，架构工具 25 项、文档工具 29 项。文档收口后另核对引用和 `git diff --check`。 |
+| `UNIT_PASS` | Vitest 211 文件、2771 项，seed `1789874587336`；另有 `npm run test:native:forum-selection` 的 27 项 JVM 测试通过。 |
+| `UI_PASS` | Jest 79 套件、1652 项，seed `-885599725`。12 条既有 act 告警保留，没有屏蔽 console。 |
+| `DEVICE_REPLAY_PASS` | 隔离 API35 Release Hermes 的真实 SQLite seed/迁移/新进程核对/exercise 完成，清 5002 条旧超额历史约 795.073 ms，其他 collection、删除标记与字节数保持正确；无旧版同设备耗时对照，不宣称设备提速倍数。checkpoint 六文件 hash 与逻辑快照恢复。最终普通 APK 的 account-readonly、search-multi-source 各一次通过，零自动修复；允许错误分支的 Replay 不代表所有原站读取成功。 |
 | `APK_SANITY` | 普通 index.ts 入口、开发签名 Release Hermes x86_64 构建成功（2m18s），版本仍 `1.3.147/151`。SHA-256 `93dc6c74a5f0e7f976920183598f6818450a588e153eeb9421b609b97e9e0746`；同签名覆盖安装，`firstInstallTime=2026-07-26 16:51:37` 不变。当前 PID 的最终错误日志时间窗未见 Fatal、ANR、OOM 或 InvariantViolation，不延伸为全设备全时段保证。 |
 | `BLOCKED_BY_ENV` | LinuxDo 用户页原站验证被 Cloudflare 阻挡；按 runbook 在 App 自有 WebView 中只点一次唯一验证 checkbox，再检测状态，仍未恢复可信读取。关闭验证页，不循环重试、不清 Cookie、不旁路取凭据；本轮没有该路径的 `LIVE_PASS`。 |
 | `NOT_VERIFIED` | 真实远端上传与 picker 延迟完成、所有来源动态用户样本、Native instrumentation 完整矩阵、物理触感及冷挂 Search 性能未验证。系统文件/云端备份和其他历史 OPEN 分支不借本轮结果关闭。 |
 
 ### Search 重复渲染、帧耗时与闪空
 
-`REG-PERF-024` 继续保持 `OPEN`。在主登录态 AVD、相同最终 APK 和同一进程内，预热后执行三批各10次 Feed→Search→Feed，转向前 reset gfxinfo。原始 dump 的 reset 命令输出仍带旧窗口时间，最终按每个 post-dump 的新 Stats since 过滤，基线/候选分别剔除6/4个旧帧；连续 miss 只在单次转向内统计，不拼接不同操作。最终汇总以本轮 ignored 取证文件 frame-summary.json 为准。
+`REG-PERF-024` 继续保持 `OPEN`。在主登录态 AVD、相同最终 APK 和同一进程内，预热后执行三批各 10 次 Feed→Search→Feed，转向前 reset gfxinfo。原始 dump 的 reset 命令输出仍带旧窗口时间，最终按每个 post-dump 的新 Stats since 过滤，基线/候选分别剔除 6/4 个旧帧；连续 miss 只在单次转向内统计，不拼接不同操作。最终汇总以本轮 ignored 取证文件 `.codex-tmp/converge-audit-20260920/frame-summary.json` 为准。
 
 | 最终候选批次 | 有效帧 | p95 / worst（ms） | 单次转向最长连续 missed deadline |
 | --- | --- | --- | --- |
@@ -43,17 +45,17 @@
 | 2 | 991 | 23.106 / 33.385 | 34 |
 | 3 | 968 | 23.220 / 26.268 | 34 |
 
-候选合计2940帧、p95 23.190ms、worst 33.985ms，数值门槛通过，连续两帧不得 miss 的门槛未通过。基线4333帧、p95 23.392ms、worst 44.491ms、最长连续7帧；前后 Feed 内容有变化，样本也包含 Native 动画，不能把这组数据当严格同内容提速对照，尤其不能以较低 p95 掩盖候选更长的连续 miss。
+候选合计 2940 帧、p95 23.190 ms、worst 33.985 ms，数值门槛通过，连续两帧不得 miss 的门槛未通过。基线 4333 帧、p95 23.392 ms、worst 44.491 ms、最长连续 7 帧；前后 Feed 内容有变化，样本也包含 Native 动画，不能把这组数据当严格同内容提速对照，尤其不能以较低 p95 掩盖候选更长的连续 miss。
 
-独立20秒 Perfetto 归因样本不混入上述门禁：候选456帧中440为 Prediction Error/Early，1为 Prediction Error + App Deadline Missed/Late，1为 Prediction Error + Buffer Stuffing/Late，12为 Unknown/Early，2为 None/On-time。候选 gfx CPU command submission p95约6.171ms；这些数据不足以将连续 miss 归因于 React，也不足以直接认定只是模拟器问题。
+独立 20 秒 Perfetto 归因样本不混入上述门禁：候选 456 帧中 440 为 Prediction Error/Early，1 为 Prediction Error + App Deadline Missed/Late，1 为 Prediction Error + Buffer Stuffing/Late，12 为 Unknown/Early，2 为 None/On-time。候选 gfx CPU command submission p95 约 6.171 ms；这些数据不足以将连续 miss 归因于 React，也不足以直接认定只是模拟器问题。
 
-受控 React Profiler 使用真实 AppNavigator、生命周期、SearchRoute/controller，在 Native 边界使用既有替身。10次切换每次4次 Search commit（含2次 nested update）、2次 header update/2次 list render，输入框实例稳定、无重复挂载、无请求、次数不随切换累积。这只能排除该接线下的重复挂载和累积更新，不代表真实 FlashList/GPU；没有据此添加无因果证据的 memo。引用回复路径也已有无限 stale time 和 WeakMap 编译缓存，没有证明新增的昂贵热路。
+受控 React Profiler 使用真实 AppNavigator、生命周期、SearchRoute/controller，在 Native 边界使用既有替身。10 次切换每次 4 次 Search commit（含 2 次 nested update）、2 次 header update/2次 list render，输入框实例稳定、无重复挂载、无请求、次数不随切换累积。这只能排除该接线下的重复挂载和累积更新，不代表真实 FlashList/GPU；没有据此添加无因果证据的 memo。引用回复路径也已有无限 stale time 和 WeakMap 编译缓存，没有证明新增的昂贵热路。
 
-另一次5次往返录屏独立于性能采样：780帧逐帧检测未出现整块内容闪白，抽样接触表未发现页面闪空。该 oracle 只覆盖整块白屏，不证明没有局部闪烁或全部跳帧。Native selection 复核确认只在 selection active 时订阅 preDraw、按可见/已挂载行投影并复用路径和 offset 缓存；27项 JVM 测试不能替代尚未运行的设备专项。
+另一次 5 次往返录屏独立于性能采样：780 帧逐帧检测未出现整块内容闪白，抽样接触表未发现页面闪空。该 oracle 只覆盖整块白屏，不证明没有局部闪烁或全部跳帧。Native selection 复核确认只在 selection active 时订阅 preDraw、按可见/已挂载行投影并复用路径和 offset 缓存；27 项 JVM 测试不能替代尚未运行的设备专项。
 
-本轮没有远端写入、卸载、清 App 数据、退出账号或更改版本。搜索恢复空关键词与全部来源，既有历史保留。末尾补读 More 摘要时 agent-device snapshot helper 两次超时，未取得新的账号摘要证据；普通 ADB 读取正常，App 仍为 PID10579，版本与首次安装时间不变，没有按工具提示重启共享 ADB 或模拟器。该末尾工具障碍不抹去此前 Replay/录屏证据，也不能将上轮3/3摘要算成本轮新证据。
+本轮没有远端写入、卸载、清 App 数据、退出账号或更改版本。搜索恢复空关键词与全部来源，既有历史保留。末尾补读 More 摘要时 agent-device snapshot helper 两次超时，未取得新的账号摘要证据；普通 ADB 读取正常，App 仍为 PID10579，版本与首次安装时间不变，没有按工具提示重启共享 ADB 或模拟器。该末尾工具障碍不抹去此前 Replay/录屏证据，也不能将上轮 3/3 摘要算成本轮新证据。
 
-本任务 agent-device 会话已关闭，session list 为空；独立存储 proof 模拟器完成 checkpoint 恢复后已关闭。测试、Gradle、FFmpeg、录屏和 Perfetto 进程均结束，设备临时 trace 已取回后移除。保留主模拟器、App、ADB 和共享 MCP；新增的 agent-device daemon PID34968 按 runbook 作为共享服务保留，不强杀。最后代码哈希核对仍仅13个路径变化，文档引用和 `git diff --check` 通过。日志、开工哈希、差分探针、APK、原站样本、trace 和录屏均仅保存在 `.codex-tmp/converge-audit-20260920/`，不提交、发布或上传。
+本任务 agent-device 会话已关闭，session list 为空；独立存储 proof 模拟器完成 checkpoint 恢复后已关闭。测试、Gradle、FFmpeg、录屏和 Perfetto 进程均结束，设备临时 trace 已取回后移除。保留主模拟器、App、ADB 和共享 MCP；新增的 agent-device daemon PID34968 按 runbook 作为共享服务保留，不强杀。最后代码哈希核对仍仅 13 个路径变化，文档引用和 `git diff --check` 通过。日志、开工哈希、差分探针、APK、原站样本、trace 和录屏均仅保存在 `.codex-tmp/converge-audit-20260920/`，不提交、发布或上传。
 
 ## 2026-09-20 再次全仓审查与修复
 
@@ -65,11 +67,11 @@
 | --- | --- | --- |
 | P1 / `DATA-01/02/03` | 来源允许未知发布日期，存储可以保存，但备份 schema 把它当坏记录。导出漏收藏，导入合法空备份还会删除本机记录。 | topic 日期只增加明确未知值，本机操作时间继续严格校验。来源 parser 契约、领域四站矩阵、真实 store/SQLite 导出合并和旧迁移 owner，另有 Android 真实 SQLite proof；`REG-DATA-013`。 |
 | P2 / `USER-01` | V2EX 全页链接扫描及从完整 href 取首个数字，导致正文外链或数字用户名制造错误 cursor。 | 只认当前用户/活动路径的分页区和唯一正整数 p，两条真实 reader 入口；`REG-USER-014`。 |
-| P2 / `USER-01` | 妖火把同主题同分钟当成同一回复，丢不同正文，controller 合并还会再次丢弃同 id。 | 缺楼层时用完整正文参与身份，无内容重复块单独折叠；保留楼层、跨页重复与摘要截断对照；`REG-USER-015`。 |
-| P2 / `SEARCH-02/04` | V2EX 第34页请求 990+30，超过 SOV2EX 1000 条深度窗口，最后10条返回400。 | 稳定偏移、末窗10条、到边界终止、越界零请求；真实搜索链的 HTTP 替身执行[官方限制](https://raw.githubusercontent.com/gexiao/sov2ex/v2/pkg/server/handler.go)；`REG-SEARCH-031`。 |
+| P2 / `USER-01` | 妖火把同主题同分钟当成同一回复，丢不同正文，controller 合并还会再次丢弃同 ID。 | 缺楼层时用完整正文参与身份，无内容重复块单独折叠；保留楼层、跨页重复与摘要截断对照；`REG-USER-015`。 |
+| P2 / `SEARCH-02/04` | V2EX 第 34 页请求 990+30，超过 SOV2EX 1000 条深度窗口，最后 10 条返回 400。 | 稳定偏移、末窗 10 条、到边界终止、越界零请求；真实搜索链的 HTTP 替身执行[官方限制](https://raw.githubusercontent.com/gexiao/sov2ex/v2/pkg/server/handler.go)；`REG-SEARCH-031`。 |
 | P2 / `RELEASE-01` | 正式发布继承开发 ENTRY_FILE，真实 Gradle bundle task 可选中 proof 入口。 | 现有环境净化函数移除开发覆盖，两阶段实际环境断言和真实 Gradle 配置；`REG-OPS-021`。 |
 
-格局判断仍采用“删除错误概念”：未知发布时间不是无效本机记录，分钟时间不是回复身份，总命中数不是可访问深度，开发环境不是发布入口的权威。保留的数据格式、操作时间、账号隔离和去重语义都是真实契约，不为小 diff 放弃它们。没有新增依赖、框架、迁移版本、状态层或通用 parser 抽象。
+格局判断仍采用「删除错误概念」：未知发布时间不是无效本机记录，分钟时间不是回复身份，总命中数不是可访问深度，开发环境不是发布入口的权威。保留的数据格式、操作时间、账号隔离和去重语义都是真实契约，不为小 diff 放弃它们。没有新增依赖、框架、迁移版本、状态层或通用 parser 抽象。
 
 测试与复杂度收口：
 
@@ -82,7 +84,7 @@
 
 Android `DATA-01/02/03` 补充在唯一指定的 `WZ_ReaderStorage_API35_20260910` 执行。匹配当前 ReaderData 与 proof 源码的开发签名 Release Hermes 包完成 seed、迁移、新进程完整核对、exercise 导出/合并；未知日期保留，正常日期对照不变。安装签名一致，首次安装时间保持 `2026-09-10 04:04:05`；结束后 checkpoint 的六文件 hash 和独立 SQL 逻辑快照均恢复原值。APK SHA-256 为 `cecee6b0816123407883c689a140dfd098528c467b004b6d78653b0f2115b685`。第一次本机编排因只识别一种 apksigner 输出而停在安装前，改为复用现有 `scripts/apk-signing.cjs` 后复用同一已构建 APK 完成；这不是产品红例，也没有跳过签名核对。
 
-V2EX 仅做两次匿名只读 GET，Livid 的 topics/replies 均 HTTP 200，真实分页区确为 ps_container；将保存响应交给真实 reader 均产生非空活动和下一 cursor 2。这是当前协议样本佐证，不等同数字用户名、同分钟回复或第34页的设备 Live。
+V2EX 仅做两次匿名只读 GET，Livid 的 topics/replies 均 HTTP 200，真实分页区确为 ps_container；将保存响应交给真实 reader 均产生非空活动和下一 cursor 2。这是当前协议样本佐证，不等同数字用户名、同分钟回复或第 34 页的设备 Live。
 
 通知 pending 的新旧目标交错探针虽红，但模拟完整顺序缺乏实际导航 effect 可达证据；通知 snapshot 倒灌、LinuxDo summary 用户身份也缺实际调用时序或原站样本，均未登记为确认 Bug。既有 OPEN 事故保持原状态，本轮五项已修复不表示仓库此后不会有 Bug，也不代表历史未闭合项已经全部通过。
 
@@ -90,23 +92,23 @@ V2EX 仅做两次匿名只读 GET，Livid 的 topics/replies 均 HTTP 200，真�
 
 | 证据层 | 实际范围 |
 | --- | --- |
-| `STATIC_PASS` | `npm run typecheck`；lint、格式、架构、unused、版本及文档引用门禁。架构工具25项、文档工具29项通过。完整 verify 首次止于新增测试的依赖方向，修正后重跑；第二次完成所有测试后，文档 checker 要求精确的“当前 owner”字段名，修正四个标签后重跑 check:docs、check:unused 和版本检查，未无故重复已通过的全部测试。因此不声称单次 verify 命令退出0。 |
+| `STATIC_PASS` | `npm run typecheck`；lint、格式、架构、unused、版本及文档引用门禁。架构工具 25 项、文档工具 29 项通过。完整 verify 首次止于新增测试的依赖方向，修正后重跑；第二次完成所有测试后，文档 checker 要求精确的「当前 owner」字段名，修正四个标签后重跑 check:docs、check:unused 和版本检查，未无故重复已通过的全部测试。因此不声称单次 verify 命令退出 0。 |
 | `UNIT_PASS` | Vitest 211 文件、2757 项，seed `1789872244148`。新增反例均为普通通过测试；六个既有 canonical test 文件获得边界覆盖，没有新增常驻测试套件。 |
 | `UI_PASS` | Jest 79 套件、1652 项，seed `1039619248`。沿用真实 Query/controller 接线，未为 parser/schema 修复复制页面算法。 |
 | `DEVICE_REPLAY_PASS` | ReaderStorage 的真实 SQLite seed/迁移/新进程核对/exercise 和 checkpoint 恢复通过；普通入口匹配 APK 的 `tests/device/account-readonly.ad`、`tests/device/search-multi-source.ad` 各一次、零自动修复通过。允许错误分支的脚本不代表原站全成功。 |
-| `APK_SANITY` | 普通 index.ts 入口开发签名 Release Hermes x86_64 构建退出0（2m28s），版本仍 `1.3.147/151`，SHA-256 `af9e9189ecb114722ae502db1fc70226fb20c1075471cbee27d6f5cd8edc3554`。同签名覆盖安装至 WZ_Pixel_API_35，首次安装时间保持 `2026-07-26 16:51:37`，网站登录/自动填入仍3/3，普通 App 根入口可用。未执行正式 release。 |
+| `APK_SANITY` | 普通 index.ts 入口开发签名 Release Hermes x86_64 构建退出 0（2m28s），版本仍 `1.3.147/151`，SHA-256 `af9e9189ecb114722ae502db1fc70226fb20c1075471cbee27d6f5cd8edc3554`。同签名覆盖安装至 WZ_Pixel_API_35，首次安装时间保持 `2026-07-26 16:51:37`，网站登录/自动填入仍 3/3，普通 App 根入口可用。未执行正式 release。 |
 | `LIVE_PASS` | 仅当前匹配 APK 的 V2EX 查询 `AI -zzreaudit20260920` 返回真实结果、进入主题与数字用户名 atreus1891832889 的用户页、显示主题/四条回复、打开条目后返回保留回复页，再返回原查询；另有上文两个匿名原站响应的 reader 回放。 |
-| `NOT_VERIFIED` | USER 设备真正跨到第二页、妖火同分钟不同正文的当前原站样本、搜索第34页现场、系统文件选择器/云端备份、物理设备与 Native 专项，以及历史 OPEN 事故未覆盖分支。原站协议边界由普通行为测试证明，不借浅页 Live 关闭全部矩阵。 |
+| `NOT_VERIFIED` | USER 设备真正跨到第二页、妖火同分钟不同正文的当前原站样本、搜索第 34 页现场、系统文件选择器/云端备份、物理设备与 Native 专项，以及历史 OPEN 事故未覆盖分支。原站协议边界由普通行为测试证明，不借浅页 Live 关闭全部矩阵。 |
 
 定向打开 Livid 另一主题的 ADB 操作被自动审批拦截，仅返回 `blocked by policy`；未重试或改用另一种直接启动方式。后续沿 App 内已有返回/搜索路径完成只读核对；通用 scroll 没有给出可观察的续页变化，因此不算设备分页通过。本次唯一明确新建的长查询记录已移除，恢复空关键词/全部来源；已有历史不清空。没有原站写入、退出账号或清理 Cookie。
 
-与开工860个代码文件哈希逐项比较，本轮只改5个生产文件、6个既有测试文件和1个既有设备 proof；其余原有代码状态保留。三个事实/取证文档同步本轮契约与证据，未改版本或依赖。本任务两处 agent-device 会话已关闭且列表为空，任务启动的 ReaderStorage 模拟器已关闭；主模拟器、ADB 与共享 MCP 保留。日志、起点哈希、受控反例、原站响应与 APK 只保存在 ignored `.codex-tmp/re-audit-20260920/`。
+与开工 860 个代码文件哈希逐项比较，本轮只改 5 个生产文件、6 个既有测试文件和 1 个既有设备 proof；其余原有代码状态保留。三个事实/取证文档同步本轮契约与证据，未改版本或依赖。本任务两处 agent-device 会话已关闭且列表为空，任务启动的 ReaderStorage 模拟器已关闭；主模拟器、ADB 与共享 MCP 保留。日志、起点哈希、受控反例、原站响应与 APK 只保存在 ignored `.codex-tmp/re-audit-20260920/`。
 
 ## 2026-09-20 格局修复：统一请求、分页与导航的最终归属
 
 用户在本轮审查后明确授权修复四项 Bug。基线仍为 `69cdedf94392ba2570459492cb7dfdad33f27545` 叠加完整已有工作区；保留上轮测试治理和用户 WIP，不提交、发布或修改版本。下方审查章节保存修复前事实，四项问题当前状态及关闭证据以 `docs/regression-corpus.md` 为准。
 
-格局判断采用“先定义不可违反的原则，再删除错误概念”：授权归真正发送边界，分页游标归已交付结果，导航归最新有效意图。旧实现的异步授权类型、消费后裁剪、不可推进来源的重试页，以及旧启动目标的覆盖权都不是外部兼容承诺；账号隔离、来源协议、有效重试和完整定位目标则必须保留。
+格局判断采用「先定义不可违反的原则，再删除错误概念」：授权归真正发送边界，分页游标归已交付结果，导航归最新有效意图。旧实现的异步授权类型、消费后裁剪、不可推进来源的重试页，以及旧启动目标的覆盖权都不是外部兼容承诺；账号隔离、来源协议、有效重试和完整定位目标则必须保留。
 
 | 改动 | 当前代价 | 消除的问题与证据 |
 | --- | --- | --- |
@@ -130,12 +132,12 @@ V2EX 仅做两次匿名只读 GET，Livid 的 topics/replies 均 HTTP 200，真�
 | `UI_PASS` | Jest 79 套件、1652 项，seed `-249183338`；包含真实代理等待、搜索 controller/Screen、Feed 会话恢复和 `NAV-02/03` 交错时序。 |
 | `APK_SANITY` | 构建退出 0（2m19s）；包名 `com.wz.reader`、版本 `1.3.147/151`，SHA-256 `ad8cae8aaffca1d514fc414c8b4c150c60c3c6de4a30254219e0467bf473bdd0`。签名与原包一致后覆盖安装到 `WZ_Pixel_API_35`；首次安装时间仍为 `2026-07-26 16:51:37`，网站登录/自动填入仍 3/3。最终验收日志时间窗未检测到崩溃、ANR 或 JS 错误。 |
 | `DEVICE_REPLAY_PASS` | 最终 APK 的 `tests/device/feed-source-controls.ad` 14 步、`tests/device/notifications-readonly.ad` 28 步通过，零自动修复；分别证明 `FEED-01/02` 和 `NOTIFY-01` 来源切换、明确 outcome 与只读设置返回，不将允许错误分支的 Replay 当作四站真实数据均成功。 |
-| `LIVE_PASS` | `SEARCH-01/02/04`：同一个 `AI -zzgejuexclude20260920` 查询从 HTTP 400 恢复为 V2EX 真实结果，滚动分页看到“已载入 150 条”；不声称读尽原站全部结果。`NAV-02/03`：V2EX 普通无楼层主题 `1229472`，warm 与 process-cold 均显示正确主题，一次 Android Back 回到首页。 |
+| `LIVE_PASS` | `SEARCH-01/02/04`：同一个 `AI -zzgejuexclude20260920` 查询从 HTTP 400 恢复为 V2EX 真实结果，滚动分页看到「已载入 150 条」；不声称读尽原站全部结果。`NAV-02/03`：V2EX 普通无楼层主题 `1229472`，warm 与 process-cold 均显示正确主题，一次 Android Back 回到首页。 |
 | `NOT_VERIFIED` | 通知真实发送、已读和上传；主设备匿名 Feed/退出登录；搜索空中间页的原站样本、其他搜索来源；四站真实楼层完整矩阵与设备上精确交错竞态；物理设备和原生专项。相应确定性边界由上述 owner 验证，不把受控 HTTP 或普通主题打开记成这些分支的 Live。 |
 
 最终 UI 输出仍有 13 条既有 act 告警（通知 Route 1、通知 runtime 3、Topic session 5、Topic reply filters 4），以及 Reanimated/SQLite 的测试环境提示；没有屏蔽 console。通知/导航本次新增 owner 与搜索新按钮没有新增告警。两次完整门禁之间没有通过重试或改变隔离掩盖断言失败。
 
-本任务搜索记录已逐项移除，搜索恢复空关键词/全部来源，通知“只看未读”恢复原值；没有发送、标记已读、上传、清账号或改版本。两处本任务 agent-device session 已关闭且列表为空，测试和 Gradle 进程均已结束；未停止共享 MCP、ADB 或模拟器。最终门禁、构建和导航普通红日志留在本机 ignored `.codex-tmp/geju-bugfix-20260920/`，最终 APK 也仅保存在该目录；不提交、发布或上传。
+本任务搜索记录已逐项移除，搜索恢复空关键词/全部来源，通知「只看未读」恢复原值；没有发送、标记已读、上传、清账号或改版本。两处本任务 agent-device session 已关闭且列表为空，测试和 Gradle 进程均已结束；未停止共享 MCP、ADB 或模拟器。最终门禁、构建和导航普通红日志留在本机 ignored `.codex-tmp/geju-bugfix-20260920/`，最终 APK 也仅保存在该目录；不提交、发布或上传。
 
 ## 2026-09-20 全仓审查与测试治理
 
@@ -245,7 +247,7 @@ V2EX 仅做两次匿名只读 GET，Livid 的 topics/replies 均 HTTP 200，真�
 - 普通入口的开发签名 `assembleRelease` 构建通过，未执行正式发布流程。前几次构建被本次调用方式留下的空 `ENTRY_FILE` 干扰：当前 PowerShell 的 .NET 环境变量 API 将 null 转为空字符串，RN 将它优先解析为仓库目录。改用 `Remove-Item Env:ENTRY_FILE` 真正删除变量后，正常 `index.ts` 打包和构建通过；没有保留临时 Gradle 绕行配置。
 - APK SHA-256 为 `be9401dc9e8606f6463c5178a681dcc4a4e9a177015292252eda602f57977646`，版本 `1.3.144` / `148`，签名与主设备原安装一致。仅覆盖安装到 `WZ_Pixel_API_35`，`firstInstallTime` 保持 `2026-07-26 16:51:37`，三个账号仍已登录，取得 `APK_SANITY`。
 - 同一 APK 的 `tests/device/account-readonly.ad`、`tests/device/feed-gesture-priority.ad`、`tests/device/feed-source-controls.ad`、`tests/device/library-return.ad`、`tests/device/notifications-readonly.ad` 五份回放全部通过，取得对应入口的 `DEVICE_REPLAY_PASS`。回放包含账号切换查看、Feed 手势和 Topic 返回、Library 集合/来源切换及通知只读操作；其中允许 error outcome 的断言仅证明页面能正确结算，不证明所有远端请求成功。
-- 补充 App 内只读 `LIVE_PASS`：四站 User 资料、主题与回复正常展示；linux.do 当前账户的主题计数为 0，空态与其一致，其余样本活动非空。V2EX 回复追加分页出现更早条目，显式刷新回到首屏；NodeSeek、linux.do 活动进入 Topic 后返回正常。V2EX Feed 选择“深圳”分类后正确显示对应内容。只读手动验收记录在本机，不保存正文或身份到本文。
+- 补充 App 内只读 `LIVE_PASS`：四站 User 资料、主题与回复正常展示；linux.do 当前账户的主题计数为 0，空态与其一致，其余样本活动非空。V2EX 回复追加分页出现更早条目，显式刷新回到首屏；NodeSeek、linux.do 活动进入 Topic 后返回正常。V2EX Feed 选择「深圳」分类后正确显示对应内容。只读手动验收记录在本机，不保存正文或身份到本文。
 - 受控 HTTP 不代表真实发帖、编辑、上传、标记已读或通知投递；本轮不执行这些真实写操作。未测量性能、耗电或时延收益。
 
 | 批次 | 已取得证据 | 未在主设备强制制造的分支 |
@@ -340,17 +342,17 @@ Feed 补修后的普通入口也使用 Node 22 构建成功，APK SHA-256 为 `4
 
 ## 2026-09-17 测试审查实施
 
-本轮沿用 revision `9304443206fe0d39db52aead39a80a88233d490c`，保留开工时61项已有工作区改动；未提交、发布或推送。新增产品历史归 `REG-SEARCH-029`、`REG-TOPIC-173`、`REG-USER-012/013`，产品行为见 product map，测试/设备操作归原有权威文档。
+本轮沿用 revision `9304443206fe0d39db52aead39a80a88233d490c`，保留开工时 61 项已有工作区改动；未提交、发布或推送。新增产品历史归 `REG-SEARCH-029`、`REG-TOPIC-173`、`REG-USER-012/013`，产品行为见 product map，测试/设备操作归原有权威文档。
 
 | 范围 | 实际证据 |
 | --- | --- |
 | `SEARCH-02` | 真实 controller、写入队列与存储重挂载；延迟添加→删除、A→B→A 修复前失败，排队目标去重后通过；包含最新失败重试与旧失败不污染新目标。 |
-| `TOPIC-01/03` | 真实 NodeSeek 注入桥接与最终 parser；缺行、乱序、重复 DOM/embedded ID、重复楼层、交叉冲突、数字楼层0与签名。独立复核补出的交叉匹配反例同样先红后绿。 |
-| `USER-01` | 妖火真实适配器全 cursor 遍历，14+15+15+2等不完整页与59条上界不漏；同名跨来源、数字UID、新/同实例、用户名/epoch/卸载和迟到恢复只归当前解析作用域。 |
-| 测试治理 | helper内违规I/O、catalog缺能力/多能力和倒置图片预览顺序均做过负向控制。保留真实加载事件的图片 owner，定向运行7项通过；删除仅重复编译同一输入的伪动态测试。NativeModules恢复原描述符，verify只保留一次严格类型检查。 |
-| 工具可靠性 | checkpoint与视觉判定23项通过，Node22.22.2，seed917146；包含备份/owner拒绝零业务写入、并发拒绝、进程被杀后释放OS租约、恢复失败/冲突/续接、字节及独立逻辑重读、缺批准与基准被修改、传输与清理错误独立保留。实际agent-device0.20.6比较相同PNG通过，受控布局改变、尺寸变化、缺基准均失败。 |
+| `TOPIC-01/03` | 真实 NodeSeek 注入桥接与最终 parser；缺行、乱序、重复 DOM/embedded ID、重复楼层、交叉冲突、数字楼层 0 与签名。独立复核补出的交叉匹配反例同样先红后绿。 |
+| `USER-01` | 妖火真实适配器全 cursor 遍历，14+15+15+2 等不完整页与 59 条上界不漏；同名跨来源、数字 UID、新/同实例、用户名/epoch/卸载和迟到恢复只归当前解析作用域。 |
+| 测试治理 | helper 内违规I/O、catalog 缺能力/多能力和倒置图片预览顺序均做过负向控制。保留真实加载事件的图片 owner，定向运行 7 项通过；删除仅重复编译同一输入的伪动态测试。NativeModules 恢复原描述符，verify 只保留一次严格类型检查。 |
+| 工具可靠性 | checkpoint 与视觉判定 23 项通过，Node22.22.2，seed917146；包含备份/owner 拒绝零业务写入、并发拒绝、进程被杀后释放 OS 租约、恢复失败/冲突/续接、字节及独立逻辑重读、缺批准与基准被修改、传输与清理错误独立保留。实际agent-device0.20.6比较相同 PNG 通过，受控布局改变、尺寸变化、缺基准均失败。 |
 
-产品与相关治理 owner 的补充组合：Vitest6文件221项、UI4文件112项，seed917231；原固定seed917146保留红绿和重放记录。最终完整 `npm run verify` 以 Node22.22.2 退出0：`UNIT_PASS` 为211个Vitest文件2625项（seed1789647227838），`UI_PASS` 为78个UI文件1553项（seed453138200），静态、架构、文档、严格类型及版本门禁取得 `STATIC_PASS`。另行 `npm run typecheck` 通过；这些结果不扩大为原站证据。
+产品与相关治理 owner 的补充组合：Vitest6 文件 221 项、UI4 文件 112 项，seed917231；原固定 seed917146 保留红绿和重放记录。最终完整 `npm run verify` 以 Node22.22.2 退出 0：`UNIT_PASS` 为 211 个 Vitest 文件 2625 项（seed1789647227838），`UI_PASS` 为 78 个 UI 文件 1553 项（seed453138200），静态、架构、文档、严格类型及版本门禁取得 `STATIC_PASS`。另行 `npm run typecheck` 通过；这些结果不扩大为原站证据。
 
 本机路径 `.codex-tmp/pro-test-followup-20260917/` 保留原始回执，视觉目录由 runbook 定义。专项 proof APK SHA-256 为 `d90676276fd516105b2f59d52e859f2fd6cdbbe2019365fd11dfc15bc38cf5ba`，安装 UID 10209、首次安装时间 `2026-09-10 04:04:05` 保持不变。
 
@@ -361,13 +363,13 @@ Feed 补修后的普通入口也使用 Node 22 构建成功，APK SHA-256 为 `4
 | boundaries | `DEVICE_REPLAY_PASS`：实际 Android SQLite 导入与独立重读的 27 个删除时间/容量边界组合通过。 |
 | checkpoint 故障 | 故意业务失败、App 中断和取消文件选择均按预期返回非零；取消选择的 `invalidImports=0`，不能冒充无效导入验收。以上三轮及正常验收均以六个白名单文件哈希和独立逻辑重读证明 `restoration.phase=restored`。 |
 
-ADB 曾短暂不可用，失败发生于边界验收备份前，没有业务写入；连接恢复后重新执行取得通过证据。Windows 传输改用临时文件 push、run-as staging、校验再替换；实际恢复中断续接也已完成。独立复核发现的“远端临时文件清理错误覆盖原传输错误”以反例先红后绿修正，本机 scratch 始终进入清理，多错误分别保留。
+ADB 曾短暂不可用，失败发生于边界验收备份前，没有业务写入；连接恢复后重新执行取得通过证据。Windows 传输改用临时文件 push、run-as staging、校验再替换；实际恢复中断续接也已完成。独立复核发现的「远端临时文件清理错误覆盖原传输错误」以反例先红后绿修正，本机 scratch 始终进入清理，多错误分别保留。
 
-视觉 `DEVICE_REPLAY_PASS`：最终 Gallery APK SHA-256 为 `3711d70535bc0c2608c8834949869c9b3f2b81cba805a916f2ee387f95dfbb0f`。14个固定画面各连续捕获三次，耗时405秒，尺寸一致、阈值0.1下差异像素为零；逐帧审阅后显式登记本机基准。随后普通比较入口再次14/14通过，耗时149秒，并完成数据库还原。候选为 `capture-xAsv1f`，普通比较为 `capture-vO91XU`；均在 ignored `.codex-tmp/visual-runs/`。
+视觉 `DEVICE_REPLAY_PASS`：最终 Gallery APK SHA-256 为 `3711d70535bc0c2608c8834949869c9b3f2b81cba805a916f2ee387f95dfbb0f`。14 个固定画面各连续捕获三次，耗时 405 秒，尺寸一致、阈值 0.1 下差异像素为零；逐帧审阅后显式登记本机基准。随后普通比较入口再次 14/14 通过，耗时 149 秒，并完成数据库还原。候选为 `capture-xAsv1f`，普通比较为 `capture-vO91XU`；均在 ignored `.codex-tmp/visual-runs/`。
 
-固定样本改用已有 `displayTimeText` 避免相对日期随日历漂移，两项跨日期 oracle 先红后绿；生产时间格式未改变。真实 CLI 检出两次 Gallery 构建中5个画面的预期日期变化，其余9个画面完全一致。结合画面和布局定义核对最近搜索的独立48dp点击/删除区、长资料及140%应用字号下的换行、关注/展开按钮和错误恢复入口；未发现关键操作遮挡或文字重叠。Gallery不构成完整 App E2E 或完整网络隔离证明。
+固定样本改用已有 `displayTimeText` 避免相对日期随日历漂移，两项跨日期 oracle 先红后绿；生产时间格式未改变。真实 CLI 检出两次 Gallery 构建中 5 个画面的预期日期变化，其余 9 个画面完全一致。结合画面和布局定义核对最近搜索的独立 48 dp 点击/删除区、长资料及 140% 应用字号下的换行、关注/展开按钮和错误恢复入口；未发现关键操作遮挡或文字重叠。Gallery 不构成完整 App E2E 或完整网络隔离证明。
 
-本轮结束时六个白名单数据库文件及全部存储键值均恢复原基线，App停止；仅关闭本任务启动的专用隔离模拟器，原两个模拟器和共享工具保持运行。真实远端写入、物理设备差异、原有未验收设备缺口，以及性能实验、测试框架迁移、Node24支持扩展均未纳入本轮通过声明。
+本轮结束时六个白名单数据库文件及全部存储键值均恢复原基线，App 停止；仅关闭本任务启动的专用隔离模拟器，原两个模拟器和共享工具保持运行。真实远端写入、物理设备差异、原有未验收设备缺口，以及性能实验、测试框架迁移、Node24 支持扩展均未纳入本轮通过声明。
 
 ## 2026-09-19：全仓复核方案落实
 
@@ -407,13 +409,13 @@ ADB 曾短暂不可用，失败发生于边界验收备份前，没有业务写�
 
 同一候选取得四站 `LIVE-READ-01` 的 Feed→Topic 数据及返回流程 `LIVE_PASS`。NodeSeek 看到详情加载中后切后台，返回时正文已加载；其多页样本倒序先显示读取最新回复，再出现 #590 起的下降序列，继续滚动截图为 #579–575。linux.do 短主题回复数 3、楼号 2–4，倒序 4→2 后恢复；妖火短主题 1–4 同样正确往返。完整四站多页原站对照仍为 `NOT_VERIFIED`：NodeSeek 后续滚动出现 agent-device accessibility helper 无法取得前台内容，实际截图正常、PID 不变且 Back 后 helper 恢复；尚未证明是产品无障碍缺陷，未通过替换采集引擎伪造通过。
 
-通知 Live 中 NodeSeek 的部分解析结果保留有效条目并显示不完整提示；linux.do 返回需要登录。随后只读取账号状态标签并执行既有刷新，确认 linux.do 为“已验证”但非登录，其余两站已登录；安装前 3/3 来自当时 UI 投影，且原包已经显示部分站点不可用，现有证据不足以确定登录失效时间或归因本次迁移。按 AGENTS/runbook 冻结主设备后续安装、配置和凭据变更，没有清 Cookie、自动登录或恢复旧快照；主设备保留该候选与当前现场，Agent 会话已释放。linux.do 认证通知与最终备份修复的主设备覆盖验收记 `BLOCKED_BY_ENV`，原生文件验收在隔离 AVD 独立结算。只读回执在 ignored `.codex-tmp/implementation-main-device-20260919/`。
+通知 Live 中 NodeSeek 的部分解析结果保留有效条目并显示不完整提示；linux.do 返回需要登录。随后只读取账号状态标签并执行既有刷新，确认 linux.do 为「已验证」但非登录，其余两站已登录；安装前 3/3 来自当时 UI 投影，且原包已经显示部分站点不可用，现有证据不足以确定登录失效时间或归因本次迁移。按 AGENTS/runbook 冻结主设备后续安装、配置和凭据变更，没有清 Cookie、自动登录或恢复旧快照；主设备保留该候选与当前现场，Agent 会话已释放。linux.do 认证通知与最终备份修复的主设备覆盖验收记 `BLOCKED_BY_ENV`，原生文件验收在隔离 AVD 独立结算。只读回执在 ignored `.codex-tmp/implementation-main-device-20260919/`。
 
-用户随后反馈主模拟器窗口黑屏：只读检查时，Android 内部截图为正常“更多”，主 App PID 未变化，Display=ON 且 Windows 窗口进程响应正常；电脑端漏绘制的根因未确认。按用户随后明确要求，关闭两台 AVD 并以可见窗口重新启动，未使用快照、清数据或更换 APK；两个首次安装时间分别保持 `2026-07-26 16:51:37` 和 `2026-09-07 17:29:25`。这次授权仅覆盖重启与显示窗口，主设备后续安装和凭据变更继续冻结。两台可见窗口按用户要求保留，属于进程基线的明确例外。
+用户随后反馈主模拟器窗口黑屏：只读检查时，Android 内部截图为正常「更多」，主 App PID 未变化，Display=ON 且 Windows 窗口进程响应正常；电脑端漏绘制的根因未确认。按用户随后明确要求，关闭两台 AVD 并以可见窗口重新启动，未使用快照、清数据或更换 APK；两个首次安装时间分别保持 `2026-07-26 16:51:37` 和 `2026-09-07 17:29:25`。这次授权仅覆盖重启与显示窗口，主设备后续安装和凭据变更继续冻结。两台可见窗口按用户要求保留，属于进程基线的明确例外。
 
 系统备份的首个实现经真实 Activity.recreate 反例发现原 Promise 不结算：锁定 Expo activity-result registry 在 Activity 销毁时 unregister 其主回调，默认 fallback 不负责完成原调用。现改为模块自身的 OnActivityResult 与每次调用的请求码，JSON 保留在原调用内存；Activity 重建后完成原保存，真正模块销毁明确拒绝并停止写入。受控验证中的 malformed result 同样不能在主线程直接抛错。
 
-备份的 6 项 JVM 测试覆盖完整 UTF-8 写入与关闭、关闭失败、取消中断、无效返回，以及模块销毁/替换后迟到回调和写入期间的并发拒绝。移除请求码匹配后，“旧 Activity 结果不能结算新调用”准确失败；还原后完整模块 136 项通过。打开 provider 前、写入循环内和完成后均检查调用有效性，不能在已经销毁的调用上开始截断目标文件。
+备份的 6 项 JVM 测试覆盖完整 UTF-8 写入与关闭、关闭失败、取消中断、无效返回，以及模块销毁/替换后迟到回调和写入期间的并发拒绝。移除请求码匹配后，「旧 Activity 结果不能结算新调用」准确失败；还原后完整模块 136 项通过。打开 provider 前、写入循环内和完成后均检查调用有效性，不能在已经销毁的调用上开始截断目标文件。
 
 设备 proof 与 runner 的相关改动另跑 85 项 tooling（seed `919207`）全部通过；收尾 Lint、全仓格式检查、TypeScript noEmit、28 项文档 checker、14 份文档引用与 555 个模块的架构检查通过。这轮定向复核与前述完整 verify 有覆盖重叠，不相加。
 
@@ -423,7 +425,7 @@ ADB 曾短暂不可用，失败发生于边界验收备份前，没有业务写�
 
 诊断接收方是测试 APK 的独立 UID：真实 Sharesheet 将内容 URI 交给接收 Activity，再由带 READ flag 的 Intent 转交其短命 Service；原分享 Promise 返回后才触发延迟 3 秒读取，长度和 SHA-256 与导出文件完全一致。临时授权由 Android 维持至 Service 停止，采用 [Android Service 的标准 URI 权限机制](https://developer.android.com/reference/android/app/Service#Permissions)，没有改生产 Sharing 授权或添加永久 grant。通过回执为 ignored `.codex-tmp/platform-export-service-device.log`，App proof buildId 为 `e3223b0bf51e4b21a23967875d6b3bf7`，SHA-256 为 `8bd99d970ded49c723586f889a09607c713165f70a06dd71117d2c3f851762b6`；测试结束恢复临时图片权限、停止接收 Service，并只删除本次 provider/诊断/缓存文件。
 
-旧 SVG 设备 owner 首轮十请求队列触发 30 秒总期限，随后独立二请求重放仍失败，故已撤回“批量压力导致”的初步归因。二请求保留 WebView 复用、排空释放、缓存命中与真实像素的全部断言，32 容量边界另由既有 JVM owner 负责。排查时生产 `SvgRendererModule.kt` 与基线旧路径内容去除换行差异后完全相同；动态 SVG 同设备通过。5 秒时的测试侧取证确认第一张已完成，复用后的第二张 prepared=true，但 WebView.url 为 data:、expectedPageUrl 为请求专属 https URL，visualStateRequested=false。原始失败见 ignored `.codex-tmp/platform-legacy-host-final.log` 和 `.codex-tmp/platform-legacy-targeted-device.log`。
+旧 SVG 设备 owner 首轮十请求队列触发 30 秒总期限，随后独立二请求重放仍失败，故已撤回「批量压力导致」的初步归因。二请求保留 WebView 复用、排空释放、缓存命中与真实像素的全部断言，32 容量边界另由既有 JVM owner 负责。排查时生产 `SvgRendererModule.kt` 与基线旧路径内容去除换行差异后完全相同；动态 SVG 同设备通过。5 秒时的测试侧取证确认第一张已完成，复用后的第二张 prepared=true，但 `WebView.url` 为 data:、expectedPageUrl 为请求专属 https URL，visualStateRequested=false。原始失败见 ignored `.codex-tmp/platform-legacy-host-final.log` 和 `.codex-tmp/platform-legacy-targeted-device.log`。
 
 用户授权纳入 `REG-TOPIC-180` 后，单补 historyUrl 的 proof 仍失败，记录在 ignored `.codex-tmp/platform-svg-fixed-final.log`。设备实际 WebView 为 124.0.6367.219；对应 [AwContents 源码](https://chromium.googlesource.com/chromium/src/+/refs/tags/124.0.6367.219/android_webview/java/src/org/chromium/android_webview/AwContents.java) 将与已提交 URL 相同的加载标为 RELOAD，而 [LoadUrlParams 源码](https://chromium.googlesource.com/chromium/src/+/refs/tags/124.0.6367.219/content/public/android/java/src/org/chromium/content_public/browser/LoadUrlParams.java) 为不同 HTML 使用相同的内部 data URL。结合实测，修复定位于复用前清空导航尚未完成：现在等待当前 View 的 about:blank 完成且 URL 一致后再开始下一张，销毁、队列全部超时和渲染进程退出时释放相应状态，historyUrl 显式使用 pageUrl，原精确身份 guard 与 30 秒总期限保留。
 
@@ -444,20 +446,20 @@ SVG 修复后的最终源码重新编译并通过 SvgRendererPolicy 13 项与 Ap
 | `ACCOUNT-01/04`、`NOTIFY-01/03` | 三站账号刷新保持登录；实际重启 App（PID `4100→9890`）后再次 canonical 刷新仍为三站已登录，取得此登录保持分支 `LIVE_PASS`。linux.do、妖火通知读到真实数据；linux.do 未读筛选显示合法空态，切回恢复原列表，取得对应读取流程 `LIVE_PASS`。NodeSeek 保留有效条目并显示部分解析提示；提示流程通过，通知完整性 `NOT_VERIFIED`。未打开或标记任何消息已读。 |
 | `TOPIC-01/03`：V2EX | `1233404` 当前显示 174 条；正序跨 #100→101 读到 #174，倒序跨 #101→100 回到 #1，两端提示及重复触底稳定，取得该分页流程 `LIVE_PASS`。恢复正序、全部内容与空查找。历史 147 条不再当作当前总数。 |
 | `TOPIC-01/03`：NodeSeek | `861053` 当前端点为 #1、#16；倒序先显示读取最新回复，再显示 #16，正序确认 #10→11 跨窗，两端提示成立，取得该分页流程 `LIVE_PASS`。采集中的引用楼号另行排除，不把所有 `#数字` 当成回复行。 |
-| `TOPIC-01/03`：linux.do | 从热门列表前五项选择“智谱修复了 zcode 代码上传的问题”；显示 67 条，首尾 #2、#68。倒序先读取真实尾窗，两方向逐窗抵达端点并显示对应末端提示，取得该分页流程 `LIVE_PASS`。恢复正序和来源列表的“最新”筛选。 |
+| `TOPIC-01/03`：linux.do | 从热门列表前五项选择「智谱修复了 zcode 代码上传的问题」；显示 67 条，首尾 #2、#68。倒序先读取真实尾窗，两方向逐窗抵达端点并显示对应末端提示，取得该分页流程 `LIVE_PASS`。恢复正序和来源列表的「最新」筛选。 |
 | `TOPIC-01/03`：妖火 | `1560939` 倒序先读取最新窗口，再显示 #558；续读回 #1，重新进入恢复正序并续读至 #558，两端再次触底可见内容稳定。全程存在部分内容提示，初始 12 条、后续 90 条是已加载数量，不能当作全帖总数；部分页使末端完成提示保持隐藏。两个方向的序列与续读已观察，完整性和完整末端 oracle 为 `NOT_VERIFIED`，没有依据将缺失楼号归因为删除或解析丢失。 |
 
-本次只结算观察到的读取与分页流程，不宣称逐条正文无缺失或全量去重已验证。`LIVE-READ-05` 的同账号原站对照与实际 cursor/请求预算仍为 `NOT_VERIFIED`：“原站打开”实际调用外部浏览器，不能假设共享 App 登录态；可见末端稳定也不能证明零额外 transport。linux.do 旧长文 `342888` 的回顶曾触及 agent-device 滚动安全上限，随后返回与其他目标正常；这是采集限制，不记为产品失败。实际 ENOSPC、物理设备与其他 WebView 版本继续保留既有验证边界。
+本次只结算观察到的读取与分页流程，不宣称逐条正文无缺失或全量去重已验证。`LIVE-READ-05` 的同账号原站对照与实际 cursor/请求预算仍为 `NOT_VERIFIED`：「原站打开」实际调用外部浏览器，不能假设共享 App 登录态；可见末端稳定也不能证明零额外 transport。linux.do 旧长文 `342888` 的回顶曾触及 agent-device 滚动安全上限，随后返回与其他目标正常；这是采集限制，不记为产品失败。实际 ENOSPC、物理设备与其他 WebView 版本继续保留既有验证边界。
 
-收尾恢复首页“全部”、来源筛选及通知“全部/关闭只看未读”，账号中心收起；只保留响应正常的主模拟器可见窗口，App 位于前台。自动化会话关闭，仅停止通过 PID、创建时间、路径和父进程核对的本任务 daemon，保留共享工具与 ADB。本次补验只更新证据记录和待验收索引，`npm run check:docs` 与 `git diff --check` 通过，取得文档 `STATIC_PASS`，未以此扩大此前运行测试的结论。
+收尾恢复首页「全部」、来源筛选及通知「全部/关闭只看未读」，账号中心收起；只保留响应正常的主模拟器可见窗口，App 位于前台。自动化会话关闭，仅停止通过 PID、创建时间、路径和父进程核对的本任务 daemon，保留共享工具与 ADB。本次补验只更新证据记录和待验收索引，`npm run check:docs` 与 `git diff --check` 通过，取得文档 `STATIC_PASS`，未以此扩大此前运行测试的结论。
 
 ### 同账号原站对照与追加验收
 
 用户要求继续后，通过 App 自有 WebView 的现有认证会话执行只读 GET，只导出响应结构、页码、楼号和数量，没有读取 Cookie、凭据或输出私信正文。独立 CDP 转发端口仅用于本次取证，随后移除。证据在 ignored `.codex-tmp/main-acceptance-extra-20260919/`。
 
-- `NOTIFY-01/03`：NodeSeek 私信列表四行均没有 id、均有唯一正安全整数 max_id，原站前端明确用它作 latestMsg.id。实际 adapter 因只认 id 而退回不可信时间身份；已修复并保留非法数据的质量防线。升级复核又证实旧 worker 曾将 fallback 存入可信 ledger，直接换 ID 会误投递旧未读。共享推进函数现在仅对可确认含旧私信 fallback 的 NodeSeek 基线，在整轮可信扫描后静默重建，partial 不写状态，下一条新消息只投递一次。`REG-NOTIFY-072` 保留全部事故与边界。
+- `NOTIFY-01/03`：NodeSeek 私信列表四行均没有 `id`、均有唯一正安全整数 max_id，原站前端明确用它作 `latestMsg.id`。实际 adapter 因只认 `id` 而退回不可信时间身份；已修复并保留非法数据的质量防线。升级复核又证实旧 worker 曾将 fallback 存入可信 ledger，直接换 ID 会误投递旧未读。共享推进函数现在仅对可确认含旧私信 fallback 的 NodeSeek 基线，在整轮可信扫描后静默重建，partial 不写状态，下一条新消息只投递一次。`REG-NOTIFY-072` 保留全部事故与边界。
 - `TOPIC-01/03`：妖火 `1560939` 原站第 19 页有 12 行且本身缺 #10，第 1 页有 30 行且缺 #528/#529，第 2 页 #497–526 连续。生产 parser 全部正常读取；基线既有 hasFloorGap 误把稀疏页标为 partial，连带改变数量提示并隐藏末端。隔离复现器在生产 reader 上 5 红/14 绿，仅 ignored 候选去掉连续性要求后 19/19 绿，解析丢行、缺明确楼号、错误分页与边缘防线仍在。此计划外既有问题登记为 `REG-TOPIC-181 OPEN`，待用户确认纳入；未将候选写入产品或 APK，也不猜测缺号来自删除。
-- `TOPIC-01/03`：同账号 linux.do 原站确认上轮“智谱修复了 zcode 代码上传的问题”为 `2922301`，本轮已增长至 posts_count/highest_post_number=72，目标窗口实际为 #1–20 与 #53–72。此处请求没有 track_view/track_visit/timings 写入；原站窗口和请求耗时只证明这两次诊断读取，不能代替 App 的 cursor 或预算证据。
+- `TOPIC-01/03`：同账号 linux.do 原站确认上轮「智谱修复了 zcode 代码上传的问题」为 `2922301`，本轮已增长至 posts_count/highest_post_number=72，目标窗口实际为 #1–20 与 #53–72。此处请求没有 track_view/track_visit/timings 写入；原站窗口和请求耗时只证明这两次诊断读取，不能代替 App 的 cursor 或预算证据。
 - `TOPIC-02`：当前生产 `streamImageDownload` 编译产物直接向 Linux `/dev/full` 写入，系统调用实证为 `write(..., 8192) = -1 ENOSPC`，异常为 No space left on device；输出流关闭、responseBodyEnd/callEnd 各 1、本次 part 文件 0。生产类及源码 hash 前后一致，取得此 host owner 的 `UNIT_PASS`；没有填满宿主磁盘、挂载设备、操作主模拟器数据。Android 文件系统实际耗尽、MediaStore/SAF ENOSPC 仍 `NOT_VERIFIED`。回执位于 ignored `.codex-tmp/host-enospc-6d641b2efc9943a5b900f0e90a491ac1/`；临时启用的 WSL 恢复为 Stopped。
 
 NodeSeek parser 新行为修前 3 项失败，升级组合 oracle 修前错误投递 1 条；Node 22.22.2、seed `19092026` 下，修后 adapter/gateway/store/worker/delivery 五 owner 共 168 项通过，另两组通知 UI 110 项通过。最新完整 `npm run verify` exit 0：Vitest 2718 项/211 文件（seed `1789822804246`），UI 1639 项/79 suites（seed `-983596622`），其余静态、架构、文档、unused/type 和版本检查通过；定向数量与全量重叠，不相加。`npm run typecheck` 及补修后的 noEmit 也通过。
@@ -472,13 +474,13 @@ NodeSeek parser 新行为修前 3 项失败，升级组合 oracle 修前错误�
 
 ### 妖火稀疏回复误报修复
 
-用户随后明确要求“修复”，将 `REG-TOPIC-181` 纳入范围。实际产品变更只在 `getYaohuoRepliesDirect` 删除楼号连续性推断，完整性继续由解析质量与已确认窗口决定；没有修改分页算法、楼号、UI 分支、计数口径或缺首楼的边缘策略。正式 `src/sources/yaohuo/reader.test.ts` 纳入五个稀疏窗口场景，修复前 5 失败/83 通过；既有 inferred/truncated 用例补强 partial 与 watermark 断言，并添加可读稀疏响应落入错误 cursor 页的拒绝用例。修复后 reader/gateway 三 owner 161 项通过（seed `691905`），保留既有 UI owner，不另复制一套末端判断测试。
+用户随后明确要求「修复」，将 `REG-TOPIC-181` 纳入范围。实际产品变更只在 `getYaohuoRepliesDirect` 删除楼号连续性推断，完整性继续由解析质量与已确认窗口决定；没有修改分页算法、楼号、UI 分支、计数口径或缺首楼的边缘策略。正式 `src/sources/yaohuo/reader.test.ts` 纳入五个稀疏窗口场景，修复前 5 失败/83 通过；既有 inferred/truncated 用例补强 partial 与 watermark 断言，并添加可读稀疏响应落入错误 cursor 页的拒绝用例。修复后 reader/gateway 三 owner 161 项通过（seed `691905`），保留既有 UI owner，不另复制一套末端判断测试。
 
 Node 22.22.2 下 `npm run typecheck` 和最新全量 `npm run verify` exit 0：Vitest 2724 项/211 文件（seed `1789824285971`），UI 1639 项/79 suites（seed `235436373`），静态、架构、文档、unused/type、版本检查均通过；上述定向测试与全量重叠，不相加。普通开发签名 Release/Hermes 包 buildId `887fe3669fc343f689cca4908478c96f`、SHA-256 `65d594064959292b5a7b4488bf56967773148d1d4cde464ad3ccc1e22159364c`，仍为 `1.3.147/151`、x86_64、非 debuggable。APK 内 buildId、Hermes、无 proof 配置及归档 source map 的新判断均已核对；主设备同签名覆盖安装后，实际安装 hash 一致且 `firstInstallTime=2026-07-26 16:51:37` 不变。证据与构建产物在 ignored `.codex-tmp/yaohuo-gap-fix-20260919/`。
 
-该普通包完成 `TOPIC-01/03 LIVE_PASS`：原帖 `1560939` 正序从首窗沿真实相邻页续读，缺号 #9→11 正常显示，最终 #558 下出现“已到最新回复”；重新进入后回复标题显示 558 且无 partial 提示，切倒序从 #558 沿相邻页读到 #1，显示“已到最早回复”。两端各再触底一次仍稳定，真实截图与楼层/状态观察已归档；没有把引用中的楼号当成真实回复头，也不将视口观察扩张为逐条全文比对或精确 transport 次数证明。错误分页、真正缺楼号和截断的防线由正式 owner 证明，保持 `UNIT_PASS`；既有末端及 partial UI owner 随本次全量取得 `UI_PASS`，本包普通启动取得 `APK_SANITY`。`REG-TOPIC-181` 关闭。
+该普通包完成 `TOPIC-01/03 LIVE_PASS`：原帖 `1560939` 正序从首窗沿真实相邻页续读，缺号 #9→11 正常显示，最终 #558 下出现「已到最新回复」；重新进入后回复标题显示 558 且无 partial 提示，切倒序从 #558 沿相邻页读到 #1，显示「已到最早回复」。两端各再触底一次仍稳定，真实截图与楼层/状态观察已归档；没有把引用中的楼号当成真实回复头，也不将视口观察扩张为逐条全文比对或精确 transport 次数证明。错误分页、真正缺楼号和截断的防线由正式 owner 证明，保持 `UNIT_PASS`；既有末端及 partial UI owner 随本次全量取得 `UI_PASS`，本包普通启动取得 `APK_SANITY`。`REG-TOPIC-181` 关闭。
 
-收尾账号 canonical 刷新后三站仍已登录，账号面板收起并恢复首页全部来源，退出主题即释放本路由的倒序选择。未提交、发布、执行站点写入或安装临时日志接收器；后一项授权仍不属于本次“修复”。原计划中精确请求时序、设备 ENOSPC、物理设备与其他 WebView 等未验证范围继续保留，不能由此项通过一并关闭。
+收尾账号 canonical 刷新后三站仍已登录，账号面板收起并恢复首页全部来源，退出主题即释放本路由的倒序选择。未提交、发布、执行站点写入或安装临时日志接收器；后一项授权仍不属于本次「修复」。原计划中精确请求时序、设备 ENOSPC、物理设备与其他 WebView 等未验证范围继续保留，不能由此项通过一并关闭。
 
 ### 全量验收继续：后台、持久化与干净安装
 
@@ -497,7 +499,7 @@ Node 22.22.2 下 `npm run typecheck` 和最新全量 `npm run verify` exit 0：V
 
 `TOPIC-01/03 UI_PASS`：在真实 Route、Account、Query、gateway 上补两条组合用例，只隔离外部 Fetcher/WebView。第 4 秒切后台，LinuxDo direct 仍在原第 8 秒到期，后续 hidden-browser 在总第 23 秒到期，返回前台不重新请求；首次冷请求经真实导航失焦取消，返回同一保留页面能恢复。该 owner 8/8 通过（seed `691919`），类型与定向 lint/format 通过；四源差异继续由已有 controller 矩阵负责。
 
-按本轮继续验收授权，主设备已临时安装无网络权限、独立 UID 的本地诊断接收器；先前“未安装／尚无 transport 证据”是前轮状态。两份实际分享文件分别完整接收 16508007、16796679 字节并核对 SHA-256。`.codex-tmp/acceptance-complete-20260919/request-assertions.json` 验证四源请求都是开始→切后台→成功结束→回前台，耗时 V2EX 645、NodeSeek 634、linux.do 646、妖火 1961 ms。妖火同帖双向各 19 页的每个原生调用均成功；两段末端重复触底观察区间内新增调用为 0。当前 writer 无丢弃／损坏／写失败，但历史累计丢弃及写失败计数非零，因此结论限于已匹配事件与这些观察区间，不扩张为四源所有 cursor 或全历史零丢失证明。
+按本轮继续验收授权，主设备已临时安装无网络权限、独立 UID 的本地诊断接收器；先前「未安装／尚无 transport 证据」是前轮状态。两份实际分享文件分别完整接收 16508007、16796679 字节并核对 SHA-256。`.codex-tmp/acceptance-complete-20260919/request-assertions.json` 验证四源请求都是开始→切后台→成功结束→回前台，耗时 V2EX 645、NodeSeek 634、linux.do 646、妖火 1961 ms。妖火同帖双向各 19 页的每个原生调用均成功；两段末端重复触底观察区间内新增调用为 0。当前 writer 无丢弃／损坏／写失败，但历史累计丢弃及写失败计数非零，因此结论限于已匹配事件与这些观察区间，不扩张为四源所有 cursor 或全历史零丢失证明。
 
 `DATA-03` 关闭错误反例纳入原方案已明确授权的 provider 失败范围，登记 `REG-DATA-012`。独立 UID provider 已 closeWithError 后，旧生产输出工厂仍误返回 32768 字节成功；测试屏障只等远端报告完成，不注入抛错或替代生产检查。改为可靠描述符检查后，同一 owner 验证 Promise 拒绝、原错误文本及本地 FD 关闭；EIO/ENOSPC 与真实非空图片 part 的清理也通过。使用 Android [ParcelFileDescriptor 的错误检测协议](https://developer.android.com/reference/android/os/ParcelFileDescriptor)，不等待未来云端同步，不删除用户目标文档。
 
@@ -541,7 +543,7 @@ Node 22.22.2 下 `npm run typecheck` 和最新全量 `npm run verify` exit 0：V
 
 主普通包 `63ada67c8c5c454aa7cd6ed717c62aa1` 的新 job `4879` 已取得暖进程自然调度 `DEVICE_REPLAY_PASS`：PID `19999` 保持不变，headless task `2` 在设备 UTC `16:35:52.796–16:35:59.644` 执行 6848 ms；带设备时钟前后锚点的 JobScheduler 历史确认同一 job 自然 START、正常 jobFinished。实际诊断中同一 process session 的 task `trace-78` → worker `trace-79` → 三来源 delivery 均完整闭合；task success、worker noop、`delivered=0`、`failedSources=0`，后台 `16:23:26.963` 到恢复前台 `16:37:28.063` 包住全部执行。文件 14786316 字节、SHA-256 `64ad5d0e7a60a902231a1f67b0e1e1172117343a58231340e8b91eb31aa42d19`；离线回执为 ignored `.codex-tmp/emulator-remaining-20260919/main-passive-offline-verification.json`。历史累计 JS drop/write `60/4`、Native `50/4` 与已校验旧文件完全相同，本轮区间零增量、当前队列丢弃与损坏行为零；不宣称历史全零。临时无网络权限本地接收器在核对已安装 hash 后移除，主 App 保留，导出文件继续按 24 小时策略留存。
 
-隔离设备第二轮自然冷启动得到真实红灯：注册时仅 TIMING_DELAY 未满足，退到 HOME 后进程 `4445` 消失且 stopped=false；系统于 UTC `16:38:58.382` 自然拉起 `5498`，WorkManager 恢复唯一任务，但 `ClassNotFoundException` 表明 `RNHeadlessAppLoader` 已被 Release R8 移除，JS 回执始终为 ready。这与已经通过的暖进程不是同一入口。红灯回执为 ignored `.codex-tmp/emulator-remaining-20260919/natural-cold-v2-e4d217ea67e24aa6b7db430f69ed8cd3/confirmed-cold-failure.json`；结束观察后原 APK、六个数据库文件、通知权限及安装身份已恢复。按本轮后台修复与冷进程验收范围纳入 `REG-NOTIFY-074`，在现有 app.json 中加精确保留规则，继续以启用 R8 的实际 Release 验证，不关闭压缩绕过。
+隔离设备第二轮自然冷启动得到真实红灯：注册时仅 TIMING_DELAY 未满足，退到 HOME 后进程 `4445` 消失且 stopped=false；系统于 UTC `16:38:58.382` 自然拉起 `5498`，WorkManager 恢复唯一任务，但 `ClassNotFoundException` 表明 `RNHeadlessAppLoader` 已被 Release R8 移除，JS 回执始终为 ready。这与已经通过的暖进程不是同一入口。红灯回执为 ignored `.codex-tmp/emulator-remaining-20260919/natural-cold-v2-e4d217ea67e24aa6b7db430f69ed8cd3/confirmed-cold-failure.json`；结束观察后原 APK、六个数据库文件、通知权限及安装身份已恢复。按本轮后台修复与冷进程验收范围纳入 `REG-NOTIFY-074`，在现有 `app.json` 中加精确保留规则，继续以启用 R8 的实际 Release 验证，不关闭压缩绕过。
 
 ### R8 冷启动修复复验（2026-09-20）
 
@@ -575,8 +577,104 @@ canonical owner `tests/ui/topic/topic-actions-controller.test.tsx` 新增回复�
 
 主 `WZ_Pixel_API_35:5554` 按用户要求改为可见窗口。首轮普通 Release/Hermes/x86_64 包 buildId `e4dd12d60a15495aaee87b639b3930c9` 在测试帖成功发布第 37 楼，创建投票 3199/3200；App 刷新／重新打开与原站第 4 页均确认两个标题、选项和位置，取得 `WRITE-01/05 LIVE_PASS`。编辑清理时现场发现旧卡片残留，按 `REG-WRITE-094` 修复共享 `applyEditedReplyContent`；helper 三个反例和真实 controller 的双排序缓存反例修前均红，修后 helper 15/15、action/session UI 253/253，类型检查通过。
 
-最终普通开发签名 Release/Hermes/x86_64 包 buildId `3b9b891326164779be4e04064cbac738`，APK SHA-256 `08d74c7b9c3767298cc1d949ec47f3c0b2155c907fa103f244e9fd84d6991ff7`。主设备同签名覆盖安装后实际 hash 一致，版本仍为 `1.3.147/151`、`firstInstallTime=2026-07-26 16:51:37` 不变，取得 `APK_SANITY`。同一第 37 楼复用已有 3199/3200：删掉第一项后立即只显示位于中间／结束正文之间的第二项，删掉全部后立即无卡片，均无需手动刷新；随后主动刷新读回一致，取得 `WRITE-02/05`、`TOPIC-03 LIVE_PASS`，关闭 `REG-WRITE-094`。第 37 楼最终仅保留“阅坛投票预检回归 20260920：验证完成，双投票发布、读回及编辑清理均正常。”。没有删除回复或远端投票实体，也未提交投票选项。
+最终普通开发签名 Release/Hermes/x86_64 包 buildId `3b9b891326164779be4e04064cbac738`，APK SHA-256 `08d74c7b9c3767298cc1d949ec47f3c0b2155c907fa103f244e9fd84d6991ff7`。主设备同签名覆盖安装后实际 hash 一致，版本仍为 `1.3.147/151`、`firstInstallTime=2026-07-26 16:51:37` 不变，取得 `APK_SANITY`。同一第 37 楼复用已有 3199/3200：删掉第一项后立即只显示位于中间／结束正文之间的第二项，删掉全部后立即无卡片，均无需手动刷新；随后主动刷新读回一致，取得 `WRITE-02/05`、`TOPIC-03 LIVE_PASS`，关闭 `REG-WRITE-094`。第 37 楼最终仅保留「阅坛投票预检回归 20260920：验证完成，双投票发布、读回及编辑清理均正常。」。没有删除回复或远端投票实体，也未提交投票选项。
 
 最终 Node 22.22.2 `npm run verify` exit 0：211 个 Vitest 文件 2774 项（seed `1789879064584`），79 个 UI suite 1658 项（seed `-1264077501`），lint、format、架构、文档、unused/type 与版本检查均通过，取得 `STATIC_PASS`、`UNIT_PASS`、`UI_PASS`。原始日志与设备截图保存在 ignored `.codex-tmp/review-fixes-20260920/`，两个普通包的匹配 source map／R8 mapping 保存在 ignored `diagnostic-symbols/` 对应 buildId 下。未知创建结果与取消替换的零创建分支由真实 controller／HTTP 边界回归证明；主设备未人为制造这些故障，故该故障分支设备证据为 `NOT_VERIFIED`，不把正常 Live 提交扩大成全部故障通过。
 
 收尾主 App 回到首页全部来源，账号中心摘要仍为网站登录 3/3、待处理 0；NS 登录由实际发布／编辑进一步确认。自动化会话关闭，输入法恢复原 Google LatinIME，构建与验证进程均退出；按用户要求保留可见主模拟器，不停止共享 ADB 或 MCP。未提交、推送或正式发布。
+
+## 2026-10-07 测试价值审计与清理
+
+基线 revision 为 `500dd13d67c524211c6a6f40932df60f509bee2e`，开始时已有 19 个修改文件，包括文档、Feed controller、read gateway 和相关测试。本轮保留这些改动，只修改三个 tooling 测试文件并追加本节。审计以现有[测试标准](testing-standard.md)为判定依据，覆盖全仓测试入口、断言和 mock 的静态扫描、全量 Vitest 与 UI 基线运行，以及可疑测试的定向审查。没有逐条对全部用例执行负向控制，不能据此宣称剩余测试全部有效。
+
+### 全仓分布与价值判断
+
+tracked 测试和回放共 404 个文件。统计口径为 `git ls-files` 中实际存在的 `.test.*`、`.spec.*`、`*Test.kt`、`*Test.java` 和 `.ad`；fixture、配置和验收文档不算测试文件。
+
+此外，`patches/` 还维护 10 个依赖内 Native 测试文件，分别覆盖 React Native 六个 owner、Expo Image 两个 owner、Expo FileSystem 下载响应和 Expo Video 播放 instrumentation。它们随补丁安装，未重复计入这 404 个独立 tracked 文件；本轮同样没有执行这些原生测试。
+
+| 范围 | 文件数 | 本轮判断与证据边界 |
+| --- | --- | --- |
+| `src/domain`、`src/features`、`src/sources` | 136 | 保留确定性行为 owner。重点保护四站解析、内容守恒、身份与权限、分页和迟到结果。固定 HTML、JSON 或日期是可重放输入；是否固定输入不能决定测试价值。 |
+| `src/platform`、`src/ui`、`src/app` | 57 | 保留存储事务、持久化恢复、请求取消、凭据隔离和真实编辑器 DOM owner。平台 API 替身只证明应用侧协议。 |
+| `tests/integration` | 23 | 保留跨模块契约，其中五个压力测试文件检查大数据下的内容完整性、并发和资源上限。耗时日志仅供观察，不证明性能没有回退。 |
+| `tests/tooling` 的 Vitest 文件 | 27 | 清理发布脚本、补丁和 UI 选择器的重复文字检查。保留配置、权限、版本 CLI、实际 Expo mod 和已安装补丁检查。 |
+| `tests/ui` | 97 | 全量基线 2384 项通过。真实组件、点击和状态结果有价值；mock 的列表、WebView 和动画不能证明原生几何、系统 IME 或原站健康。 |
+| Node tooling | 3 | 架构检查器、视觉隔离规则和文档检查器有合法及非法输入反例，保留。 |
+| Native | 34 | 包含 JVM、host 和 instrumentation owner；只核对入口与职责，本轮未执行原生测试。 |
+| Replay | 27 | 保留只读旅程及专项 proof 的接线证据，本轮未运行设备回放或 Live。 |
+
+最耗时的基线文件仍有实际行为保护：`src/ui/composer/editorRuntime.test.ts` 执行真实编辑器 DOM；`tests/ui/topic-composer/topic-composer-performance-stress.test.tsx` 检查长草稿在重开、拒绝和重复发送中的保留。不能仅凭耗时删除它们。全仓扫描没有找到完全相同的测试函数体，也没有发现被 `skip` 或 `todo` 隐藏的既有用例；这不等于没有语义重复。
+
+### 已完成的清理
+
+| 处置 | 具体改动 | 保留或替换后的 owner |
+| --- | --- | --- |
+| `REPLACE_AT_SEAM`，6 组完整旧用例 | 删除检查发布源码中是否出现签名、manifest、Java provenance、Smoke 顺序和 ABI 文字的用例。 | `tests/tooling/release-workflow.test.ts` 执行真实发布入口、环境 helper 和签名解析器，只替换文件、子进程及符号归档 I/O。验证预检失败、构建阶段失败、三道签名校验、凭据隔离、包文件恢复、manifest 的实际值，以及专项 Replay 参数。 |
+| `MERGE_INTO`，2 组完整旧用例 | 删除 Smoke 中跨多个 TSX 搜索选择器的用例，以及 Expo Video 补丁源码片段检查。 | 选择器由 App、Feed、Search、Library、Account 的 UI owner 负责；补丁安装由 `tests/tooling/patch-artifacts.test.ts` 的真实 reverse apply gate 负责。 |
+| `DELETE`，2 组 | 删除把 `react-native-render-html` 当前版本复写进断言、以及仅搜索 Vitest 配置 glob 的用例。 | 依赖版本由 `package.json` 与 lockfile 维护；测试发现由实际全量运行确认。版本升级后的行为仍由产品 owner 验证。 |
+| `KEEP_OWNER`，5 组已调整用例 | 保留 CI 全量校验、Git history、Gradle ABI、正式 signer pin 和 source-build 配置，只移除其中重复的发布源码或 patch 文字断言。 | 原配置测试继续负责静态配置，发布执行与补丁安装分别交给上述 owner。 |
+
+本轮分类只计算已处理的 15 组既有逻辑测试，参数化声明算一组：`KEEP_OWNER=5`、`MERGE_INTO=2`、`REPLACE_AT_SEAM=6`、`DELETE=2`、`FIX_ISOLATION=0`、`OPEN_BUG=0`。完整删除 10 组旧声明，新增 4 组执行测试，净减少 6 组声明；新增参数化故障分支使实际执行用例增加 7 项。文件数、用例数或行数不作为完成标准。
+
+删除前临时破坏五处实现，保留或替换后的 owner 均因断言失败而退出 1：绕过正式 APK signer 校验、把签名变量泄露给普通构建子进程、写入错误 manifest hash、损坏已安装的 Expo Video patch、破坏 Feed outcome 选择器。第一次 signer 负向控制暴露了测试夹具把两道签名故障混为一类的问题；拆开正式 APK、Smoke 输入包与开发签名包后重新验证通过。每次故障注入后都逐字恢复生产文件和依赖文件，负向控制不留在长期代码中。
+
+### 仍需定向迁移的候选
+
+以下检查仍有静态作用，但其标题或断言不能作为运行行为通过证据，本轮没有整批删除：
+
+- `tests/tooling/release-packaging.test.ts` 中的 IPv4 拒绝、系统代理让行、SVG 安全配置、Native bridge 与区域解码检查仍读取 Kotlin 文字。后续需逐项对照模块内实际 JVM 或 instrumentation owner，证明相同失败条件已被捕获后再合并；不能用 JS 侧 green 代替原生行为。
+- `tests/tooling/android-smoke-guard.test.ts` 的诊断 bootstrap 已实际执行初始化顺序，保留；同一用例中的 More Route 接线部分仍是源码正则，适合迁至真实 Route 的导出动作 owner。
+- `tests/tooling/forum-platform-package.test.ts` 的 Manifest 与 FileProvider XML 是有效静态契约，保留；Custom Tab handoff 的源码字符串需要独立的 Android Intent 结果证据。
+- `tests/ui/visual/visual-scenario-contract.test.tsx` 的全场景 render 循环主要捕获渲染异常，没有内容结果断言，只记渲染冒烟。各能力 manifest 的内容断言与设备视觉比较仍分别承担行为和画面证据。
+
+UI 基线还有 27 条 React `act` 警告，分别来自 `tests/ui/notifications/notifications-route.test.tsx` 的 11 条、`tests/ui/topic-composer/create-topic-screen.test.tsx` 的 1 条、`tests/ui/topic/composer-submission.test.tsx` 的 9 条、`tests/ui/topic/topic-session-controller.test.tsx` 的 2 条及 `tests/ui/notifications/notifications-runtime.test.tsx` 的 4 条。它们是待定位的异步等待或收尾问题，不能仅据此判为产品 Bug；本轮未屏蔽警告，也未宣称完成隔离修复。
+
+### 验证与统计
+
+使用 Node `22.23.2`，固定 seed `20261007`。基线 Vitest 为 243 文件、3410 项通过，最后测试结束时间减整轮开始时间为 65.91 秒；清理后同 seed 为 243 文件、3417 项通过、69.74 秒。UI 基线为 97 套件、2384 项通过、220.79 秒。本轮没有证明测试运行提速。
+
+| 统计口径 | 修改前 | 修改后 |
+| --- | --- | --- |
+| 全仓测试与回放文件 | 404 | 404 |
+| 全仓测试与回放物理行数，不含末尾空行 | 168741 | 168780 |
+| 三个修改测试文件的行数 | 1713 | 1752 |
+| 三个修改测试文件的实际执行用例 | 73 | 80 |
+
+初次沙箱运行在临时目录 realpath、缓存 rename、本地服务和临时 Git 仓库上遇到权限限制；改用获自动批准的本地执行环境后，原基线全部通过。环境失败没有通过删测试、放宽断言或重试配置隐藏。原始结果、全仓清单和负向控制记录位于本机 ignored `.codex-tmp/test-value-audit-20261007/`。
+
+最终 `npm run verify` exit 0，使用默认随机顺序；完整日志为 ignored `.codex-tmp/test-value-audit-20261007/verify-final.log`。各项定向检查与全量运行有重叠，不累计相加。
+
+| 证据归属 | 最终结果 |
+| --- | --- |
+| `STATIC_PASS` | lint、format、架构检查与 25 项架构测试、29 项文档测试、15 个 Markdown 文件的引用检查、unused/type、版本检查通过；独立 `npm run typecheck` 通过。 |
+| `UNIT_PASS` | 243 个 Vitest 文件、3417 项全部通过，seed `1791347353838`，57.68 秒；发布流程执行、补丁安装与现有业务 owner 均包含在内。 |
+| `UI_PASS` | 97 套件、2384 项全部通过，seed `-643243535`，186.89 秒；最终随机顺序产生 33 条 `act` 警告，基线为 27 条，未作为零告警通过。 |
+| `NOT_VERIFIED` | Native 与依赖补丁内原生测试、设备 Replay、Live、APK 构建和安装本轮未运行；不复用历史回执宣称本次通过。 |
+
+本轮没有修改产品运行逻辑、依赖或版本，也没有提交、推送、发布或真实站点写入。原有 19 个 dirty 文件的改动保留，仅向其中的本报告追加记录；三个 tooling 测试文件是本轮新增修改范围。
+
+### 过时接口与测试夹具复核
+
+按用户后续要求，另从同一 revision 和第一轮清理后的工作区检查测试是否仍对应当前代码。临时 TypeScript AST 脚本交叉检查了 tracked 测试入口、181 处本地模块 mock、生产调用引用与 JSX spread 的实际 props；对候选继续核对动态加载、Android 平台文件和编辑器 bundle 入口。脚本及前后清单位于 ignored `.codex-tmp/test-value-audit-20261007/stale-followup/`。静态扫描仅筛选候选，不按文件年龄或 `legacy` 字样删除测试。
+
+| 当前测试 | 已确认的过时内容与处置 |
+| --- | --- |
+| `src/app/AppNavigator.test.ts` | 测试已经调用拆分后的 `appNavigation`，却保留底部 Tab、Native Stack、图标、React Native View 和 NavBar 五处无消费者的 mock。删除这些 mock 及未使用的 NavigationContainer 替身，把旧 AppNavigator 分组标题改为实际路由投影；五项导航命令及真实 StackRouter 断言保留。 |
+| `src/sources/notificationBackgroundAccess.test.ts` | 删除指向已不存在的 `linuxdo/auth` 的 mock。实际等待的是保存的 User-Agent，而不是旧凭据 helper，同步修正标题和局部变量；来源停用后零 profile 请求的安全断言保留。 |
+| `tests/ui/account/account-host.test.tsx` | 删除已迁出的 ButtonControls、ImagePreviewModal 两处 mock 和六个旧 props。去掉四处 `as any`，夹具通过 `satisfies ComponentProps<typeof AccountHost>` 约束，使用真实账号投影和样式工厂，布尔回调按当前接口返回；NodeImage 脚本替换、重挂和阻断行为保留。 |
+| `tests/ui/shared/topic-card.test.tsx` | 删除样式改由 Context 提供后残留的 `styles/theme` props 及仅为它们创建的样式夹具，公共 props 用当前组件类型约束；同文案新 payload 必须更新点击结果的断言保留。 |
+| `tests/ui/topic/image-preview.test.tsx` | 删除预览翻页改为 `onSelect(index)` 后遗留的 `onNext/onPrevious` mock 与手写接口，回调类型改从当前组件 props 派生；现有手势、翻页、取消和生命周期断言保留。 |
+| `dev/review-remediation-proof/recovery.ad` | 收藏已迁到 More 的二级页，回放仍点击不存在的 `main-tab-library`。删除旧入口步骤，改为当前「更多 → 收藏」，等待收藏 ready 后核对恢复资料；恢复业务断言保留。 |
+
+合计删除八处过时 mock 工厂、十个旧 props 或回调字段，五个测试文件净减少代码；没有发现上述行为本身已退役，因此没有删除仍有作用的整条测试。清理后，本地 mock 路径缺失与这次 JSX spread 旧 props 候选均为零。此结果不证明任意动态调用或外部 API 都没有漂移。
+
+此外扫描了 27 个 Replay 的 241 处 ID 选择器引用，对动态 ID 家族和系统文件选择器做人工核对，确认并修正了上述收藏旧入口。新步骤与当前生产 AppNavigator、More 收藏入口及已有 `tests/device/library-return.ad` 一致；本轮没有执行设备回放，恢复旅程仍为 `NOT_VERIFIED`。
+
+另外核实并保留了扫描的假阳性：MathJax 经真实 `require` 延迟加载；Android User-Agent 使用 `src/platform/android/androidWebViewUserAgent.android.ts`；LinuxDo poll 进入 Composer bundle；原图订阅 wrapper 与生产 hook 共享同一订阅实现；Expo fetch cancellation 的 Native mock 由已安装依赖实际消费。存储和 Cookie 的旧数据迁移、旧 Android 权限分支仍有当前消费者，继续保留。
+
+定向运行 seed `20261008`：导航和后台读取 6 项 `UNIT_PASS`，账号宿主、卡片和图片预览 77 项 `UI_PASS`。另做三次临时负向控制：删除来源停用守卫、清空 NodeImage 注入脚本后，保留的行为测试均转红；重新加入旧 `closeImagePreview` prop 后，类型检查明确拒绝。所有文件均通过 `finally` 按原字节恢复，未留下生产改动。
+
+最终随机顺序的 Vitest 为 243 文件、3417 项 `UNIT_PASS`，seed `1791348603839`、58.50 秒；UI 为 97 套件、2384 项 `UI_PASS`，seed `-875448148`、185.09 秒。该轮仍有 37 条 `act` 警告，本轮修改的三个 UI owner 定向运行无此警告；没有屏蔽其他 owner 的现存警告。
+
+完整 verify 在新增文档中一处无效的 Android 平台文件缩写引用处退出 1，之前的 lint、format、架构及逻辑/UI 检查均通过。改成实际文件路径后，补跑文档测试、引用检查、unused/type、版本及独立 typecheck，取得 `STATIC_PASS`；没有重复运行代码未再变化且已通过的全量测试。失败日志原样保留为 ignored `.codex-tmp/test-value-audit-20261007/stale-followup/verify-final.log`，后续静态检查为同目录 `static-final.log`。Native、设备 Replay、Live 和 APK 继续为 `NOT_VERIFIED`。本次只改五个测试文件、一个 Replay 和本节记录，原有工作区改动保留，未修改产品逻辑或设备状态。

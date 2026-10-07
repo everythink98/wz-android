@@ -44,6 +44,7 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type FeedPageParam = { cursor?: string; page: number };
 type FeedPage = FeedResponse & FeedPageParam;
+type FeedSnapshot = { queryKey: readonly unknown[]; data: InfiniteData<FeedPage> };
 
 type FeedSourceState = {
   hasMore: boolean;
@@ -157,8 +158,8 @@ function changedReadPlanSources(previousQueryKey: readonly unknown[], currentQue
   return new Set(sourceValues.filter((source) => previousScopes.get(source) !== currentScopes.get(source)));
 }
 
-function safeFeedPlaceholder(
-  previousData: { pages: FeedPage[]; pageParams: FeedPageParam[] } | undefined,
+function safeFeedSnapshot(
+  previousData: InfiniteData<FeedPage> | undefined,
   previousQueryKey: readonly unknown[] | undefined,
   currentQueryKey: readonly unknown[]
 ) {
@@ -338,12 +339,12 @@ export function useFeedController({
     [categories, enabledFeedSources, queryClient, readGateway, sessionEpochs]
   );
 
+  const [feedSnapshot, setFeedSnapshot] = useState<FeedSnapshot>();
+  const feedReadOwnerRef = useCommittedRef({ active: feedActive, queryKey: feedQueryKey });
   const feedQuery = useInfiniteQuery({
     queryKey: feedQueryKey,
     enabled: feedActive && feedEnabled,
     initialPageParam: { page: 1 } satisfies FeedPageParam,
-    placeholderData: (previousData, previousQuery) =>
-      safeFeedPlaceholder(previousData, previousQuery?.queryKey, feedQueryKey),
     queryFn: async ({ pageParam, signal }) => {
       const trace = beginDiagnosticTrace('feed', 'load', {
         source: feedSource,
@@ -370,7 +371,27 @@ export function useFeedController({
             ...(feedSource === 'all'
               ? { includedSources: enabledFeedSources, readPlanScopes: feedReadPlanScopes }
               : { readPlanScope: feedReadPlanScope }),
-            trace
+            trace,
+            onBeforeSessionChange: (response) => {
+              if (
+                feedSource !== 'all' ||
+                pageParam.page !== 1 ||
+                signal.aborted ||
+                !feedReadOwnerRef.current.active ||
+                feedReadOwnerRef.current.queryKey !== feedQueryKey ||
+                response.items.length === 0 ||
+                !Object.keys(response.errors || {}).length
+              )
+                return;
+              let page: FeedPage;
+              try {
+                page = validateFeedPage(feedSource, pageParam, response);
+              } catch {
+                // The normal Query path below still reports the invalid page.
+                return;
+              }
+              setFeedSnapshot({ queryKey: feedQueryKey, data: { pages: [page], pageParams: [pageParam] } });
+            }
           }
         );
         const page = validateFeedPage(feedSource, pageParam, response);
@@ -405,7 +426,21 @@ export function useFeedController({
     },
     getNextPageParam: nextFeedPage
   });
-  const pages = feedQuery.data?.pages || [];
+  const retainedFeed = useMemo(
+    () => safeFeedSnapshot(feedSnapshot?.data, feedSnapshot?.queryKey, feedQueryKey),
+    [feedSnapshot, feedQueryKey]
+  );
+  const feedData = feedQuery.data ?? retainedFeed;
+  useLayoutEffect(() => {
+    setFeedSnapshot((current) =>
+      current?.queryKey === feedQueryKey && current?.data === feedData
+        ? current
+        : feedData
+          ? { queryKey: feedQueryKey, data: feedData }
+          : undefined
+    );
+  }, [feedData, feedQueryKey]);
+  const pages = feedData?.pages || [];
   const refreshFeedScope = JSON.stringify([feedActive, feedQueryKey]);
   const refreshFeedGenerationRef = useRef(0);
   const [manualRefreshing, setManualRefreshing] = useState(false);
@@ -418,14 +453,13 @@ export function useFeedController({
   }, [refreshFeedScope]);
   const mergedFeed = useMemo(() => mergeFeedPages(pages), [pages]);
   const lastPage = pages.at(-1);
-  const nextPage =
-    feedSourceRequestEnabled && !feedQuery.isPlaceholderData && lastPage ? nextFeedPage(lastPage) : undefined;
+  const nextPage = feedSourceRequestEnabled && feedQuery.data && lastPage ? nextFeedPage(lastPage) : undefined;
   const loadMoreError = feedSourceRequestEnabled && feedQuery.isFetchNextPageError;
   useEffect(() => {
-    if (feedSource === 'yaohuo' && feedQuery.isSuccess && !feedQuery.isPlaceholderData) {
+    if (feedSource === 'yaohuo' && feedQuery.isSuccess) {
       handledYaohuoLoginIntentRef.current = null;
     }
-  }, [feedQuery.isPlaceholderData, feedQuery.isSuccess, feedSource]);
+  }, [feedQuery.isSuccess, feedSource]);
   const activeFeedState = useMemo<FeedSourceState>(
     () => ({
       hasMore: Boolean(nextPage),
@@ -704,7 +738,7 @@ export function useFeedController({
     categoryFilter,
     changeFeedSource,
     feedAllowsRemotePagination,
-    feedBusy: feedActive && feedEnabled && feedQuery.isPending,
+    feedBusy: feedActive && feedEnabled && feedQuery.isPending && !feedData,
     feedCategories,
     enabledFeedSources,
     feedFilter,

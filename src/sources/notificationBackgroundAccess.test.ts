@@ -11,19 +11,16 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('./sourceRead', () => ({
   getCurrentUserIdentity: mocks.getCurrentUserIdentity
 }));
-vi.mock('@/sources/linuxdo/auth', () => ({
-  loadLinuxDoCredentials: vi.fn()
-}));
 
 import { probeBackgroundNotificationAccess } from './notificationBackgroundAccess';
 
 describe('background notification access', () => {
-  it('does not start the profile request when the source is disabled during credential loading', async () => {
-    let resolveCredential!: (value: string | null) => void;
+  it('does not start the profile request when the source is disabled during User-Agent loading', async () => {
+    let resolveUserAgent!: (value: string | null) => void;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(
       () =>
         new Promise((resolve) => {
-          resolveCredential = resolve;
+          resolveUserAgent = resolve;
         })
     );
     mocks.getCurrentUserIdentity.mockResolvedValue({ id: '7', username: 'user' });
@@ -35,7 +32,7 @@ describe('background notification access', () => {
     await vi.waitFor(() => expect(SecureStore.getItemAsync).toHaveBeenCalledTimes(1));
 
     allowed = false;
-    resolveCredential(null);
+    resolveUserAgent(null);
 
     await expect(probe).rejects.toMatchObject({ reason: 'source-disabled', source: 'nodeseek' });
     expect(mocks.getCurrentUserIdentity).not.toHaveBeenCalled();

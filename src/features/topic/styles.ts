@@ -26,6 +26,48 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontWeight: '700',
       lineHeight: Math.round(31 * titleFontScale)
     },
+    titleOnlyTitle: {
+      fontSize: Math.round(20 * titleFontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(28 * titleFontScale)
+    },
+    titleOnlyAuthorRow: {
+      gap: 10,
+      minHeight: 48
+    },
+    titleOnlyAuthorName: {
+      fontSize: Math.round(13 * fontScale),
+      fontWeight: '500',
+      lineHeight: Math.round(18 * fontScale)
+    },
+    titleOnlyAuthorDate: {
+      fontSize: Math.round(12 * fontScale),
+      lineHeight: Math.round(17 * fontScale)
+    },
+    titleOnlyMetaStack: {
+      gap: 8
+    },
+    titleOnlyHeaderStack: {
+      paddingBottom: 12
+    },
+    titleOnlySearchRow: {
+      backgroundColor: theme.surface2,
+      borderRadius: radiusSm,
+      gap: 8,
+      paddingHorizontal: 12
+    },
+    titleOnlySearchInput: {
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      fontSize: Math.round(13 * fontScale),
+      minHeight: 48,
+      paddingHorizontal: 0
+    },
+    titleOnlyNoticeText: {
+      color: theme.muted,
+      fontWeight: '400',
+      lineHeight: 18
+    },
     buttonDisabled: {
       opacity: 0.45
     },

@@ -265,6 +265,7 @@ jest.mock('lucide-react-native', () => {
     Minimize2: Icon,
     Quote: Icon,
     Redo2: Icon,
+    Search: Icon,
     SquarePen: Icon,
     Star: Icon,
     ThumbsDown: Icon,
@@ -4022,11 +4023,25 @@ describe('Topic reply filters', () => {
   });
 
   it('shows the V2EX topic vote count without exposing a vote action', async () => {
-    const v2exTopic: TopicDetail = { ...topic, upvoteCount: 336 };
+    const v2exTopic: TopicDetail = { ...topic, contentHtml: '<p>正文</p>', upvoteCount: 336 };
     const view = await render(<TopicFilterHarness selectedTopic={v2exTopic} topicDetail={v2exTopic} />);
 
     expect(view.getByTestId('readonly-stat-UP 票').props.children).toBe('UP 票 336');
     expect(view.queryByTestId('topic-poll-v2ex')).toBeNull();
+  });
+
+  it.each([0, 6])('keeps a title-only V2EX topic with %s votes compact above its replies', async (upvoteCount) => {
+    const titleOnly: TopicDetail = { ...topic, contentHtml: '', upvoteCount };
+    const view = await render(<TopicFilterHarness selectedTopic={titleOnly} topicDetail={titleOnly} />);
+
+    expect(view.getByText(topic.title)).toBeTruthy();
+    expect(view.getAllByText('V2EX')).toHaveLength(1);
+    expect(view.getByTestId('topic-author')).toBeVisible();
+    expect(view.getByLabelText('评论内查找')).toBeTruthy();
+    expect(view.queryByTestId('readonly-stat-UP 票')).toBeNull();
+    expect(lastFlashListItemTypes).not.toContain('topicPostlude');
+    if (upvoteCount) expect(view.getByText(/ · 6 UP 票/)).toBeTruthy();
+    else expect(view.queryByText(/UP 票/)).toBeNull();
   });
 
   it('uses the concise favorite label for source-site bookmark actions', async () => {

@@ -275,6 +275,7 @@ describe('Android topic content splitting', () => {
             .trim();
           expect(selection, `${source}/${role}/${String(html)}`).toBe(text);
           expect(prepared.contentPlan.previewImages.map((image) => image.source)).toEqual(images);
+          if (!String(html || '').trim()) expect(prepared.contentPlan.rows).toEqual([]);
           const renderedHtml = renderedContentRows(prepared.contentPlan)
             .map((row) => row.html)
             .join('');

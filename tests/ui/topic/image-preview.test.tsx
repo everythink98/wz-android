@@ -334,18 +334,10 @@ function previewProps(items: ReturnType<typeof previewItem>[], index = 0) {
 }
 
 function callbacks(
-  overrides: Partial<{
-    onClose: () => void;
-    onNext: () => void;
-    onPrevious: () => void;
-    onSave: () => void;
-    onSelect: (index: number) => void;
-  }> = {}
+  overrides: Partial<Pick<React.ComponentProps<typeof ImagePreviewModal>, 'onClose' | 'onSave' | 'onSelect'>> = {}
 ) {
   return {
     onClose: jest.fn<() => void>(),
-    onNext: jest.fn<() => void>(),
-    onPrevious: jest.fn<() => void>(),
     onSave: jest.fn<() => void>(),
     onSelect: jest.fn<(index: number) => void>(),
     ...overrides

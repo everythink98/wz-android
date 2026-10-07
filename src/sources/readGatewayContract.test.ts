@@ -1883,6 +1883,57 @@ describe('source gateway read contract', () => {
     expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['current', 'aborted', 'superseded'] as const)(
+    'hands off only a current aggregate result before session invalidation: %s',
+    async (state) => {
+      let epoch = 1;
+      const events: string[] = [];
+      const pending = Promise.withResolvers<FeedResponse>();
+      forumMocks.getFeed.mockReturnValueOnce(pending.promise);
+      const gateway = createReadGateway({
+        fetcher: vi.fn(),
+        getEnabledSources: () => ['nodeseek', 'v2ex'],
+        nodeSeekUserAgent: () => 'test',
+        isSourceAuthenticated: () => true,
+        currentSessionEpoch: () => epoch,
+        onSessionExpired: () => {
+          events.push('expired');
+          epoch += 1;
+        }
+      });
+      const controller = new AbortController();
+      const onBeforeSessionChange = vi.fn(() => events.push('handoff'));
+      const read = gateway.getFeed({ source: 'all', signal: controller.signal }, { onBeforeSessionChange });
+      await vi.waitFor(() => expect(forumMocks.getFeed).toHaveBeenCalledOnce());
+      if (state === 'aborted') controller.abort();
+      if (state === 'superseded') epoch += 1;
+      const response: FeedResponse = {
+        items: [
+          {
+            source: 'v2ex',
+            id: '720',
+            title: 'Healthy topic',
+            author: 'neo',
+            url: 'https://www.v2ex.com/t/720',
+            createdAt: '2026-10-07',
+            replyCount: 0
+          }
+        ],
+        errors: { nodeseek: { kind: 'login-expired', reason: 'http-401', message: 'HTTP 401' } },
+        hasMore: false,
+        nextPage: null
+      };
+      pending.resolve(response);
+      await expect(read).rejects.toThrow('请求已取消');
+      if (state === 'current') {
+        expect(events).toEqual(['handoff', 'expired']);
+        expect(onBeforeSessionChange).toHaveBeenCalledExactlyOnceWith(response);
+      } else {
+        expect(onBeforeSessionChange).not.toHaveBeenCalled();
+      }
+    }
+  );
+
   it('cancels an expired Yaohuo read when a newer credential takes ownership', async () => {
     let generation = 7;
     const response = Promise.withResolvers<never>();

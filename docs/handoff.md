@@ -1,13 +1,13 @@
 # 交接说明
 
-这是一份常青交接入口，不保存版本号、Release hash、dirty 快照或“当前做到哪一步”。实时进度由 Git、版本配置和与当前对象身份匹配的运行证据现场生成。
+本文说明接手顺序和文档职责，不保存版本号、发布包哈希、未提交改动快照或任务进度。接手时，使用 Git、版本配置和与当前构建及设备身份匹配的运行证据确认状态。
 
 ## 接手顺序
 
 1. 阅读仓库根目录的 `AGENTS.md` 与 `README.md`，确认执行约束、产品范围和最小开发入口。
-2. 用下方命令记录 Git revision、dirty 状态和版本配置；不要先借用历史交接结论。
-3. 阅读 `docs/product-charter.md` 与 `docs/product-map.md`；产品/runtime 改动选择直接影响的能力 ID 并展开共享 seam，纯测试、文档或治理改动记录 evidence owner。
-4. 按能力或 owner 检索 `docs/regression-corpus.md`，确认历史逃逸问题的状态、根因与当前归属。
+2. 用下方命令记录 Git 修订号、未提交状态和版本配置；不要直接沿用历史交接结论。
+3. 阅读 `docs/product-charter.md` 与 `docs/product-map.md`。产品行为或运行时改动选择直接影响的能力 ID，并检查共用实现的其他入口；纯测试、文档或治理改动记录证据归属。
+4. 按能力或归属模块检索 `docs/regression-corpus.md`，确认历史回归事故的状态、根因与当前归属。
 5. 按任务读取 `docs/code-standards.md`、`docs/architecture.md`、`docs/testing-standard.md` 与 `docs/operator-runbook.md`；不要把它们全部复制进任务说明。
 6. 本机存在 `memory/MEMORY.md` 时，只按索引读取相关补充事实；需要模拟器证据时，只采用与当前 revision、App 版本和 APK 身份同时匹配的 `docs/emulator-baseline.md` 记录。
 7. 按维护手册准备依赖，再按测试标准选择验证强度；首次建立开发基线运行 `npm run verify`，纯文档整理只运行文档门禁。涉及真实页面或设备行为时再扩大验证。
@@ -16,12 +16,12 @@
 
 | 事实 | 权威位置 |
 | --- | --- |
-| 品牌、视觉和 accessibility | [设计约束](../PRODUCT.md) |
+| 品牌、视觉和无障碍 | [设计约束](../PRODUCT.md) |
 | 产品取舍与功能准入 | [产品章程](product-charter.md) |
-| 现有能力、入口、能力 ID 与共享 seam | [产品地图](product-map.md) |
-| 历史逃逸问题的状态、根因与当前 owner | [回归语料库](regression-corpus.md) |
-| ownership、import、测试归属与质量门禁 | [代码规范](code-standards.md) |
-| module、interface、数据与原生配置边界 | [架构说明](architecture.md) |
+| 现有能力、入口、能力 ID 与共享实现边界 | [产品地图](product-map.md) |
+| 历史回归事故的状态、根因与当前归属 | [回归语料库](regression-corpus.md) |
+| 职责归属、模块导入、测试归属与质量门禁 | [代码规范](code-standards.md) |
+| 模块、接口、数据与原生配置边界 | [架构说明](architecture.md) |
 | 测试方法、证据层与授权边界 | [测试标准](testing-standard.md) |
 | 构建、覆盖安装、Replay、Smoke 与发布操作 | [维护手册](operator-runbook.md) |
 | App 内真实来源与系统验收场景 | [Agent Live](../tests/live/agent-live.md) |
@@ -30,7 +30,7 @@
 | 当前实现和可运行行为 | 代码、配置与实际运行结果 |
 | 本机专项取证与设备历史证据 | `memory/` 与 `docs/emulator-baseline.md` |
 
-用户最新明确要求优先于既有文档；实现与文档冲突时，以代码和匹配身份的运行结果为当前事实，并在交付中指出差异。本机记忆只作补充，不能覆盖 tracked 文档。
+用户最新明确要求优先于既有文档。实现与文档冲突时，以代码和匹配身份的运行结果为当前事实，并在交付中指出差异。本机记忆只作补充，不能覆盖受版本管理的文档。
 
 ## 现场生成当前状态
 
@@ -42,17 +42,17 @@ node -p "require('./package.json').version"
 node -p "require('./app.json').expo.android.versionCode"
 ```
 
-- `git status --short` 非空时，逐文件区分既有 WIP 与本任务改动；不得把 dirty tree 描述成已交付版本。
+- `git status --short` 非空时，逐文件区分已有未完成改动与本任务改动；不得把含未提交改动的工作区描述成已交付版本。
 - 发布状态以 Git、版本配置、Release 产物和实际发布结果共同判定；交接文档不维护手写进度表。
 - 模拟器记录只有在 revision、App 版本和 APK 身份全部匹配时才是当前证据；没有匹配记录就是未验证。
-- 接手审查修复时，按[修复取证记录](review-remediation.md)的后续补验更新原始缺口，不能把历史“未验证”直接当作现状。强制后台任务重放与自然调度/厂商省电分别判断；真实 SQLite 配合合成 transport 不代表完成原站写入，隔离 proof 包或 ABI 编译成功也不代表最终普通包已覆盖安装或物理设备已验证。
+- 接手审查修复时，按[修复取证记录](review-remediation.md)的后续补验更新原始缺口，不能把历史「未验证」直接当作现状。强制后台任务重放与自然调度/厂商省电分别判断；真实 SQLite 配合合成 transport 不代表完成原站写入，隔离 proof 包或 ABI 编译成功也不代表最终普通包已覆盖安装或物理设备已验证。
 - 当前技术债务以 `docs/code-cleanup-map.md` 为准；没有条目不等于可以凭猜测新增或删除能力。
 
 ## 文档与记忆收口
 
-1. 枚举 tracked Markdown，并按需检查本机 `memory/`、`docs/emulator-baseline.md` 和 workspace residue。
+1. 枚举受版本管理的 Markdown 文件，按需检查本机 `memory/`、`docs/emulator-baseline.md` 和工作区残留文件。
 2. 以用户要求、当前代码、配置及匹配身份的运行结果核对事实；每类事实只在上表的权威位置写完整版本。
 3. 删除过时的现役说法和重复索引；历史事故留在回归语料库，历史设备证据留在模拟器基线，普通演进交给 Git。
 4. 本机 `memory/MEMORY.md` 只做索引，主题文件只保留本机独有事实和权威文档指针；普通文档整理按需只读，不补造本机文件或改写宿主生成记忆。
-5. 运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`，另核对新增/调整的标题锚点、REG 编号唯一性和文档职责。现有检查器校验文件路径、能力与 REG 引用、状态字段及 npm script，同时检查全部 REG 定义唯一性并报告两处行号；标题锚点仍需人工核对。代码或工具发生变化时，再运行相应测试、`npm run typecheck` 和 `npm run verify`。
-6. 交付时现场报告最近完整基线、眼前 dirty WIP、已确认技术债务、未验证范围和清理候选；未经确认不删除录屏、`tmp/`、dogfood 结果或额外 worktree。
+5. 运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`，核对新增或调整的标题锚点、REG 编号唯一性和文档职责。现有检查器校验文件路径、能力与 REG 引用、状态字段及 npm script，并检查全部 REG 定义是否唯一；发现重复时报告两处行号。标题锚点仍需人工核对。代码或工具发生变化时，再运行相应测试、`npm run typecheck` 和 `npm run verify`。
+6. 交付时报告最近完整基线、当前未提交改动、已确认技术债务、未验证范围和清理候选。未经确认，不删除录屏、`tmp/`、dogfood 结果或额外 worktree。

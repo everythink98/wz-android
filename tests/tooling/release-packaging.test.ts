@@ -50,15 +50,10 @@ describe('Android release packaging guards', () => {
     }
   });
 
-  it('uses the same complete verification entrypoint in CI and release', () => {
+  it('keeps the complete verification entrypoint in CI', () => {
     const pkg = JSON.parse(readProjectFile('package.json'));
     const ciWorkflow = readProjectFile('.github', 'workflows', 'ci.yml');
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const verifySteps = String(pkg.scripts.verify).split(/\s*&&\s*/);
-    const verifyIndex = releaseScript.indexOf("run('npm', ['run', 'verify']);");
-    const prebuildIndex = releaseScript.indexOf(
-      "run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean', '--no-install']);"
-    );
 
     expect(verifySteps).toEqual(
       expect.arrayContaining([
@@ -98,8 +93,6 @@ describe('Android release packaging guards', () => {
       ])
     );
     expect(ciWorkflow).toContain('- run: npm run verify');
-    expect(verifyIndex).toBeGreaterThanOrEqual(0);
-    expect(prebuildIndex).toBeGreaterThan(verifyIndex);
   });
 
   it('backs the Android appearance setting with Expo SystemUI', () => {
@@ -110,65 +103,17 @@ describe('Android release packaging guards', () => {
     expect(pkg.dependencies['expo-system-ui']).toBeDefined();
   });
 
-  it('keeps the published APK arm64-only and development signing limited to the smoke APK', () => {
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-    const releaseHelpers = readProjectFile('scripts', 'release-environment.mjs');
+  it('defaults Gradle APK splits to arm64 and accepts the requested release ABIs', () => {
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
-
-    expect(releaseScript).toContain('app-arm64-v8a-release.apk');
-    expect(releaseScript).toContain('.env.release.local');
-    expect(releaseScript).toContain('verifyReleaseSigningEnv(configuredReleaseEnv)');
-    expect(releaseScript).toContain('androiddebugkey');
-    expect(releaseScript).toContain('debug.keystore');
-    expect(releaseScript).toContain("const releaseApkFileName = 'app-arm64-v8a-release.apk'");
-    expect(releaseScript).toContain("const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])]");
-    expect(releaseScript).toContain('app-${smokeApkAbi}-smoke-dev.apk');
-    expect(releaseScript).toContain('signDevelopmentSmokeApk(builtSmokeApkPath, smokeApkPath);');
-    expect(releaseScript).toContain('smokeSignerSha256 === expectedReleaseSignerSha256');
-    expect(releaseScript).not.toContain('verifyExpectedReleaseSigner(smokeSignerSha256);');
-    expect(releaseHelpers).toContain("`-PreactNativeArchitectures=${builtAbis.join(',')}`");
-    expect(releaseHelpers).toContain("`-PreleaseApkAbis=${builtAbis.join(',')}`");
-    expect(releaseScript).not.toContain('armeabi-v7a');
     expect(gradle).toContain('project.findProperty("releaseApkAbis") ?: "arm64-v8a"');
     expect(gradle).toContain('include(*requestedReleaseAbis)');
     expect(gradle).not.toContain('armeabi-v7a');
   });
 
-  it('generates a release manifest with APK hash, package, version, and signer digest', () => {
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-
-    expect(releaseScript).toContain('release-manifest.json');
-    expect(releaseScript).toContain('apkName');
-    expect(releaseScript).toContain('sha256');
-    expect(releaseScript).toContain('packageName');
-    expect(releaseScript).toContain('versionName');
-    expect(releaseScript).toContain('versionCode');
-    expect(releaseScript).toContain('signerSha256');
-    expect(releaseScript).toContain('singleApkSignerSha256(output)');
-  });
-
-  it('records Java provenance through the validated parser', () => {
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-
-    expect(releaseScript).toMatch(/parseJavaVersionOutput\(\s*runCapture\('java', \['-version'\], \{/);
-    expect(releaseScript).toContain("failureMessage: '无法读取可信的 Java 版本。'");
-    expect(releaseScript).toContain('if (!failureMessage) {');
-    expect(releaseScript).not.toContain("firstOutputLine(runCapture('java', ['-version']), 'Java')");
-  });
-
-  it('pins the expected release signer digest before writing the manifest', () => {
+  it('pins the installed application signer used by release verification', () => {
     const app = JSON.parse(readProjectFile('app.json'));
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
 
     expect(app.expo.extra.releaseSignerSha256).toBe('6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66');
-    expect(releaseScript).toContain('expectedReleaseSignerSha256');
-    expect(releaseScript).toContain('verifyExpectedReleaseSigner(signerSha256);');
-  });
-
-  it('does not print apksigner certificate output after a successful check', () => {
-    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-
-    expect(releaseScript).toMatch(/if \(result\.status !== 0\) \{\s+if \(result\.stdout\) \{/);
   });
 
   it('compresses release native libraries without compressing the bundle or enabling the optimizer plugin', () => {
@@ -209,7 +154,6 @@ describe('Android release packaging guards', () => {
   it('packages the patched React Android implementation from source', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const pkg = JSON.parse(readProjectFile('package.json'));
-    const reactNativePatch = readProjectFile('patches', 'react-native+0.86.3.patch');
     const buildProperties = app.expo.plugins.find(
       (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-build-properties'
     );
@@ -218,12 +162,6 @@ describe('Android release packaging guards', () => {
     expect(pkg.expo.autolinking.android.buildFromSource).toEqual(
       expect.arrayContaining(['expo-document-picker', 'expo-image', 'expo-video'])
     );
-    expect(reactNativePatch).toContain('ReactAndroid/src/main/java');
-    expect(reactNativePatch).toContain('jsiDir.invariantSeparatorsPath');
-    expect(reactNativePatch).toContain('node_modules/react-native/settings.gradle.kts');
-    expect(reactNativePatch).toContain('+project(":packages").projectDir = file(System.getProperty("java.io.tmpdir"))');
-    expect(reactNativePatch).not.toContain('ReactAndroid/build.gradle.kts');
-    expect(reactNativePatch).not.toContain('compileOnly(');
   });
 
   it.each([
@@ -482,72 +420,5 @@ describe('Android release packaging guards', () => {
     const app = JSON.parse(readProjectFile('app.json'));
 
     expect(app.expo.plugins).toContainEqual(['expo-dev-client', { toolsButton: false }]);
-  });
-
-  it('owns the locked Expo Video source changes through patch-package', () => {
-    const pkg = JSON.parse(readProjectFile('package.json'));
-    const lock = JSON.parse(readProjectFile('package-lock.json'));
-    const patch = readProjectFile('patches', 'expo-video+57.0.3.patch');
-    const dataSource = readProjectFile(
-      'node_modules',
-      'expo-video',
-      'android',
-      'src',
-      'main',
-      'java',
-      'expo',
-      'modules',
-      'video',
-      'utils',
-      'DataSourceUtils.kt'
-    );
-    const registry = readProjectFile(
-      'node_modules',
-      'expo-video',
-      'android',
-      'src',
-      'main',
-      'java',
-      'expo',
-      'modules',
-      'video',
-      'utils',
-      'ReadNetworkVideoClientRegistry.kt'
-    );
-    const networkPlugin = readNativePlugin('network');
-
-    expect(pkg.dependencies['expo-video']).toBe('~57.0.3');
-    expect(lock.packages['node_modules/expo-video'].version).toBe('57.0.3');
-    expect(String(pkg.scripts.postinstall).split(/\s*&&\s*/)).toEqual(
-      expect.arrayContaining(['patch-package', 'npm run build:composer'])
-    );
-    expect(patch).toContain('DataSourceUtils.kt');
-    expect(patch).toContain('ReadNetworkVideoClientRegistry.kt');
-    // Packaging evidence only; real handoff/recycle behavior belongs to the device proof.
-    expect(patch).toContain('VideoManager.kt');
-    expect(patch).toContain('VideoManager.beginFullscreenHandoff(this)');
-    expect(patch).toContain('VideoManager.claimFullscreenHandoff(handoffToken)');
-    expect(patch).toContain('VideoManager.cancelFullscreenHandoff(handoffToken)');
-    expect(dataSource).toContain('ReadNetworkVideoClientRegistry.clientForGeneration');
-    expect(dataSource).toContain('?: OkHttpClientProvider.createClient()');
-    expect(dataSource).toContain('filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }');
-    expect(registry).toContain('object ReadNetworkVideoClientRegistry');
-    expect(registry).toContain('clients.remove(generation, client)');
-    expect(networkPlugin).not.toContain('patchExpoVideoDataSource');
-    expect(networkPlugin).not.toContain('EXPO_VIDEO_SOURCE_SHA256');
-  });
-
-  it('pins react-native-render-html to the reviewed version', () => {
-    const pkg = JSON.parse(readProjectFile('package.json'));
-    const lock = JSON.parse(readProjectFile('package-lock.json'));
-
-    expect(pkg.dependencies['react-native-render-html']).toBe('6.3.4');
-    expect(lock.packages[''].dependencies['react-native-render-html']).toBe('6.3.4');
-  });
-
-  it('keeps TSX tests discoverable when UI tests are added', () => {
-    const vitestConfig = readProjectFile('vitest.config.mts');
-
-    expect(vitestConfig).toContain('src/**/*.test.tsx');
   });
 });

@@ -2534,7 +2534,7 @@ export function prepareSanitizedForumContent(
   }
   stripCompilerOwnedNodeAttributes(contentRoot);
   normalizeForumUserMentionNodes(contentRoot);
-  if (!/<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*)?>/.test(raw)) {
+  if (raw && !/<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*)?>/.test(raw)) {
     const paragraph = new HTMLElement('p', {});
     paragraph.set_content([...contentRoot.childNodes]);
     contentRoot.set_content([paragraph]);

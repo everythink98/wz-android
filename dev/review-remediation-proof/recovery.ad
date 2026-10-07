@@ -44,7 +44,9 @@ press id="main-tab-feed"
 wait label="V2EX" 10000
 press label="核对恢复"
 wait text="恢复结果核对通过" 10000
-press id="main-tab-library"
+press id="main-tab-more"
+find "role=button label=\"收藏\"" click
+wait id="library-favorites-ready" 60000
 wait text="恢复验收资料" 10000
 press label="结束恢复验收"
 wait text="恢复业务核对通过" 10000

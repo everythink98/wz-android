@@ -1,35 +1,55 @@
 # 维护手册
 
-本手册只维护可执行操作。产品契约、能力 ID 和共享 seam 见 [产品地图](product-map.md)，历史 oracle 见 [回归语料库](regression-corpus.md)，证据层与授权规则见 [测试标准](testing-standard.md)，代码边界见 [代码规范](code-standards.md) 与 [架构说明](architecture.md)。当前版本始终从 `package.json` 和 `app.json` 读取。
+本手册说明开发、设备验证和发布的操作步骤。产品契约、能力 ID 和共享实现边界见[产品地图](product-map.md)，历史行为判定依据见[回归语料库](regression-corpus.md)，证据层与授权规则见[测试标准](testing-standard.md)，代码边界见[代码规范](code-standards.md)和[架构说明](architecture.md)。当前版本从 `package.json` 和 `app.json` 读取。
+
+下文的 Replay 指设备脚本重放，Smoke 指冒烟测试，Agent Live 指 App 内真实来源或系统能力验收。专项 runner 指对应的执行脚本；proof APK 指用于专项验证的隔离构建。命令、场景 ID 和证据状态保留原有英文标识。
 
 ## 阅读导航
 
 - 本地开发：[标准命令](#标准命令)、[依赖补丁](#依赖补丁可安装性)、[可视状态](#可视状态语料库)。
 - 设备验证：[覆盖安装](#覆盖安装)、[Replay](#replay)、[首页手势](#首页手势完整回归)、[Release 性能](#release-性能回归)。
 - 真实来源：[Agent Live](#agent-live)、[直达主题](#直接打开主题链接)。
-- 交付收口：[正式发布](#正式发布)、[工具进程](#工具进程收口)。
+- 发布与清理：[正式发布](#正式发布)、[工具进程](#工具进程收口)。
 
 ## 开发与交付
 
-1. 产品/runtime 改动在产品地图选择直接影响的能力 ID 并展开共享 seam；纯测试、文档或治理改动记录 evidence owner。
-2. 只有改动命中已知事故 seam 时才查回归语料库；当前必跑项以 product map 的 canonical evidence 与测试标准为准。
-3. 记录 Git revision 与 dirty 状态，完成最小完整改动。
-4. 按测试标准运行最低可靠证据；涉及设备、真实来源或写操作时遵守相应授权边界。
-5. 交付时按能力 ID 或 evidence owner 报告证据层、恢复状态和未验证范围。
+1. 产品行为或运行时改动先在产品地图选择直接影响的能力 ID，并检查共用实现的其他入口。纯测试、文档或治理改动记录证据归属。
+2. 改动涉及已知事故的实现边界时，查阅回归语料库。当前必跑项以产品地图的主要验证证据和测试标准为准。
+3. 记录 Git 修订号与未提交状态，完成最小完整改动。
+4. 按测试标准执行最低可靠层的验证；涉及设备、真实来源或写操作时，遵守相应授权边界。
+5. 交付时按能力 ID 或证据归属报告证据层、恢复状态和未验证范围。
 
 ## 标准命令
 
-命令定义以 `package.json` 为准。首次开发使用 Node 22（`>=22.22.2 <23`），执行 `npm ci` 安装 lockfile 中的依赖；postinstall 会应用 source patch 并构建 Composer。启动 Android 前准备 SDK、Java 环境，并核对下文的安装身份。
+命令定义以 `package.json` 为准。首次开发按以下顺序准备：
 
-Composer 专项使用 `npm run test:composer:device -- --serial emulator-5556 --build --output .codex-tmp/composer-<独立运行名>`。需先启动固定隔离 AVD `WZ_ComposerInsets_0916` 或 `WZ_TopicCreation_Test_API35`，选择真实系统 IME，准备现有安装、Java/Android SDK/Windows C++ 工具链；runner 不自动创建、卸载、清数据或重置设备。它仅构建开发签名 Release Hermes 诊断入口，不走正式发布。复用时把 `--build` 换为 `--apk <composer-proof.apk>`，须同时保留紧邻的 `<APK>.json` 身份文件；`--cases <逗号分隔的场景 ID>` 可定向，例如 `nodeseek-rich-sheet-shown,nodeseek-rich-fullscreen-shown`。输出目录必须全新且位于 `.codex-tmp`，包含环境、每场景 token/receipt、原生节点和截图、结果清单。
+1. 准备 Node.js 22（`>=22.22.2 <23`）。
+2. 执行 `npm ci`，安装锁文件中的依赖。postinstall 随后自动应用源码补丁并构建 Composer。
+3. 启动 Android 前，准备 SDK 和 Java 环境，并按下文核对安装身份。
 
-新建发帖隔离环境时，由操作者先记录进程/设备基线，创建并启动 `WZ_TopicCreation_Test_API35`，确认没有用户数据后首次安装已匹配源码的开发签名 proof APK，再运行 runner；runner 不承担首次安装，也不放宽已有安装、签名、`firstInstallTime` 与源码/APK 哈希门禁。首次安装仅适用于这个新建隔离环境，不能用于修复旧设备。既有 AVD 若存在安装元数据但 `pm path` 为空，或安装身份/签名异常，立即冻结该设备，不卸载、不清数据、不重建；保留现场并另建授权的隔离环境。设备名严格匹配上述两个值，端口或相似名称不能作为放行依据。
+运行 Composer 专项前，先启动固定隔离 AVD `WZ_ComposerInsets_0916` 或 `WZ_TopicCreation_Test_API35`，选择真实系统 IME，准备现有安装及 Java、Android SDK、Windows C++ 工具链。runner 不自动创建、卸载、清除数据或重置设备。
 
-专项只接受当前源码与 APK 哈希、buildId 匹配且 `isDev=false/isHermes=true` 的包；先比对已装 APK 签名，再覆盖安装并复核 `firstInstallTime`。完整场景矩阵定义在 `scripts/run-composer-device-proof.mjs`，含两站 16 种编辑模式/面板/键盘组合、各独立写入口、失败保稿/重开、深浅全屏及竞态/选图取消。`stress-ime-fast/slow` 在隔离设备分别使用 0/5 倍 window animation scale，记录并最终恢复原值；这些压力条件不代替原生 IME 帧顺序单测。所有发送使用合成账号与 HTTP/adapter 响应，未匹配请求立即失败；不得将这些结果标为 `LIVE_PASS`。较大挖孔须在同一隔离 AVD 单独切换系统 cutout overlay、记录实际 Insets，并添加 `--require-cutout` 重跑深浅全屏，最后恢复原 overlay；overlay 已启用不等于生效，cutout Insets 仍为 0 时必须失败，工具栏按状态栏与 cutout 的较大值验收。可参考 [Android 官方挖孔测试说明](https://developer.android.com/develop/ui/compose/system/test-cutouts)。真实物理设备没有对应证据时仍为 `NOT_VERIFIED`。结束后 runner 释放自己的 agent-device session 并恢复 IME/动画设置；操作者只关闭本次启动的隔离模拟器。
+执行 `npm run test:composer:device -- --serial emulator-5556 --build --output .codex-tmp/composer-<独立运行名>`。该命令只构建开发签名的 Release Hermes 诊断入口，不执行正式发布。复用构建时把 `--build` 换为 `--apk <composer-proof.apk>`，须同时保留紧邻的 `<APK>.json` 身份文件；`--cases <逗号分隔的场景 ID>` 可定向，例如 `nodeseek-rich-sheet-shown,nodeseek-rich-fullscreen-shown`。输出目录必须全新且位于 `.codex-tmp`，包含环境、每场景 token/receipt、原生节点和截图、结果清单。
 
-表情布局专项选择 `composerCases.filter(case => case.stress === 'expressions')` 的场景 ID，覆盖两站富文本/源码、半屏/全屏、私信、发帖、深浅主题和 1.3 倍字号。`expressions-open/close.ad` 走实际工具按钮；DOM oracle 检查完整可选行、固定分类遮挡、长窗口的正文预览和未加载图片的可见占位，Native oracle 核对选择器位于 IME 与导航区上方。agent-device 打开入口可能启用无界面的测试输入法；runner 在表情验收前恢复记录的真实系统 IME，搜索聚焦和几何检查不能在测试输入法下执行。模式切换与显式关闭后核对正文和真实 IME；贴纸选择按 `WRITE-05` 的连续点选契约核对，不等待自动关闭。截图另行人工核对。当前 App 锁定竖屏，改变系统旋转设置不能作为横屏证据；短窗口须在独立设备按下文小屏流程记录实际 viewport 并恢复显示设置。2026-10-05 两台既有 proof AVD 出现安装元数据存在但 `pm path` 为空，已冻结安装变更；本轮另建独立 `WZ_ComposerExpressions_Test_API35_20261005`，数据目录为本轮 ignored scratch，确认全新空设备后首次安装匹配 proof APK，再按同一覆盖安装与身份门禁运行。该精确 AVD 名也在 runner allowlist 中，不能借此重置旧 AVD 或主登录态设备。用户随后要求关闭全部模拟器并只重开主设备，本轮隔离矩阵因此中止；局部结果不作为完整 `DEVICE_REPLAY_PASS`，普通入口在主设备另做只读验收。
+新建发帖隔离环境时，由操作者先记录进程/设备基线，创建并启动 `WZ_TopicCreation_Test_API35`，确认没有用户数据后首次安装已匹配源码的开发签名 proof APK，再运行 runner；runner 不承担首次安装，也不放宽已有安装、签名、`firstInstallTime` 与源码/APK 哈希门禁。首次安装仅适用于这个新建隔离环境，不能用于修复旧设备。
 
-长输入定向使用 `--cases stress-ime-fast,stress-ime-slow --ime-cycles 20 --ime-chars 512 --ime-timeout-minutes 20`。两种动画速度各循环 20 次，每轮交替富文本/源码，输入可区分的确定性 ASCII 块，验证完整 WebView 文档只插入一次、收起重开保稿、全屏几何和最终模拟提交全文；结果逐轮保存。每轮按最多 64 字符的连续 `adb input text` 批次刷新事件时间戳，避免 Android 把耗时超过 10 秒的同批旧按键丢弃；总字符数不减少，不按失败结果重传。Runner 同时保存输入前 DOM/选区、输入事件聚合及严格全文差异，CDP 只接自有进程并验证实际 Composer base URI 和编辑器结构。真实系统键盘保持激活，但发送的是键事件，不能据此声称中文组合输入或候选词提交通过。`inputToReceiptMs` 包含输入、bridge 与自动保存，不能作为纯渲染耗时。
+既有 AVD 若存在安装元数据但 `pm path` 为空，或安装身份/签名异常，立即冻结该设备，不卸载、不清数据、不重建；保留现场并另建授权的隔离环境。设备名严格匹配上述两个值，端口或相似名称不能作为放行依据。
+
+专项只接受当前源码与 APK 哈希、buildId 匹配且 `isDev=false/isHermes=true` 的包；先比对已装 APK 签名，再覆盖安装并复核 `firstInstallTime`。完整场景矩阵定义在 `scripts/run-composer-device-proof.mjs`，含两站 16 种编辑模式/面板/键盘组合、各独立写入口、失败保稿/重开、深浅全屏及竞态/选图取消。`stress-ime-fast/slow` 在隔离设备分别使用 0/5 倍 window animation scale，记录并最终恢复原值；这些压力条件不代替原生 IME 帧顺序单测。所有发送使用合成账号与 HTTP/adapter 响应，未匹配请求立即失败；不得将这些结果标为 `LIVE_PASS`。
+
+较大挖孔须在同一隔离 AVD 单独切换系统 cutout overlay、记录实际 Insets，并添加 `--require-cutout` 重跑深浅全屏，最后恢复原 overlay；overlay 已启用不等于生效，cutout Insets 仍为 0 时必须失败，工具栏按状态栏与 cutout 的较大值验收。可参考 [Android 官方挖孔测试说明](https://developer.android.com/develop/ui/compose/system/test-cutouts)。真实物理设备没有对应证据时仍为 `NOT_VERIFIED`。结束后，runner 释放自己的 agent-device 会话，并恢复 IME 和动画设置；操作者只关闭本次启动的隔离模拟器。
+
+表情布局专项选择 `composerCases.filter(case => case.stress === 'expressions')` 的场景 ID，覆盖两站富文本/源码、半屏/全屏、私信、发帖、深浅主题和 1.3 倍字号。`expressions-open/close.ad` 走实际工具按钮；DOM 断言检查完整可选行、固定分类遮挡、长窗口的正文预览和未加载图片的可见占位；Native 断言核对选择器位于 IME 与导航区上方。
+
+agent-device 打开入口可能启用无界面的测试输入法；runner 在表情验收前恢复记录的真实系统 IME，搜索聚焦和几何检查不能在测试输入法下执行。模式切换与显式关闭后核对正文和真实 IME；贴纸选择按 `WRITE-05` 的连续点选契约核对，不等待自动关闭。截图另行人工核对。当前 App 锁定竖屏，改变系统旋转设置不能作为横屏证据；短窗口须在独立设备按下文小屏流程记录实际 viewport 并恢复显示设置。
+
+2026-10-05 两台既有 proof AVD 出现安装元数据存在但 `pm path` 为空，已冻结安装变更；本轮另建独立 `WZ_ComposerExpressions_Test_API35_20261005`，数据目录为本轮 ignored scratch，确认全新空设备后首次安装匹配 proof APK，再按同一覆盖安装与身份门禁运行。该精确 AVD 名也在 runner allowlist 中，不能借此重置旧 AVD 或主登录态设备。用户随后要求关闭全部模拟器并只重开主设备，本轮隔离矩阵因此中止；局部结果不作为完整 `DEVICE_REPLAY_PASS`，普通入口在主设备另做只读验收。
+
+长输入定向使用 `--cases stress-ime-fast,stress-ime-slow --ime-cycles 20 --ime-chars 512 --ime-timeout-minutes 20`。两种动画速度各循环 20 次，每轮交替富文本/源码，输入可区分的确定性 ASCII 块，验证完整 WebView 文档只插入一次、收起重开保稿、全屏几何和最终模拟提交全文；结果逐轮保存。
+
+每轮按最多 64 字符的连续 `adb input text` 批次刷新事件时间戳，避免 Android 把耗时超过 10 秒的同批旧按键丢弃；总字符数不减少，不按失败结果重传。Runner 同时保存输入前 DOM/选区、输入事件聚合及严格全文差异，CDP 只接自有进程并验证实际 Composer base URI 和编辑器结构。
+
+真实系统键盘保持激活，但发送的是键事件，不能据此声称中文组合输入或候选词提交通过。`inputToReceiptMs` 包含输入、bridge 与自动保存，不能作为纯渲染耗时。
 
 发帖专项复用同一隔离构建，不另开 Metro：
 
@@ -38,9 +58,13 @@ $topicCases = node --input-type=module -e "import {topicCreationCases} from './s
 npm run test:composer:device -- --serial emulator-5556 --build --output .codex-tmp/topic-proof-<独立运行名> --cases $topicCases
 ```
 
-`topic-*` 包含三站普通成功/明确拒绝/未知，linux.do 审核与断连、妖火派币/投票/外站资源/本地文件、三站切换与强停重启恢复。主设备不得运行此入口。构建前完成业务与 fixture 修改；source hash 同时包含真实页面和共享测试 transport，构建中变动必须重建。文件场景仅创建合成小文件，所有 POST 在 Mock Fetcher 内终止；未匹配请求、原生标题不符、重复请求、错误清稿或另一站草稿变化均失败。结果保存每场景 token、SQLite 摘要、实际字段名/数量、原生截图与节点，不记录真实草稿或凭证。重启场景复用同 token 的合成账号读取已有 SQLite，不重新播种丢失稿；发布场景使用新 token。构建通常需数分钟，首次原生依赖未缓存可能更久，以 Gradle 完成和哈希 gate 为准；此命令本身包含覆盖安装与设备操作，只在已授权隔离设备验证时执行。
+`topic-*` 包含三站普通成功/明确拒绝/未知，linux.do 审核与断连、妖火派币/投票/外站资源/本地文件、三站切换与强停重启恢复。主设备不得运行此入口。构建前完成业务与 fixture 修改；source hash 同时包含真实页面和共享测试 transport，构建中变动必须重建。文件场景仅创建合成小文件，所有 POST 在 Mock Fetcher 内终止；未匹配请求、原生标题不符、重复请求、错误清稿或另一站草稿变化均失败。结果保存每场景 token、SQLite 摘要、实际字段名/数量、原生截图与节点，不记录真实草稿或凭证。
 
-本人主帖编辑复用同一 runner：`--cases topic-edit-nodeseek-success,topic-edit-linuxdo-success,topic-edit-yaohuo-success,topic-edit-nodeseek-unknown,topic-edit-yaohuo-restart`。原始正文和两个编辑目标、创建草稿均为合成数据；标题用中文输入，实际 IME 检查后再模拟保存或强停重启。三站成功用例必须重新进入同一主题，再修改并保存一次，分别核对两次写请求与原始正文不变。保存只能进入无网络回退的 `topicEditingTransport`，必须保留其他目标稿，未知保持当前编辑页；重启零写请求。L 站 metadata/body 分步失败及重启恢复另由 source/controller/SQLite owner 验证。真实三站保存不在本命令授权中。
+重启场景复用同 token 的合成账号读取已有 SQLite，不重新播种丢失稿；发布场景使用新 token。构建通常需数分钟，首次原生依赖未缓存可能更久，以 Gradle 完成和哈希 gate 为准；此命令本身包含覆盖安装与设备操作，只在已授权隔离设备验证时执行。
+
+本人主帖编辑复用同一 runner：`--cases topic-edit-nodeseek-success,topic-edit-linuxdo-success,topic-edit-yaohuo-success,topic-edit-nodeseek-unknown,topic-edit-yaohuo-restart`。原始正文和两个编辑目标、创建草稿均为合成数据；标题用中文输入，实际 IME 检查后再模拟保存或强停重启。三站成功用例必须重新进入同一主题，再修改并保存一次，分别核对两次写请求与原始正文不变。保存只能进入无网络回退的 `topicEditingTransport`，必须保留其他目标稿，未知保持当前编辑页；重启零写请求。
+
+L 站 metadata/body 分步失败及重启恢复另由 source/controller/SQLite owner 验证。真实三站保存不在本命令授权中。
 
 小屏、大字号只在上述隔离 AVD 验证，不能临时改变主登录设备供用户使用的显示设置。先记录 `adb -s <serial> shell wm size`、`wm density` 与 `settings get system font_scale`；可设 900×1600、字号 1.4，再以同源码 APK 重跑 `topic-nodeseek-panel-keyboard,topic-linuxdo-panel-keyboard`。这两项检查真实 IME、面板关闭、底栏几何及正文可编辑高度，需另看截图确认分类/标题没有残留半行裁切，手动复核标题聚焦、正文聚焦与收键盘的字段恢复。结束恢复原显示设置，并按覆盖安装规则恢复普通入口 APK；runner 不自动恢复安装包。
 
@@ -105,11 +129,11 @@ npm run visual:gallery -- --port 8081
 
 ### 诊断导出与崩溃还原
 
-用户设备上的事后排障先使用“更多 → 问题诊断”导出，不靠重现故障或结束进程取代已有证据。新 Android journal 在私有非备份目录保存 JS/Native 各四份 2 MiB、最长七天和独立最多 256 KiB 最近崩溃文件；旧两份 1 MiB cache 仍参与导出。高流量会提前轮转，操作系统强杀前的异步队列可能未写盘，不能承诺七天完整记录。
+用户设备上的事后排障先使用「更多 → 问题诊断」导出，不靠重现故障或结束进程取代已有证据。新 Android journal 在私有非备份目录保存 JS/Native 各四份 2 MiB、最长七天和独立最多 256 KiB 最近崩溃文件；旧两份 1 MiB cache 仍参与导出。高流量会提前轮转，操作系统强杀前的异步队列可能未写盘，不能承诺七天完整记录。
 
 先读导出的 `diagnostic-metadata` 与 `diagnostic-coverage`：核对 buildId、versionCode、事件时间范围、journal/writer 状态和丢弃/损坏/读写失败计数；`sources` 分别声明 JS、Native、crash、两份旧 cache 和旧 Native ring 的状态、事件数、损坏行及首尾时间，没有事件时不凭空补时间。Native 的 JS/Native 分段健康计数跨进程保存，`expiredSegmentCount` 区分保留期淘汰，`crashReadFailureCount` 区分最近崩溃文件读取失败。再按事件自身 buildId/processSessionId 分组；普通请求用 `appSessionId + traceId + requestId` 串联 JS transport、Native DNS/connect/response 和 fallback，恢复事件用 `parentTraceId/requestId` 追溯证据与阈值，不能只看最后一次 `rotate-read-runtime`。`previous-exit` 只说明 Android 为对应前一进程提供的退出原因；无记录不证明没有崩溃，ANR/native-crash 原因不等于已有完整堆栈。
 
-JS 同时只有一个 Native batch 在写，其余事件合并等待，在写与待写合计最多 128 KiB；单次写超时只记录健康错误，底层调用实际结算前不提交下一批，不能用超时释放并发占位。导出等待写队列最多五秒，超时仍尝试收集可用证据。致命异常摘要包含尚未批量落盘的最后 JS 阶段，Native 致命处理还会最多等待 250ms 刷出已排队事件，然后继续原异常处理；这个有界等待不能覆盖操作系统直接结束进程或磁盘不可写。
+JS 同时只有一个 Native batch 在写，其余事件合并等待，在写与待写合计最多 128 KiB；单次写超时只记录健康错误，底层调用实际结算前不提交下一批，不能用超时释放并发占位。导出等待写队列最多五秒，超时仍尝试收集可用证据。致命异常摘要包含尚未批量落盘的最后 JS 阶段，Native 致命处理还会最多等待 250 ms 刷出已排队事件，然后继续原异常处理；这个有界等待不能覆盖操作系统直接结束进程或磁盘不可写。
 
 异常入口按真实 RN 管线判断，不能只看是否存在 `RN$registerExceptionListener`：当 `RN$useAlwaysAvailableJSErrorHandling` 不为 true 时，已就绪的 JS/renderer 异常仍走 legacy 入口。当前保留 Native listener，同时包装 `ExceptionsManager.handleException`（不可用才用 ErrorUtils），完整委托并去重。系统 `ApplicationExitInfo` 的 EXCESSIVE_RESOURCE_USAGE 记录为 `resource-limit`，保留 `exitReasonCode`；即使同一进程已有 JS 致命异常，也不把该退出原因猜成 crash。
 
@@ -137,7 +161,7 @@ proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出�
 
 ### 图片运行时 Native 验证
 
-排查图片失败时导出“更多 → 问题诊断”的现有日志。按 `appSessionId + traceId` 关联 JS `image-load` 与 Native request，以 `mediaRef` 找同图的后续重试；多个原生请求再以 `callId` 区分。`imageConsumer=svg-probe` 表示显示失败后的兼容探测，其 200 不能证明 Fresco/Glide 成功。JS `finish/success` 表示显示，`imageFailure` 为闭集错误分类，`unknown` 表示现有原生回调没有足够信息；Native `response-headers`、`response-body-end`、`image-call-failed` 和 `image-lease-released` 分别表示响应头、读取、失败与资源释放。缓存命中可能只有 JS 显示终态，没有网络 Call；不凭缺少 Call 单独断言缓存命中。Native 事件已进入跨进程 journal，512 条 ring 仅为旧桥接兼容窗口；先按上节 coverage 判断可用时间范围。
+排查图片失败时导出「更多 → 问题诊断」的现有日志。按 `appSessionId + traceId` 关联 JS `image-load` 与 Native request，以 `mediaRef` 找同图的后续重试；多个原生请求再以 `callId` 区分。`imageConsumer=svg-probe` 表示显示失败后的兼容探测，其 200 不能证明 Fresco/Glide 成功。JS `finish/success` 表示显示，`imageFailure` 为闭集错误分类，`unknown` 表示现有原生回调没有足够信息；Native `response-headers`、`response-body-end`、`image-call-failed` 和 `image-lease-released` 分别表示响应头、读取、失败与资源释放。缓存命中可能只有 JS 显示终态，没有网络 Call；不凭缺少 Call 单独断言缓存命中。Native 事件已进入跨进程 journal，512 条 ring 仅为旧桥接兼容窗口；先按上节 coverage 判断可用时间范围。
 
 fresh prebuild 后，用 `android/gradlew.bat -p android :forum-platform:testDebugUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行模块内网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
 
@@ -265,7 +289,7 @@ adb -s <serial> install -r <node_modules/expo-video/android/build/outputs/apk/an
 adb -s <serial> shell am instrument -w -r -e class expo.modules.video.ReaderPlaybackInstrumentedTest expo.modules.video.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-必须看到非零测试全部通过。覆盖真实缓存字节、Range 回源、epoch/Referer 隔离、LRU 淘汰、缺失文件回源、音视频真实 seek 与视频目标帧、40/48dp 图标和 56dp 点击范围；负向控制保留旧的不缓存路径。测试阶段以 `ReaderPlaybackProof` 输出仅含合成数据的请求计数与 seek 耗时，截图只写测试 APK 的 external files；任务证据复制到 ignored scratch，不进入 Git。完成后只停止本次测试进程，保留阅坛数据与设备状态。生产 App 中四站正文/回复/引用/采纳答案及实际全屏返回仍需匹配 APK 单独验收，这组 instrumentation 不能替代 Live。
+必须看到非零测试全部通过。覆盖真实缓存字节、Range 回源、epoch/Referer 隔离、LRU 淘汰、缺失文件回源、音视频真实 seek 与视频目标帧、40/48 dp 图标和 56 dp 点击范围；负向控制保留旧的不缓存路径。测试阶段以 `ReaderPlaybackProof` 输出仅含合成数据的请求计数与 seek 耗时，截图只写测试 APK 的 external files；任务证据复制到 ignored scratch，不进入 Git。完成后只停止本次测试进程，保留阅坛数据与设备状态。生产 App 中四站正文/回复/引用/采纳答案及实际全屏返回仍需匹配 APK 单独验收，这组 instrumentation 不能替代 Live。
 
 ### 更新下载证据
 
@@ -301,7 +325,7 @@ L 站 CSRF 请求经隐藏 WebView 接力失败时，保留原始 CF 响应的�
 
 出现原生请求要求挑战、验证页却不出现挑战或验证后仍失败时，先按以下顺序排查。历史反例见[回归语料库的代理出口案例](regression-corpus.md#环境反例2026-09-20-cf-验证与上报出口不一致)。这是环境诊断步骤，不授权修改用户网络，也不把普通 403 一律归为 CF。
 
-包含出口诊断的新构建会在 L 站验证文档就绪时自动采样，用户无需另开浏览器：复现后从“更多”导出诊断，查找 `operation=egress-probe`，通过 `parentTraceId` 关联本次验证。`probeNativeResult` 与 `probeWebViewResult` 均为 `success` 时，`isSameEgress=false` 表示该次采样出口不同，`true` 仅排除该次 trace 采样的差异；两端协议和出口地址族分别由 `probeNativeProtocol/probeWebViewProtocol`、`probeNativeAddressFamily/probeWebViewAddressFamily` 记录。任一侧 timeout、canceled、http-error、network-error 或 invalid-response 时不输出相等结论，不能当作出口不同或相同。手动检测不等待探测，过早检测可能只有取消记录；CDK 返回后的自动检测等待当前主域探针结算，最多沿用其五秒窗口，失败、超时或出口不同也继续检测。旧构建没有该事件，无法从已有 Cookie、UA 或 socket `addressFamily` 反推公网出口。采样不保存 IP 或正文，不改变代理设置与登录态。
+包含出口诊断的新构建会在 L 站验证文档就绪时自动采样，用户无需另开浏览器：复现后从「更多」导出诊断，查找 `operation=egress-probe`，通过 `parentTraceId` 关联本次验证。`probeNativeResult` 与 `probeWebViewResult` 均为 `success` 时，`isSameEgress=false` 表示该次采样出口不同，`true` 仅排除该次 trace 采样的差异；两端协议和出口地址族分别由 `probeNativeProtocol/probeWebViewProtocol`、`probeNativeAddressFamily/probeWebViewAddressFamily` 记录。任一侧 timeout、canceled、`http-error`、network-error 或 invalid-response 时不输出相等结论，不能当作出口不同或相同。手动检测不等待探测，过早检测可能只有取消记录；CDK 返回后的自动检测等待当前主域探针结算，最多沿用其五秒窗口，失败、超时或出口不同也继续检测。旧构建没有该事件，无法从已有 Cookie、UA 或 socket `addressFamily` 反推公网出口。采样不保存 IP 或正文，不改变代理设置与登录态。
 
 详细证据按以下顺序读取：
 
@@ -313,7 +337,7 @@ L 站 CSRF 请求经隐藏 WebView 接力失败时，保留原始 CF 响应的�
 - 探测已启动但正常停留仍变成 `canceled`，或返回主域后不再自动检测时，核对 `probeCancelReason=navigation` 前是否只有重复的 `load-start`。Android `doUpdateVisitedHistory` 也发送该事件，`loading` 按 `progress != 100` 计算，true 与 false 均不能证明新文档；不应仅凭此布尔值取消。允许的顶层导航回调或真实 `documentKey` 变化才使旧文档证据失效。验收须同时取得双侧有效采样、检测检查点持有该完整样本，以及关联 Cookie 交接和检测终态，并重复打开验证窗口；不能以首轮成功或手动兜底完成替代自动检测通过。导出健康计数是跨进程累计值，应与本轮基线比较新增量，不能把历史非零写失败或丢弃计数说成本轮失败，也不能称累计值全零。
 - 检测的 Cookie 交接 `cookie-barrier` 用 `parentTraceId` 关联验证，原生 Cookie 日志沿该 barrier 的 `traceId` 读取。`surfaceGeneration` 仅是已有窗口状态旁证，专用阅读验证可能复用该值，不能作唯一关联键。再按验证中的 `batchId` 对齐同一 App session 的阅读上报和补发，检查原生请求的 Cookie/UA 一致性、CF Ray 与业务终态。诊断请求成功不能代替原业务成功。
 - Cookie 对照必须覆盖全部同名 `cf_clearance`：`cfClearanceCount/storedCfClearanceCount` 记录发送与平台按请求 URL 读取的数量，`cfClearanceDistinctCount/storedCfClearanceDistinctCount` 记录不同值数量，`isCfClearanceCurrent` 比较完整有序集合，`didCfClearanceChange` 比较窗口打开与交接时根 URL 的完整集合。缺少这些计数字段的旧构建只比较首枚，不能排除第二枚遗漏或变化。窗口打开/交接时，`cfClearanceInfoResult=success` 才提供 `cfClearancePartitionedCount/cfClearanceUnpartitionedCount`；`unsupported/failed` 表示属性未知，不能当作零枚。属性采样限于 `https://linux.do/` 对应视角，不枚举整个 Cookie 库；同一次交接的 intent/finish/persist 复用该快照，不是独立采样。分区数量不代表 WebView 已通过挑战，也不自动决定哪枚 Cookie 有效；日志不保存 Cookie 值或摘要。
-- 出口对照同时核对原请求、原生探针、恢复请求的 Native `connection-acquired`：同一进程下比较 `lane/generation/poolId/connectionId`。实际复用同一连接可排除“探针另建连接、业务滞留旧连接”的解释；跨进程不能按相同对象 ID 字符串认作同一连接。Cookie 集合一致和同出口仍不证明 CF 接受原生请求，不能据此自动清除登录或更换请求通道。
+- 出口对照同时核对原请求、原生探针、恢复请求的 Native `connection-acquired`：同一进程下比较 `lane/generation/poolId/connectionId`。实际复用同一连接可排除「探针另建连接、业务滞留旧连接」的解释；跨进程不能按相同对象 ID 字符串认作同一连接。Cookie 集合一致和同出口仍不证明 CF 接受原生请求，不能据此自动清除登录或更换请求通道。
 
 1. 留存原请求的状态与识别依据；`cf-mitigated: challenge` 是明确挑战证据。核对实际发送的 Cookie 是否与当前共享存储一致、UA 是否一致，不能只看存储中存在 Cookie。
 2. 在同一时间窗口，分别经真实原生通道与验证 WebView 对同源 `/cdn-cgi/trace` 做不带凭据的只读探测，比较 CF 实际看到的公网 IP、地址族与协议。只保留地址族、协议和本轮出口是否相同的布尔值；若需跨进程比较，使用只驻内存的随机盐，不持久化公网 IP、盐或 Cookie。trace 的 200 只证明出口可观测，不证明业务上报成功。
@@ -334,15 +358,15 @@ Mihomo 客户端可试验以下定向规则，插在已有规则之前并保留�
 
 ### L 站 CF 验证与自动检测验收
 
-读取恢复新建的验证网页直接进入 [CDK](https://cdk.linux.do/)，不再先访问主站 `/challenge`。账号页可点击“网站验证”，普通登录或已经复用的登录网页保留原入口。当前文档须精确为 CDK `/login`、无已知加载错误，且收到既有原生注入探针的合格消息、无挑战标记，才返回主域 `/latest`；无需登录 CDK。CDK 阶段不在 `onLoadEnd` 手动补注入，避免把 Android 网络错误前的普通 finish 当成成功。其他 CDK 最终页保留手动检测；不清 Cookie 或登录态，不修改代理或业务传输。
+读取恢复新建的验证网页直接进入 [CDK](https://cdk.linux.do/)，不再先访问主站 `/challenge`。账号页可点击「网站验证」，普通登录或已经复用的登录网页保留原入口。当前文档须精确为 CDK `/login`、无已知加载错误，且收到既有原生注入探针的合格消息、无挑战标记，才返回主域 `/latest`；无需登录 CDK。CDK 阶段不在 `onLoadEnd` 手动补注入，避免把 Android 网络错误前的普通 finish 当成成功。其他 CDK 最终页保留手动检测；不清 Cookie 或登录态，不修改代理或业务传输。
 
-可信返回后，等待同一主域文档的已知页面状态、无挑战标记，以及既有五秒出口探针结算，再自动执行一次当前检测；探针质量不作为业务准入条件。读取恢复只恢复本轮 exact Query / 阅读 batchId，账号页“网站验证”只走既有账号检测。保留手动“检测并继续”，手动检测会消耗本轮自动机会。重复消息不重复检测；关闭、刷新、真实导航、后台、身份变化或页面错误撤销待执行动作。失败结果留屏，用户点击“重新验证”才再次进入 CDK，不自动循环。
+可信返回后，等待同一主域文档的已知页面状态、无挑战标记，以及既有五秒出口探针结算，再自动执行一次当前检测；探针质量不作为业务准入条件。读取恢复只恢复本轮 exact Query / 阅读 batchId，账号页「网站验证」只走既有账号检测。保留手动「检测并继续」，手动检测会消耗本轮自动机会。重复消息不重复检测；关闭、刷新、真实导航、后台、身份变化或页面错误撤销待执行动作。失败结果留屏，用户点击「重新验证」才再次进入 CDK，不自动循环。
 
 验收确认直接入口、可信返回、新主域 probe、单次自动检测、Cookie barrier 及原请求终态，并核对手动检测仍可用、失败不循环。CDK 消息不作为主域登录、UA 或出口证据；普通 finish 后收到网络错误、旧 key 或旧文档消息均不得误触发返回或自动检测。主站 404、CDK 200、Cookie 更新和同出口不能替代实际 API 成功。阅读恢复仍使用原 batchId 和原始 100 秒期限；过期、取消或结果不明不得重放，主动产生真实阅读上报仍须逐项授权。页面及原生事件顺序由 `tests/ui/account/account-site-panels.test.tsx` 承接，自动检测、撤销及交接由 `src/features/account/useVerificationController.test.ts` 承接，真实 reading 接线由 `tests/ui/account/account-runtime.test.tsx` 承接。
 
 `REG-ACCOUNT-054` 保留此前真实 CF → CDK 挑战 → 原生恢复对照，以及旧手动入口构建 `b129345cd5cd4cf3977a7b0cffa3bf3e` 的按钮链路 `LIVE_PASS`。后者保留数据覆盖安装，三站登录保留；实际进入 CDK 后回主域，取得新 probe，检测交接完成，后续两个自然阅读 POST 200，分享导出与 Native journal 匹配且健康计数零新增。该 UI 验收沿用此前已恢复的 clearance，未重新制造 CF，不能将两次证据合称新包完整 CF 恢复。
 
-此前一次性备用引导版本已获 `UI_PASS`，该模拟器包的手动备用、回主域采样、检测交接、自然阅读和日志导出已获 `LIVE_PASS`，但未自然重现受阻业务。历史摘要见 `.codex-tmp/cf-auto-verification-logs/acceptance.md`；其分享曾触及 128 MB 上限，仅将本任务旧失败候选导出校验哈希归档后移除设备冗余副本，再完成导出和分享，未清 Cookie 或登录态，不据此授权清理其他导出。本轮首个候选因第二轮 history 误取消被拒绝交付；最终修复构建在已登录主 AVD、深色/140% 下连续两次自动完成账号“网站验证”，无手动检测，双侧采样及交接完整，后续两次自然阅读 POST 200。实际 UI 分享导出与关键 journal 匹配，健康计数零新增，获此范围 `LIVE_PASS`；回执为 `.codex-tmp/cf-verification-polish/emulator-receipt.json`，安装与打包核验见同目录 `.codex-tmp/cf-verification-polish/install-after.txt`、`.codex-tmp/cf-verification-polish/emulator-sanity.json`。新受阻原批次恢复、新 CF 挑战、实体机及小屏原生结果态仍为 `NOT_VERIFIED`；完整证据边界见 `REG-ACCOUNT-054`。
+此前一次性备用引导版本已获 `UI_PASS`，该模拟器包的手动备用、回主域采样、检测交接、自然阅读和日志导出已获 `LIVE_PASS`，但未自然重现受阻业务。历史摘要见 `.codex-tmp/cf-auto-verification-logs/acceptance.md`；其分享曾触及 128 MB 上限，仅将本任务旧失败候选导出校验哈希归档后移除设备冗余副本，再完成导出和分享，未清 Cookie 或登录态，不据此授权清理其他导出。本轮首个候选因第二轮 history 误取消被拒绝交付；最终修复构建在已登录主 AVD、深色/140% 下连续两次自动完成账号「网站验证」，无手动检测，双侧采样及交接完整，后续两次自然阅读 POST 200。实际 UI 分享导出与关键 journal 匹配，健康计数零新增，获此范围 `LIVE_PASS`；回执为 `.codex-tmp/cf-verification-polish/emulator-receipt.json`，安装与打包核验见同目录 `.codex-tmp/cf-verification-polish/install-after.txt`、`.codex-tmp/cf-verification-polish/emulator-sanity.json`。新受阻原批次恢复、新 CF 挑战、实体机及小屏原生结果态仍为 `NOT_VERIFIED`；完整证据边界见 `REG-ACCOUNT-054`。
 
 ### L 站访问与等级入账验收
 
@@ -375,7 +399,7 @@ npm run smoke:android
 node scripts/smoke-android.mjs <apkPath>
 ```
 
-禁止在保留数据的设备上执行 `agent-device reinstall`、`agent-device uninstall`、`adb uninstall`、`adb shell pm clear` 或 Gradle `connectedDebugAndroidTest`。已验证的 `agent-device 0.20.6` 中，`reinstall` 会先执行不带 `-k` 的卸载，CLI 的 “Replace installed app” 文案不代表保留数据。覆盖安装失败就停止；不得自动改走卸载、清数据或重置模拟器。账号、本机数据或 `firstInstallTime` 异常时立即冻结设备变更，只读取证并报告。
+禁止在保留数据的设备上执行 `agent-device reinstall`、`agent-device uninstall`、`adb uninstall`、`adb shell pm clear` 或 Gradle `connectedDebugAndroidTest`。已验证的 `agent-device 0.20.6` 中，`reinstall` 会先执行不带 `-k` 的卸载，CLI 的「Replace installed app」文案不代表保留数据。覆盖安装失败就停止；不得自动改走卸载、清数据或重置模拟器。账号、本机数据或 `firstInstallTime` 异常时立即冻结设备变更，只读取证并报告。
 
 ### Replay
 
@@ -407,7 +431,7 @@ runner 会拒绝与 `WZ_ANDROID_TEST_DEVICE` 或 `WZ_ANDROID_SMOKE_DEVICE` 相�
 
 1. 核对安装身份、版本与 APK SHA-256；覆盖安装后执行 `APK_SANITY` 和 `tests/device/feed-gesture-priority.ad`。
 2. 打开首页，顺序执行下方连续手势矩阵、双向 CANCEL/UP、独立惯性、首页刷新和边界交叉脚本。
-3. 核对底栏顺序为“首页、搜索、消息、更多”，第三格使用铃铛 `Bell`，第四格保留 `MoreHorizontal`。打开“消息”，执行通知刷新取消脚本，然后返回首页。
+3. 核对底栏顺序为「首页、搜索、消息、更多」，第三格使用铃铛 `Bell`，第四格保留 `MoreHorizontal`。打开「消息」，执行通知刷新取消脚本，然后返回首页。
 4. 按 `tests/live/agent-live.md` 的 `LIVE-FEED-01` 补验首尾边界、点选、分类栏、刷新中切来源/底栏和返回。只读手势验收不改变来源启停/顺序或账号状态。
 5. 保存每项通过或未验证范围及设备输入方式；实体手机与鼠标手动操作分别记录，不借用自动注入结论。回收本轮会话和专用临时文件。
 
@@ -428,17 +452,17 @@ $env:ANDROID_HOME = '<Android-SDK>'
 node scripts/check-feed-gestures.mjs '<ignored-evidence-directory>' yaohuo
 ```
 
-来源参数默认 `v2ex`，也可选当前已能稳定读取的 `yaohuo`、`nodeseek` 或 `linuxdo`。脚本从真实列表中段执行 72 组手势：原有 8 类 × 3 种速度 × 2 个方向（横滑归位途中接纵滚、完整横滑、纵向斜滑、纵转横、横转纵、惯性中接横滑、同次回拖和系统取消），另加静止/惯性中/横纵交接后 20% 屏宽的短快滑（80/120ms、双向）、12% 屏宽短慢拖（800ms、双向）和惯性中轻点，再加横纵交接后的短斜滑（横移 20% 屏宽、纵移 8% 屏宽，80/120ms、双向）。每项检查完整页面几何，纵向意图/取消保持来源，短慢拖按原生规则自然结算，完整横滑和短快滑必须换来源；归位期间接纵滚还检查卡片实际位移，轻点必须停止惯性且不打开帖子。末尾可加已有动作名（如 `fling-short-horizontal`，多个用逗号分隔）作紧凑诊断，但最终验收仍运行默认全矩阵。每项先切至“全部”再切回目标来源，避免依赖可关闭的回顶按钮或上次滚动位置。`tests/device/TouchTrace.java` 在 adb shell 内按同一时间线注入连续触摸，不安装测试 App；jar 只写任务专用 `/data/local/tmp` 路径，结束移除。结果只保存动作、来源、bounds 与实际事件时间，不保存列表正文；实际时间漂移超过 50ms 时停止并报告输入无效，不能把延长后的慢拖当作短快滑。来源进入验证页、列表未加载或用户同时触摸设备均不能作为手势 verdict；测试期间独占设备输入。该矩阵仍须配合下面的惯性、刷新 oracle 和 `LIVE-FEED-01` 的首尾边界、点选、刷新交叉与页面返回。
+来源参数默认 `v2ex`，也可选当前已能稳定读取的 `yaohuo`、`nodeseek` 或 `linuxdo`。脚本从真实列表中段执行 72 组手势：原有 8 类 × 3 种速度 × 2 个方向（横滑归位途中接纵滚、完整横滑、纵向斜滑、纵转横、横转纵、惯性中接横滑、同次回拖和系统取消），另加静止/惯性中/横纵交接后 20% 屏宽的短快滑（80/120 ms、双向）、12% 屏宽短慢拖（800 ms、双向）和惯性中轻点，再加横纵交接后的短斜滑（横移 20% 屏宽、纵移 8% 屏宽，80/120 ms、双向）。每项检查完整页面几何，纵向意图/取消保持来源，短慢拖按原生规则自然结算，完整横滑和短快滑必须换来源；归位期间接纵滚还检查卡片实际位移，轻点必须停止惯性且不打开帖子。末尾可加已有动作名（如 `fling-short-horizontal`，多个用逗号分隔）作紧凑诊断，但最终验收仍运行默认全矩阵。每项先切至「全部」再切回目标来源，避免依赖可关闭的回顶按钮或上次滚动位置。`tests/device/TouchTrace.java` 在 adb shell 内按同一时间线注入连续触摸，不安装测试 App；jar 只写任务专用 `/data/local/tmp` 路径，结束移除。结果只保存动作、来源、bounds 与实际事件时间，不保存列表正文；实际时间漂移超过 50 ms 时停止并报告输入无效，不能把延长后的慢拖当作短快滑。来源进入验证页、列表未加载或用户同时触摸设备均不能作为手势 verdict；测试期间独占设备输入。该矩阵仍须配合下面的惯性、刷新 oracle 和 `LIVE-FEED-01` 的首尾边界、点选、刷新交叉与页面返回。
 
 首页惯性另从已打开的首页运行，沿用以上显式设备与 session：
 
-判断慢拖手感时区分实际跟手位移与松手结算：短慢拖可以自然回弹，长慢拖超过原生阈值应换页。尤其检查“先纵滚再横拖”，不能沿用上一段被取消手势的按下位置。需要诊断时在本机记录 MotionEvent、页面进度和归位输入，临时日志不得进入补丁或最终 APK；完整矩阵仍是 canonical owner，自动注入不代表物理触感。
+判断慢拖手感时区分实际跟手位移与松手结算：短慢拖可以自然回弹，长慢拖超过原生阈值应换页。尤其检查「先纵滚再横拖」，不能沿用上一段被取消手势的按下位置。需要诊断时在本机记录 MotionEvent、页面进度和归位输入，临时日志不得进入补丁或最终 APK；完整矩阵仍是 canonical owner，自动注入不代表物理触感。
 
 ```powershell
 node scripts/check-feed-fling.mjs '<ignored-evidence-directory>'
 ```
 
-脚本重新选择 V2EX 首屏，执行 120ms 快甩并比较松手后两个时刻的列表内容，独立断言拖动确实发生、松手后仍继续移动。需使用有足够静态条目且无加载遮罩的页面；截图采样排除导航栏、滚动条和悬浮操作，不能用于有大面积动态图片的列表或证明所有速度、设备性能均正常。仅验证“甩动后还能横滑”不能代替该惯性 oracle。
+脚本重新选择 V2EX 首屏，执行 120 ms 快甩并比较松手后两个时刻的列表内容，独立断言拖动确实发生、松手后仍继续移动。需使用有足够静态条目且无加载遮罩的页面；截图采样排除导航栏、滚动条和悬浮操作，不能用于有大面积动态图片的列表或证明所有速度、设备性能均正常。仅验证「甩动后还能横滑」不能代替该惯性 oracle。
 
 首页刷新在浅色主题、已登录且可读取的妖火列表执行：
 
@@ -446,7 +470,7 @@ node scripts/check-feed-fling.mjs '<ignored-evidence-directory>'
 node scripts/check-feed-refresh.mjs '<ignored-evidence-directory>'
 ```
 
-检查 50/100px 短拉、长拉后系统 CANCEL、回拉、下拉中横移及下一次正常刷新。先确认指示器实际出现，再核对收起与完整页面；像素探针适用浅色静态列表，若中央正文有同色内容，需人工核对截图，不能放宽阈值冒充通过。
+检查 50/100 px 短拉、长拉后系统 CANCEL、回拉、下拉中横移及下一次正常刷新。先确认指示器实际出现，再核对收起与完整页面；像素探针适用浅色静态列表，若中央正文有同色内容，需人工核对截图，不能放宽阈值冒充通过。
 
 刷新尚未结算时的切站和底栏返回使用同一脚本的 `interruptions` 模式：
 
@@ -456,29 +480,29 @@ node scripts/check-feed-refresh.mjs '<ignored-evidence-directory>' interruptions
 
 该模式要求松手 1 秒后仍能确认刷新圆圈，快网络导致前置条件不成立不能计入通过。模拟器可临时使用受控的蜂窝延迟，操作前记录 Wi-Fi、移动数据与 latency，结束在 `finally` 恢复原值；不改账号或服务器代理。[Android Emulator 官方控制台说明](https://developer.android.com/studio/run/emulator-console) 指出 `network delay` 仅作用于 Ethernet/Cellular，36.5 起默认 Wi-Fi 走 netsim，不能只设置该参数就声称已模拟慢 Wi-Fi。
 
-首页边界交叉从已加载的完整列表执行；要求所有一级来源标签可见，“全部 → 已读”中有既有阅读记录：
+首页边界交叉从已加载的完整列表执行；要求所有一级来源标签可见，「全部 → 已读」中有既有阅读记录：
 
 ```powershell
 node scripts/check-feed-boundaries.mjs '<ignored-evidence-directory>'
 ```
 
-按当前来源顺序验证首尾页快慢向外滑；每次碰边界后，反向短滑 20% 屏宽、120ms 必须切至邻页，再向原方向短滑必须返回边界页。首屏向右、末屏向左本来就没有相邻页，向外不切页不能单独作为拦截 Bug。其余用例覆盖列表顶部和实际尾部双向斜滑、双指后恢复单指、快甩后点远端 Tab、二级栏横滑及切底栏返回。尾部固定选择“全部 → 已读”的有限列表，并确认“已经到底了”；不要在未筛选的来源中追逐自动追加的帖子，也不为准备数据打开未读帖子。已读为空时脚本明确停止，首尾斜滑记为 `NOT_VERIFIED`；末尾添加 `interactions` 可独立运行后四项交互，不代替完整边界验收。末尾添加 `rail` 只诊断四站分类栏：要求四站启用、存在溢出分类，逐站验证双向位移、两端继续拖动不换来源及点击隐藏分类，结束回到“全部”。分类不溢出或来源验证页遮挡时前置条件不成立，不计入通过。连续手势矩阵仍使用长列表验证中段。刷新尚未结算时切来源/底栏仍按 `LIVE-FEED-01` 单独取证，不能用正常切页结果代替。
+按当前来源顺序验证首尾页快慢向外滑；每次碰边界后，反向短滑 20% 屏宽、120 ms 必须切至邻页，再向原方向短滑必须返回边界页。首屏向右、末屏向左本来就没有相邻页，向外不切页不能单独作为拦截 Bug。其余用例覆盖列表顶部和实际尾部双向斜滑、双指后恢复单指、快甩后点远端 Tab、二级栏横滑及切底栏返回。尾部固定选择「全部 → 已读」的有限列表，并确认「已经到底了」；不要在未筛选的来源中追逐自动追加的帖子，也不为准备数据打开未读帖子。已读为空时脚本明确停止，首尾斜滑记为 `NOT_VERIFIED`；末尾添加 `interactions` 可独立运行后四项交互，不代替完整边界验收。末尾添加 `rail` 只诊断四站分类栏：要求四站启用、存在溢出分类，逐站验证双向位移、两端继续拖动不换来源及点击隐藏分类，结束回到「全部」。分类不溢出或来源验证页遮挡时前置条件不成立，不计入通过。连续手势矩阵仍使用长列表验证中段。刷新尚未结算时切来源/底栏仍按 `LIVE-FEED-01` 单独取证，不能用正常切页结果代替。
 
 `rail` 后可再指定 `v2ex`、`linuxdo`、`nodeseek` 或 `yaohuo`，用于独立重放中断来源。反向拖动先验证实际回移，再继续拖至起点检查边界，不假定两次等距输入必然抵消原生惯性。
 
-通知刷新取消另在浅色主题、“消息 → 全部”、列表顶部运行，沿用以上显式设备与 session：
+通知刷新取消另在浅色主题、「消息 → 全部」、列表顶部运行，沿用以上显式设备与 session：
 
 ```powershell
 node scripts/check-notification-refresh-cancel.mjs '<ignored-evidence-directory>'
 ```
 
-脚本先等待聚合通知进入 data、empty 或 partial 终态，排除首次加载圆圈，再使用已安装的 `pngjs` 读取原生截图，证明下拉指示器出现，验证 CANCEL 后 1 秒内收起、下一次正常下拉在 60 秒内结算。证据目录必须 ignored；不打开消息、不标已读。当前像素探针适用于已验的 1080×2400 与 1264×2780 浅色 viewport；其他布局需先核对截图与探针范围，不能把“未拉出指示器”算作通过。
+脚本先等待聚合通知进入 data、empty 或 partial 终态，排除首次加载圆圈，再使用已安装的 `pngjs` 读取原生截图，证明下拉指示器出现，验证 CANCEL 后 1 秒内收起、下一次正常下拉在 60 秒内结算。证据目录必须 ignored；不打开消息、不标已读。当前像素探针适用于已验的 1080×2400 与 1264×2780 浅色 viewport；其他布局需先核对截图与探针范围，不能把「未拉出指示器」算作通过。
 
 `npm run smoke:android` 在覆盖安装后的第一次启动前写入日志 marker，只检查有界启动窗口、前台包名、崩溃、ANR 与 RedBox，形成 `APK_SANITY`；随后 Replay 独立形成 `DEVICE_REPLAY_PASS`。二者都不等于真实来源当天数据或全部功能通过，也不授权任何远端写操作。
 
 ### 冷启动对照
 
-启动图通过 `expo-splash-screen` 的 drawable 配置和 `plugins/withSharedAppIcon.js` 共用 `assets/icon.webp`；React 占位用原生资源名，不再 require 完整 PNG。WebP 是 `assets/icon.png` 的无损副本；更新图标时同步转换并核对解码后的 RGBA 像素一致（Pillow：`image.save(path, lossless=True, method=6, exact=True)`）。`assets/splashscreen.xml` 保持原生 288dp 画布内居中 200dp 图标；两种入口的显示尺寸同时核对。缩包验收比较同签名、同 ABI 的 release APK，并确认只保留一份 `reader_app_icon`，无 `assets_icon` 或五档 `splashscreen_logo` 位图。
+启动图通过 `expo-splash-screen` 的 drawable 配置和 `plugins/withSharedAppIcon.js` 共用 `assets/icon.webp`；React 占位用原生资源名，不再 require 完整 PNG。WebP 是 `assets/icon.png` 的无损副本；更新图标时同步转换并核对解码后的 RGBA 像素一致（Pillow：`image.save(path, lossless=True, method=6, exact=True)`）。`assets/splashscreen.xml` 保持原生 288 dp 画布内居中 200 dp 图标；两种入口的显示尺寸同时核对。缩包验收比较同签名、同 ABI 的 release APK，并确认只保留一份 `reader_app_icon`，无 `assets_icon` 或五档 `splashscreen_logo` 位图。
 
 使用相同配置的 Release Hermes 测试包，先按覆盖安装规则确认签名、APK SHA 与 firstInstallTime，再执行：
 
@@ -554,13 +578,13 @@ node --input-type=module -e "import {buildDeviceProof} from './scripts/device-pr
 node scripts/run-media-pressure-device-proof.mjs --serial <隔离serial> --apk <刚构建并已安装的APK> --build-id <buildId> --output .codex-tmp/<全新目录>
 ```
 
-Runner 不构建或安装；它核对已安装 APK SHA、UID、首次安装时间和 Release Hermes 进程身份，执行至少 20 轮且不少于 180 秒。使用真实生产媒体组件及 Native player，覆盖音频/视频互斥、播放推进、seek/pause、音频行回收保留进度、视频回收重建、原生全屏中回收内联行，以及实际 HOME 后暂停和返回不自动续播。全屏沿生产 gate 继续播放；每次回收后保留至少 600ms、同一 Native player 位置推进至少 0.3 秒，并保存 hold 前后两张全屏图，须人工核对实际画面变化。网络被隔离，媒体仅从本地 asset 读取。每轮断言 player release 与观察订阅结算，保留 Native 状态、错误和 PSS 离散采样；release 次数不能证明 native heap 无泄漏，播放进度或两张截图不能证明每帧无卡顿或实际出声，实际声音与物理设备表现另报。结束后关闭本次 session，恢复正常入口的同签名 APK 并核对首次安装时间、冷启动和资料保留。
+Runner 不构建或安装；它核对已安装 APK SHA、UID、首次安装时间和 Release Hermes 进程身份，执行至少 20 轮且不少于 180 秒。使用真实生产媒体组件及 Native player，覆盖音频/视频互斥、播放推进、seek/pause、音频行回收保留进度、视频回收重建、原生全屏中回收内联行，以及实际 HOME 后暂停和返回不自动续播。全屏沿生产 gate 继续播放；每次回收后保留至少 600 ms、同一 Native player 位置推进至少 0.3 秒，并保存 hold 前后两张全屏图，须人工核对实际画面变化。网络被隔离，媒体仅从本地 asset 读取。每轮断言 player release 与观察订阅结算，保留 Native 状态、错误和 PSS 离散采样；release 次数不能证明 native heap 无泄漏，播放进度或两张截图不能证明每帧无卡顿或实际出声，实际声音与物理设备表现另报。结束后关闭本次 session，恢复正常入口的同签名 APK 并核对首次安装时间、冷启动和资料保留。
 
 ### Release 性能回归
 
 正式门槛只使用与当前 revision、APK SHA、PID 和主登录态 AVD 匹配的 Release `FrameTimeline/gfxinfo` 与 `meminfo`。Perfetto、heapprofd 或 Hermes sampling 只用于独立归因，采样轮次不能混入通过数据。每个页面把首次挂载与预热路径分开统计；PSS 一律以同一 PID 的 Feed 静置基线计算增量。
 
-Search 空态固定执行三批、每批 10 次 Feed → Search → Feed：每次转向前重置 `gfxinfo`，同时报告两个方向和整批的 p95、worst、missed deadline。门槛为每批 p95 `<=25ms`、worst `<=35ms`，且不得有相邻两条有效 App 帧记录均 missed deadline；若这两条记录的 `IntendedVsync` 跨多个显示周期，另报间隔，不描述成连续显示周期掉帧。另取原始分辨率截图与 Native tree：最近记录仍须保持单张圆角分组面板、hairline 分隔和互不重叠的 `48dp` 点击区，最多 20 条记录不得作为 Header 子树整体常驻。节点减少但 traversal/draw 仍稳定在 21–26ms 时，只 profile Header 控件；不得叠加全局 memo、延时或预挂载 workaround。
+Search 空态固定执行三批、每批 10 次 Feed → Search → Feed：每次转向前重置 `gfxinfo`，同时报告两个方向和整批的 p95、worst、missed deadline。门槛为每批 p95 `<=25ms`、worst `<=35ms`，且不得有相邻两条有效 App 帧记录均 missed deadline；若这两条记录的 `IntendedVsync` 跨多个显示周期，另报间隔，不描述成连续显示周期掉帧。另取原始分辨率截图与 Native tree：最近记录仍须保持单张圆角分组面板、hairline 分隔和互不重叠的 `48dp` 点击区，最多 20 条记录不得作为 Header 子树整体常驻。节点减少但 traversal/draw 仍稳定在 21–26 ms 时，只 profile Header 控件；不得叠加全局 memo、延时或预挂载 workaround。
 
 每次测量须等上一转向及原生延迟淡出完全结束后再重置 `gfxinfo`；重置时间不能当作真实点击时间，逐帧判断页面归属须另取实际输入时序。当前 API 35 每次转向完成后至少保留 3 秒完整采样窗口，以覆盖已观察到的晚帧；若独立归因证明仍有更晚帧，应延长窗口并保留全部有效帧，不得裁剪晚帧、关闭滚动条或修改系统动画来满足门槛。
 
@@ -577,14 +601,14 @@ Glide 5.0.5 与详情 FlashList 回收池 40 是当前固定基线，不再循�
 Android 主楼正文连续选择的 targeted Live 固定展开 `TOPIC-01/02/03` 与 `NAV-02/03`，全程只读：
 
 - 纵滚绘制 owner 的 targeted proof 只复测当前 NodeSeek `https://www.nodeseek.com/post-832584-1`：先长按同页原生标题记录平台 start/end 手柄的方向、hotspot、行底位置和拖动触感，再在正文执行一次静止长按进入自定义选择，禁止用双击代替；正文手柄必须使用同一平台主题形状，主体从行底向下展开且不压住端点文字。把端点放到 wrap-content TextView 底部和相邻 row 边界，确认平台手柄仍完整可见；这条 falsifier 必须由同一 ViewRoot 的列表 viewport/surface overlay handle wrapper 通过，TextView/marked-row overlay、关闭 `clipChildren/clipToPadding`、`PopupWindow` 或独立窗口均不合格。把范围拖过首段、贴纸、标题、链接和多段正文后保持选区不取消，连续三次快速下滚再上滚。录制原始分辨率画面并逐帧独立核对可见高亮、起点手柄和终点手柄；端点可见但手柄缺失直接失败，只有真实 viewport/祖先裁剪或 ActionMode 遮挡可列为 excluded。每个实测样本相对当前文字 Path/caret 的 `L∞` 误差必须 `<=2px`，并报告 eligible、measured、missing、excluded 和最坏帧；尤其核对 pre-draw 后仍发生滚动/translation 的同一 draw，低帧率肉眼观察、滚动结束截图或坐标回调断言不能替代该证据。
-- 直达 NodeSeek `https://www.nodeseek.com/post-877083-1`，先记录主楼正文、标题、表格、表后文字、Emoji 与贴纸的 bounds/baseline；在带 opening marker 的主楼正文双击，确认不出现原生局部高亮、手柄或系统 ActionMode，再以静止长按进入自定义选择。跨至少三个 viewport 并触发至少一次 cell recycle；每次滚动后确认高亮和手柄仍贴合当前文字、旧屏幕位置无 overlay 残影，回收/layout commit 中即使某帧暂时没有可绘制映射也不得取消逻辑选区或 ActionMode，稳定帧必须恢复可见 overlay。再拖过“正文 → 标题 → 表格 → 表后文字”后复制，核对段落换行、table tab/newline 和媒体标签的原文顺序。如主楼存在展开引用/details、签名或 terminal Tab，还要确认当前实际显示的分支进入同一 manifest，折叠内容不进入。选择中与取消后重复记录，所有上述位置相对选择前必须为 `0px` 位移。
+- 直达 NodeSeek `https://www.nodeseek.com/post-877083-1`，先记录主楼正文、标题、表格、表后文字、Emoji 与贴纸的 bounds/baseline；在带 opening marker 的主楼正文双击，确认不出现原生局部高亮、手柄或系统 ActionMode，再以静止长按进入自定义选择。跨至少三个 viewport 并触发至少一次 cell recycle；每次滚动后确认高亮和手柄仍贴合当前文字、旧屏幕位置无 overlay 残影，回收/layout commit 中即使某帧暂时没有可绘制映射也不得取消逻辑选区或 ActionMode，稳定帧必须恢复可见 overlay。再拖过「正文 → 标题 → 表格 → 表后文字」后复制，核对段落换行、table tab/newline 和媒体标签的原文顺序。如主楼存在展开引用/details、签名或 terminal Tab，还要确认当前实际显示的分支进入同一 manifest，折叠内容不进入。选择中与取消后重复记录，所有上述位置相对选择前必须为 `0px` 位移。
 - 同帖慢横拖 table/code、纵向滚动、普通链接点击、Back 与取消选区保持既有行为；起止手柄都从可见命中区边缘按下并细微拖动，端点不得跳到手指中心，拖动合法选择手柄时始终不得出现放大镜，之后逐字符往返：Android 27+ 只有逻辑端点改变时出现 `TEXT_HANDLE_MOVE`，停在同一端点、自动滚动但端点未变、取消和重绑均无选择触感。活动选区上普通短按正文或空白必须在原点击分发后取消，形成纵向滚动意图的手势必须保留选区且首个 draw frame 就让 overlay 贴住文字。普通链接 tap 必须直接进入既有目标并结束旧选区，不得被 coordinator 延迟或吞掉。横滑接管后不得残留放大镜、手柄或 ActionMode。
 - 直达 NodeSeek `https://www.nodeseek.com/post-652056-1`，保持主楼与至少一条回复同时挂载：主楼表格必须仍能静止长按进入连续选择；回复 row 必须零 opening marker、不能进入主楼 manifest 或 Native 映射，长按回复只执行独立的原有整条复制并核对剪贴板，不出现主楼 coordinator 的手柄/ActionMode。对当前实际显示的评论和已采纳答案逐项重复该负向 marker 验收；当前真实对象不具备某一类型时该分支记 `NOT_VERIFIED`，不用普通回复冒充。
 - 直达 NodeSeek `https://www.nodeseek.com/post-863650-1`，分别在选择前、选择中和取消后记录父 FlashList row、mounted media、warm/running/original 高水位、PID 与 PSS；选择不得增加 row/media 挂载，继续满足每 row `<=4`、warm `<=8`、running `<=4`、original `<=1`，并以同条件基线的 PSS 曲线与自然偏差作非回退判断，同一 PID 连续两轮相同滚动后 PSS 不得持续增长。
 
 主楼双击出现任何局部选区、静止长按未进入自定义选择、滚动后 overlay 与当前文字错位或留下旧屏残影、可见端点缺少对应手柄、手柄仍由 TextView/marked-row host 承载而在行底或相邻 row 被裁剪、viewport/surface wrapper 使用缓存的 screen 坐标而未在 draw 时重投影、生产 surface 依赖关闭 `clipChildren/clipToPadding`、创建 `PopupWindow`/独立 ViewRoot、手柄形状/方向不匹配同页原生标题、手柄主体压住端点文字、hotspot 误差 `>2px`、按下时端点跳变、端点未变仍请求触感或端点已变却无 `TEXT_HANDLE_MOVE`、瞬态映射缺失取消逻辑选区、回复/评论/采纳答案出现 opening marker 或参与主楼 manifest，以及空白/重复 row 或 marker、无效 tape、revision 复用、稳定帧仍无法映射当前端点等结构性失败，连同整条长按复制退化、主楼复制顺序错误、位置变化、额外挂载、ANR/OOM/Fatal 或 PID 意外重启都记为明确失败。只有端点文字本身未挂载或被真实 viewport/祖先裁剪时，单个瞬态帧才可跳过当帧命中或绘制并等待稳定映射；文字端点已经可见却缺少手柄仍直接失败。外部内容变化或独立 AVD/主 AVD 不可用记 `BLOCKED_BY_ENV`；缺少物理 Android 设备时仅实际触感记 `NOT_VERIFIED`，其余分支不能据此跳过，且都不能用局部单测或 App 启动替代。`REG-TOPIC-100` 在上述主楼正向、回复/评论/采纳答案负向、回收、布局、触感和性能 Live 分支全部取得 `LIVE_PASS` 前不得记为 `RESOLVED`。
 
-- ActionMode targeted proof：任一主楼选区执行 Select all 后，浮动菜单必须立即物理移除 Select all，并把可执行 Copy 直接留在一级菜单；端点缩回后 Select all 恢复，整个流程不得依赖系统是否显示浮动菜单返回箭头。记录同页原生标题和主楼在当前设备上的平台动作：标准 Share 必须用 `ACTION_SEND` `text/plain` 进入 Android Sharesheet，不自行枚举分享目标；API 23+ 只显示设备当前可解析且满足 same-package/exported/permission 边界的 `PROCESS_TEXT` 动作，名称、数量和顺序允许随系统/OEM/已安装 App 变化，不要求固定出现“翻译”。classifier 按系统版本验收：API 24–25 无 classifier 动作；API 26–27 至多一个 legacy label/icon/onClick-or-intent 动作；API 28+ 为动态 `RemoteAction` 列表。API 26+ 动作都允许异步出现，但改变/取消选区后旧 snapshot 的晚到动作不得回填或执行。classifier 可能在菜单打开时就把选区纯文本交给系统/OEM 实现，因此该只读展示也只能使用不敏感测试文本；Share、`PROCESS_TEXT` 或 classifier 动作的外部执行则必须逐项取得用户明确授权。点击 Share 后核对 `EXTRA_TEXT` 在 100,000 UTF-16 字符 parcel-safe 上限内严格等于当下 canonical 选区、超限不劈 surrogate；点击 `PROCESS_TEXT` 后核对只读 extra 与未经裁剪的当下 canonical 文本；点击 classifier action 只核对仍匹配 snapshot 的 legacy listener/intent 或 `PendingIntent` 被执行，未授权分支记 `NOT_VERIFIED`。成功启动 Sharesheet 可结束选区；取消目标选择不产生正文写回，Share launch 失败必须保留选区，无 handler、query、分类、Intent 或 `PendingIntent` 失败都不得崩溃、修改正文或损坏 Copy/Select all；不得输出 Intent payload、选区正文或外部 App 数据到日志/交付物。
+- ActionMode targeted proof：任一主楼选区执行 Select all 后，浮动菜单必须立即物理移除 Select all，并把可执行 Copy 直接留在一级菜单；端点缩回后 Select all 恢复，整个流程不得依赖系统是否显示浮动菜单返回箭头。记录同页原生标题和主楼在当前设备上的平台动作：标准 Share 必须用 `ACTION_SEND` `text/plain` 进入 Android Sharesheet，不自行枚举分享目标；API 23+ 只显示设备当前可解析且满足 same-package/exported/permission 边界的 `PROCESS_TEXT` 动作，名称、数量和顺序允许随系统/OEM/已安装 App 变化，不要求固定出现「翻译」。classifier 按系统版本验收：API 24–25 无 classifier 动作；API 26–27 至多一个 legacy label/icon/onClick-or-intent 动作；API 28+ 为动态 `RemoteAction` 列表。API 26+ 动作都允许异步出现，但改变/取消选区后旧 snapshot 的晚到动作不得回填或执行。classifier 可能在菜单打开时就把选区纯文本交给系统/OEM 实现，因此该只读展示也只能使用不敏感测试文本；Share、`PROCESS_TEXT` 或 classifier 动作的外部执行则必须逐项取得用户明确授权。点击 Share 后核对 `EXTRA_TEXT` 在 100,000 UTF-16 字符 parcel-safe 上限内严格等于当下 canonical 选区、超限不劈 surrogate；点击 `PROCESS_TEXT` 后核对只读 extra 与未经裁剪的当下 canonical 文本；点击 classifier action 只核对仍匹配 snapshot 的 legacy listener/intent 或 `PendingIntent` 被执行，未授权分支记 `NOT_VERIFIED`。成功启动 Sharesheet 可结束选区；取消目标选择不产生正文写回，Share launch 失败必须保留选区，无 handler、query、分类、Intent 或 `PendingIntent` 失败都不得崩溃、修改正文或损坏 Copy/Select all；不得输出 Intent payload、选区正文或外部 App 数据到日志/交付物。
 
 ## 直接打开主题链接
 
@@ -655,9 +679,9 @@ npm run release:android
 
 ### 自动视觉回归与 checkpoint 续接
 
-使用已存在的 `WZ_ReaderStorage_API35_20260910` 专用 AVD；不得借用主登录设备或重置 AVD。两个 runner 共享本机127.0.0.1:42187的 OS 排他租约，进程退出后租约释放，checkpoint 状态继续约束下一次运行。端口被占用时先确认正在运行的 owner，不杀未知进程。
+使用已存在的 `WZ_ReaderStorage_API35_20260910` 专用 AVD；不得借用主登录设备或重置 AVD。两个 runner 共享本机 127.0.0.1:42187 的 OS 排他租约，进程退出后租约释放，checkpoint 状态继续约束下一次运行。端口被占用时先确认正在运行的 owner，不杀未知进程。
 
-固定条件为 API 35、1080×2400、420 dpi、系统字号 100%、en-US；环境清单另记录镜像 fingerprint、时区、导航模式、系统主题及工具版本。14帧中的140%是应用字号，列表密度保持标准；搜索和用户主题样本使用固定展示日期，不能依赖当天相对时间。Gallery仅证明这些生产组件的设备视觉结果，不替代业务导航与原站链路。
+固定条件为 API 35、1080×2400、420 dpi、系统字号 100%、en-US；环境清单另记录镜像 fingerprint、时区、导航模式、系统主题及工具版本。14 帧中的 140% 是应用字号，列表密度保持标准；搜索和用户主题样本使用固定展示日期，不能依赖当天相对时间。Gallery 仅证明这些生产组件的设备视觉结果，不替代业务导航与原站链路。
 
 ```powershell
 # 首次捕获候选：临时 overlay 构建独立 Release Gallery，14帧各捕获三次。
@@ -675,6 +699,6 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --a
 node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance recovery --exercise-failure cancel-import --output .codex-tmp/<任务目录>/canceled.json
 ```
 
-基准持久保存在 ignored `.codex-tmp/visual-baselines/<环境目录>/`；每轮画面、差异图、步骤、失败材料及环境清单在 `.codex-tmp/visual-runs/`。不提交截图、APK或数据库。只有 `DEVICE_REPLAY_PASS` 代表已有批准基准的比较与数据还原共同通过；`NEEDS_REVIEW` 只是三次稳定候选，须逐帧审阅关键操作区、遮挡和长文本再批准。后续更新仍须显式捕获与批准，并审阅相对旧基准的差异，不能在回归中自动修脚本或自动放宽阈值。该入口独立于普通 `verify`。
+基准持久保存在 ignored `.codex-tmp/visual-baselines/<环境目录>/`；每轮画面、差异图、步骤、失败材料及环境清单在 `.codex-tmp/visual-runs/`。不提交截图、APK 或数据库。只有 `DEVICE_REPLAY_PASS` 代表已有批准基准的比较与数据还原共同通过；`NEEDS_REVIEW` 只是三次稳定候选，须逐帧审阅关键操作区、遮挡和长文本再批准。后续更新仍须显式捕获与批准，并审阅相对旧基准的差异，不能在回归中自动修脚本或自动放宽阈值。该入口独立于普通 `verify`。
 
 checkpoint 在 `.codex-tmp/review-remediation-checkpoints/<AVD>/`。恢复失败保留业务与恢复错误，阻止下一轮；旧 `running` 即使 runner 被杀也不能自动还原或覆盖，应先保留数据并人工检查。`restoring` 续接先核对安装身份及每个文件哈希，发现后来变化便拒绝。数据库还原不等同权限/通知业务成功，须同时查看两部分结果；安装身份变化时冻结设备变更。

@@ -5,7 +5,7 @@
 <h1 align="center">阅坛 Android</h1>
 
 <p align="center">
-  <strong>把分散的中文社区，收进一套清爽、统一的 Android 阅读体验。</strong>
+  <strong>在 Android 上浏览、搜索和阅读多个中文社区。</strong>
 </p>
 
 <p align="center">
@@ -34,18 +34,18 @@
 
 ## 项目简介
 
-阅坛 Android 是一款面向中文社区的多论坛第三方客户端。它将内容发现、搜索、深度阅读、消息管理与站内互动收拢到一个 App 中，让跨站浏览更连贯、更专注。
+阅坛 Android 是面向中文社区的多论坛第三方客户端，在一个 App 中提供内容发现、搜索、阅读、消息管理和站内互动。安装包见[下载](#下载)，开发与维护从[开发](#开发)和[项目文档](#项目文档)开始。
 
-> **统一的是体验，保留的是社区差异。** 每个来源继续使用自己的账号体系、权限和功能规则；登录、验证与接口逻辑按站隔离。
+各来源共享阅读和导航体验，保留各自的账号体系、权限和功能规则。登录、验证和接口逻辑按站隔离。
 
-目前已接入 NodeSeek、linux.do、V2EX 和妖火。它们是当前支持的内容来源，而不是产品边界；后续社区可以继续作为独立来源接入，共享稳定的阅读与交互基础。
+目前支持 NodeSeek、linux.do、V2EX 和妖火。后续社区可以作为独立来源接入，复用现有阅读与交互能力。
 
 ## 核心能力
 
 | 能力 | 使用体验 |
 | --- | --- |
-| **跨站发现** | 在“全部”中按自定义顺序聚合已启用社区，也可切换单站、分类和排序；支持刷新、分页与阅读状态筛选。 |
-| **来源管理** | 在“更多”统一启停、拖拽排序内容源；停用后，相关入口同步隐藏，并停止 App 管理的读取与后台通知请求。 |
+| **跨站发现** | 在「全部」中按自定义顺序聚合已启用社区，也可切换单站、分类和排序；支持刷新、分页与阅读状态筛选。 |
+| **来源管理** | 在「更多」统一启停、拖拽排序内容源；停用后，相关入口同步隐藏，并停止 App 管理的读取与后台通知请求。 |
 | **统一搜索** | 查看多站结果预览，或进入单站连续结果；支持来源专属筛选、搜索历史，以及登录后的 linux.do AI 搜索。 |
 | **深度阅读** | 完整呈现正文、回复、引用、代码、表格、图片、视频、附件和投票；支持楼层定位、回复筛选、评论查找与图片预览保存。 |
 | **用户资料** | 查看作者资料、主题、回复和原站主页，并可在本机关注用户。 |
@@ -56,7 +56,7 @@
 
 ## 支持来源
 
-以下仅概括各站的主要差异。完整入口、权限和回归范围以 [产品地图](docs/product-map.md) 为准。
+下表概括各站的主要差异。完整入口、权限和回归范围以[产品地图](docs/product-map.md)为准。
 
 | 来源 | 主要能力 |
 | --- | --- |
@@ -71,19 +71,21 @@
 
 **[下载阅坛 Android APK](https://github.com/everythink98/wz-android/releases/latest/download/app-arm64-v8a-release.apk)**
 
-当前版本号和 Android `versionCode` 以 `package.json` 与 `app.json` 为准，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
+当前版本号和 Android `versionCode` 以 `package.json` 与 `app.json` 为准，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许「安装未知应用」。
 
 ## 隐私与数据
 
-- Cookie 和本机资料不上传到阅坛自有服务；认证材料只用于对应原站、NodeImage 或用户配置代理的请求，不进入阅坛自有服务。
+- Cookie 和本机资料不上传到阅坛自有服务。认证材料只用于对应原站、NodeImage 或用户配置代理的请求。
 - NodeSeek、linux.do 和妖火 Cookie 由网站 WebView 与 Android `CookieManager` 持有，不复制到 SecureStore、ReaderData 或备份。
-- NodeImage API Key、保存的账号密码和服务器代理配置使用 Android SecureStore。
-- 本机资料由 SQLite 事务保存，通过当前版本 JSON 备份 / 恢复；旧 AsyncStorage 资料在首次加载时迁移。
+- NodeImage API Key、保存的账号密码和服务器代理配置存储在 Android SecureStore 中。
+- 本机资料通过 SQLite 事务保存，支持当前版本的 JSON 备份与恢复。旧 AsyncStorage 资料在首次加载时迁移。
 - 备份 JSON 不保存 Cookie、token、password、session、sid、csrf、proxy 等敏感字段。
 
 ## 开发
 
-使用 Node 22（`>=22.22.2 <23`） 和仓库 lockfile 安装依赖：
+准备 Node.js 22（`>=22.22.2 <23`）、Android SDK、Java 构建环境，以及模拟器或已开启 USB 调试的 Android 手机。已有数据的设备必须先按[覆盖安装流程](docs/operator-runbook.md#覆盖安装)核对安装身份。
+
+使用仓库锁文件安装依赖，运行检查后启动 Android 构建：
 
 ```powershell
 npm ci
@@ -91,24 +93,24 @@ npm run verify
 npm run android
 ```
 
-`npm run android` 编译并安装 Expo development build，不能使用 Expo Go。请准备 Android SDK、Java 构建环境及模拟器或已开启 USB 调试的 Android 手机；已有数据的设备先按 [覆盖安装流程](docs/operator-runbook.md#覆盖安装) 核对安装身份。日常命令、原生验证与发布操作见 [维护手册](docs/operator-runbook.md)。
+`npm run android` 编译并安装 Expo 开发构建，本项目不能使用 Expo Go。日常命令、原生验证和发布操作见[维护手册](docs/operator-runbook.md)。
 
 ## 项目文档
 
-首次接手从 [交接说明](docs/handoff.md) 开始；执行项目任务前阅读 [AGENTS.md](AGENTS.md)。文档按下面的职责维护，同一事实的完整说明只保留在对应文档。
+首次接手从[交接说明](docs/handoff.md)开始；执行项目任务前阅读 [AGENTS.md](AGENTS.md)。同一事实的完整说明只保留在下表指定的文档中。
 
 | 文档 | 用途 |
 | --- | --- |
-| [交接说明](docs/handoff.md) | 接手顺序、事实源路由与文档收口 |
+| [交接说明](docs/handoff.md) | 接手顺序、事实来源与文档整理 |
 | [产品章程](docs/product-charter.md) | 产品目标、取舍和功能准入 |
 | [设计约束](PRODUCT.md) | 品牌、视觉和无障碍要求 |
-| [产品地图](docs/product-map.md) | 当前产品行为、入口、共享 seam 与能力 ID |
+| [产品地图](docs/product-map.md) | 当前产品行为、入口、共享实现边界与能力 ID |
 | [架构说明](docs/architecture.md) | 实现结构与数据边界 |
-| [测试标准](docs/testing-standard.md) | 测试 owner、证据层、隔离和验证强度 |
-| [代码与项目结构规范](docs/code-standards.md) | ownership、命名、结构和静态门禁 |
+| [测试标准](docs/testing-standard.md) | 测试归属、证据层、隔离和验证强度 |
+| [代码与项目结构规范](docs/code-standards.md) | 职责归属、命名、结构和静态门禁 |
 | [维护手册](docs/operator-runbook.md) | 构建、覆盖安装、Replay、Smoke 和发布步骤 |
 | [回归语料库](docs/regression-corpus.md) | 已确认历史事故、根因与当前归属 |
-| [技术债务与待验收项](docs/code-cleanup-map.md) | 尚未闭合的问题、证据缺口与后续入口 |
+| [技术债务与待验收项](docs/code-cleanup-map.md) | 待解决问题、证据缺口与后续入口 |
 | [Agent Live 验收](tests/live/agent-live.md) | App 内真实来源和系统能力的验收场景 |
 
-产品或 runtime 改动请先在产品地图中选择受影响的能力 ID，并沿入口、代码 seam、自动测试和模拟器路径展开回归。不要提交 keystore、`.env.release.local` 或明文凭据。
+产品行为或运行时改动必须先在产品地图中选择受影响的能力 ID，再沿入口、共享实现边界、自动测试和模拟器操作路径确定回归范围。不要提交 keystore、`.env.release.local` 或明文凭据。

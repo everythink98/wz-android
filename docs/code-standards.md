@@ -2,9 +2,11 @@
 
 ## 适用范围
 
-本文是仓库内代码组织、import、测试归属和质量门禁的唯一规范。产品范围见 `docs/product-map.md`，运行架构见 `docs/architecture.md`，验收证据见 `docs/testing-standard.md`；其他文档只链接本文，不复制规则。
+本文规定仓库内的代码组织、模块导入、测试归属和质量门禁，是这些规则的唯一权威文档。产品范围见 `docs/product-map.md`，运行架构见 `docs/architecture.md`，验收证据见 `docs/testing-standard.md`。其他文档只链接本文，不复制规则。
 
-外部项目仅用于校准取舍，不作为可直接套用的模板：Obytes 的 [feature ownership](https://github.com/obytes/react-native-template-obytes/blob/master/docs/src/content/docs/getting-started/project-structure.mdx)、Bluesky 的 [源码布局](https://github.com/bluesky-social/social-app/tree/main/src)，以及 Expo 官方的 [TypeScript 路径别名](https://docs.expo.dev/guides/typescript/) 与 [ESLint/Prettier](https://docs.expo.dev/guides/using-eslint/)。仓库当前代码和本规范始终优先。
+本文使用 owner 表示负责某项状态、行为或生命周期的模块，ownership 表示职责归属。涉及测试时，owner 指承担该行为验证的测试；判定规则见[测试标准](testing-standard.md#一canonical-owner-模型)。代码中的模块名、接口名和目录名保持原样。
+
+结构设计可参考 Obytes 的[功能职责划分](https://github.com/obytes/react-native-template-obytes/blob/master/docs/src/content/docs/getting-started/project-structure.mdx)、Bluesky 的[源码布局](https://github.com/bluesky-social/social-app/tree/main/src)，以及 Expo 官方的 [TypeScript 路径别名](https://docs.expo.dev/guides/typescript/)与 [ESLint/Prettier](https://docs.expo.dev/guides/using-eslint/)。这些资料用于比较方案，不是可直接套用的模板；仓库当前代码和本规范始终优先。
 
 ## Ownership 目录
 
@@ -44,14 +46,14 @@
 
 ## 模块与文件拆分
 
-- 按 owner 和独立变化原因拆分，不按行数拆分。一个复杂 hook 若仍是唯一生命周期 owner，就保留 cohesive module。
+- 按职责归属和独立变化原因拆分，不按行数拆分。复杂 hook 若仍独自负责完整生命周期，就保留为一个内聚模块。
 - Screen 只拥有渲染与局部交互；远端状态、取消、草稿、返回栈、身份 epoch 等状态继续由现有 controller 或 Query owner 管理。
 - Runtime 跨 owner 只暴露按旅程分组的语义能力。Account 的公开接口固定为 `read`、`write`、`center`、`hosts`；`hosts` 只提供 Account 自己生成的 host 节点、surface 状态和语义命令，不得泄漏 raw session、setter、ref、WebView controller 或 registry。Route runtime 不得用 `ComponentProps<typeof Screen>` 反向复制 Screen props。
 - Android WebView 共享状态由 Account 单一 owner 管理：功能组件只能显式传入文档级 WebView props，不得用 props spread 暴露原生组件能力；truthy/dynamic `incognito`、`removeAllCookies`、`removeSessionCookies`、`WebStorage.deleteAllData` 与 `clearCache(true)` 在生产 TypeScript、tracked plugin 和 `modules/*/android/src/main` 中一律由 `global-webview-state-owner` 拒绝。显式 `incognito={false}` 与实例级 `clearCache(false)` 允许；`sharedCookiesEnabled={false}` 不承担 Android 隔离语义。
-- 可复用必须以语义、生命周期、权限和错误处理一致为前提。只相似但行为不同的 provider、feature 和写操作保持独立。
+- 只有语义、生命周期、权限和错误处理一致时才复用实现。仅结构相似、行为不同的 provider、feature 和写操作保持独立。
 - 样式跟随 owner：feature 样式位于对应 feature，跨旅程 token/primitive 位于 UI；`ReaderStyleContextValue` 只提供 `theme/settings`，控件和 feature 用自己的 style factory 消费，禁止恢复全局 feature-style registry。
 - 通用有状态 UI 在自研前依次核对平台控件、现有依赖和成熟受控组件；展示组件可以拥有拖动中的临时预览，但最终值、播放真相、网络身份、错误语义和领域生命周期必须留在现有 owner，禁止为了现成皮肤引入第二套播放内核或网络边界。
-- 不增加未要求的扩展点、配置层或单实现 interface。新增抽象必须减少现有重复或切断真实反向依赖。
+- 不增加未要求的扩展点、配置层或只有一个实现的接口。新增抽象必须减少现有重复或消除实际存在的反向依赖。
 
 `modules/forum-platform` 直接拥有网络、诊断、SVG、文件保存、安装器、Custom Tab、通知摘要、安全随机和区域图片源码与测试；plugin 仅修改配置及必要启动注册。新原生能力优先进入已有模块，不恢复 Kotlin 复制、包名替换或测试源码注入。原生具体启动及 source set 边界见 `docs/architecture.md`。
 

@@ -59,7 +59,7 @@ import {
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { copySourceDiagnosticSummary, sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAttempt, withForumSourceReadEligibility } from './forumSourceReadAttempt';
-import type { FeedSource, Source, SourceErrors, DiscourseTopicReading } from '@/domain/forum/models';
+import type { FeedResponse, FeedSource, Source, SourceErrors, DiscourseTopicReading } from '@/domain/forum/models';
 import {
   prepareRepliesContent,
   prepareReplyContent,
@@ -358,7 +358,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     }) => Promise<T>,
     context?: ReadGatewayReadContext,
     signal?: AbortSignal,
-    intentFields: DiagnosticFields = {}
+    intentFields: DiagnosticFields = {},
+    onBeforeSessionChange?: (result: T) => void
   ) => {
     const readingRequest = dependencies.reading?.startRequest();
     const ownsTrace = !context?.trace;
@@ -641,6 +642,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           plan?.state === 'ready' &&
           plan.lane === 'authenticated'
         ) {
+          // Preserve readable siblings before the account event cancels the aggregate Query.
+          if (!signal?.aborted) onBeforeSessionChange?.(result);
+          onBeforeSessionChange = undefined;
           if (errorRequiresAccountRecheck(error)) {
             dependencies.requestAccountRecheck?.(planSource, session.sessionEpoch, trace.traceId);
           } else {
@@ -895,7 +899,10 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         options.signal
       );
     },
-    getFeed(options: ManagedGetFeedOptions, context?: ReadGatewayReadContext) {
+    getFeed(
+      options: ManagedGetFeedOptions,
+      context?: ReadGatewayReadContext & { onBeforeSessionChange?: (response: FeedResponse) => void }
+    ) {
       return read(
         options.source,
         'getFeed',
@@ -907,7 +914,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             diagnosticTrace: trace
           }),
         context,
-        options.signal
+        options.signal,
+        {},
+        context?.onBeforeSessionChange
       );
     },
     getEmojiUrls({ source, ...options }: ManagedGetEmojiUrlsOptions, context?: ReadGatewayReadContext) {

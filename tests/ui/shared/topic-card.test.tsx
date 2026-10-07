@@ -8,7 +8,6 @@ import { MemoizedTopicCard, TopicCard } from '@/ui/topic/TopicCard';
 import { ReaderStyleProvider, useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createNotificationStyles } from '@/features/notifications/styles';
 import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 import type { Topic } from '@/domain/forum/models';
 
 jest.mock('@shopify/flash-list', () => ({
@@ -44,7 +43,6 @@ jest.mock('@/ui/avatar/Avatar', () => {
 
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const topic: Topic = {
   source: 'linuxdo',
   id: 'topic-card-1',
@@ -269,10 +267,8 @@ describe('Topic card visible behavior', () => {
       onOpenTopic,
       readerState: { favorite: false, listDensity: 'standard' as const, read: false },
       renderTrailingAction,
-      styles,
-      testID: 'memoized-topic-card',
-      theme
-    };
+      testID: 'memoized-topic-card'
+    } satisfies Omit<React.ComponentProps<typeof MemoizedTopicCard>, 'topic'>;
     const view = await render(<MemoizedTopicCard {...commonProps} topic={topic} />);
 
     await view.rerender(<MemoizedTopicCard {...commonProps} topic={nextTopic} />);

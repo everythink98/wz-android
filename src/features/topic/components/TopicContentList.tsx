@@ -32,7 +32,7 @@ import {
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider, TRenderEngineProvider, type CustomBlockRenderer } from 'react-native-render-html';
-import { Bookmark, BookmarkCheck, ChevronDown, Ham, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
+import { Bookmark, BookmarkCheck, ChevronDown, Ham, Search, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import { findReplyLocation } from '@/domain/forum/replyLocation';
 import type { ReadingSession } from '@/platform/query/discourseReadingRuntime';
 import {
@@ -64,6 +64,7 @@ import {
   nodeSeekStardustReceiveFromAttributes
 } from '@/sources/nodeseek/stardustMarkup';
 import {
+  alphaColor,
   replyContextBadgeStyle,
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
@@ -943,13 +944,14 @@ export const TopicContentList = memo(function TopicContentList({
     () => (topic?.source === 'nodeseek' ? nodeSeekTopicReactionStats(topic) : []),
     [topic]
   );
+  const titleOnlyV2ex = topic?.source === 'v2ex' && !topicContentItems.length && !legacyTopicPollsVisible;
   const topicHasPostActions = Boolean(
     topic &&
     !topicShowsAccessNotice &&
     ((topic.source === 'nodeseek' && (canWriteNodeSeek || topicReactionStats.length > 0)) ||
       (isDiscourseSource(topic.source) && (canUseDiscourseInteractions || discourseTopicReactionStats.length > 0)) ||
       (topic.source === 'yaohuo' && canWriteYaohuo) ||
-      (topic.source === 'v2ex' && typeof topic.upvoteCount === 'number'))
+      (topic.source === 'v2ex' && !titleOnlyV2ex && typeof topic.upvoteCount === 'number'))
   );
   const replyListItems = useMemo(
     () =>
@@ -2018,14 +2020,18 @@ export const TopicContentList = memo(function TopicContentList({
         return renderTopicListItemFrame(
           <View style={[styles.replyHeader, topicColumnStyle]}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>
-                回复列表
+              <Text style={titleOnlyV2ex ? styles.panelTitle : styles.sectionTitle}>
+                {titleOnlyV2ex ? '回复' : '回复列表'}
                 {typeof replyDisplayCount === 'number' ? (
                   <Text style={styles.countText}> {replyDisplayCount} 条</Text>
                 ) : null}
               </Text>
             </View>
-            {repliesPartialStatus ? <Text style={styles.noticeText}>{repliesPartialStatus}</Text> : null}
+            {repliesPartialStatus ? (
+              <Text style={[styles.noticeText, titleOnlyV2ex && styles.titleOnlyNoticeText]}>
+                {repliesPartialStatus}
+              </Text>
+            ) : null}
             {!endedEmpty ? (
               <>
                 <View style={styles.replySelectionRow}>
@@ -2084,18 +2090,29 @@ export const TopicContentList = memo(function TopicContentList({
                 ) : unreadReplyCount > 0 ? (
                   <Text style={styles.noticeText}>较上次多 {unreadReplyCount} 条回复</Text>
                 ) : null}
-                <View style={styles.searchRow}>
+                <View style={[styles.searchRow, titleOnlyV2ex && styles.titleOnlySearchRow]}>
+                  {titleOnlyV2ex ? (
+                    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                      <Search size={16} color={theme.muted} strokeWidth={1.8} />
+                    </View>
+                  ) : null}
                   <TextInput
                     accessibilityLabel="评论内查找"
-                    style={[styles.input, styles.flex]}
+                    style={[styles.input, styles.flex, titleOnlyV2ex && styles.titleOnlySearchInput]}
                     value={commentQuery}
                     onChange={recordUserInteraction}
                     onChangeText={onCommentQueryChange}
                     placeholder="评论内查找"
-                    placeholderTextColor={theme.muted}
+                    placeholderTextColor={titleOnlyV2ex ? alphaColor(theme.ink, 0.68) : theme.muted}
                   />
                   {commentQuery ? (
-                    <IconButton icon={X} label="清空查找" onPress={() => onCommentQueryChange('')} />
+                    <IconButton
+                      icon={X}
+                      iconOnly={titleOnlyV2ex}
+                      iconSize={titleOnlyV2ex ? 16 : undefined}
+                      label="清空查找"
+                      onPress={() => onCommentQueryChange('')}
+                    />
                   ) : null}
                 </View>
               </>
@@ -2273,6 +2290,7 @@ export const TopicContentList = memo(function TopicContentList({
       topicBaseUrl,
       topicColumnStyle,
       topicPostlude,
+      titleOnlyV2ex,
       topic,
       resolvedTargetReplyKey,
       unreadReplyCount,
@@ -2287,28 +2305,34 @@ export const TopicContentList = memo(function TopicContentList({
   const topicHeaderStatusBadges = topicStatusBadges(item);
   const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
   const listHeader = (
-    <View style={styles.topicHeaderStack}>
+    <View style={[styles.topicHeaderStack, titleOnlyV2ex && styles.titleOnlyHeaderStack]}>
       <View style={[styles.article, topicColumnStyle]}>
         {topic || topicError?.reason !== 'site-notice' ? (
-          <View style={styles.topicMetaStack}>
-            <View style={styles.topicBadgeRow}>
-              <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>
-                {sourceLabel(item.source)}
-              </Text>
-              {item.category ? (
-                <Text style={styles.topicCategoryBadge} numberOfLines={1}>
-                  {item.category}
+          <View style={[styles.topicMetaStack, titleOnlyV2ex && styles.titleOnlyMetaStack]}>
+            {!titleOnlyV2ex ? (
+              <View style={styles.topicBadgeRow}>
+                <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>
+                  {sourceLabel(item.source)}
                 </Text>
-              ) : null}
-            </View>
-            <Text selectable style={styles.articleTitle}>
+                {item.category ? (
+                  <Text style={styles.topicCategoryBadge} numberOfLines={1}>
+                    {item.category}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+            <Text
+              selectable
+              style={[styles.articleTitle, titleOnlyV2ex && styles.titleOnlyTitle]}
+              textBreakStrategy={titleOnlyV2ex ? 'balanced' : undefined}
+            >
               {item.title}
             </Text>
             <Pressable
               testID="topic-author"
               accessibilityRole="button"
               disabled={!userFromTopic(item)}
-              style={styles.topicAuthorRow}
+              style={[styles.topicAuthorRow, titleOnlyV2ex && styles.titleOnlyAuthorRow]}
               onPress={() => {
                 const user = userFromTopic(item);
                 if (user) {
@@ -2316,10 +2340,10 @@ export const TopicContentList = memo(function TopicContentList({
                 }
               }}
             >
-              <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} />
+              <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} small={titleOnlyV2ex} />
               <View style={styles.topicAuthorMeta}>
                 <View style={styles.replyAuthorNameRow}>
-                  <Text style={styles.replyAuthor} numberOfLines={1}>
+                  <Text style={[styles.replyAuthor, titleOnlyV2ex && styles.titleOnlyAuthorName]} numberOfLines={1}>
                     {item.author || '未知作者'}
                   </Text>
                   {item.authorLevelLabel ? (
@@ -2331,10 +2355,11 @@ export const TopicContentList = memo(function TopicContentList({
                     </Text>
                   ) : null}
                 </View>
-                <Text style={styles.meta}>
+                <Text style={[styles.meta, titleOnlyV2ex && styles.titleOnlyAuthorDate]}>
                   {formatDateTime(item.createdAt)}
                   {typeof item.replyCount === 'number' ? ` · ${item.replyCount} 回复` : ''}
                   {item.viewCount ? ` · ${item.viewCount} 浏览` : ''}
+                  {titleOnlyV2ex && topic.upvoteCount ? ` · ${topic.upvoteCount} UP 票` : ''}
                 </Text>
               </View>
             </Pressable>
@@ -2361,8 +2386,14 @@ export const TopicContentList = memo(function TopicContentList({
             {item.tags?.length ? (
               <View style={styles.topicTagRow}>
                 {item.tags.map((tag, index) => (
-                  <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
-                    <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>
+                  <View
+                    key={`${tag}-${index}`}
+                    style={[styles.topicTagPill, !titleOnlyV2ex && topicTagColorStyle(tag, theme)]}
+                  >
+                    <Text
+                      style={[styles.topicTagText, !titleOnlyV2ex && topicTagTextColorStyle(tag, theme)]}
+                      numberOfLines={1}
+                    >
                       {tag}
                     </Text>
                   </View>
