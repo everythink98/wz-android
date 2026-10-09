@@ -945,7 +945,7 @@ describe('topic rich-text selection', () => {
         </RenderHTMLConfigProvider>
       </TRenderEngineProvider>
     );
-    const expected = 320 - 16 - StyleSheet.hairlineWidth * 2 - 19 - 28;
+    const expected = 320 - 16 - StyleSheet.hairlineWidth * 2 - 18 - 28;
     expect(view.getByTestId('width-probe').props.children).toBe(`${expected}:${expected}`);
     expect(StyleSheet.flatten(view.getByTestId('topic-code-frame').props.style).minWidth).toBe(expected);
     expect(view.getByText('full code')).toBeTruthy();

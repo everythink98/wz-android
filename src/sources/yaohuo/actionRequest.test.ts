@@ -3,6 +3,7 @@ import {
   buildYaohuoDeleteFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
   buildYaohuoFavoriteRequest,
+  buildYaohuoMessageReplyRequest,
   buildYaohuoReplyRequest,
   buildYaohuoVoteRequest,
   extractYaohuoSid
@@ -13,6 +14,26 @@ function bodyParams(body?: string) {
 }
 
 describe('yaohuo action request builders', () => {
+  it('requests the original AJAX private-message acknowledgment and preserves the reply form fields', () => {
+    const request = buildYaohuoMessageReplyRequest({
+      content: '  收到\n谢谢  ',
+      fields: { action: 'add', toid: '9', title: '回复内容', ajax: '0' }
+    });
+
+    expect(request).toMatchObject({
+      path: '/bbs/messagelist_add.aspx',
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }
+    });
+    expect(Object.fromEntries(bodyParams(request.body))).toEqual({
+      action: 'add',
+      toid: '9',
+      title: '回复内容',
+      ajax: '1',
+      content: '收到\r\n谢谢'
+    });
+  });
+
   it('extracts exactly one active sidyaohuo from duplicate Cookie scopes', () => {
     expect(extractYaohuoSid('ASP.NET_SessionId=session; sidyaohuo=abc123; GUID=guid')).toBe('abc123');
     expect(extractYaohuoSid('sidyaohuo=-2; SIDYAOHUO=abc123; sidyaohuo=abc123')).toBe('abc123');
@@ -126,16 +147,19 @@ describe('yaohuo action request builders', () => {
     });
 
     expect(buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteId: '55' })).toMatchObject({
-      path: '/bbs/book_view_toVote.aspx?siteid=1000&classid=177&vid=55&vpage=1&lpage=2&id=123',
-      method: 'GET'
+      path: '/bbs/book_view_toVote.aspx',
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: 'siteid=1000&classid=177&vid=55&vpage=1&lpage=2&id=123'
     });
   });
 
-  it('builds the original favorite-record delete request', () => {
+  it('posts favorite cancellation fields as the original AJAX form body', () => {
     expect(buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' })).toEqual({
-      path: '/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
+      path: '/bbs/favlist.aspx',
       method: 'POST',
-      headers: { accept: '*/*' }
+      headers: { accept: '*/*', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: 'action=delete&siteid=1000&favtypeid=0&id=987&ajax=1'
     });
   });
 
@@ -147,8 +171,9 @@ describe('yaohuo action request builders', () => {
         voteIds: ['55', '56']
       })
     ).toMatchObject({
-      path: '/bbs/book_view_toVote.aspx?siteid=1000&classid=177&vid=55&vid=56&vpage=1&lpage=2&id=123',
-      method: 'GET'
+      path: '/bbs/book_view_toVote.aspx',
+      method: 'POST',
+      body: 'siteid=1000&classid=177&vid=55&vid=56&vpage=1&lpage=2&id=123'
     });
   });
 
@@ -182,6 +207,25 @@ describe('yaohuo action request builders', () => {
         deletePath: '/bbs/Book_re_del.aspx?action=go&classid=177&id=798458'
       })
     ).toThrow('回复 id 不正确');
+  });
+
+  it.each(['id=456', 'ID=456', 'reid=10', 'REID=10', 'classid=213', 'CLASSID=213', 'action=godel', 'ACTION=godel'])(
+    'rejects a deletion URL with an ambiguous %s field',
+    (duplicate) => {
+      expect(() =>
+        buildYaohuoDeleteReplyRequest({
+          deletePath: `/bbs/book_re_del.aspx?action=go&classid=177&reid=9&id=123&${duplicate}`
+        })
+      ).toThrow('妖火删除链接不正确');
+    }
+  );
+
+  it.each(['', 'action=&', 'action=+&'])('rejects a deletion URL without a clear action: %s', (action) => {
+    expect(() =>
+      buildYaohuoDeleteReplyRequest({
+        deletePath: `/bbs/book_re_del.aspx?${action}classid=177&reid=9&id=123`
+      })
+    ).toThrow('妖火删除链接不正确');
   });
 
   it('rejects empty reply content and invalid ids', () => {

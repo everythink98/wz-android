@@ -4,6 +4,94 @@
 
 表中的「当前 owner」指承担行为验证的测试或实现模块；oracle 指判断行为是否符合预期的可观察结果或断言。测试归属与证据分层见[测试标准](testing-standard.md)，剩余工作见[技术债务与待验收项](code-cleanup-map.md)。REG 编号、状态和字段名供文档检查器使用，保持原有标识。
 
+## `REG-DATA-014` 已加载主题收藏仍保存链接入口的占位摘要
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `LIBRARY-01`，共享 `TOPIC-01` 的本机收藏入口 |
+| 历史症状与根因 | 2026-10-09 妖火链接入口的主题详情已显示真实标题和作者，点击顶栏本机收藏后，「更多 → 收藏」却显示通用主题标题和未知作者。唯一 `TopicRoute` 回调始终提交路由占位摘要，没有消费已经加载的详情；四站共用该回调。 |
+| 当前 owner | `tests/ui/topic/topic-route-external-links.test.tsx`、`src/domain/reader/readerData.ts`、`src/platform/storage/readerDatabase.ts` |
+| 修复与红绿证据 | 最低 UI 断言四站修前 4 项失败、修后 5 项通过，seed `366025797`；相关 3 文件 36 项 `UI_PASS`，reader 持久化 3 文件 85 项 `UNIT_PASS`，seed `1791549603310`。回调复用同来源、同主题的已加载详情和既有 `topicSummary` 白名单；详情缺失或失配时保留路由摘要，取消仍按原主题键判断，不保存正文、回复或凭据。类型、定向 lint/格式、626 模块架构检查与 diff 检查通过。 |
+| 设备证据与边界 | `LIVE_PASS`：最终普通 APK `738bb294…` 从妖火链接打开已加载主题后收藏，「更多 → 收藏」显示真实标题、作者、分类与统计；打开记录仍进入正确主题，取消后恢复本轮未收藏初值。四站共用入口的其余来源只有 `UI_PASS`，不冒充四站设备验收；不迁移或清理用户已有收藏。 |
+
+## `REG-WRITE-132` 妖火取消收藏未提交独立 CSRF 令牌
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-03` |
+| 历史症状与根因 | 2026-10-09 获准真实互动后，App 将此前未收藏的主题添加成功，原站收藏夹回读存在；重新进入 App 点击一次「取消收藏」后，按钮与原站收藏夹均保持已收藏。经「更多」进入同登录态原站核对，收藏变更已改用独立令牌接口与表单 POST，旧请求把动作参数放在 query 中且没有 `ajax/__CSRFToken`。 |
+| 当前 owner | `src/sources/yaohuo/actionRequest.test.ts`、`src/sources/yaohuo/actionClient.test.ts`、`tests/ui/topic/topic-actions-controller.test.tsx` |
+| 修复与红绿证据 | 原站 `/bbs/favlist.aspx?action=csrftoken&siteid=1000` 只读 GET 返回 200，JSON 含成功标志和非空令牌，未输出值。公开 [MessageAction.js](https://www.yaohuo.me/NetCSS/JS/Shared/MessageAction.js?v2) 明确 fresh token、表单参数和单次 POST 协议；请求已改为每次取得新令牌后表单 POST，响应仅以 JSON `success=true` 确认，失败不重放。两项 action owner 共 85 项 `UNIT_PASS`，seed `1791546888694`；topic actions 158 项 `UI_PASS`，seed `366025797`；类型与相关静态检查通过。 |
+| 设备证据与边界 | `LIVE_PASS`：修复 APK `36f143…` 保留数据覆盖安装后，取消收藏成功，原站收藏夹回读本轮新增记录已不存在，恢复未收藏初值。没有重复取消或清空其他收藏。 |
+
+## `REG-WRITE-133` 妖火现代投票缺少原生入口且仍使用旧 GET 协议
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-03`，共享 `TOPIC-01` 的正文与投票呈现 |
+| 历史症状与根因 | 2026-10-09 原站未投主题含 `.vote-container` 与带 `data-vid` 的 `.vote-button`，App 只显示选项文本及计数，没有选择或提交入口。读取器只识别旧 `.toupiao a[href*=vid]`；提交器仍使用旧 GET，而原站已改为读取容器令牌后表单 POST。 |
+| 当前 owner | `src/sources/yaohuo/reader.test.ts`、`src/sources/yaohuo/actionRequest.test.ts`、`src/sources/yaohuo/actionClient.test.ts` |
+| 修复与红绿证据 | 从 App「更多」进入原站，公开 [VoteOptimize.js](https://www.yaohuo.me/NetCSS/JS/BookView/VoteOptimize.js?v17) 与十个公开投票页面均只读返回 200，现代控件及非空令牌存在，未输出令牌值。未投按钮结构及新令牌 POST 已先红后绿；真实投后又确认 `.vote-option-result/.vote-option-label/.vote-chart-text` 与 `.vote-message` 结果结构，没有按钮、`vid` 或 `body[data-has-voted]`。结果读取已补红绿：只读卡片使用本地稳定选项键，保留计数，不猜本人选择；原始投票 HTML 不重复显示，保留既有尾块契约。相关 7 文件、236 项 `UNIT_PASS`，seed `1791547957425`；类型与相关静态检查通过。 |
+| 设备证据与边界 | `LIVE_PASS`：主题 `1574216` 的选项 `43537` 只提交一次，App 显示 97 人参与、该项 25 票，原站回读同值。最终普通 APK `738bb294…` 保留数据覆盖安装后，重进与「刷新全文」均恢复原生只读卡片，三项计数为 21、25、51，投票控件全部禁用，原始结果 HTML 不重复显示；原站同时回读 97 人参与、零提交按钮和已投提示。不重复投票，不猜原站未返回的本人选项标记。 |
+
+## `REG-WRITE-134` 妖火私信已发送但未识别 AJAX 成功响应
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02` 的妖火现有会话回复 |
+| 历史症状与根因 | 2026-10-09 获准发送一次真实私信后，原站回读确认该消息存在且仅一条，但 App 返回 unknown 并保留草稿。原站现有回复表单已按 `ajax=1` 提交，并以响应正文去除首尾空白后的 `OK` 确认；App 旧请求没有该字段，确认器只接受旧 HTML 提示文案。 |
+| 当前 owner | `src/sources/yaohuo/actionRequest.test.ts`、`src/sources/yaohuo/actionClient.test.ts`、`src/sources/yaohuo/notifications.test.ts` |
+| 修复与证据 | 从 App「更多」进入原站核对，公开 [MessageView.js](https://www.yaohuo.me/NetCSS/Modern/JS/MessageView.js?v15) 只读 GET 返回 200，脚本明确现有表单的 `ajax=1` 与 `response.text().trim() === 'OK'` 成功协议。最低 owner 三文件修前为 13 失败、119 通过，修后 132 项 `UNIT_PASS`，seed `1791547957425`；覆盖 AJAX 字段与 UTF-8、空白兼容成功响应和九个原站明确拒绝码。私信事务 UI 127 项通过，seed `366025797`；类型、相关 lint/格式与 diff 检查通过。仅当前私信 POST 且请求 `ajax=1` 才接受全文 `OK`，旧精确 HTML 成功提示仍兼容，未知回包保留防重发保护；通知解析及事务不改。 |
+| 设备证据与边界 | `LIVE_PASS`：首条已送达的消息没有重发；最终普通 APK `738bb294…` 在已读过上下文的同一会话提交不同正文一次，App 关闭编辑器并回读新消息，重新打开草稿为空且发送禁用；从「更多」原站回读新消息仅一条。本轮两条不同私信均为自然中文，未删除消息。不记录私信正文或账号身份。 |
+
+## `REG-USER-020` 妖火现代资料页昵称回退为数字 ID
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01`，共享 `ACCOUNT-01` 的资料昵称补全 |
+| 历史症状与根因 | 2026-10-09 妖火用户页真实回复卡的作者显示数字 UID，摘要残留昵称。从 App「更多」进入同登录态原站，资料页 200，昵称改为 `.uinfo-nickname`，旧 `.username/.user-name/h1` 与「昵称:」文本均不存在，解析器只能保留 UID 占位。 |
+| 当前 owner | `src/sources/yaohuo/parser.test.ts` |
+| 修复与红绿证据 | 既有昵称 owner 改为现代资料结构后先红后绿，seed `31009`；解析器优先读取现代昵称，回复作者及摘要昵称剥离恢复。结构化帖子/回复统计和等级原实现仍兼容，无额外行为改动。相关 7 文件、193 项通过，seed `1791544352107`；类型、定向 lint/格式检查通过。 |
+| 设备证据与边界 | `LIVE_PASS`：普通 APK 已保留数据覆盖安装，用户主题列表可读；回复列表作者显示真实昵称，摘要不再重复昵称。安装 `firstInstallTime` 仍为 `2026-07-26 16:51:37`，妖火登录态保持。未修改用户资料或留言；本轮私信协议验收单独见 `REG-WRITE-134`。 |
+
+## `REG-WRITE-131` 妖火文件帖沿用旧图片大小规则
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-04/07` |
+| 历史症状与根因 | 2026-10-09 从 App「更多」进入同登录态原站，文件帖公开 [file-common.js](https://www.yaohuo.me/NetCSS/JS/FileUpload/file-common.js) 明确静态图片按 MIME 或扩展名识别，JPEG/PNG/WebP/HEIC/HEIF 最大 10 MiB，其余文件最大 1 MiB。App 旧规则只对 JPEG/PNG 免除 1 MiB 限制，也没有 10 MiB 上限，导致合法的大 WebP/HEIC 被拒而超限 PNG 被放行。 |
+| 当前 owner | `src/domain/forum/topicComposer.test.ts`、`src/features/topic-composer/topicCreationActions.test.ts` |
+| 修复与红绿证据 | 修前 7 项失败，seed `1791543717633`；选择和最终发布复用同一大小规则，支持 MIME/扩展名识别及最大值边界，保留原站扩展名白名单、GIF 的 1 MiB 规则和既有 multipart/正文图床通道。相同 seed 相关 15 文件、316 项通过，类型与定向 lint/格式检查通过。 |
+| 设备证据与边界 | 原站公开脚本与五类表单已只读核对，文件控件由脚本动态创建 `book_file/book_file_info`，现有 multipart 字段保持兼容。用户排除发帖，未发布随帖文件，该通道服务端写入仍为 `NOT_VERIFIED`。独立正文图床已用一张自制 PNG 在空白回复草稿验收上传，地址返回 200、`image/png`、544 字节且仅插入一次；草稿随后清空，未发表图片，不能代替文件帖的服务端验收。 |
+
+## `REG-SEARCH-039` 妖火新版搜索与用户发帖列表无法解析
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02/03/04`、`USER-01`，共享 `ACCOUNT-01` 的昵称兜底读取 |
+| 历史症状与根因 | 2026-10-09 从 App「更多」进入保留登录态的原站，搜索与 `type=pub` 用户列表均返回 200，最终地址为 `/bbs/book_list_search.aspx`，结果改为 `.post-items > li.post-item`。旧解析器只识别旧容器；普通 App 搜索 `AI` 实际显示「搜索结果返回内容无法解析，请重试」。 |
+| 当前 owner | `src/sources/yaohuo/reader.test.ts`、`src/sources/sourceUserRead.test.ts` |
+| 修复与红绿证据 | 两个 owner 在不识别现代行时失败，seed `31009`；共享解析器识别现代行，保留作者、分类、回复/浏览统计、绝对时间和原站顺序。中间 APK 进一步暴露标题链接内的「赏/附」标记混入正文，更新同一 owner 后先红再修，仅从独立标题副本移除 `.post-flag`，保留 MARK 与其他内联文字且不改原 DOM。最终相关 10 文件、264 项通过，seed `1791543782640`；用户首轮 15+15 条仍完整交付第 3 页游标，作者无 UID 时不虚构用户链接。类型与定向 lint/格式检查通过。 |
+| 设备证据与边界 | `LIVE_PASS`：最终普通 APK 搜索 `AI` 可读，标题不混入「赏/附」，实际连续分页载入 45 条；进入详情再返回保留搜索内容与位置，用户主题列表可读。最终已安装 APK SHA-256 为 `aa6541dcabc62e9b4df9ad4f6284e3d1fff9e5dc6008122dad257854de15e738`，源码映射与本轮六个运行逻辑文件一致；同签名、版本 `1.3.153/157`，启动后无 App crash/ANR，`APK_SANITY` 通过。 |
+
+## `REG-WRITE-130` 妖火删除确认链接未绑定原回复目标
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02` |
+| 历史症状与根因 | 2026-10-09 妖火协议复测在受控响应中确认，删除确认页包含同站但不同主题或回复的 `action=godel` 链接时，App 会继续请求该链接。原判据只核对站点、路径与 ID 存在，未绑定原请求的 `id/reid`。没有真实删除其他内容，不推断原站曾返回这样的异常页。 |
+| 当前 owner | `src/sources/yaohuo/actionRequest.test.ts`、`src/sources/yaohuo/actionClient.test.ts` |
+| 修复与红绿证据 | 不同主题与不同回复两项修前失败，seed `1791541650711`；重复目标字段及大小写变体 16 项修前失败，seed `1791542764255`。确认链接现复用删除 URL 校验并严格匹配原主题与回复，异常目标只有首次请求；请求侧不接受歧义的 `action/id/reid/classid`。同 seed 红绿通过，最终相关 14 文件、301 项通过；投票重复 `vid`、回复和收藏判据保持。 |
+| 设备证据与边界 | 主模拟器原站 WebView 曾发生 EGL/QEMU 图形管道 ANR 及系统服务反复重启；经用户授权保留数据冷启动后，安装身份与登录态保持，原站只读取证恢复。未执行真实删除、投票、发帖、回复或上传；本条仅结算确定性目标匹配修复，真实删除为 `NOT_VERIFIED`。 |
+
 ## `REG-FEED-039` 单站失败连带清空聚合首页的可信内容
 
 | 字段 | 内容 |
@@ -1064,6 +1152,8 @@
 | 历史症状与根因 | 2026-09-04 妖火真实回复暖图后重复定位只看到正文中部，目标楼层头部已在屏外。既有楼层定位与排序后定位都传 `viewPosition: 0.2`；FlashList 按整行高度对齐该比例，800 高 viewport 对 1800 高回复会得到 headerY=-200，与 MVCP 是否补位无关。文字加图片可编译为一个合法 reply owner，不拆正文掩盖。两处共享调用改按行起点定位后，匹配 C4 APK 的暖态新 route 仍复现偏移：初次 onLoad 前的估算位置，以及最终命令后、确认前后的晚测高没有完整交接给锚点。共享入口现在等待当前列表就绪，controller 在投影、Native 确认和阅读锚点之间保留同一目标 key，拒绝旧代次回调。真实 Topic 点击/排序命令、晚测高及确认/布局两种顺序均有失败转通过的行为 oracle；匹配最终 APK 的暖图与重复定位另行验收。 |
 | 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`tests/live/agent-live.md` |
 | 后续定位 | 同源码图片接入修复配官方 FlashList 2.3.2 的隔离对照，冷启动妖火 556 楼仍会被前方长图推出屏外。设备数值诊断确认：6695 的动画命令曾先被旧 Native 上界 1094 截短；尺寸回调无动画重投又提前结束 command，旧动画继续移动并覆盖目标锚点。修复保留当前命令及动画方式，普通测高仍交给 Native MVCP。早期把 idle 校正与对应内容高度拆开的探针，经原生调度核对不作生产根因，已替换为真实布局后校正及迟到 ACK owner。最终设备验收仍须与对应 APK 分开记录。 |
+| 2026-10-09 通知定位确认 | 用户报告通知跳转后的定位异常。从「更多」进入已登录原站，妖火完整回复链接仍为 `book_re.aspx?...&tofloor=90`；linux.do 回复通知仍携带真实楼号。修前可用的真实样本最终能到达目标，不能据此认定来源接口丢失楼层。最低 UI owner 接入实际 Recycler controller，将 Native 最终确认延迟 1000 ms：三项修前失败（seed `366025797`），分别复现未到位已确认、旧命令取消后误确认新目标，以及离开页面后仍确认。共享列表改按实际 Native offset、viewport 与当前目标 row 的几何确认到位，移除 Promise 完成回调；高亮从到位开始，已对齐与短页边界仍可完成。离页后 Native 已到位、返回时没有新滚动事件的边界另先红后绿，恢复只确认原位置而不重发滚动。Node 22 最终列表 owner 169 项 `UI_PASS`（随机 seed `1611457419`），相关路由与控制器 283 项 `UI_PASS`（seed `-895349077`），三站通知及链接 149 项 `UNIT_PASS`（seed `1791550380000`）；类型、相关 lint/格式与 626 模块架构检查通过。历史暖图与全部关联交互缺口继续保留。 |
+| 本轮真实通知验收 | 最终普通入口开发签名 Release/Hermes APK `c674170c…` 重新构建，sourceHash 起止相等，9 个本轮与前轮修复文件的编译哈希与工作区匹配，原生配置不变；保留数据覆盖安装后 `firstInstallTime=2026-07-26 16:51:37` 与三站登录保持。`LIVE_PASS`：妖火真实完整回复链接进入 `1560939/#90`，同 route `90 → 88 → 90` 与已对齐的重复命令均到目标，截图确认目标高亮；linux.do `2985467/#6`、NodeSeek `953861` 的评论 ID `12919648/#4` 从真实通知进入后楼层头可见，短页底部钳制不阻断定位，NodeSeek 原地重复亦显示高亮。没有手动发帖、回复或删除。实际只覆盖这些可用通知；全历史目标、完整暖图/正倒序矩阵与实体机仍为 `NOT_VERIFIED`，不关闭本条历史证据缺口。脱敏数值回执与公开主题截图仅保留在 ignored `.codex-tmp/notification-location-20261009/`。 |
 
 ## `REG-TOPIC-148` 补页与晚测高重新选择锚点导致续读偏移
 
@@ -1986,7 +2076,6 @@
 | 能力 ID | `WRITE-03` |
 | 历史症状与根因 | 在妖火主题点击「原站收藏」后，原站已经把主题加入收藏夹，但 App 丢失重定向证据并提示「操作结果无法确认」；根因：`src/sources/yaohuo/actionClient.ts` 的请求 helper 只返回 HTML、丢弃最终 `Response.url`；通用解析器正确地拒绝从长页面文本猜测成功，却也无法知道该请求已经同源跳到收藏夹。旧开源代码中的二次表单流程与当前线上行为不一致。 |
 | 当前 owner | `src/sources/yaohuo/actionClient.test.ts` |
-
 
 ## `REG-WRITE-003` 妖火收藏无法取消且页面不显示已收藏
 
@@ -2976,6 +3065,7 @@
 | 能力 ID | `WRITE-01`、`WRITE-02`、`WRITE-03`、`TOPIC-03` |
 | 历史症状与根因 | 妖火返回的操作结果无法确认，但只要提示文案发生同义改写，或普通 200 页面只有空白/任意短文本，App 就把它当作已确认成功，保留 optimistic 状态并弹出成功提示，可能诱导用户重复或误判收藏、回复、删除和投票；根因：妖火 action response parser 到 Topic mutation wrapper 的结果类型缺少稳定判别字段和正向成功 oracle。 |
 | 当前 owner | `src/sources/yaohuo/actionClient.test.ts` |
+| 2026-10-09 补验 | 非回复 `.tip` 分支仍把「页面已过期，请刷新后重试」等不明确提示当作成功。删除与投票两项修前失败，seed `1791541469919`；现按请求动作匹配完成文案，含糊提示、处理中与跨动作成功文案保持 `unknown`。同一来源 owner 已覆盖明确成功及标点/跳转尾文，回复和收藏判据保留；真实投票响应与接口当天兼容尚未验证。 |
 
 
 ## `REG-TEST-001` Smoke 绿灯被当成功能完整通过
@@ -6535,6 +6625,22 @@
 | 2026-10-04 图形查询根因追查 | 实际 provider 为 `com.android.webview 156.0.8062.0`，APK/ELF 与官方 Chromium tag 的 ANGLE revision `2db891493f26` 对齐，但安装包原始下载来源未确认。既有同次 trace 的 44 次 drawGl 均有 5602 次查询，种类与顺序吻合 external context 全状态保存；3724 次 glGetError 是调用数量，不代表实际错误数量，官方 gfxstream safe 查询的错误保全即可解释成对调用，不能认定启用了调试断言。上游 [e6447ec](https://github.com/google/angle/commit/e6447ec72629e569f80a0a7940fca784b746cb41) 于 2026-08-05 扩大 external 状态保存范围，是具体候选回归点；尚无前后版本单变量实测，不能定为唯一根因。未找到 App 可安全关闭全状态查询的公开 API。安装异常经用户授权保留数据恢复后，同 AVD、同 c629 诊断 APK 的独立原生 Activity 对照已完成：无 RN/Composer 页面树的 GL WebView 19 次 drawGl 均为 5602 次查询，wall min/median/max 为 219.8178/227.4881/267.4514 ms；临时 HWUI Vulkan 的 360 次 drawVk 均无该查询，wall 为 1.5255/1.91215/5.2311 ms，两段全部对应 App/SF，trace 无错误。原生 EditText 控制无 WebView functor。RN/Composer 页面树不是该每次成本的必要条件，但 MainApplication 仍初始化原生依赖；GL→Vulkan 对照支持当前 GL 互操作路径为瓶颈，不能单独定责某个库或候选提交。这是归因证据，不计产品通过。summary 见 ignored `.codex-tmp/editor-root-cause-20261004/` 下的 `native-analysis-v2/summary.json`、`web-analysis-v3/summary.json`、`web-analysis-vulkan-v1/summary.json`。只读证据、二进制身份与固定版本源码链接见 ignored `.codex-tmp/remaining-two-20261004-continue/editor-gl-query-root-cause-research.md`。 |
 | 2026-10-04 普通包临时 Vulkan Back 对照 | 同普通 APK `68651441…`、PID3248，仅临时改变 HWUI renderer；全屏 57 帧、半屏 75 帧，共 132 个实际编码帧按原尺寸复核。两段端点稳定，无旧高位或 21 px 尾条，文字墨迹为 36/37 px，未见软件绘制式压扁；最大相邻位置变化为 130/126 px，均记录到 16 次位置变化，相比默认 GL 的 798/740 px 大步明显减少。默认 GL 当前样本本已通过末端归位，因此不将该端点修复归功于 Vulkan，也不以编码帧推断连续显示帧率。当前未找到 App 可稳定按进程选择 HWUI Vulkan 的公开 API，所用 `debug.hwui.renderer` 是临时系统调试属性，实验后恢复 `skiagl`；不是支持的产品修复，默认 GL 完整平滑度及真机仍未闭合，本条保持 `OPEN`。独立原帧报告见 ignored `.codex-tmp/vulkan-back-visual-audit-20261004/review.md`。 |
 | 2026-10-04 成对开关普通包 Back 复验 | 普通默认 GL APK `8f73fcfc…`、PID2839，NodeSeek 空全屏回复、真实 Gboard，仅独立 Back。37 个实际编码帧全片原尺寸复核：首个 IME 全消帧 #15（PTS3.105322222s）工具栏已在终位，#15–37 无旧高位或 21 px 尾差；#13→14 仍有最大 739 px 跳步，PTS 间隔 156.011111 ms 不能当作刷新率。35 帧占位文字墨迹高 36 px，#12/13 为 37 px，未见压扁。此末端样本为 `LIVE_PASS`，完整动画、长文光标柄与真机仍未通过；剩余渲染性能按用户要求暂停，状态保留 `OPEN`。独立报告见 ignored `.codex-tmp/pair-ordinary-gl-back-visual-audit-20261004/review.md`。 |
+
+| 2026-10-09 全项目滚动补验 | 主 `WZ_Pixel_API_35`、默认 host GL、普通 APK `e876b8ac8de21f139c155a07d45f90e5180c667133a854eb0ecfac95b6a324f4`，NodeSeek 新主题空草稿的表情面板：650 ms 的同步注入被拉长到约 6 秒；独立异步原生注入保持预定时序，实际列表移动 389 px，但录像移动段仍只有 4 个中间编码帧，相邻 PTS 最大 167 ms。再以可见 Windows 主模拟器窗口直接拖动，动作窗 6 个提交帧均错过 deadline，主线程处理为 0.92–2.89 ms、绘制命令提交段为 166.30–200.61 ms，确认此入口的卡顿不能仅归因于自动化手势时序。该提交瓶颈与本条既有 GL 证据一致；本轮未追踪具体 GL 查询，不能据此重新定责驱动或把编码间隔当作屏幕刷新率。滚动功能、关闭与空草稿保留通过，完整流畅度未通过；没有改 WebView 层类型、图形后端、草稿或远端数据，状态保持 `OPEN`。证据为 ignored `.codex-tmp/project-scroll-20261009/emoji-timing-receipt.json`、`.codex-tmp/project-scroll-20261009/emoji-async-result.json`、`.codex-tmp/project-scroll-20261009/emoji-window-gfx.txt` 与两段原始录像。 |
+
+2026-10-09 用户恢复卡顿排查。新增独立 Android App 对照，证据归属 `REG-WRITE-087`：新建隔离 API35 AVD、同一 host GL/硬件层、1080×687 内容和约 4 秒动画，无 RN、项目 Application、网络权限或账号。按 124→156→124→156 顺序切换引擎，实际 `drawGl` 次数为 160/12/180/13，中位耗时 12.764/371.142/5.970/335.778 ms；156 的 25 次动画 drawGl 每次均有 5602 次查询，124 的 340 次动画 drawGl 内均为零。156 下原生 EditText 的 182 次动画更新无 WebView functor。对照 APK SHA256 `68b37202d43417bc4ab84696c245e7ec60e27ab60cdb401cabef10e75d117bf8`，156 引擎 APK 与主设备既有副本 SHA256 `811b0c8bf60ffc153f13626646b02d784f74c3ef1d6f0aa3eb601727ac18f426` 一致。分析按启动回执 PID 与实际动画时间窗归属，避免预初始化进程名未更新造成漏计；断言与逐帧结果在 ignored `.codex-tmp/scroll-followup-20261009/provider-comparison.json`。结果证明当前引擎组合能在独立 App 重现该成本，不证明单个 ANGLE commit、真实手机性能或 App 修复通过；124 仅为诊断对照，不作为降级方案。主模拟器 provider、APK、账号和数据未变，隔离设备取证后关闭，本条保持 `OPEN`。
+
+同日按用户要求关闭并保留数据冷启动主 AVD 和已有隔离 AVD，两个 App 的 UID、版本与首次安装时间均保持，主设备仍为 156 引擎、默认 GL、3/3 已登录。普通 `e876b8ac…` 包在真实 NodeSeek 主题 812712 的回复表情面板复现：650 ms 拖动的 41 个 MOVE 按约定时序送出，UP 为 781 ms；列表移动 394 px，录像共 7 帧、4 个中间位置，最大移动帧间隔 177.8 ms，原有流畅度断言仍失败。6 个硬件帧的 UI 工作 1.07–5.53 ms，draw 到 swap 160.52–176.39 ms；另一次独立带跟踪的往返滑动共 10 次 drawGl，每次 5602 次查询、耗时 227.04–238.23 ms。无跟踪录像与 trace 不混作同次计时，证据分别为 ignored `.codex-tmp/scroll-followup-20261009/cold-reply-emoji-result.json` 与 `.codex-tmp/scroll-followup-20261009/cold-real-emoji-draws.csv`。冷启动未消除该故障；未修改产品绘制策略或主设备引擎。
+
+同日继续排查并交付本机 native EGL 配置：同一独立 App、156 引擎与 host GPU 下，旧 Emulator 36.5.11 的 ASG 仍慢；单独升级至官方 37.2.12、保持 pipe 后仍有每次 5602 次查询。37.2.12 中按 native EGL→默认→native EGL 往返，约 4 秒动画的实际 drawGl 为 180→21→180 次，中位耗时 0.890→203.992→0.923 ms，查询数量为 0→5602→0；三段 trace 无 data loss/error。使用 `_ --use-cmd-decoder=validating --use-gl=egl` 选择 native EGL，绕过当前 ANGLE external context 全状态查询。没有引入 App 私有 API、关闭硬件层或降级引擎；Emulator 更新与 ASG 均不作为修复方案。证据在 ignored `.codex-tmp/webview-fix-20261009/provider156-egl*` 与 `provider156-default-repeat`。
+
+主 AVD 继续使用原 Emulator 36.5.11、host/pipe、HWUI `skiagl`、90Hz、同一 `e876b8ac…` 普通包和同一 156 provider。应用上述配置后，真实 NodeSeek 812712 的原 650 ms / 41 MOVE 流畅度断言通过：列表移动 391 px，32 个中间编码位置，最大间隔 42.5 ms；默认配置的旧失败为 4 个位置、177.8 ms。独立 trace 的 48 次 drawGl 查询均为零，min/median/max 为 4.266/5.592/8.705 ms，无数据丢失。不录像的回拖 p95 为 22 ms，仍有 90Hz deadline miss，不能称为零卡顿或连续 90fps。
+
+新增 `scripts/configure-emulator-webview.mjs` 保存、识别和撤销精确自有配置，拒绝陌生文件并核对安装身份。真实 Android shell 的恢复默认、重新应用、幂等调用均通过；Windows ADB 的双 CRLF 与写入刷盘缺口分别建立失败断言后修正。未刷盘的首次关闭曾留下本任务的空配置文件，未将该轮记为重启通过；确认归属后仅恢复这个文件。最终再次保留数据冷启动，配置仍为 native EGL，UID 10214、版本 1.3.153/157、firstInstallTime `2026-07-26 16:51:37`、App/provider APK SHA 和 AVD 配置保持，账号中心仍为 3/3 已登录、浅色/100% 字号。冷启动后的同一真实帖子、同一动作与原 oracle 再次通过：移动 389 px，38 个中间位置，最大间隔 31.2 ms，39 个有效 gfx 帧的 draw-to-swap 为 2.78–11.68 ms。NodeSeek 真实图片的缩放、拖动和返回，以及两站空回复的表情、全屏、真实 Gboard、源码/富文本切换均已只读执行，零输入、零发送。详细回执、原帧与配置命令见 ignored `.codex-tmp/webview-fix-20261009/` 和维护手册。
+
+两站空草稿布局录像分别有 323/498 个实际编码帧，独立复核全屏、Gboard 展开/收起、退出全屏和源码切回富文本，未见工具栏遮挡、异常裁切或长期旧布局；空稿不证明非空正文压字。L 表情上/下拖分别有 46/45 个不同中间位置，最大间隔 27.012/24.900 ms，包含可能的松手尾段，不全部归给 650 ms 触摸期间。L 冷启动后的独立 trace 有 77 次 drawGl，查询均为零，中位 4.795 ms、最大 8.994 ms，无数据丢失；再连续七次拖动跨过初始 120 项加载边界，461 个 gfx 帧 p95/p99 为 22/23 ms，列表始终有内容。真实宽表五秒慢横拖移动 242 px、纵坐标不变，截图无长按菜单；关闭回复后 Native tree 无编辑器或 IME，端点截图单独留存。复核与原始输入见上述目录的 `layout-independent-review`、`cold-egl-linuxdo-*`。
+
+上述真实帖子范围为独立标注 native EGL 的 `LIVE_PASS`，工具边界由 `tests/tooling/emulator-webview-config.test.ts` 承接。该配置按 Chromium 的可调试设备机制生效，影响此模拟器后续启动的 WebView；它解决本机已复现的查询停顿，不作为生产 App 的公开 API 修复。默认 ANGLE 路径仍有历史失败；长正文光标/选区、完整选图矩阵和物理设备仍为 `NOT_VERIFIED`，本条广义事故保持 `OPEN`，已有 App 端修复继续保留。
 
 ## `REG-WRITE-088` 新版 WebView 重复避让与 Activity 返回后的旧动画样式残留
 

@@ -1505,9 +1505,9 @@ describe('notification screens', () => {
     expect(style('下划线').textDecorationLine).toBe('underline');
     expect(style('const value = 1;').fontFamily).toBe('monospace');
     expect(ancestorStyles('正文段落')).toContainEqual(
-      expect.objectContaining({ marginBottom: surface === 'message' ? 6 : 10 })
+      expect.objectContaining({ marginBottom: surface === 'message' ? 6 : 18 })
     );
-    expect(ancestorStyles('引用文字')).toContainEqual(expect.objectContaining({ borderLeftWidth: 3 }));
+    expect(ancestorStyles('引用文字')).toContainEqual(expect.objectContaining({ borderLeftWidth: 2 }));
     expect(view.getByText('表情前表情后')).toBeTruthy();
     const emoji = view.getByLabelText(':face_with_peeking_eye:');
     expect(StyleSheet.flatten(emoji.props.style)).toMatchObject({

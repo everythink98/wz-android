@@ -1102,14 +1102,15 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     detailsPanel: {
       overflow: 'hidden',
-      backgroundColor: theme.surface2,
+      backgroundColor: theme.surface,
       borderColor: theme.line,
       borderRadius: radiusSm,
       borderWidth: StyleSheet.hairlineWidth,
       marginVertical: 5
     },
     detailsPanelHeader: {
-      minHeight: 44,
+      minHeight: 48,
+      backgroundColor: theme.surface2,
       alignItems: 'center',
       flexDirection: 'row',
       gap: 8,
@@ -1134,10 +1135,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       lineHeight: Math.round(23 * fontScale)
     },
     detailsPanelBody: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
-      paddingVertical: 10
+      paddingTop: 0
     },
     quoteBox: {
       gap: 8,
@@ -1209,12 +1208,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     quotePanelStateIcon: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 30,
-      height: 30,
-      borderColor: theme.line,
-      borderRadius: 10,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface2
+      width: 20,
+      height: 20
     },
     quoteAuthorTextBlock: {
       flex: 1,

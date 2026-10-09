@@ -211,6 +211,19 @@ function createLinuxDoLevelProfile(): LinuxDoLevelProfile {
         ratio: 0,
         displayCurrent: '0',
         displayRequired: '已通过'
+      },
+      {
+        key: 'connect:被封禁',
+        label: '被封禁',
+        current: 1,
+        required: 0,
+        met: false,
+        direction: 'maximum',
+        ratio: 1,
+        displayCurrent: '1',
+        displayRequired: '需为 0',
+        change: 1,
+        displayChange: '较上次 +1'
       }
     ],
     activity: {
@@ -224,7 +237,7 @@ function createLinuxDoLevelProfile(): LinuxDoLevelProfile {
       topicCount: 2
     },
     achievedCount: 3,
-    totalCount: 4,
+    totalCount: 5,
     fetchedAt: FIXED_TIME
   };
 }

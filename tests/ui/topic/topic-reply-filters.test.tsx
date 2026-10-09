@@ -108,9 +108,33 @@ jest.mock('@shopify/flash-list', () => {
       ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: (options: unknown) => void }>
     ) {
       ReactModule.useImperativeHandle(ref, () => ({
-        scrollToIndex: (options: unknown) => mockScrollToIndex(options),
-        scrollToOffset: (options: unknown) => mockScrollToOffset(options),
-        getLayout: (index: number) => mockGetLayout(index),
+        scrollToIndex: (options: unknown) => {
+          const result = mockScrollToIndex(options);
+          if (!mockScrollToIndex.getMockImplementation()) {
+            const { index, viewOffset = 0 } = options as { index: number; viewOffset?: number };
+            const layout = mockGetLayout(index) || { y: index * 900 };
+            if (typeof props.onScroll === 'function')
+              props.onScroll({
+                nativeEvent: {
+                  ...replyListDragEvent.nativeEvent,
+                  contentOffset: { x: 0, y: layout.y + (mockGetFirstItemOffset() || 0) + viewOffset }
+                }
+              });
+          }
+          return result;
+        },
+        scrollToOffset: (options: unknown) => {
+          const result = mockScrollToOffset(options);
+          if (!mockScrollToOffset.getMockImplementation() && typeof props.onScroll === 'function')
+            props.onScroll({
+              nativeEvent: {
+                ...replyListDragEvent.nativeEvent,
+                contentOffset: { x: 0, y: (options as { offset: number }).offset }
+              }
+            });
+          return result;
+        },
+        getLayout: (index: number) => mockGetLayout(index) || { x: 0, y: index * 900, width: 320, height: 900 },
         getFirstItemOffset: () => mockGetFirstItemOffset()
       }));
       lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
@@ -120,6 +144,8 @@ jest.mock('@shopify/flash-list', () => {
       ReactModule.useEffect(() => {
         if (!didLoad.current && data.length > 0 && mockFlashListLayoutReady) {
           didLoad.current = true;
+          if (typeof props.onLayout === 'function')
+            props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 800 } } });
           if (typeof props.onLoad === 'function') props.onLoad({ elapsedTimeInMs: 0 });
         }
       }, [data.length, props.onLoad]);
@@ -1284,6 +1310,17 @@ describe('Topic reply filters', () => {
       />
     );
     await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
+    await fireEvent(view.getByText(/accepted preview/), 'touchStart', {
+      nativeEvent: { pageX: 100, pageY: 100, touches: [{ pageX: 100, pageY: 100 }] }
+    });
+    await fireEvent(view.getByText(/accepted preview/), 'touchMove', {
+      nativeEvent: { pageX: 100, pageY: 106, touches: [{ pageX: 100, pageY: 106 }] }
+    });
+    await fireEvent(view.getByText(/accepted preview/), 'longPress');
+    expect(copy).not.toHaveBeenCalled();
+    await fireEvent(view.getByText(/accepted preview/), 'touchStart', {
+      nativeEvent: { pageX: 100, pageY: 100, touches: [{ pageX: 100, pageY: 100 }] }
+    });
     await fireEvent(view.getByText(/accepted preview/), 'longPress');
 
     await waitFor(() => expect(copy).toHaveBeenCalledWith('accepted preview\naccepted code'));
@@ -1952,6 +1989,205 @@ describe('Topic reply filters', () => {
       }
     }
   );
+
+  it.each([
+    'late acknowledgement',
+    'new target',
+    'inactive route',
+    'bottom clamp',
+    'already aligned',
+    'late row layout'
+  ])('confirms only the current visible reply after %s', async (change) => {
+    jest.useFakeTimers({ doNotFake: ['performance'] });
+    mockFlashListLayoutReady = false;
+    const positioned = jest.fn();
+    let nativeOffset = 0;
+    let logicalOffset = 0;
+    let pendingNativeTarget = 0;
+    let timestamp = 0;
+    let targetMeasured = change !== 'late row layout';
+    const layouts = () => {
+      let y = 0;
+      return lastFlashListItemKeys.map((_, index) => {
+        const height =
+          !targetMeasured && index === lastReplyListIndex(2)
+            ? 0
+            : change === 'bottom clamp' && index >= lastReplyListIndex(2)
+              ? 100
+              : 900;
+        const layout = { x: 0, y, width: 320, height };
+        y += height;
+        return layout;
+      });
+    };
+    const tree = (floor: number, requestId: number, active = true) => (
+      <TopicFilterHarness
+        active={active}
+        targetReply={{ floor }}
+        targetReplyRequestId={requestId}
+        readingEntry={{
+          ready: true,
+          positionReady: false,
+          windowReady: true,
+          windowLoaded: jest.fn(),
+          anchor: undefined,
+          location: { kind: 'reply', target: { floor } },
+          baseline: undefined,
+          highest: undefined,
+          positioned,
+          failed: jest.fn()
+        }}
+      />
+    );
+    try {
+      const view = await render(tree(2, 1));
+      const manager = {
+        get props() {
+          return { data: lastFlashListProps.data, horizontal: false };
+        },
+        firstItemOffset: 0,
+        getDataLength: () => lastFlashListProps.data.length,
+        getDataKey: (index: number) => lastFlashListItemKeys[index],
+        getIsFirstLayoutComplete: () => true,
+        shouldMaintainVisibleContentPosition: () => true,
+        hasStableDataKeys: () => true,
+        getLayout: (index: number) => layouts()[index],
+        getWindowSize: () => ({ width: 320, height: 800 }),
+        getAbsoluteLastScrollOffset: () => logicalOffset,
+        getMaxScrollOffset: () => layouts().at(-1)!.y + layouts().at(-1)!.height - 800,
+        updateScrollOffset: (offset: number) => {
+          logicalOffset = offset;
+        },
+        setOffsetProjectionEnabled: () => undefined,
+        setScrollDirection: () => undefined,
+        computeVisibleIndices: () => ({
+          startIndex: Math.floor(logicalOffset / 900),
+          endIndex: Math.floor(logicalOffset / 900)
+        })
+      };
+      const hook = await renderHook(() =>
+        useRecyclerViewController(
+          manager as unknown as Parameters<typeof useRecyclerViewController>[0],
+          null,
+          {
+            current: {
+              scrollTo: ({ y }: { y: number }) => {
+                pendingNativeTarget = y;
+              }
+            }
+          } as unknown as Parameters<typeof useRecyclerViewController>[2],
+          { current: { scrollBy: () => undefined } }
+        )
+      );
+      mockGetLayout.mockImplementation((index) => layouts()[index]);
+      mockGetFirstItemOffset.mockReturnValue(0);
+      mockScrollToIndex.mockImplementation((command) =>
+        hook.result.current.handlerMethods.scrollToIndex(
+          command as Parameters<typeof hook.result.current.handlerMethods.scrollToIndex>[0]
+        )
+      );
+      if (change === 'already aligned') {
+        await act(() => {
+          nativeOffset = layouts()[lastReplyListIndex(2)].y;
+          logicalOffset = nativeOffset;
+          lastFlashListProps.onScroll({
+            nativeEvent: { ...replyListDragEvent.nativeEvent, contentOffset: { x: 0, y: nativeOffset } }
+          });
+        });
+      }
+      await act(() => lastFlashListProps.onLoad({ elapsedTimeInMs: 0 }));
+      if (change === 'already aligned') {
+        expect(positioned).toHaveBeenCalledTimes(1);
+        await view.rerender(tree(2, 2));
+        expect(positioned).toHaveBeenCalledTimes(2);
+        expect(layouts()[lastReplyListIndex(2)].y - nativeOffset).toBe(0);
+        await view.unmount();
+        await hook.unmount();
+        return;
+      }
+      if (change === 'new target') await view.rerender(tree(3, 2));
+      if (change === 'inactive route') await view.rerender(tree(2, 1, false));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1000);
+      });
+      const floor = change === 'new target' ? 3 : 2;
+      const targetIndex = lastReplyListIndex(floor);
+      expect(layouts()[targetIndex].y - nativeOffset).toBeGreaterThanOrEqual(800);
+      expect(positioned).not.toHaveBeenCalled();
+      expect(
+        StyleSheet.flatten(
+          view.getByTestId(`reply-floor-${floor}`, { includeHiddenElements: true }).parent?.parent?.props.style
+        )?.backgroundColor
+      ).toBeUndefined();
+      await act(() => {
+        nativeOffset = Math.max(0, Math.min(manager.getMaxScrollOffset(), pendingNativeTarget));
+        if (hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset())) {
+          logicalOffset = nativeOffset;
+          lastFlashListProps.onScroll({
+            nativeEvent: { ...replyListDragEvent.nativeEvent, contentOffset: { x: 0, y: nativeOffset } }
+          });
+        }
+      });
+      const headerY = layouts()[targetIndex].y - nativeOffset;
+      expect(headerY).toBeGreaterThanOrEqual(0);
+      expect(headerY).toBeLessThan(800);
+      if (change === 'bottom clamp') expect(headerY).toBeGreaterThan(0);
+      if (change === 'late row layout') {
+        expect(positioned).not.toHaveBeenCalled();
+        await act(() => {
+          targetMeasured = true;
+          lastFlashListProps.onContentSizeChange(320, layouts().at(-1)!.y + layouts().at(-1)!.height);
+        });
+      }
+      expect(positioned).toHaveBeenCalledTimes(change === 'inactive route' ? 0 : 1);
+      if (change === 'inactive route') {
+        await view.rerender(tree(2, 1));
+        expect(positioned).toHaveBeenCalledTimes(1);
+      }
+      if (change !== 'inactive route')
+        expect(
+          StyleSheet.flatten(
+            view.getByTestId(`reply-floor-${floor}`, { includeHiddenElements: true }).parent?.parent?.props.style
+          )?.backgroundColor
+        ).toBeTruthy();
+      await view.unmount();
+      await hook.unmount();
+    } finally {
+      mockScrollToIndex.mockReset();
+      mockGetLayout.mockReset();
+      mockGetFirstItemOffset.mockReset();
+      mockFlashListLayoutReady = true;
+      jest.useRealTimers();
+    }
+  });
+
+  it('confirms an opening at native zero without another scroll event', async () => {
+    const positioned = jest.fn();
+    mockScrollToOffset.mockImplementation(() => undefined);
+    try {
+      const view = await render(
+        <TopicFilterHarness
+          location={{ kind: 'opening' }}
+          readingEntry={{
+            ready: true,
+            positionReady: false,
+            windowReady: true,
+            windowLoaded: jest.fn(),
+            anchor: undefined,
+            location: { kind: 'opening' },
+            baseline: undefined,
+            highest: undefined,
+            positioned,
+            failed: jest.fn()
+          }}
+        />
+      );
+      expect(positioned).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    } finally {
+      mockScrollToOffset.mockReset();
+    }
+  });
 
   it.each(['layout then ack', 'overlapping acknowledgements', 'reader takeover', 'rounded boundary', 'zero boundary'])(
     'preserves content through native layout commits (%s)',
@@ -3370,12 +3606,17 @@ describe('Topic reply filters', () => {
       const view = await render(<TopicFilterHarness {...props} />);
       const quoteContentKeys = () =>
         lastFlashListItemKeys.filter((_key, index) => lastFlashListItemTypes[index] === 'replyQuoteContent');
+      const quoteContentRows = () =>
+        (lastFlashListProps.data as TopicListItem[]).filter(
+          (item): item is Extract<TopicListItem, { type: 'replyQuoteContent' }> => item.type === 'replyQuoteContent'
+        );
 
       expect(lastFlashListItemTypes.indexOf('replyStart')).toBeGreaterThan(
         lastFlashListItemTypes.indexOf('replyControls')
       );
       expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(2);
       const coldKeys = quoteContentKeys();
+      expect(quoteContentRows().map(({ last }) => last)).toEqual([false, false]);
       const measuredRows = view.getAllByTestId(/^reply-quote-materialization-/);
       expect(measuredRows).toHaveLength(2);
       expect(within(measuredRows[0]).getByLabelText('content-continuation-first')).toBeTruthy();
@@ -3394,6 +3635,13 @@ describe('Topic reply filters', () => {
         expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(6)
       );
       expect(quoteContentKeys().slice(0, 2)).toEqual(coldKeys);
+      expect(
+        quoteContentRows()
+          .slice(0, 2)
+          .map(({ last }) => last)
+      ).toEqual([false, false]);
+      expect(quoteContentRows().filter(({ last }) => last)).toHaveLength(1);
+      expect(quoteContentRows().at(-1)?.last).toBe(true);
       expect(view.queryAllByTestId(/^reply-quote-materialization-/)).toHaveLength(0);
       expect(view.getAllByLabelText('content-continuation-middle')).toHaveLength(4);
       expect(view.getAllByLabelText('content-continuation-last')).toHaveLength(1);
@@ -4118,10 +4366,12 @@ describe('Topic reply filters', () => {
     await scroll(4);
     await scroll(8);
     expect(view.getByLabelText('写回复')).toBeEnabled();
+    const readingListProps = lastFlashListProps;
     await scroll(16);
     expect(view.queryByLabelText('写回复')).toBeNull();
     expect(view.getByLabelText('写回复', { includeHiddenElements: true })).toBeDisabled();
     expect(StyleSheet.flatten(lastFlashListProps.contentContainerStyle).paddingBottom).toBe(bottomPadding);
+    expect(lastFlashListProps === readingListProps).toBe(true);
 
     const rendersWhileHidden = mockReplyComposerSheet.mock.calls.length;
     for (let y = 20; y <= 800; y += 4) await scroll(y);
@@ -4130,6 +4380,7 @@ describe('Topic reply filters', () => {
     expect(view.queryByLabelText('写回复')).toBeNull();
     await scroll(830);
     expect(view.getByLabelText('写回复')).toBeEnabled();
+    expect(lastFlashListProps === readingListProps).toBe(true);
 
     for (const y of [9200, 9220, 9200]) await scroll(y);
     expect(view.queryByLabelText('写回复')).toBeNull();

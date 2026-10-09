@@ -1,9 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import { Pressable, Text } from 'react-native';
-import { ReduceMotion } from 'react-native-reanimated';
 
-import { FORUM_CALLOUT_TRANSITION_MS, ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
+import { ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { alphaColor, createTheme } from '@/ui/theme/tokens';
 
@@ -12,7 +11,7 @@ const lightTheme = createTheme(readerData.settings);
 const darkTheme = createTheme({ ...readerData.settings, theme: 'dark' });
 
 describe('shared ForumCallout', () => {
-  it('reports a controlled toggle from the 48dp accessible header', async () => {
+  it('reports a controlled toggle without animating the external body header geometry', async () => {
     const onExpandedChange = jest.fn();
     const view = await render(
       <ForumCallout
@@ -29,16 +28,13 @@ describe('shared ForumCallout', () => {
     const header = view.getByRole('button', { name: '警告标题' });
     expect(header.props.accessibilityState).toEqual({ expanded: false });
     expect(header).toHaveStyle({ minHeight: 48 });
-    const layout = view.getByTestId('forum-callout').props.layout;
-    expect(layout.getDuration()).toBe(FORUM_CALLOUT_TRANSITION_MS);
-    expect(layout.getReduceMotion()).toBe(ReduceMotion.System);
+    expect(view.getByTestId('forum-callout').props.layout).toBeUndefined();
     const [icon] = view.root?.queryAll((instance) => instance.props.testID === 'forum-callout-icon') || [];
     expect(icon.props.accessible).toBe(false);
 
     await fireEvent.press(header);
 
     expect(onExpandedChange).toHaveBeenCalledWith(true);
-    expect(FORUM_CALLOUT_TRANSITION_MS).toBe(100);
   });
 
   it('uses static header semantics when there is no foldable body', async () => {
@@ -85,8 +81,8 @@ describe('shared ForumCallout', () => {
   });
 
   it.each([
-    { name: 'light', theme: lightTheme, backgroundAlpha: 0.1, borderAlpha: 0.28 },
-    { name: 'dark', theme: darkTheme, backgroundAlpha: 0.16, borderAlpha: 0.36 }
+    { name: 'light', theme: lightTheme, backgroundAlpha: 0.08, borderAlpha: 0.22 },
+    { name: 'dark', theme: darkTheme, backgroundAlpha: 0.12, borderAlpha: 0.28 }
   ])('uses App warning tone in $name theme', async ({ theme, backgroundAlpha, borderAlpha }) => {
     const palette = forumCalloutPalette('warning', theme);
     const view = await render(

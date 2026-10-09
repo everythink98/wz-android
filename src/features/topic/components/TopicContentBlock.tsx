@@ -10,7 +10,7 @@ import {
   type ViewStyle,
   type ViewProps
 } from 'react-native';
-import { ChevronDown, ChevronRight, Copy } from 'lucide-react-native';
+import { Copy } from 'lucide-react-native';
 import { RenderHTMLSource } from 'react-native-render-html';
 import type {
   CompiledForumContentRow,
@@ -19,7 +19,7 @@ import type {
   ForumContentPart
 } from '@/domain/forum/topicContentSplit';
 import { ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
-import { lineHeightMultiplier } from '@/ui/theme/tokens';
+import { fontFamilyValue, lineHeightMultiplier } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from '../styles';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
@@ -27,6 +27,7 @@ import { useTopicSplitDisclosure, useTopicTerminalReport } from '../rendering/To
 import { TopicHorizontalScroll, TopicTableSemanticBoundary } from '../rendering/topicTableRenderers';
 import { useTopicSelectionRowActive } from '../selection/TopicSelectionSurface';
 import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
+import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 
 export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
@@ -109,11 +110,51 @@ function CodeBlock({
   };
   return (
     <View
-      style={{
-        marginBottom: row.part === 'first' || row.part === 'middle' ? 0 : terminal ? 12 : 10,
-        marginTop: row.part === 'middle' || row.part === 'last' ? 0 : terminal ? 12 : 10
-      }}
+      style={[
+        {
+          backgroundColor: terminal ? '#111827' : theme.surface2,
+          borderColor: terminal ? 'rgba(255,255,255,0.16)' : theme.line,
+          borderRadius: radius,
+          borderWidth: StyleSheet.hairlineWidth,
+          marginBottom: terminal ? 12 : 10,
+          marginTop: terminal ? 12 : 10,
+          overflow: 'hidden'
+        },
+        continuationFrameStyle(row.part, radius)
+      ]}
     >
+      {row.copyText !== undefined ? (
+        <View
+          style={{
+            alignItems: 'center',
+            borderBottomColor: terminal ? 'rgba(255,255,255,0.16)' : theme.line,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            paddingLeft: 12
+          }}
+        >
+          <Text
+            style={{
+              color: terminal ? '#9ca3af' : theme.muted,
+              fontFamily: fontFamilyValue(settings.fontFamily),
+              fontSize: Math.round(12 * settings.fontScale),
+              lineHeight: Math.round(18 * settings.fontScale)
+            }}
+          >
+            {terminal ? '终端' : '代码'}
+          </Text>
+          <Pressable
+            accessibilityLabel="复制完整代码"
+            accessibilityRole="button"
+            hitSlop={12}
+            style={{ alignItems: 'center', justifyContent: 'center', minHeight: 48, minWidth: 48 }}
+            onPress={copy}
+          >
+            <Copy color={terminal ? '#e5e7eb' : theme.muted} size={17} strokeWidth={1.8} />
+          </Pressable>
+        </View>
+      ) : null}
       <TopicHorizontalScroll
         accessibilityHint="横向滑动查看完整代码"
         accessibilityLabel="代码块"
@@ -124,18 +165,12 @@ function CodeBlock({
         viewportWidth={contentWidth}
       >
         <View
-          style={[
-            {
-              backgroundColor: terminal ? '#111827' : theme.surface2,
-              borderColor: terminal ? 'rgba(255,255,255,0.16)' : theme.line,
-              borderRadius: radius,
-              borderWidth: StyleSheet.hairlineWidth,
-              minWidth: contentWidth,
-              padding: terminal ? 14 : 12,
-              paddingRight: row.copyText === undefined ? (terminal ? 14 : 12) : 68
-            },
-            continuationFrameStyle(row.part, radius)
-          ]}
+          style={{
+            minWidth: contentWidth,
+            paddingHorizontal: terminal ? 14 : 12,
+            paddingTop: row.part === 'first' || row.part === 'only' ? 12 : 0,
+            paddingBottom: row.part === 'last' || row.part === 'only' ? 12 : 0
+          }}
           testID="topic-code-frame"
         >
           <Text
@@ -151,29 +186,6 @@ function CodeBlock({
           </Text>
         </View>
       </TopicHorizontalScroll>
-      {row.copyText !== undefined ? (
-        <Pressable
-          accessibilityLabel="复制完整代码"
-          accessibilityRole="button"
-          hitSlop={12}
-          style={{
-            alignItems: 'center',
-            backgroundColor: terminal ? '#1f2937' : theme.surface,
-            borderColor: terminal ? 'rgba(255,255,255,0.2)' : theme.line,
-            borderRadius: 8,
-            borderWidth: StyleSheet.hairlineWidth,
-            justifyContent: 'center',
-            minHeight: 48,
-            minWidth: 48,
-            position: 'absolute',
-            right: 6,
-            top: 6
-          }}
-          onPress={copy}
-        >
-          <Copy color={terminal ? '#e5e7eb' : theme.muted} size={18} strokeWidth={2} />
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -183,7 +195,7 @@ function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, {
   const report = useTopicTerminalReport({ defaultTabId: row.defaultTabId, semanticId: row.semanticId });
   return (
     <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <ScrollView overScrollMode="never" horizontal showsHorizontalScrollIndicator={false}>
         {row.tabs.map((tab, index) => {
           const active = report.activeTabId === tab.id;
           return (
@@ -253,7 +265,6 @@ function DisclosureHeader({
       />
     );
   }
-  const StateIcon = disclosure.expanded ? ChevronDown : ChevronRight;
   return (
     <View style={[styles.detailsPanel, continuationFrameStyle(visualPart, 8)]}>
       <Pressable
@@ -263,7 +274,7 @@ function DisclosureHeader({
         onPress={disclosure.toggle}
       >
         <View style={styles.detailsPanelIcon}>
-          <StateIcon size={18} color={theme.ink} strokeWidth={2.1} />
+          <DisclosureChevron expanded={disclosure.expanded} color={theme.muted} />
         </View>
         <View style={styles.detailsPanelSummary}>
           <Text selectable={selectable} style={styles.detailsPanelSummaryText}>
@@ -362,10 +373,10 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
             marginBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
             marginTop: 0,
             overflow: 'hidden',
-            paddingBottom: 12,
-            paddingLeft: 24,
+            paddingBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
+            paddingLeft: 12,
             paddingRight: 12,
-            paddingTop: 8
+            paddingTop: 0
           },
           continuationFrameStyle(frame.part, 8)
         ]}
@@ -378,7 +389,11 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
   if (frame.kind === 'details') {
     return (
       <ContentFrame style={[styles.detailsPanel, continuationFrameStyle(frame.part, 8)]}>
-        <ContentFrame style={styles.detailsPanelBody}>{children}</ContentFrame>
+        <ContentFrame
+          style={[styles.detailsPanelBody, { paddingBottom: frame.part === 'last' || frame.part === 'only' ? 10 : 0 }]}
+        >
+          {children}
+        </ContentFrame>
       </ContentFrame>
     );
   }
@@ -386,7 +401,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
     <ContentFrame
       style={{
         borderLeftColor: theme.lineStrong,
-        borderLeftWidth: 3,
+        borderLeftWidth: 2,
         marginBottom: frame.part === 'last' || frame.part === 'only' ? 10 : 0,
         marginTop: frame.part === 'first' || frame.part === 'only' ? 10 : 0,
         paddingBottom: frame.part === 'last' || frame.part === 'only' ? 2 : 0,

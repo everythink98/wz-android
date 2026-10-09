@@ -1,6 +1,7 @@
 import type { TopicStyles } from '../styles';
 import { memo, useCallback, useMemo } from 'react';
 import { Pressable, Text, ToastAndroid, View } from 'react-native';
+import { TopicCopySurface } from './TopicCopySurface';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
@@ -338,7 +339,7 @@ export function ReplyItem({
             </View>
           ) : (
             <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:body`}>
-              <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
+              <TopicCopySurface style={styles.replyBody} onCopy={copyReplyTextToClipboard}>
                 <MemoizedTopicContentBlock
                   contentWidth={replyContentWidth}
                   html={highlightedSectionHtml || undefined}
@@ -346,7 +347,7 @@ export function ReplyItem({
                   row={section.content}
                   selectable={false}
                 />
-              </Pressable>
+              </TopicCopySurface>
             </TopicSplitDisclosureScope>
           )}
         </View>
@@ -417,7 +418,7 @@ export function ReplyItem({
                 />
               ) : (
                 <TopicSplitDisclosureScope scopeKey={`reply-quote:${section.instanceKey}`}>
-                  <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
+                  <TopicCopySurface onCopy={copyReplyTextToClipboard}>
                     <MemoizedTopicContentBlock
                       contentWidth={Math.max(220, replyContentWidth - 24)}
                       html={'html' in section.content ? highlightHtml(section.content.html, query) : undefined}
@@ -425,7 +426,7 @@ export function ReplyItem({
                       row={section.content}
                       selectable={false}
                     />
-                  </Pressable>
+                  </TopicCopySurface>
                 </TopicSplitDisclosureScope>
               )}
             </View>
@@ -724,7 +725,7 @@ export function ReplyItem({
             <>
               {!bodyVirtualized && bodyContent ? (
                 <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:body`}>
-                  <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
+                  <TopicCopySurface style={styles.replyBody} onCopy={copyReplyTextToClipboard}>
                     <MemoizedTopicContentBlock
                       contentWidth={replyContentWidth}
                       html={'html' in bodyContent ? highlightedHtml : undefined}
@@ -733,7 +734,7 @@ export function ReplyItem({
                       selectable={false}
                       trimTrailingBlockSpacing
                     />
-                  </Pressable>
+                  </TopicCopySurface>
                 </TopicSplitDisclosureScope>
               ) : null}
               {!signatureVirtualized && signatureContent ? (

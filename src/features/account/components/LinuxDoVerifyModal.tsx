@@ -158,7 +158,11 @@ export function LinuxDoVerifyModal(props: Props) {
           <Text style={styles.verificationHint}>可以随时关闭并返回原页面。</Text>
         </View>
       ) : result ? (
-        <ScrollView contentContainerStyle={styles.verificationStatus} accessibilityLiveRegion="polite">
+        <ScrollView
+          overScrollMode="never"
+          contentContainerStyle={styles.verificationStatus}
+          accessibilityLiveRegion="polite"
+        >
           <Text style={styles.verificationTitle}>
             {blocked ? '还需要一次验证' : canRetry ? '等待继续检测' : '本次检测已结束'}
           </Text>

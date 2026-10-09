@@ -153,6 +153,7 @@ export function TopicSelectionPanel({
       {hint ? <Text style={styles.muted}>{hint}</Text> : null}
       {mode === 'categories' ? (
         <FlatList
+          overScrollMode="never"
           style={styles.list}
           data={
             term
@@ -213,6 +214,7 @@ export function TopicSelectionPanel({
           </Text>
           {tags.length ? (
             <ScrollView
+              overScrollMode="never"
               horizontal
               style={styles.chips}
               contentContainerStyle={styles.chipRow}
@@ -261,6 +263,7 @@ export function TopicSelectionPanel({
           ) : null}
           {showRequiredGroup ? <Text style={styles.muted}>{requiredGroupHint}</Text> : null}
           <FlatList
+            overScrollMode="never"
             style={styles.list}
             data={tagResult?.tags || []}
             keyboardShouldPersistTaps="handled"

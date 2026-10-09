@@ -140,8 +140,8 @@ export function LinuxDoLevelPanel({
                           item.met ? styles.levelVetoCardPassed : styles.levelVetoCardFailed
                         ]}
                       >
-                        <Text style={styles.levelRequirementLabel}>{item.label}</Text>
-                        <View style={styles.levelVetoValueBlock}>
+                        <View style={styles.levelRequirementHeader}>
+                          <Text style={styles.levelRequirementLabel}>{item.label}</Text>
                           <Text
                             style={[
                               styles.levelRequirementValue,
@@ -150,8 +150,8 @@ export function LinuxDoLevelPanel({
                           >
                             {item.displayCurrent} · {status}
                           </Text>
-                          {changeText ? <Text style={[styles.levelChangeText, changeStyle]}>{changeText}</Text> : null}
                         </View>
+                        {changeText ? <Text style={[styles.levelChangeText, changeStyle]}>{changeText}</Text> : null}
                       </View>
                     );
                   }

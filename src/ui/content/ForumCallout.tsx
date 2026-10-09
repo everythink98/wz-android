@@ -1,11 +1,8 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import {
   Bug,
   Check,
-  ChevronDown,
-  ChevronRight,
   CircleCheck,
   CircleHelp,
   ClipboardList,
@@ -25,10 +22,7 @@ import {
   type DiscourseCalloutType
 } from '@/domain/forum/callouts';
 import { alphaColor, type ReaderTheme } from '@/ui/theme/tokens';
-
-export const FORUM_CALLOUT_TRANSITION_MS = 100;
-
-const CALLOUT_LAYOUT = LinearTransition.duration(FORUM_CALLOUT_TRANSITION_MS).reduceMotion(ReduceMotion.System);
+import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 
 const CALLOUT_ICONS = {
   note: SquarePen,
@@ -57,8 +51,8 @@ function toneColor(tone: DiscourseCalloutTone, theme: ReaderTheme) {
 export function forumCalloutPalette(type: DiscourseCalloutType, theme: ReaderTheme) {
   const color = toneColor(DISCOURSE_CALLOUT_REGISTRY[type].tone, theme);
   return {
-    backgroundColor: alphaColor(color, theme.dark ? 0.16 : 0.1),
-    borderColor: alphaColor(color, theme.dark ? 0.36 : 0.28),
+    backgroundColor: alphaColor(color, theme.dark ? 0.12 : 0.08),
+    borderColor: alphaColor(color, theme.dark ? 0.28 : 0.22),
     color
   };
 }
@@ -84,7 +78,6 @@ export function ForumCallout({
 }) {
   const palette = forumCalloutPalette(type, theme);
   const Icon = CALLOUT_ICONS[type];
-  const FoldIcon = expanded ? ChevronDown : ChevronRight;
   const toggleExpanded = () => onExpandedChange(!expanded);
   const header = (
     <>
@@ -97,16 +90,12 @@ export function ForumCallout({
         <Icon accessible={false} color={palette.color} size={20} strokeWidth={2.2} />
       </View>
       <View style={calloutStyles.title}>{title}</View>
-      {foldable ? <FoldIcon accessible={false} color={palette.color} size={18} strokeWidth={2.1} /> : null}
+      {foldable ? <DisclosureChevron expanded={expanded} color={palette.color} /> : null}
     </>
   );
 
   return (
-    <Animated.View
-      layout={CALLOUT_LAYOUT}
-      style={[calloutStyles.callout, palette, boundarySpacing]}
-      testID="forum-callout"
-    >
+    <View style={[calloutStyles.callout, palette, boundarySpacing]} testID="forum-callout">
       {foldable ? (
         <Pressable
           accessibilityLabel={titleLabel}
@@ -122,7 +111,7 @@ export function ForumCallout({
           {header}
         </View>
       )}
-    </Animated.View>
+    </View>
   );
 }
 
@@ -135,9 +124,9 @@ const calloutStyles = StyleSheet.create({
     marginTop: 8,
     overflow: 'hidden',
     paddingBottom: 12,
-    paddingLeft: 24,
+    paddingLeft: 12,
     paddingRight: 12,
-    paddingTop: 12
+    paddingTop: 4
   },
   header: {
     alignItems: 'center',

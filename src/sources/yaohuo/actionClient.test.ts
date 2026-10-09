@@ -14,7 +14,8 @@ import {
   buildYaohuoDeleteReplyRequest,
   buildYaohuoFavoriteRequest,
   buildYaohuoMessageReplyRequest,
-  buildYaohuoReplyRequest
+  buildYaohuoReplyRequest,
+  buildYaohuoVoteRequest
 } from './actionRequest';
 
 function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/bbs/book_re.aspx') {
@@ -38,6 +39,17 @@ function replyFetcher(html: string) {
   return vi.fn(async (url: string, init?: RequestInit) =>
     htmlResponse(init?.method === 'GET' ? replyForm() : html, 200, url)
   );
+}
+
+function voteContainer(token = 'fresh-vote-token') {
+  return `<div class="vote-container" data-vote-url="/bbs/book_view_toVote.aspx" data-vote-csrf="${token}">
+    <button class="vote-button" data-siteid="1000" data-id="123" data-vid="7" data-vpage="1" data-lpage="1">选项一</button>
+    <button class="vote-button" data-siteid="1000" data-id="123" data-vid="8" data-vpage="1" data-lpage="1">选项二</button>
+  </div>`;
+}
+
+function voteFetcher(html: string) {
+  return vi.fn(async (url: string) => htmlResponse(url.endsWith('/bbs-123.html') ? voteContainer() : html, 200, url));
 }
 
 describe('runYaohuoAction', () => {
@@ -129,7 +141,76 @@ describe('runYaohuoAction', () => {
     );
   });
 
-  it('confirms a private reply only from the exact original success text', async () => {
+  it.each(['OK', ' \r\nOK\t '])('confirms the original AJAX private-message acknowledgment: %j', async (html) => {
+    const request = buildYaohuoMessageReplyRequest({
+      content: '收到',
+      fields: { action: 'add', toid: '9', ajax: '1' }
+    });
+    const fetcher = vi.fn(async () => htmlResponse(html));
+
+    await expect(runYaohuoAction({ request, fetcher })).resolves.toEqual({
+      status: 'confirmed',
+      message: '发送信息成功！'
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['OK!', 'NOT OK', '<div>OK</div>', '{"success":true}', '未知状态码'])(
+    'leaves an unrecognized AJAX private-message response unconfirmed: %s',
+    async (html) => {
+      const request = buildYaohuoMessageReplyRequest({
+        content: '收到',
+        fields: { action: 'add', toid: '9', ajax: '1' }
+      });
+      const fetcher = vi.fn(async () => htmlResponse(html));
+
+      await expect(runYaohuoAction({ request, fetcher })).resolves.toEqual({
+        status: 'unknown',
+        message: '操作结果无法确认，请刷新原帖核对'
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    ['REPEAT', '刚刚已经给对方发过相同的内容了'],
+    ['NULL', '请填写对方ID和内容'],
+    ['WAITING', '操作太快了，请稍后再试'],
+    ['MAX1', '一次最多发给100人，请分批发送'],
+    ['MAX', '今天的发信数量已达上限，明天再来吧'],
+    ['LOCK', '你已被加入黑名单，暂时不能发信'],
+    ['ALLERR', '只有站长才能群发给全站会员'],
+    ['BLOCKED', '对方设置了不接收你的私信'],
+    ['NOTEXSIT', '对方ID不存在，请检查后再发']
+  ])('marks the original AJAX private-message rejection as not sent: %s', async (code, message) => {
+    const request = buildYaohuoMessageReplyRequest({
+      content: '收到',
+      fields: { action: 'add', toid: '9', ajax: '1' }
+    });
+    const fetcher = vi.fn(async () => htmlResponse(` \n${code}\t `));
+
+    await expect(runYaohuoAction({ request, fetcher })).rejects.toMatchObject({ message, serverRejected: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, '0'])(
+    'does not confirm an OK response without the AJAX private-message request: %s',
+    async (ajax) => {
+      const request = buildYaohuoMessageReplyRequest({ content: '收到', fields: { action: 'add', toid: '9' } });
+      const body = new URLSearchParams(request.body);
+      if (ajax) body.set('ajax', ajax);
+      else body.delete('ajax');
+
+      await expect(
+        runYaohuoAction({
+          request: { ...request, body: body.toString() },
+          fetcher: vi.fn(async () => htmlResponse('OK'))
+        })
+      ).resolves.toEqual({ status: 'unknown', message: '操作结果无法确认，请刷新原帖核对' });
+    }
+  );
+
+  it('continues to confirm the exact legacy private-message success text', async () => {
     const request = buildYaohuoMessageReplyRequest({ content: '收到', fields: { action: 'add', toid: '9' } });
 
     await expect(
@@ -239,33 +320,97 @@ describe('runYaohuoAction', () => {
     });
   });
 
-  it('confirms original favorite cancellation from the JSON response', async () => {
+  it('reads a fresh cancellation token and posts the intended favorite record once', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    let tokenReads = 0;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'GET') {
+        return htmlResponse(JSON.stringify({ success: true, token: `fresh-favorite-token-${++tokenReads}` }), 200, url);
+      }
+      const body = new URLSearchParams(String(init?.body));
+      return htmlResponse(
+        JSON.stringify({
+          success: tokenReads > 0 && body.get('__CSRFToken') === `fresh-favorite-token-${tokenReads}`,
+          message: '删除成功'
+        }),
+        200,
+        url
+      );
+    });
+    const request = buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await expect(
+        runYaohuoAction({ request, fetcher, trace: beginDiagnosticTrace('topic', 'favorite') })
+      ).resolves.toEqual({
+        status: 'confirmed',
+        message: '已取消收藏'
+      });
+      expect(fetcher.mock.calls.at(-2)).toEqual([
+        'https://www.yaohuo.me/bbs/favlist.aspx?action=csrftoken&siteid=1000',
+        expect.objectContaining({ method: 'GET', body: undefined, cache: 'no-store' })
+      ]);
+      const [url, init] = fetcher.mock.calls.at(-1)!;
+      expect(url).toBe('https://www.yaohuo.me/bbs/favlist.aspx');
+      expect(init).toMatchObject({
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }
+      });
+      expect(Object.fromEntries(new URLSearchParams(String(init?.body)))).toEqual({
+        action: 'delete',
+        siteid: '1000',
+        favtypeid: '0',
+        id: '987',
+        ajax: '1',
+        __CSRFToken: `fresh-favorite-token-${attempt}`
+      });
+    }
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(events)).not.toContain('fresh-favorite-token-');
+  });
+
+  it.each([
+    ['missing token', JSON.stringify({ success: true })],
+    ['empty token', JSON.stringify({ success: true, token: '  ' })],
+    ['non-string token', JSON.stringify({ success: true, token: 123 })],
+    ['rejected token', JSON.stringify({ success: false, token: 'untrusted-token' })],
+    ['non-boolean success', JSON.stringify({ success: 'true', token: 'untrusted-token' })],
+    ['invalid JSON', '<html>普通收藏列表</html>']
+  ])('does not POST a favorite cancellation with %s', async (_kind, response) => {
+    const fetcher = vi.fn(async (url: string) => htmlResponse(response, 200, url));
+    await expect(
+      runYaohuoAction({ request: buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' }), fetcher })
+    ).rejects.toThrow('无法读取妖火收藏验证信息，请刷新后重试');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe('https://www.yaohuo.me/bbs/favlist.aspx?action=csrftoken&siteid=1000');
+  });
+
+  it('does not trust a cancellation token redirected outside yaohuo', async () => {
     const fetcher = vi.fn(async () =>
       htmlResponse(
-        JSON.stringify({ success: true, message: '删除成功' }),
+        JSON.stringify({ success: true, token: 'foreign-token' }),
         200,
-        'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987'
+        'https://example.com/bbs/favlist.aspx'
       )
     );
-
-    const result = await runYaohuoAction({
-      request: buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' }),
-      fetcher
-    });
-
-    expect(fetcher).toHaveBeenCalledWith(
-      'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
-      expect.objectContaining({ method: 'POST', body: undefined })
-    );
-    expect(result).toMatchObject({ status: 'confirmed', message: '已取消收藏' });
+    await expect(
+      runYaohuoAction({ request: buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' }), fetcher })
+    ).rejects.toThrow('无法读取妖火收藏验证信息，请刷新后重试');
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('does not clear the favorite style when original cancellation is rejected', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) =>
       htmlResponse(
-        JSON.stringify({ success: false, message: '删除失败' }),
+        JSON.stringify(
+          init?.method === 'GET'
+            ? { success: true, token: 'fresh-favorite-token' }
+            : { success: false, code: 'csrf_invalid', message: '删除失败' }
+        ),
         200,
-        'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987'
+        url
       )
     );
 
@@ -275,6 +420,8 @@ describe('runYaohuoAction', () => {
         fetcher
       })
     ).rejects.toThrow('删除失败');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map(([, init]) => init?.method)).toEqual(['GET', 'POST']);
   });
 
   it('follows yaohuo reply delete confirmation links before reporting success', async () => {
@@ -341,6 +488,174 @@ describe('runYaohuoAction', () => {
       status: 'unknown',
       message: '操作结果无法确认，请刷新原帖核对'
     });
+  });
+
+  it.each([
+    ['another topic', 'id=456&reid=9'],
+    ['another reply', 'id=123&reid=10'],
+    ['duplicate topic', 'id=123&id=456&reid=9'],
+    ['case-varied topic', 'id=123&ID=456&reid=9'],
+    ['duplicate reply', 'id=123&reid=9&reid=10'],
+    ['case-varied reply', 'id=123&reid=9&REID=10'],
+    ['duplicate action', 'id=123&reid=9&action=go'],
+    ['case-varied action', 'id=123&reid=9&ACTION=go']
+  ])('does not follow a deletion confirmation for %s', async (_target, fields) => {
+    const fetcher = vi.fn(async (url: string) =>
+      htmlResponse(
+        `<a href="/bbs/book_re_del.aspx?action=godel&${fields}&siteid=1000&classid=177&token=fresh-token">确定删除！</a>`,
+        200,
+        url
+      )
+    );
+    await expect(
+      runYaohuoAction({
+        request: buildYaohuoDeleteReplyRequest({
+          deletePath: '/bbs/book_re_del.aspx?action=go&siteid=1000&classid=177&reid=9&id=123'
+        }),
+        fetcher
+      })
+    ).resolves.toEqual({ status: 'unknown', message: '操作结果无法确认，请刷新原帖核对' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs/book_re_del.aspx?action=go&siteid=1000&classid=177&reid=9&id=123',
+      expect.objectContaining({ method: 'GET' })
+    );
+  });
+
+  it.each([
+    [
+      'reply deletion',
+      buildYaohuoDeleteReplyRequest({
+        deletePath: '/bbs/book_re_del.aspx?action=godel&siteid=1000&classid=177&reid=9&id=123'
+      })
+    ],
+    ['vote', buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteId: '7' })]
+  ])('does not confirm %s from an inconclusive action notice', async (_action, request) => {
+    for (const message of [
+      '页面已过期，请刷新后重试',
+      '操作太频繁，请稍后再试',
+      '请先输入验证码',
+      '请求处理中',
+      '操作没有成功',
+      '成功后才能返回',
+      '删除成功了吗',
+      '投票成功后才能查看结果'
+    ]) {
+      const fetcher = voteFetcher(`<div class="tip">${message}</div>`);
+      await expect(runYaohuoAction({ request, fetcher })).resolves.toEqual({ status: 'unknown', message });
+      expect(fetcher).toHaveBeenCalledTimes(request.method === 'POST' ? 2 : 1);
+    }
+  });
+
+  it.each([
+    [
+      'reply deletion',
+      buildYaohuoDeleteReplyRequest({
+        deletePath: '/bbs/book_re_del.aspx?action=godel&siteid=1000&classid=177&reid=9&id=123'
+      }),
+      '删除成功！ 跳转中...返回',
+      '投票成功'
+    ],
+    ['vote', buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteId: '7' }), '投票成功', '删除成功']
+  ])('confirms %s only from its own completion notice', async (_action, request, success, otherAction) => {
+    const fetcher = voteFetcher(`<div class="tip">${success}</div>`);
+    await expect(runYaohuoAction({ request, fetcher })).resolves.toEqual({ status: 'confirmed', message: success });
+    await expect(
+      runYaohuoAction({
+        request,
+        fetcher: voteFetcher(`<div class="tip">${otherAction}</div>`)
+      })
+    ).resolves.toEqual({ status: 'unknown', message: otherAction });
+  });
+
+  it('reads fresh vote metadata before posting all chosen options exactly once', async () => {
+    let reads = 0;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'GET' && url.endsWith('/bbs-123.html')) {
+        return htmlResponse(voteContainer(`fresh-vote-token-${++reads}`), 200, url);
+      }
+      const body = new URLSearchParams(String(init?.body));
+      return htmlResponse(
+        `<div class="tip">${reads > 0 && body.get('__CSRFToken') === `fresh-vote-token-${reads}` ? '投票成功' : '投票失败'}</div>`,
+        200,
+        url
+      );
+    });
+    const request = buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteIds: ['7', '8'] });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await expect(runYaohuoAction({ request, fetcher })).resolves.toEqual({
+        status: 'confirmed',
+        message: '投票成功'
+      });
+      expect(fetcher.mock.calls.at(-2)).toEqual([
+        'https://www.yaohuo.me/bbs-123.html',
+        expect.objectContaining({ method: 'GET', body: undefined })
+      ]);
+      const [url, init] = fetcher.mock.calls.at(-1)!;
+      expect(url).toBe('https://www.yaohuo.me/bbs/book_view_toVote.aspx');
+      expect(init).toMatchObject({
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }
+      });
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.getAll('vid')).toEqual(['7', '8']);
+      expect(Object.fromEntries(body)).toMatchObject({
+        __CSRFToken: `fresh-vote-token-${attempt}`,
+        siteid: '1000',
+        classid: '',
+        id: '123',
+        vpage: '1',
+        lpage: '1'
+      });
+    }
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    ['already voted', `<body data-has-voted="true">${voteContainer()}</body>`],
+    ['disabled choice', voteContainer().replace('data-vid="7"', 'data-vid="7" disabled')],
+    ['missing token', voteContainer('')],
+    [
+      'foreign action',
+      voteContainer().replace('/bbs/book_view_toVote.aspx', 'https://example.com/bbs/book_view_toVote.aspx')
+    ],
+    ['another action', voteContainer().replace('book_view_toVote.aspx', 'book_re.aspx')],
+    ['another topic', voteContainer().replaceAll('data-id="123"', 'data-id="456"')],
+    ['another site', voteContainer().replaceAll('data-siteid="1000"', 'data-siteid="2000"')],
+    ['another choice', voteContainer().replace('data-vid="7"', 'data-vid="9"')],
+    ['another category', voteContainer().replaceAll('data-siteid="1000"', 'data-siteid="1000" data-classid="213"')],
+    ['ambiguous container', voteContainer() + voteContainer()]
+  ])('does not POST a vote with %s', async (_kind, html) => {
+    const fetcher = vi.fn(async (url: string) => htmlResponse(html, 200, url));
+    await expect(
+      runYaohuoAction({ request: buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteId: '7' }), fetcher })
+    ).rejects.toThrow('无法读取妖火投票验证信息，请刷新后重试');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe('https://www.yaohuo.me/bbs-123.html');
+  });
+
+  it('does not POST a vote after the topic read redirects outside yaohuo', async () => {
+    const fetcher = vi.fn(async () => htmlResponse(voteContainer(), 200, 'https://example.com/bbs-123.html'));
+    await expect(
+      runYaohuoAction({ request: buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteId: '7' }), fetcher })
+    ).rejects.toThrow('无法读取妖火投票验证信息，请刷新后重试');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('still posts an enabled choice when another option is disabled', async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) =>
+      htmlResponse(
+        init?.method === 'GET'
+          ? voteContainer().replace('data-vid="8"', 'data-vid="8" disabled')
+          : '<div class="tip">投票成功</div>',
+        200,
+        url
+      )
+    );
+    await expect(
+      runYaohuoAction({ request: buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteId: '7' }), fetcher })
+    ).resolves.toEqual({ status: 'confirmed', message: '投票成功' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('does not report long full pages without a tip as submitted', async () => {

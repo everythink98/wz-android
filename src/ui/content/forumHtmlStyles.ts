@@ -48,7 +48,7 @@ export function buildHtmlRenderingStyles({
     lineHeight: baseLineHeight
   };
   const htmlParagraph = {
-    marginBottom: 10,
+    marginBottom: 18,
     marginTop: 0
   };
   const heading = (
@@ -64,7 +64,7 @@ export function buildHtmlRenderingStyles({
     marginBottom,
     marginTop
   });
-  const listPaddingLeft = Math.round(34 * settings.fontScale);
+  const listPaddingLeft = Math.round(28 * settings.fontScale);
   const mentionStyle = {
     alignSelf: 'flex-start' as const,
     backgroundColor: alphaColor(linkColor, theme.dark ? 0.2 : 0.12),
@@ -82,9 +82,9 @@ export function buildHtmlRenderingStyles({
       backgroundColor: 'transparent'
     },
     p: htmlParagraph,
-    h1: heading(24, 32, '700', 24, 10),
-    h2: heading(20, 28, '700', 20, 10),
-    h3: heading(18, 26, '600', 16, 8),
+    h1: heading(24, 32, '700', 20, 8),
+    h2: heading(20, 28, '700', 16, 8),
+    h3: heading(18, 26, '600', 14, 8),
     h4: heading(16, 24, '600', 16, 8),
     h5: heading(15, 22, '600', 12, 6),
     h6: heading(14, 21, '600', 12, 6),
@@ -121,7 +121,7 @@ export function buildHtmlRenderingStyles({
     blockquote: {
       backgroundColor: 'transparent',
       borderLeftColor: theme.lineStrong,
-      borderLeftWidth: 3,
+      borderLeftWidth: 2,
       marginBottom: 10,
       marginTop: 10,
       paddingBottom: 2,
@@ -195,9 +195,9 @@ export function buildHtmlRenderingStyles({
       borderRightWidth: 1,
       color: theme.ink,
       flexShrink: 0,
-      fontWeight: '700',
+      fontWeight: '600',
       paddingHorizontal: 10,
-      paddingVertical: 9
+      paddingVertical: 8
     },
     td: {
       backgroundColor: theme.surface,
@@ -207,7 +207,7 @@ export function buildHtmlRenderingStyles({
       color: theme.ink,
       flexShrink: 0,
       paddingHorizontal: 10,
-      paddingVertical: 9
+      paddingVertical: 8
     }
   };
   const htmlClassesStyles: HtmlClassesStyles = {

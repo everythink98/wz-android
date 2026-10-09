@@ -46,6 +46,7 @@ function SearchFilterBody({
   const [initialOffset] = useState(() => scrollOffsetRef.current);
   return (
     <ScrollView
+      overScrollMode="never"
       {...props}
       contentOffset={initialOffset}
       onScroll={({ nativeEvent }) => {

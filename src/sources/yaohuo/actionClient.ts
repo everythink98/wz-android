@@ -1,4 +1,4 @@
-import type { YaohuoActionRequest } from './actionRequest';
+import { normalizeYaohuoReplyDeletePath, type YaohuoActionRequest } from './actionRequest';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html';
@@ -21,12 +21,26 @@ export const YAOHUO_ACTION_HEADERS = {
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
 const YAOHUO_ACTION_SUCCESS_PATTERN =
   /^(?:评论成功|回复成功！(?:\s*获得妖晶:\d+，获得经验:\d+)?(?:\s*跳转中\.\.\.返回)?)$/;
+const YAOHUO_DELETE_SUCCESS_PATTERN = /^删除成功[！!。\s]*(?:跳转中[.。…]*\s*)?(?:返回)?$/;
+const YAOHUO_VOTE_SUCCESS_PATTERN = /^投票成功[！!。\s]*(?:跳转中[.。…]*\s*)?(?:返回)?$/;
 const YAOHUO_REPLY_PATH_PATTERN = /^\/bbs\/book_re\.aspx$/i;
 const YAOHUO_REPLY_DELETE_PATH_PATTERN = /^\/bbs\/book_re_del\.aspx$/i;
 const YAOHUO_FAVORITE_ENTRY_PATH_PATTERN = /^\/bbs\/share\.aspx$/i;
 const YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN = /^\/bbs\/favlist\.aspx$/i;
 const YAOHUO_MESSAGE_REPLY_PATH_PATTERN = /^\/bbs\/messagelist_add\.aspx$/i;
+const YAOHUO_VOTE_PATH_PATTERN = /^\/bbs\/book_view_toVote\.aspx$/i;
 const YAOHUO_ACTION_UNKNOWN_MESSAGE = '操作结果无法确认，请刷新原帖核对';
+const YAOHUO_MESSAGE_REPLY_ERRORS = new Map<string, string>([
+  ['REPEAT', '刚刚已经给对方发过相同的内容了'],
+  ['NULL', '请填写对方ID和内容'],
+  ['WAITING', '操作太快了，请稍后再试'],
+  ['MAX1', '一次最多发给100人，请分批发送'],
+  ['MAX', '今天的发信数量已达上限，明天再来吧'],
+  ['LOCK', '你已被加入黑名单，暂时不能发信'],
+  ['ALLERR', '只有站长才能群发给全站会员'],
+  ['BLOCKED', '对方设置了不接收你的私信'],
+  ['NOTEXSIT', '对方ID不存在，请检查后再发']
+]);
 
 export type YaohuoActionResult =
   { status: 'confirmed'; message: string; favoriteId?: number } | { status: 'unknown'; message: string };
@@ -45,14 +59,22 @@ function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired'
   return error;
 }
 
-function actionMessage(html: string, reply = false): YaohuoActionResult {
+function actionMessage(html: string, action?: 'reply' | 'delete' | 'vote'): YaohuoActionResult {
   const tip = parseHtml(html).querySelector('.tip');
   const text = tip ? elementText(tip) : textContentFromHtml(html);
   if (!text || (!tip && text.length > 80)) {
     return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
   assertYaohuoActionSuccess(text);
-  if ((reply || !tip) && !YAOHUO_ACTION_SUCCESS_PATTERN.test(text)) {
+  const successPattern =
+    action === 'reply'
+      ? YAOHUO_ACTION_SUCCESS_PATTERN
+      : action === 'delete'
+        ? YAOHUO_DELETE_SUCCESS_PATTERN
+        : action === 'vote'
+          ? YAOHUO_VOTE_SUCCESS_PATTERN
+          : undefined;
+  if (!successPattern?.test(text) || (action !== 'reply' && !tip)) {
     return { status: 'unknown', message: tip && text.length <= 80 ? text : YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
   return {
@@ -61,7 +83,13 @@ function actionMessage(html: string, reply = false): YaohuoActionResult {
   };
 }
 
-function messageReplyResult(html: string): YaohuoActionResult {
+function messageReplyResult(html: string, ajax: boolean): YaohuoActionResult {
+  if (ajax) {
+    const code = html.trim();
+    if (code === 'OK') return { status: 'confirmed', message: '发送信息成功！' };
+    const rejection = YAOHUO_MESSAGE_REPLY_ERRORS.get(code);
+    if (rejection) throw Object.assign(new Error(rejection), { serverRejected: true });
+  }
   const root = parseHtml(html);
   const tip = root.querySelector('.tip');
   const message = elementText(tip) || textContentFromHtml(html);
@@ -77,7 +105,7 @@ function assertYaohuoActionSuccess(message: string, serverRejected = false) {
   }
 }
 
-function deleteConfirmationPath(html: string) {
+function deleteConfirmationPath(html: string, requestUrl: URL) {
   const link = parseHtml(html)
     .querySelectorAll('a[href]')
     .find((item) => {
@@ -89,19 +117,14 @@ function deleteConfirmationPath(html: string) {
     return '';
   }
   try {
-    const url = new URL(href.replace(/&amp;/gi, '&'), YAOHUO_BASE_URL);
-    const host = url.hostname.toLowerCase();
+    const url = new URL(normalizeYaohuoReplyDeletePath(href), YAOHUO_BASE_URL);
     if (
-      host !== 'www.yaohuo.me' ||
-      !YAOHUO_REPLY_DELETE_PATH_PATTERN.test(url.pathname) ||
       url.searchParams.get('action')?.toLowerCase() !== 'godel' ||
-      !url.searchParams.get('reid') ||
-      !url.searchParams.get('id')
+      url.searchParams.get('reid') !== requestUrl.searchParams.get('reid') ||
+      url.searchParams.get('id') !== requestUrl.searchParams.get('id')
     ) {
       return '';
     }
-    url.protocol = 'https:';
-    url.hostname = 'www.yaohuo.me';
     return `${url.pathname}${url.search}`;
   } catch {
     return '';
@@ -131,7 +154,7 @@ function isFavoriteDeleteRequest(request: YaohuoActionRequest) {
   return (
     request.method === 'POST' &&
     YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN.test(url.pathname) &&
-    url.searchParams.get('action')?.toLowerCase() === 'delete'
+    new URLSearchParams(request.body).get('action')?.toLowerCase() === 'delete'
   );
 }
 
@@ -155,13 +178,15 @@ async function fetchYaohuoActionHtml({
   path,
   fetcher,
   signal,
-  timeoutMs
+  timeoutMs,
+  cache
 }: {
   request: YaohuoActionRequest;
   path: string;
   fetcher: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
+  cache?: RequestCache;
 }) {
   const response = await fetchWithTimeout(
     `${YAOHUO_BASE_URL}${path}`,
@@ -171,7 +196,8 @@ async function fetchYaohuoActionHtml({
         ...YAOHUO_ACTION_HEADERS,
         ...request.headers
       },
-      body: request.method === 'POST' ? request.body : undefined
+      body: request.method === 'POST' ? request.body : undefined,
+      ...(cache ? { cache } : {})
     },
     {
       fetcher,
@@ -207,6 +233,7 @@ export async function runYaohuoAction({
 }): Promise<YaohuoActionResult> {
   const requestUrl = new URL(request.path, YAOHUO_BASE_URL);
   const isReply = request.method === 'POST' && YAOHUO_REPLY_PATH_PATTERN.test(requestUrl.pathname);
+  const isVote = request.method === 'POST' && YAOHUO_VOTE_PATH_PATTERN.test(requestUrl.pathname);
   if (isReply) {
     const body = new URLSearchParams(request.body);
     const topicId = body.get('id') || '';
@@ -248,6 +275,120 @@ export async function runYaohuoAction({
     }
     body.set('__CSRFToken', token);
     request = { ...request, body: body.toString(), headers: { ...request.headers, referer: formUrl } };
+  } else if (isVote) {
+    const body = new URLSearchParams(request.body);
+    const topicId = body.get('id') || '';
+    if (!/^[1-9]\d*$/.test(topicId)) throw new Error('帖子 id 不正确');
+    const formPath = `/bbs-${topicId}.html`;
+    const formUrl = `${YAOHUO_BASE_URL}${formPath}`;
+    const formResponse = await fetchYaohuoActionHtml({
+      request: { path: formPath, method: 'GET', headers: { 'cache-control': 'no-store' } },
+      path: formPath,
+      fetcher,
+      signal,
+      timeoutMs,
+      cache: 'no-store'
+    });
+    const voteIds = body.getAll('vid');
+    const root = parseHtml(formResponse.html);
+    if (root.querySelector('body')?.getAttribute('data-has-voted') === 'true')
+      throw new Error('无法读取妖火投票验证信息，请刷新后重试');
+    const contexts = root
+      .querySelectorAll('.vote-container')
+      .map((container) => {
+        try {
+          const url = new URL(container.getAttribute('data-vote-url') || '', formUrl);
+          const token = container.getAttribute('data-vote-csrf')?.trim();
+          if (
+            url.origin !== YAOHUO_BASE_URL ||
+            !YAOHUO_VOTE_PATH_PATTERN.test(url.pathname) ||
+            url.search ||
+            url.hash ||
+            !token
+          )
+            return null;
+          const buttons = container
+            .querySelectorAll('.vote-button')
+            .filter((button) => voteIds.includes(button.getAttribute('data-vid') || ''));
+          const first = buttons[0];
+          if (
+            !first ||
+            buttons.length !== voteIds.length ||
+            voteIds.some((id) => buttons.filter((button) => button.getAttribute('data-vid') === id).length !== 1)
+          )
+            return null;
+          const fields = {
+            classid: first.getAttribute('data-classid') || '',
+            vpage: first.getAttribute('data-vpage') || '',
+            lpage: first.getAttribute('data-lpage') || ''
+          };
+          if (
+            buttons.some(
+              (button) =>
+                button.hasAttribute('disabled') ||
+                button.getAttribute('data-id') !== topicId ||
+                button.getAttribute('data-siteid') !== body.get('siteid') ||
+                Boolean(fields.classid && fields.classid !== body.get('classid')) ||
+                Object.entries(fields).some(([name, value]) => (button.getAttribute(`data-${name}`) || '') !== value)
+            )
+          )
+            return null;
+          return { path: url.pathname, token, fields };
+        } catch {
+          return null;
+        }
+      })
+      .filter((context) => context !== null);
+    const context = contexts.length === 1 ? contexts[0] : undefined;
+    const isSameOrigin = !formResponse.responseUrl || new URL(formResponse.responseUrl).origin === YAOHUO_BASE_URL;
+    if (trace)
+      markDiagnosticStage(trace, 'credential', {
+        source: 'yaohuo',
+        hasCsrfToken: Boolean(context?.token),
+        isSameOrigin
+      });
+    if (!context || !isSameOrigin) throw new Error('无法读取妖火投票验证信息，请刷新后重试');
+    body.set('__CSRFToken', context.token);
+    Object.entries(context.fields).forEach(([name, value]) => body.set(name, value));
+    request = {
+      ...request,
+      path: context.path,
+      body: body.toString(),
+      headers: { ...request.headers, referer: formUrl }
+    };
+  } else if (isFavoriteDeleteRequest(request)) {
+    const tokenPath = '/bbs/favlist.aspx?action=csrftoken&siteid=1000';
+    const tokenResponse = await fetchYaohuoActionHtml({
+      request: { path: tokenPath, method: 'GET', headers: { accept: 'application/json', 'cache-control': 'no-store' } },
+      path: tokenPath,
+      fetcher,
+      signal,
+      timeoutMs,
+      cache: 'no-store'
+    });
+    const isSameOrigin = !tokenResponse.responseUrl || isFavoriteSuccessUrl(tokenResponse.responseUrl);
+    let token = '';
+    try {
+      const data: unknown = JSON.parse(tokenResponse.html);
+      if (
+        data &&
+        typeof data === 'object' &&
+        'success' in data &&
+        data.success === true &&
+        'token' in data &&
+        typeof data.token === 'string'
+      ) {
+        token = data.token.trim();
+      }
+    } catch {
+      token = '';
+    }
+    if (trace)
+      markDiagnosticStage(trace, 'credential', { source: 'yaohuo', hasCsrfToken: Boolean(token), isSameOrigin });
+    if (!token || !isSameOrigin) throw new Error('无法读取妖火收藏验证信息，请刷新后重试');
+    const body = new URLSearchParams(request.body);
+    body.set('__CSRFToken', token);
+    request = { ...request, body: body.toString() };
   }
   let { html, responseUrl } = await fetchYaohuoActionHtml({
     request,
@@ -258,7 +399,7 @@ export async function runYaohuoAction({
   });
 
   if (request.method === 'GET' && YAOHUO_REPLY_DELETE_PATH_PATTERN.test(requestUrl.pathname)) {
-    const confirmationPath = deleteConfirmationPath(html);
+    const confirmationPath = deleteConfirmationPath(html, requestUrl);
     if (confirmationPath) {
       ({ html, responseUrl } = await fetchYaohuoActionHtml({
         request,
@@ -277,7 +418,7 @@ export async function runYaohuoAction({
   }
 
   if (request.method === 'POST' && YAOHUO_MESSAGE_REPLY_PATH_PATTERN.test(requestUrl.pathname)) {
-    return messageReplyResult(html);
+    return messageReplyResult(html, new URLSearchParams(request.body).get('ajax') === '1');
   }
 
   if (isFavoriteEntryRequest(request)) {
@@ -292,5 +433,14 @@ export async function runYaohuoAction({
     return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
 
-  return actionMessage(html, isReply);
+  return actionMessage(
+    html,
+    isReply
+      ? 'reply'
+      : request.method === 'GET' && YAOHUO_REPLY_DELETE_PATH_PATTERN.test(requestUrl.pathname)
+        ? 'delete'
+        : isVote
+          ? 'vote'
+          : undefined
+  );
 }

@@ -93,6 +93,7 @@ import { DetailActionButton } from './TopicActionBar';
 import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
+import { TopicCopySurface } from './TopicCopySurface';
 import { topicStatusBadges } from '../model/topicHeaderModel';
 import type { TopicActionsController } from '../actions/useTopicActionsController';
 import { markCurrentNodeSeekOwnRepliesUnlikable } from '../actions/actionHelpers';
@@ -1159,12 +1160,75 @@ export const TopicContentList = memo(function TopicContentList({
   }, [resolvedTargetReplyKey, targetReplyCommandKey, topicListItems]);
   const targetIsOpeningPost = activeLocation?.kind === 'opening';
   const handledTargetReplyRef = useRef('');
+  const pendingTargetPositionRef = useRef<{
+    topicKey: string;
+    commandKey: string;
+    rowKey?: string;
+    offset: number;
+    highlight: boolean;
+  } | null>(null);
+  const nativeViewportRef = useRef({ topicKey: detailTopicStateKey, offset: 0, height: 0 });
   const targetHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedTargetKey, setHighlightedTargetKey] = useState('');
   useEffect(() => {
     handledTargetReplyRef.current = '';
+    pendingTargetPositionRef.current = null;
+    if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
     setHighlightedTargetKey('');
   }, [detailTopicStateKey, targetReplyCommandKey]);
+  const confirmTargetPosition = useCallback(() => {
+    const pending = pendingTargetPositionRef.current;
+    const viewport = nativeViewportRef.current;
+    if (
+      !active ||
+      loadedDetailKey !== detailTopicStateKey ||
+      !pending ||
+      pending.topicKey !== detailTopicStateKey ||
+      pending.commandKey !== targetReplyCommandKey ||
+      viewport.topicKey !== detailTopicStateKey ||
+      viewport.height <= 0
+    )
+      return;
+    let position = -viewport.offset;
+    if (pending.rowKey) {
+      const index = topicListItems.findIndex((item) => item.key === pending.rowKey);
+      if (index < 0) return;
+      const layout = topicScrollRef.current?.getLayout(index);
+      if (!layout || layout.height <= 0) return;
+      position =
+        (topicScrollRef.current?.getFirstItemOffset() || 0) +
+        layout.y +
+        Math.min(pending.offset, Math.max(0, layout.height - 1)) -
+        viewport.offset;
+    }
+    if (position < -1 || position >= viewport.height) return;
+    pendingTargetPositionRef.current = null;
+    if (pending.highlight) {
+      setHighlightedTargetKey(pending.commandKey);
+      targetHighlightTimerRef.current = setTimeout(() => setHighlightedTargetKey(''), 1800);
+    }
+    read.readingEntry?.positioned();
+  }, [
+    active,
+    detailTopicStateKey,
+    loadedDetailKey,
+    read.readingEntry,
+    targetReplyCommandKey,
+    topicListItems,
+    topicScrollRef
+  ]);
+  const onListViewportLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const previous = nativeViewportRef.current;
+      nativeViewportRef.current = {
+        topicKey: detailTopicStateKey,
+        offset: previous.topicKey === detailTopicStateKey ? previous.offset : 0,
+        height: event.nativeEvent.layout.height
+      };
+      confirmTargetPosition();
+    },
+    [confirmTargetPosition, detailTopicStateKey]
+  );
   useEffect(() => {
     setReplyLocationCommand(null);
   }, [
@@ -1194,14 +1258,11 @@ export const TopicContentList = memo(function TopicContentList({
     [onCommentQueryChange, onLocateReply, onReplyFilterChange]
   );
   useEffect(() => {
-    if (
-      !active ||
-      loadedDetailKey !== detailTopicStateKey ||
-      !targetReplyCommandKey ||
-      !canShowReplies ||
-      handledTargetReplyRef.current === targetReplyCommandKey
-    )
+    if (!active || loadedDetailKey !== detailTopicStateKey || !targetReplyCommandKey || !canShowReplies) return;
+    if (handledTargetReplyRef.current === targetReplyCommandKey) {
+      confirmTargetPosition();
       return;
+    }
     if (commentQuery || replyFilter !== 'all') {
       onCommentQueryChange('');
       onReplyFilterChange('all');
@@ -1215,40 +1276,48 @@ export const TopicContentList = memo(function TopicContentList({
             (item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision
           )
         : -1;
-      const result =
-        index >= 0
-          ? topicScrollRef.current?.scrollToIndex({ animated: false, index, viewOffset: anchor?.offset || 0 })
-          : topicScrollRef.current?.scrollToOffset({ animated: !anchor, offset: 0 });
-      void Promise.resolve(result).then(() => read.readingEntry?.positioned());
+      pendingTargetPositionRef.current = {
+        topicKey: detailTopicStateKey,
+        commandKey: targetReplyCommandKey,
+        rowKey: index >= 0 ? topicListItems[index].key : undefined,
+        offset: index >= 0 ? anchor?.offset || 0 : 0,
+        highlight: false
+      };
+      if (index >= 0)
+        void topicScrollRef.current?.scrollToIndex({ animated: false, index, viewOffset: anchor?.offset || 0 });
+      else topicScrollRef.current?.scrollToOffset({ animated: !anchor, offset: 0 });
+      confirmTargetPosition();
       return;
     }
     if (targetReplyListIndex >= 0) {
       handledTargetReplyRef.current = targetReplyCommandKey;
-      if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
-      if (!activeTargetReply?.readingResume) {
-        setHighlightedTargetKey(targetReplyCommandKey);
-        targetHighlightTimerRef.current = setTimeout(() => setHighlightedTargetKey(''), 1800);
-      }
       const anchor = activeTargetReply?.readingResume ? read.readingEntry?.anchor : undefined;
       const rowIndex = anchor?.rowKey
         ? topicListItems.findIndex(
             (item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision
           )
         : -1;
-      void Promise.resolve(
-        topicScrollRef.current?.scrollToIndex({
-          animated: !activeTargetReply?.readingResume,
-          index: rowIndex >= 0 ? rowIndex : targetReplyListIndex,
-          viewPosition: 0,
-          viewOffset: rowIndex >= 0 ? anchor?.offset || 0 : 0
-        })
-      ).then(() => read.readingEntry?.positioned());
+      pendingTargetPositionRef.current = {
+        topicKey: detailTopicStateKey,
+        commandKey: targetReplyCommandKey,
+        rowKey: topicListItems[rowIndex >= 0 ? rowIndex : targetReplyListIndex].key,
+        offset: rowIndex >= 0 ? anchor?.offset || 0 : 0,
+        highlight: !activeTargetReply?.readingResume
+      };
+      void topicScrollRef.current?.scrollToIndex({
+        animated: !activeTargetReply?.readingResume,
+        index: rowIndex >= 0 ? rowIndex : targetReplyListIndex,
+        viewPosition: 0,
+        viewOffset: rowIndex >= 0 ? anchor?.offset || 0 : 0
+      });
+      confirmTargetPosition();
     }
   }, [
     active,
     activeTargetReply?.readingResume,
     canShowReplies,
     commentQuery,
+    confirmTargetPosition,
     detailTopicStateKey,
     loadedDetailKey,
     onCommentQueryChange,
@@ -1387,6 +1456,7 @@ export const TopicContentList = memo(function TopicContentList({
         .filter((item) => item.isViewable !== false)
         .sort((a, b) => (a.index || 0) - (b.index || 0));
       reportReadingVisible();
+      confirmTargetPosition();
       const visibleReplyIndexes = new Set<number>();
       let windowStartVisible = false;
       viewableItems.forEach(({ isViewable, item: listItem }) => {
@@ -1405,7 +1475,7 @@ export const TopicContentList = memo(function TopicContentList({
         windowStartVisible || (visibleReplyIndexes.size > 0 && firstVisibleReplyIndex <= visibleReplyIndexes.size);
       if (windowStartWithinPrefetchRef.current) loadWindowStart();
     },
-    [loadWindowStart, observeViewableItems, replyWindowIndexByKey, reportReadingVisible]
+    [confirmTargetPosition, loadWindowStart, observeViewableItems, replyWindowIndexByKey, reportReadingVisible]
   );
   const handleReplyEndReached = useCallback(() => {
     if (replyEndError || !replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) return;
@@ -1588,9 +1658,9 @@ export const TopicContentList = memo(function TopicContentList({
         const content = <View style={contentContainerStyle}>{children}</View>;
         return renderTopicListItemFrame(
           context === 'accepted' && contentItem.type === 'content' ? (
-            <Pressable delayLongPress={450} style={rowStyle} onLongPress={copyAcceptedAnswerToClipboard}>
+            <TopicCopySurface style={rowStyle} onCopy={copyAcceptedAnswerToClipboard}>
               {content}
-            </Pressable>
+            </TopicCopySurface>
           ) : (
             <View style={rowStyle}>{content}</View>
           ),
@@ -2445,6 +2515,7 @@ export const TopicContentList = memo(function TopicContentList({
               >
                 {!readingPositionReady ? (
                   <ScrollView
+                    overScrollMode="never"
                     style={[styles.content, styles.topicContent, StyleSheet.absoluteFill]}
                     contentContainerStyle={styles.topicContentInner}
                   >
@@ -2454,6 +2525,8 @@ export const TopicContentList = memo(function TopicContentList({
                 <FlashList
                   ref={topicScrollRef}
                   onLoad={onListLoad}
+                  onLayout={onListViewportLayout}
+                  onContentSizeChange={confirmTargetPosition}
                   accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
                   testID={topic ? 'topic-detail-loaded' : undefined}
                   style={[styles.content, styles.topicContent, !readingPositionReady && { opacity: 0 }]}
@@ -2470,6 +2543,12 @@ export const TopicContentList = memo(function TopicContentList({
                   ItemSeparatorComponent={TopicListItemSeparator}
                   keyboardShouldPersistTaps="always"
                   onScroll={(event) => {
+                    nativeViewportRef.current = {
+                      topicKey: detailTopicStateKey,
+                      offset: event.nativeEvent.contentOffset.y,
+                      height: event.nativeEvent.layoutMeasurement.height
+                    };
+                    confirmTargetPosition();
                     onScrollProgress?.(event);
                     readingScrollOffset.current = event.nativeEvent.contentOffset.y;
                     readingSessionRef.current?.interact();

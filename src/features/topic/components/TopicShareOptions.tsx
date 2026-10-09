@@ -95,7 +95,11 @@ export function TopicShareOptions({
         </Text>
         <IconButton icon={X} label="关闭分享" iconOnly onPress={close} />
       </View>
-      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 4 + insets.bottom }}>
+      <ScrollView
+        overScrollMode="never"
+        style={styles.content}
+        contentContainerStyle={{ paddingBottom: 4 + insets.bottom }}
+      >
         <View style={styles.topic}>
           <Text numberOfLines={2} style={styles.title}>
             {topic.title}

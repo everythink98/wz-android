@@ -91,6 +91,7 @@ export function PillRail({
   }, [resetScrollKey]);
   return (
     <ScrollView
+      overScrollMode="never"
       ref={scrollRef}
       horizontal
       showsHorizontalScrollIndicator={false}

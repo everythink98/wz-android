@@ -21,6 +21,7 @@ export function parseYaohuoUserProfileDocument(
 ): UserProfile {
   const visibleText = elementText(root);
   const displayName =
+    safeYaohuoProfileName(elementText(root.querySelector('.uinfo-nickname'))) ||
     safeYaohuoProfileName(visibleText.match(/(?:昵称|用户名)\s*[:：]\s*([^\s<]+)/)?.[1]) ||
     safeYaohuoProfileName(elementText(root.querySelector('.username, .user-name, h1'))) ||
     username ||
@@ -71,7 +72,7 @@ export function parseYaohuoUserProfileDocument(
   };
   const hasProfileSurface =
     /昵称|用户名|发帖|回帖|等级|注册/.test(visibleText) ||
-    Boolean(root.querySelector('.username, .user-name, h1')) ||
+    Boolean(root.querySelector('.uinfo-nickname, .username, .user-name, h1')) ||
     result.topics.length > 0;
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'html-user',

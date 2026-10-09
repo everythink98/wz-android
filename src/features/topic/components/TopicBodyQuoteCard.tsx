@@ -1,8 +1,8 @@
 import type { TopicStyles } from '../styles';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import { type ReaderTheme } from '@/ui/theme/tokens';
+import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 
 export function TopicBodyQuoteCard({
   completeContent,
@@ -31,7 +31,6 @@ export function TopicBodyQuoteCard({
   testID?: string;
   theme: ReaderTheme;
 }) {
-  const StateIcon = expanded ? ChevronUp : ChevronDown;
   return (
     <View style={[styles.quoteBox, completeContentMountedExternally && styles.quoteRowTop]} testID={testID}>
       <View style={styles.quotePanelHeader}>
@@ -47,7 +46,7 @@ export function TopicBodyQuoteCard({
           >
             <Text style={styles.quotePanelStateText}>{loading ? '读取' : expanded ? '收起' : '展开'}</Text>
             <View style={styles.quotePanelStateIcon}>
-              <StateIcon size={16} color={theme.primary} strokeWidth={1.9} />
+              <DisclosureChevron expanded={expanded} color={theme.primary} size={16} />
             </View>
           </Pressable>
         ) : null}

@@ -147,6 +147,15 @@ function giftError(total: string, perPerson: string) {
   return Number(perPerson) > Number(total) ? '每人妖晶不能超过派币总额' : '';
 }
 
+export function yaohuoFileSizeLimit(file: Pick<TopicDraftAttachment, 'name' | 'mimeType'>) {
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  const staticImage =
+    ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(
+      file.mimeType.toLowerCase()
+    ) || ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(extension);
+  return (staticImage ? 10 : 1) * 1024 * 1024;
+}
+
 export function validateTopicDraft(draft: TopicDraft, context: TopicCreationContext): Record<string, string> {
   const errors: Record<string, string> = {};
   if (draft.source !== context.source) return { categoryId: '发帖站点与当前规则不一致，请重新加载' };
@@ -250,14 +259,9 @@ export function validateTopicDraft(draft: TopicDraft, context: TopicCreationCont
       if (files.length < 1 || files.length > 9) errors.attachments = '请选择 1–9 个本地文件';
       for (const file of files) {
         const extension = file.name.split('.').pop()?.toLowerCase() || '';
-        const isDecodedImage = ['image/jpeg', 'image/jpg', 'image/png'].includes(file.mimeType.toLowerCase());
-        if (
-          !file.uri ||
-          file.size <= 0 ||
-          !context.allowedFileExtensions.includes(extension) ||
-          (!isDecodedImage && file.size > 1024 * 1024)
-        )
-          errors.attachments = '文件格式不支持，或非 JPEG/PNG 文件超过 1 MiB';
+        const maximum = yaohuoFileSizeLimit(file);
+        if (!file.uri || file.size <= 0 || !context.allowedFileExtensions.includes(extension) || file.size > maximum)
+          errors.attachments = `文件格式不支持，或文件超过 ${maximum / 1024 / 1024} MiB`;
         if (file.status === 'unknown' || file.status === 'failed' || file.status === 'uploading')
           errors.attachments = '请重新选择不可用的本地文件';
       }

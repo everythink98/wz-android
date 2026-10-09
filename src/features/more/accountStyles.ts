@@ -173,11 +173,10 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     },
     levelVetoCard: {
       minHeight: 52,
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'space-between',
-      gap: 10,
+      alignItems: 'stretch',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      gap: 2,
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
@@ -190,11 +189,6 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelVetoCardFailed: {
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.12 : 0.06),
       borderColor: alphaColor(theme.danger, theme.dark ? 0.32 : 0.2)
-    },
-    levelVetoValueBlock: {
-      alignItems: 'flex-end',
-      flexShrink: 1,
-      gap: 2
     },
     levelStatGrid: {
       flexDirection: 'row',

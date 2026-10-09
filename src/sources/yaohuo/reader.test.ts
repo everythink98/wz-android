@@ -11,7 +11,7 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './reader';
-import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
+import { parseYaohuoListDocument, parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
 import { parseYaohuoCurrentUserHtml } from './sessionParser';
 import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
 import { yaohuoReplyListNextPageUrlFromRoot, yaohuoTopicListNextPageUrlFromRoot } from './protocol';
@@ -182,6 +182,60 @@ describe('Android direct yaohuo API', () => {
     expect(result.items.map((item) => item.id)).toEqual(['123']);
     expect(result.hasMore).toBe(true);
     expect(result.nextPage).toBe(2);
+  });
+
+  it('reads current Yaohuo search rows with source metadata, order and pagination', async () => {
+    const html = `
+      <div class="search-page post-page"><ul class="post-items">
+        <li class="post-item" data-id="123">
+          <a class="topic-link post-title" href="/bbs-123.html">测试<mark>搜索</mark>主题<span class="post-flag post-flag--warm">赏</span></a>
+          <div class="post-meta"><span class="post-stat"><span class="post-author">测试 / 作者</span>
+            <span class="post-count"><i class="post-sep">/</i><a href="/bbs/book_re.aspx?actoin=class&amp;siteid=1000&amp;classid=201&amp;id=123&amp;getTotal=27&amp;lpage=1">27</a>回<i class="post-sep">/</i>2571阅</span>
+          </span><time class="post-time" title="2026-10-03 12:00:23">6天前</time></div>
+        </li>
+        <li class="post-item" data-id="124">
+          <a class="topic-link post-title" href="/bbs-124.html">第二个<span>搜索</span>主题<span class="post-flag">附</span></a>
+          <div class="post-meta"><span class="post-stat"><span class="post-author">另一位作者</span>
+            <span class="post-count">/<a href="/bbs/book_re.aspx?id=124">0</a>回/12阅</span>
+          </span><time class="post-time" title="2026-10-09 12:00:00">今天</time></div>
+        </li>
+      </ul></div>
+      <div class="search-pagination post-pagination modern-pagination-container">
+        <a href="/bbs/book_list_search.aspx?action=search&amp;siteid=1000&amp;classid=0&amp;type=title&amp;key=投票&amp;getTotal=826&amp;page=2">下一页</a>
+        <a href="/bbs/book_list_search.aspx?action=search&amp;page=0">上一页</a>
+        <div class="showpage">第 1/56 页，共 826 条</div>
+      </div>
+    `;
+    const result = await searchYaohuoDirect({
+      query: '投票',
+      category: '177',
+      yaohuoFetcher: async () => new Response(html)
+    });
+
+    expect(result.items.map(({ id }) => id)).toEqual(['123', '124']);
+    expect(result.items[0]).toMatchObject({
+      title: '测试搜索主题',
+      author: '测试 / 作者',
+      categoryId: '201',
+      category: '资源分享',
+      replyCount: 27,
+      viewCount: 2571,
+      displayTimeText: '6天前',
+      createdAt: '2026-10-03T04:00:23.000Z'
+    });
+    expect(result.items[0].authorId).toBeUndefined();
+    expect(result.items[0].authorUrl).toBeUndefined();
+    expect(result.items[1]).toMatchObject({ title: '第二个搜索主题', categoryId: '177', replyCount: 0, viewCount: 12 });
+    expect(result).toMatchObject({ hasMore: true, nextPage: 2 });
+    expect(sourceDiagnosticSummary(result)).toMatchObject({ candidateCount: 2, validCount: 2, isParseEmpty: false });
+    const root = parseHtml(html);
+    const original = root.toString();
+    const list = parseYaohuoListDocument(root, html);
+    expect(list.items.map(({ id, title }) => ({ id, title }))).toEqual([
+      { id: '124', title: '第二个搜索主题' },
+      { id: '123', title: '测试搜索主题' }
+    ]);
+    expect(root.toString()).toBe(original);
   });
 
   it('keeps yaohuo search results returned by the official page without local keyword filtering', async () => {
@@ -1158,6 +1212,99 @@ describe('Android direct yaohuo API', () => {
       max: 2
     });
     expect(detail.polls?.[0]).not.toHaveProperty('readonly');
+  });
+
+  it.each([false, true])(
+    'reads the modern single-choice poll with voted=%s without authored or reply state',
+    (voted) => {
+      const detail = parseYaohuoTopicHtml(
+        `
+      <body${voted ? ' data-has-voted="true"' : ''}>
+        <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-10-09 12:00</div>
+        <div class="bbscontent"><!--listS--><p>正文讨论已投票和多选，可选2项</p><!--listE--></div>
+        <div class="vote-container" data-vote-url="/bbs/book_view_toVote.aspx" data-vote-csrf="synthetic-token">
+          <div class="vote-title">单选投票: 共有21人参与</div>
+          <div class="vote-option-row"><div class="vote-option-text">选项 A：投票已关闭是否合理</div><span class="VON1 view-hidden">(0)</span>
+            <button type="button" data-siteid="1000" data-id="123" data-vid="55" data-vpage="1" data-lpage="1" data-vote-index="1" class="vote-button">投票</button>
+          </div>
+          <div class="vote-option-row"><div class="vote-option-text">选项 B</div><span class="VON2 view-hidden">(21)</span>
+            <button type="button" data-siteid="1000" data-id="123" data-vid="56" data-vpage="1" data-lpage="1" data-vote-index="2" class="vote-button">投票</button>
+          </div>
+        </div>
+        <div class="louzhuxinxi">楼主信息</div>
+        <div class="recontent"><div class="vote-container"><div class="vote-title">投票已关闭</div>
+          <div class="vote-option-row"><div class="vote-option-text">回复伪投票</div><button class="vote-button" data-id="123" data-vid="99">投票</button></div>
+        </div></div>
+      </body>
+      `,
+        { id: '123', url: 'https://www.yaohuo.me/bbs-123.html' }
+      );
+
+      expect(detail.polls).toEqual([
+        {
+          id: 'yaohuo-123',
+          title: '投票',
+          voted,
+          closed: false,
+          multiple: false,
+          participantCount: 21,
+          options: [
+            { id: '55', label: '选项 A：投票已关闭是否合理', count: 0, selected: false },
+            { id: '56', label: '选项 B', count: 21, selected: false }
+          ]
+        }
+      ]);
+      expect(detail.contentHtml).toContain('正文讨论已投票和多选，可选2项');
+      expect(detail.contentHtml).not.toMatch(/vote-container|vote-button|synthetic-token|选项 A|选项 B|回复伪投票/);
+      expect(detail.polls?.[0]).not.toHaveProperty('readonly');
+      expect(detail.polls?.[0]).not.toHaveProperty('min');
+      expect(detail.polls?.[0]).not.toHaveProperty('max');
+    }
+  );
+
+  it('reads voted modern poll results as readonly counts without inventing the selected choice', () => {
+    const html = `
+      <body>
+        <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-10-09 12:00</div>
+        <div class="bbscontent"><!--listS--><p>投票正文</p><!--listE--></div>
+        <div class="vote-container" data-vote-url="/bbs/book_view_toVote.aspx">
+          <div class="vote-title">单选投票: 共有97人参与</div>
+          <div class="vote-option-result"><div class="vote-option-label">选项 A</div><div class="vote-chart-container">
+            <div class="vote-chart-bar" style="width:21.65%"></div><div class="vote-chart-text">21.65% (21)</div>
+          </div></div>
+          <div class="vote-option-result"><div class="vote-option-label">选项 B</div><div class="vote-chart-container">
+            <div class="vote-chart-bar" style="width:25.77%"></div><div class="vote-chart-text">25.77% (25)</div>
+          </div></div>
+          <div class="vote-option-result"><div class="vote-option-label">选项 C</div><div class="vote-chart-container">
+            <div class="vote-chart-bar" style="width:52.58%"></div><div class="vote-chart-text">52.58% (51)</div>
+          </div></div>
+          <div class="vote-message">您已经投过票，谢谢您的参与</div>
+        </div>
+        <div class="louzhuxinxi">楼主信息</div>
+      </body>
+    `;
+    const detail = parseYaohuoTopicHtml(html, { id: '123' });
+
+    expect(detail.polls).toEqual([
+      {
+        id: 'yaohuo-123',
+        title: '投票',
+        voted: true,
+        closed: false,
+        multiple: false,
+        readonly: true,
+        participantCount: 97,
+        options: [
+          { id: 'yaohuo-123-result-1', label: '选项 A', count: 21 },
+          { id: 'yaohuo-123-result-2', label: '选项 B', count: 25 },
+          { id: 'yaohuo-123-result-3', label: '选项 C', count: 51 }
+        ]
+      }
+    ]);
+    expect(detail.polls?.[0].options.every((option) => !Object.hasOwn(option, 'selected'))).toBe(true);
+    expect(parseYaohuoTopicHtml(html, { id: '123' }).polls).toEqual(detail.polls);
+    expect(detail.contentHtml).toContain('投票正文');
+    expect(detail.contentHtml).not.toMatch(/vote-container|vote-option-result|选项 A|选项 B|选项 C|您已经投过票/);
   });
 
   it('keeps yaohuo resource download content rendered outside the main post block', () => {

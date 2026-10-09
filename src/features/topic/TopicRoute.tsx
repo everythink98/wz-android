@@ -12,7 +12,7 @@ import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 
-import { topicKey } from '@/domain/reader/readerData';
+import { topicKey, topicSummary } from '@/domain/reader/readerData';
 import type { TopicLocationTarget, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
@@ -66,16 +66,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const focused = useIsFocused();
   const active = focused && runtime.appActive;
   const topic = route.params.topic;
-  const toggleTopicFavorite = useCallback(
-    () =>
-      runtime.reader.commit({
-        type: 'favorite',
-        topic,
-        enabled: !runtime.reader.dataRef.current.favorites[topicKey(topic)],
-        at: new Date().toISOString()
-      }),
-    [runtime.reader, topic]
-  );
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const locationRequestIdRef = useRef(route.params.locationRequestId ?? 0);
   const topicSession = useTopicSessionController({ notify: runtime.notify, topic });
@@ -193,6 +183,16 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const [displayedPreview, setDisplayedPreview] = useState<ImagePreviewItem | null>(null);
   const [sharingTopic, setSharingTopic] = useState<TopicShareState | null>(null);
   const shareableDetail = topicDetail?.id === topic.id && topicDetail.source === topic.source ? topicDetail : null;
+  const toggleTopicFavorite = useCallback(
+    () =>
+      runtime.reader.commit({
+        type: 'favorite',
+        topic: topicSummary(shareableDetail || topic),
+        enabled: !runtime.reader.dataRef.current.favorites[topicKey(topic)],
+        at: new Date().toISOString()
+      }),
+    [runtime.reader, shareableDetail, topic]
+  );
   const closeTopicShare = useCallback(() => setSharingTopic(null), []);
   useEffect(() => {
     setSharingTopic(null);

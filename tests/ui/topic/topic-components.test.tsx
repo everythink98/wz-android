@@ -490,6 +490,69 @@ function stardustActions(
 }
 
 describe('Topic real child components', () => {
+  it.each(['vertical', 'horizontal', 'returned', 'second-pointer', 'cancelled', 'released'])(
+    'does not copy a reply after a reading gesture (%s)',
+    async (gesture) => {
+      const copy = jest.mocked(Clipboard.setStringAsync);
+      copy.mockClear();
+      const view = await render(<ReplyItem {...replyProps({ bodyContent: compiledRichText('<p>正文内容</p>') })} />);
+      const content = view.getByTestId('html-source');
+      const touch = (pageX: number, pageY: number, count = 1) => ({
+        nativeEvent: { pageX, pageY, touches: Array.from({ length: count }, () => ({ pageX, pageY })) }
+      });
+      await fireEvent(content, 'touchStart', touch(100, 100));
+      if (gesture === 'cancelled') await fireEvent(content, 'touchCancel');
+      else if (gesture === 'released') await fireEvent(content, 'touchEnd');
+      else if (gesture === 'second-pointer') await fireEvent(content, 'touchStart', touch(100, 100, 2));
+      else {
+        await fireEvent(
+          content,
+          'touchMove',
+          touch(gesture === 'horizontal' ? 106 : 100, gesture === 'horizontal' ? 100 : 106)
+        );
+        if (gesture === 'returned') await fireEvent(content, 'touchMove', touch(100, 100));
+      }
+      await fireEvent(content, 'longPress');
+      expect(copy).not.toHaveBeenCalled();
+
+      await fireEvent(content, 'touchStart', touch(100, 100));
+      await fireEvent(content, 'touchMove', touch(102, 101));
+      await fireEvent(content, 'longPress');
+      expect(copy).toHaveBeenCalledTimes(1);
+      expect(copy).toHaveBeenCalledWith('正文内容');
+    }
+  );
+
+  it('cancels long-press copying while dragging virtualized replies and expanded quotes', async () => {
+    const copy = jest.mocked(Clipboard.setStringAsync);
+    copy.mockClear();
+    const props = replyProps({
+      reply: { ...replyProps().reply, contentHtml: '<p>正文内容</p><pre>分段代码</pre>' },
+      expandedQuotes: { 'reply:comment:22:nodeseek:topic-1:1': true },
+      loadedQuotedReplies: {
+        'nodeseek:topic-1:1': {
+          author: 'quoted-user',
+          contentHtml: '<p>被引用内容</p>',
+          createdAt: '2026-07-14T00:00:00.000Z',
+          floor: 1
+        }
+      }
+    });
+    const view = await render(<VirtualizedReplyRows props={props} />);
+    const touch = (pageY: number) => ({ nativeEvent: { pageX: 100, pageY, touches: [{ pageX: 100, pageY }] } });
+    for (const text of ['正文内容', '分段代码', '被引用内容']) {
+      const content = view.getByText(text);
+      copy.mockClear();
+      await fireEvent(content, 'touchStart', touch(100));
+      await fireEvent(content, 'touchMove', touch(106));
+      await fireEvent(content, 'longPress');
+      expect(copy).not.toHaveBeenCalled();
+      await fireEvent(content, 'touchStart', touch(100));
+      await fireEvent(content, 'longPress');
+      expect(copy).toHaveBeenCalledWith('被引用内容\n正文内容\n分段代码');
+    }
+  });
+
   it('keeps reply long-press copy available while opening-post selection is active', async () => {
     const selection = jest.spyOn(TopicSelection, 'useTopicSelectionRowRef').mockReturnValue({
       active: true,
@@ -502,6 +565,9 @@ describe('Topic real child components', () => {
     try {
       const view = await render(<ReplyItem {...replyProps({ bodyContent: compiledRichText('<p>正文内容</p>') })} />);
 
+      await fireEvent(view.getByTestId('html-source'), 'touchStart', {
+        nativeEvent: { pageX: 100, pageY: 100, touches: [{ pageX: 100, pageY: 100 }] }
+      });
       await fireEvent(view.getByTestId('html-source'), 'longPress');
 
       await waitFor(() => expect(copy).toHaveBeenCalledWith('正文内容'));

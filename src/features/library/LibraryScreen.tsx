@@ -537,7 +537,7 @@ export const LibraryScreen = memo(function LibraryScreen({
                     visible
                     onRequestClose={closeCategoryMenu}
                   >
-                    <ScrollView>
+                    <ScrollView overScrollMode="never">
                       {categoryItems.map((item, index) => (
                         <PopupMenuItem
                           key={item.value}

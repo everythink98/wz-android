@@ -5,7 +5,7 @@ import { Linking, Share } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
 import type { Topic, TopicDetail } from '@/domain/forum/models';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
@@ -77,10 +77,10 @@ function latestScreen() {
   return props;
 }
 
-function setup(topicDetail: TopicDetail | null = null) {
+function setup(topicDetail: TopicDetail | null = null, routeTopic = topic) {
   const data = createEmptyReaderData();
   jest.mocked(useTopicSessionController).mockReturnValue({
-    state: { replyComposerIntent: { kind: 'closed' }, selectedTopic: topic },
+    state: { replyComposerIntent: { kind: 'closed' }, selectedTopic: routeTopic },
     commands: {
       composer: { toggle: jest.fn() },
       view: {
@@ -99,7 +99,7 @@ function setup(topicDetail: TopicDetail | null = null) {
     topicDetail,
     topicError: null,
     topicFavorite: false,
-    topicQueryKey: ['forum', 'nodeseek', 'topic'],
+    topicQueryKey: ['forum', routeTopic.source, 'topic'],
     topicReplies: []
   };
   jest.mocked(useTopicController).mockReturnValue(controller as never);
@@ -144,7 +144,7 @@ function setup(topicDetail: TopicDetail | null = null) {
     push: jest.fn(),
     setParams: jest.fn()
   } as unknown as NativeStackScreenProps<RootStackParamList, 'Topic'>['navigation'];
-  const element = (value = runtime, currentTopic = topic, sessionEpochs = initialForumSessionEpochs) => (
+  const element = (value = runtime, currentTopic = routeTopic, sessionEpochs = initialForumSessionEpochs) => (
     <ForumSessionEpochProvider sessionEpochs={sessionEpochs} transportIdentity="applied">
       <TopicRouteRuntimeProvider value={value}>
         <TopicRoute navigation={navigation} route={{ key: 'topic', name: 'Topic', params: { topic: currentTopic } }} />
@@ -196,6 +196,86 @@ describe('Topic Route external links', () => {
     } finally {
       openBrowserAsync.mockRestore();
       openURL.mockRestore();
+    }
+  });
+});
+
+describe('Topic Route local favorites', () => {
+  it.each(['linuxdo', 'nodeseek', 'yaohuo', 'v2ex'] as const)(
+    'saves the loaded %s summary after opening a topic stub and keeps the local toggle target',
+    async (source) => {
+      const urls = {
+        linuxdo: 'https://linux.do/t/42',
+        nodeseek: 'https://www.nodeseek.com/post-42-1',
+        yaohuo: 'https://www.yaohuo.me/bbs-42.html',
+        v2ex: 'https://www.v2ex.com/t/42'
+      };
+      const stub = { ...topic, source, title: '主题占位', author: '未知作者', url: urls[source] };
+      const loaded = {
+        ...detail,
+        ...stub,
+        title: '已加载标题',
+        author: '已加载作者',
+        categoryId: '177',
+        category: '已加载分类',
+        createdAt: '2026-07-13T04:05:00.000Z',
+        lastReplyAt: '2026-10-08T06:30:00.000Z',
+        replyCount: 27,
+        viewCount: 91
+      };
+      const { element, runtime } = setup(loaded, stub);
+      await render(element());
+
+      await act(() => latestScreen().chrome.toggleFavorite());
+      expect(runtime.reader.commit).toHaveBeenCalledWith({
+        type: 'favorite',
+        topic: expect.objectContaining({
+          source,
+          id: stub.id,
+          title: loaded.title,
+          author: loaded.author,
+          categoryId: loaded.categoryId,
+          category: loaded.category,
+          createdAt: loaded.createdAt,
+          lastReplyAt: loaded.lastReplyAt,
+          replyCount: loaded.replyCount,
+          viewCount: loaded.viewCount,
+          url: loaded.url
+        }),
+        enabled: true,
+        at: expect.any(String)
+      });
+      const command = jest.mocked(runtime.reader.commit).mock.calls[0][0];
+      if (command.type !== 'favorite') throw new Error('Expected a favorite command');
+      expect(command.topic).not.toHaveProperty('contentHtml');
+      expect(command.topic).not.toHaveProperty('replies');
+      runtime.reader.dataRef.current = {
+        ...runtime.reader.dataRef.current,
+        favorites: { [topicKey(stub)]: true }
+      };
+      await act(() => latestScreen().chrome.toggleFavorite());
+      expect(runtime.reader.commit).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false }));
+    }
+  );
+
+  it('keeps the route summary when detail is missing or belongs to another topic or source', async () => {
+    const { controller, element, runtime } = setup();
+    const view = await render(element());
+    await act(() => latestScreen().chrome.toggleFavorite());
+    for (const staleDetail of [
+      { ...detail, id: '43' },
+      { ...detail, source: 'yaohuo' as const }
+    ]) {
+      jest.mocked(useTopicController).mockReturnValue({ ...controller, topicDetail: staleDetail } as never);
+      await view.rerender(element());
+      await act(() => latestScreen().chrome.toggleFavorite());
+    }
+    expect(runtime.reader.commit).toHaveBeenCalledTimes(3);
+    for (const [command] of jest.mocked(runtime.reader.commit).mock.calls) {
+      expect(command).toMatchObject({
+        type: 'favorite',
+        topic: { source: topic.source, id: topic.id, title: topic.title }
+      });
     }
   });
 });

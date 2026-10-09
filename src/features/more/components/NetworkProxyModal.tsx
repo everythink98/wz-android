@@ -373,7 +373,11 @@ export function NetworkProxyModal({
             ) : null}
           </View>
         ) : null}
-        <ScrollView style={[styles.flex, { backgroundColor: pageColor }]} contentContainerStyle={proxyStyles.content}>
+        <ScrollView
+          overScrollMode="never"
+          style={[styles.flex, { backgroundColor: pageColor }]}
+          contentContainerStyle={proxyStyles.content}
+        >
           <View style={[proxyStyles.card, proxyStyles.switchCard, { backgroundColor: cardColor }]}>
             <Text style={[proxyStyles.switchLabel, { color: theme.ink }]}>使用代理</Text>
             <Switch
@@ -511,6 +515,7 @@ export function NetworkProxyModal({
             <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
           </View>
           <ScrollView
+            overScrollMode="never"
             style={[styles.searchFilterBody, { maxHeight: Math.max(320, Math.round(height * 0.58)) }]}
             contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]}
             keyboardShouldPersistTaps="handled"

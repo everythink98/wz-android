@@ -175,21 +175,18 @@ export const TopicScreen = memo(function TopicScreen({
       <AppButton label="重试" onPress={refreshWholeTopic} />
     </View>
   ) : null;
-  const headerState = (
-    <>
-      {topicError ? (
-        topicAuthNotice ? (
-          <AuthNoticeBox notice={topicAuthNotice}>{topicErrorActions}</AuthNoticeBox>
-        ) : (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{topicReadableError}</Text>
-            {topicErrorActions}
-          </View>
-        )
-      ) : null}
-      {!topic && !topicError ? <LoadingState text="正在读取主题..." /> : null}
-    </>
-  );
+  const headerState = topicError ? (
+    topicAuthNotice ? (
+      <AuthNoticeBox notice={topicAuthNotice}>{topicErrorActions}</AuthNoticeBox>
+    ) : (
+      <View style={styles.errorBox}>
+        <Text style={styles.errorText}>{topicReadableError}</Text>
+        {topicErrorActions}
+      </View>
+    )
+  ) : !topic ? (
+    <LoadingState text="正在读取主题..." />
+  ) : null;
 
   return (
     <View style={styles.topicScreenRoot} onLayout={onPageLayout}>

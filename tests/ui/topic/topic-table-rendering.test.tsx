@@ -18,7 +18,7 @@ import {
   topicSemanticRowVisible,
   useTopicSplitDisclosureStore
 } from '@/features/topic/rendering/TopicSplitDisclosure';
-import { fireEvent, render } from '../render';
+import { fireEvent, render, within } from '../render';
 
 type MockPanGesture = {
   config: Record<string, unknown>;
@@ -557,12 +557,16 @@ describe('native topic structured rendering', () => {
 
     mockAnimatedScrollTo.mockClear();
     await fireEvent(scroll, 'begin', {});
-    await fireEvent(scroll, 'update', { translationX: -999, translationY: 0 });
+    await fireEvent(scroll, 'update', { translationX: -999, translationY: 0, changeX: -999 });
     expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 256, 0, false);
+
+    await fireEvent(scroll, 'update', { translationX: -989, translationY: 0, changeX: 10 });
+    expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 246, 0, false);
+    await fireEvent(scroll, 'update', { translationX: -999, translationY: 0, changeX: -10 });
 
     mockAnimatedScrollTo.mockClear();
     await fireEvent(scroll, 'begin', {});
-    await fireEvent(scroll, 'update', { translationX: 0, translationY: 100 });
+    await fireEvent(scroll, 'update', { translationX: 0, translationY: 100, changeX: 0 });
     expect(mockAnimatedScrollTo.mock.calls.every(([, x]) => x === 256)).toBe(true);
 
     await fireEvent(scroll, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
@@ -629,7 +633,7 @@ describe('native topic structured rendering', () => {
     });
     expect(mockAnimatedScrollTo).not.toHaveBeenCalled();
     await fireEvent(screen.getByTestId('second'), 'begin', {});
-    await fireEvent(screen.getByTestId('second'), 'update', { translationX: -16, translationY: 0 });
+    await fireEvent(screen.getByTestId('second'), 'update', { translationX: -16, translationY: 0, changeX: -16 });
     expect(mockAnimatedScrollTo.mock.calls.filter(([, x]) => x === 80)).toHaveLength(2);
   });
 
@@ -874,7 +878,7 @@ describe('native topic structured rendering', () => {
 
     mockAnimatedScrollTo.mockClear();
     await fireEvent(scrolls[0], 'begin', {});
-    await fireEvent(scrolls[0], 'update', { translationX: -120 });
+    await fireEvent(scrolls[0], 'update', { translationX: -120, changeX: -120 });
     expect(mockAnimatedScrollTo.mock.calls.filter(([, x]) => x === 120)).toHaveLength(2);
     await screen.rerender(pair(false));
     mockAnimatedScrollTo.mockClear();
@@ -902,6 +906,7 @@ describe('native topic structured rendering', () => {
 
     expect(screen.getAllByTestId('topic-code-frame')).toHaveLength(1);
     const codeScroll = screen.getByTestId('topic-code-scroll');
+    expect(within(codeScroll).queryByRole('button', { name: '复制完整代码' })).toBeNull();
     expect(codeScroll.props.scrollEnabled).toBe(false);
     expect(codeScroll.props.gestureConfig).toMatchObject({
       enabled: true,

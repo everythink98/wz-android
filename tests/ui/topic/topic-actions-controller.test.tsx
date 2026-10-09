@@ -2475,8 +2475,9 @@ describe('topic action query mutations', () => {
       expect.objectContaining({
         request: {
           method: 'POST',
-          path: '/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
-          headers: { accept: '*/*' }
+          path: '/bbs/favlist.aspx',
+          headers: { accept: '*/*', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+          body: 'action=delete&siteid=1000&favtypeid=0&id=987&ajax=1'
         }
       })
     );

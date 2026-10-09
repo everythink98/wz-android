@@ -320,6 +320,7 @@ export function ComposerToolbar({
           <View style={styles.topicRow}>{renderedButtons}</View>
         ) : (
           <ScrollView
+            overScrollMode="never"
             horizontal
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
@@ -345,7 +346,7 @@ export function ComposerToolbar({
               accessibilityLabel={menu.kind === 'heading' ? '段落与标题选项' : '列表选项'}
               style={[styles.menu, { left: menu.left, top: menu.top, width: menu.width, height: menu.height }]}
             >
-              <ScrollView keyboardShouldPersistTaps="always" keyboardDismissMode="none">
+              <ScrollView overScrollMode="never" keyboardShouldPersistTaps="always" keyboardDismissMode="none">
                 {choices.map((choice) => (
                   <Pressable
                     key={choice.action}

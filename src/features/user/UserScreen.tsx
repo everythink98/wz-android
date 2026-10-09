@@ -526,6 +526,7 @@ export const UserScreen = memo(function UserScreen({
         </ScreenTopBarActions>
       </ScreenTopBar>
       <FlatList
+        overScrollMode="never"
         testID={profile ? 'user-screen-loaded' : undefined}
         key={userIdentity}
         ref={listRef}

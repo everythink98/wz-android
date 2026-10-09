@@ -303,14 +303,41 @@ describe('yaohuo reply parsing', () => {
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
-  it('replaces a current-account id placeholder with the profile nickname', () => {
+  it('uses the current profile nickname for user identity and authored replies', () => {
     const profile = parseUserProfile(
       `
-      <div class="content">昵称:火友<br/>贴子(0).回复(0)</div>
+      <div class="uinfo-page"><div class="uinfo-profile"><div class="uinfo-nickname">火友</div></div>
+        <div class="uinfo-stat posts"><div class="uinfo-stat-inner"><div class="uinfo-text">
+          <div class="label">帖子</div><div class="value">3</div>
+        </div></div></div>
+        <div class="uinfo-stat replies"><div class="uinfo-stat-inner"><div class="uinfo-text">
+          <div class="label">回复</div><div class="value">8</div>
+        </div></div></div>
+        <div class="uinfo-stat level"><div class="uinfo-stat-inner"><div class="uinfo-text">
+          <div class="value">2<span class="unit">级</span></div><div class="label">等级</div>
+        </div></div></div>
+        <div class="uinfo-stat reg"><div class="uinfo-stat-inner"><div class="uinfo-text">
+          <div class="value">1<span class="unit">年</span></div><div class="label">注册时长</div>
+        </div></div></div>
+      </div>
     `,
       { id: '7', username: '7' }
     );
 
-    expect(profile).toMatchObject({ id: '7', username: '火友', displayName: '火友' });
+    expect(profile).toMatchObject({
+      id: '7',
+      username: '火友',
+      displayName: '火友',
+      topicCount: 3,
+      replyCount: 8,
+      postCount: 11,
+      levelLabel: '2级'
+    });
+    expect(sourceDiagnosticSummary(profile)).toMatchObject({ validCount: 1, isParseEmpty: false });
+    const replies = parseUserReplies(
+      '<div class="line1">火友 (7) #2 回帖正文 2026-10-09 12:00 <a href="/bbs-66.html">查看</a></div>',
+      { id: profile.id, username: profile.displayName }
+    );
+    expect(replies[0]).toMatchObject({ author: '火友', excerpt: '回帖正文' });
   });
 });

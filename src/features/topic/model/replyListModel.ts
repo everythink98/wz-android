@@ -275,7 +275,7 @@ export function buildVirtualizedReplyItems({
           reference: quote.reference,
           content: item.content,
           first: index === 0,
-          last: index === visibleContent.length - 1
+          last: index === content.length - 1
         });
       });
     });

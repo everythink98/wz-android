@@ -18,10 +18,11 @@ export function buildYaohuoMessageReplyRequest({
 }): YaohuoActionRequest {
   const params = new URLSearchParams(fields);
   params.set('content', normalizeYaohuoContent(content));
+  params.set('ajax', '1');
   return {
     path,
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
     body: params.toString()
   };
 }
@@ -74,6 +75,13 @@ function yaohuoDeleteUrl(deletePath: string) {
     url.password ||
     host !== 'www.yaohuo.me' ||
     !/^\/bbs\/book_re_del\.aspx$/i.test(url.pathname)
+  ) {
+    throw new Error('妖火删除链接不正确');
+  }
+  const queryNames = [...url.searchParams.keys()].map((name) => name.toLowerCase());
+  if (
+    !url.searchParams.get('action')?.trim() ||
+    ['action', 'id', 'reid', 'classid'].some((name) => queryNames.filter((key) => key === name).length > 1)
   ) {
     throw new Error('妖火删除链接不正确');
   }
@@ -193,12 +201,14 @@ export function buildYaohuoDeleteFavoriteRequest({ favoriteId }: { favoriteId: s
     action: 'delete',
     siteid: '1000',
     favtypeid: '0',
-    id: cleanPositiveInteger(favoriteId, '收藏记录 id')
+    id: cleanPositiveInteger(favoriteId, '收藏记录 id'),
+    ajax: '1'
   });
   return {
-    path: `/bbs/favlist.aspx?${params.toString()}`,
+    path: '/bbs/favlist.aspx',
     method: 'POST',
-    headers: { accept: '*/*' }
+    headers: { accept: '*/*', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    body: params.toString()
   };
 }
 
@@ -227,8 +237,9 @@ export function buildYaohuoVoteRequest({
   params.set('lpage', '2');
   params.set('id', cleanPositiveInteger(topicId, '帖子 id'));
   return {
-    path: `/bbs/book_view_toVote.aspx?${params.toString()}`,
-    method: 'GET',
-    headers: {}
+    path: '/bbs/book_view_toVote.aspx',
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    body: params.toString()
   };
 }

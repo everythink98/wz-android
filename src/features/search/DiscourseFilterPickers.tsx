@@ -303,6 +303,7 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
+          overScrollMode="never"
           style={[styles.searchFilterBody, candidateBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
@@ -365,6 +366,7 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
+          overScrollMode="never"
           style={[styles.searchFilterBody, filterBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
@@ -438,6 +440,7 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
+          overScrollMode="never"
           style={[styles.searchFilterBody, candidateBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"

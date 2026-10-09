@@ -578,7 +578,12 @@ export function NotificationSettingsScreen({
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const onPageLayout = useStartupPageLayout();
   return (
-    <ScrollView onLayout={onPageLayout} style={styles.screen} contentContainerStyle={styles.settingsContent}>
+    <ScrollView
+      overScrollMode="never"
+      onLayout={onPageLayout}
+      style={styles.screen}
+      contentContainerStyle={styles.settingsContent}
+    >
       {initializationError ? (
         <View style={styles.permissionBox} accessibilityLiveRegion="polite">
           <Text style={styles.errorText}>{initializationError}</Text>
@@ -1030,6 +1035,7 @@ export function NotificationDetailScreen({
     <View style={styles.screen} onLayout={onPageLayout}>
       <View style={styles.detailViewport}>
         <ScrollView
+          overScrollMode="never"
           ref={scrollRef}
           testID="notification-detail-scroll"
           style={[styles.screen, conversation ? styles.conversationScreen : styles.documentScreen]}

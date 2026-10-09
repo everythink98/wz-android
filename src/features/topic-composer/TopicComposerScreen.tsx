@@ -869,6 +869,7 @@ export function TopicComposerScreen({
                 importantForAccessibility={editorObscured ? 'no-hide-descendants' : 'auto'}
               >
                 <ScrollView
+                  overScrollMode="never"
                   style={[styles.metaViewport, metadataCollapsed && { maxHeight: 0 }]}
                   accessibilityElementsHidden={metadataCollapsed}
                   importantForAccessibility={metadataCollapsed ? 'no-hide-descendants' : 'auto'}
@@ -882,6 +883,7 @@ export function TopicComposerScreen({
                     </View>
                   ) : null}
                   <ScrollView
+                    overScrollMode="never"
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.metadataRow}
@@ -1196,7 +1198,12 @@ export function TopicComposerScreen({
                 onClose={() => setPanel(null)}
               />
             ) : (
-              <ScrollView key={panel} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetBody}>
+              <ScrollView
+                overScrollMode="never"
+                key={panel}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.sheetBody}
+              >
                 {insertionError ? (
                   <Text accessibilityRole="alert" style={styles.error}>
                     {insertionError}

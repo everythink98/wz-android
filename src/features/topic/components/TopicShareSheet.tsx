@@ -289,6 +289,7 @@ export function TopicShareSheet({
         <View style={styles.preview}>
           {document.kind === 'ready' && !tooLarge ? (
             <ScrollView
+              overScrollMode="never"
               key={attempt}
               ref={scrollRef}
               testID="topic-share-content"

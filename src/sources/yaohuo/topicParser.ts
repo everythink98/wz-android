@@ -363,7 +363,57 @@ function parseYaohuoVoteChoiceLimits(text: string) {
   return { min, max };
 }
 
-function parseVotePolls(root: ReturnType<typeof parseHtml>, topicId: string): TopicPoll[] | undefined {
+function parseVotePolls(
+  root: ReturnType<typeof parseHtml>,
+  topicId: string,
+  voteContainer: HTMLElement | undefined
+): TopicPoll[] | undefined {
+  if (voteContainer) {
+    const choiceOptions: TopicPollOption[] = voteContainer
+      .querySelectorAll('.vote-option-row')
+      .flatMap((row, index) => {
+        const button = row.querySelector('button.vote-button');
+        const id = button?.getAttribute('data-vid') || '';
+        const label = elementText(row.querySelector('.vote-option-text'));
+        if (!/^\d+$/.test(id) || button?.getAttribute('data-id') !== topicId || !label) return [];
+        const count = elementText(row.querySelector(`.VON${index + 1}`)).match(/\((\d+)\)/)?.[1];
+        return [{ id, label, ...(count === undefined ? {} : { count: Number(count) }), selected: false }];
+      });
+    const readonly = !choiceOptions.length;
+    const options = readonly
+      ? voteContainer.querySelectorAll('.vote-option-result').flatMap((row, index) => {
+          const label = elementText(row.querySelector('.vote-option-label'));
+          if (!label) return [];
+          const count = elementText(row.querySelector('.vote-chart-text')).match(/\((\d+)\)/)?.[1];
+          return [
+            {
+              id: `yaohuo-${topicId}-result-${index + 1}`,
+              label,
+              ...(count === undefined ? {} : { count: Number(count) })
+            }
+          ];
+        })
+      : choiceOptions;
+    if (!options.length) return undefined;
+    const title = elementText(voteContainer.querySelector('.vote-title'));
+    const message = elementText(voteContainer.querySelector('.vote-message'));
+    const status = [title, message].join(' ');
+    const participants = title.match(/共有\s*(\d+)\s*人参与/)?.[1];
+    return [
+      {
+        id: `yaohuo-${topicId}`,
+        title: '投票',
+        voted:
+          root.querySelector('body')?.getAttribute('data-has-voted') === 'true' ||
+          /您(?:已经|已)投过票|您已投票/.test(message),
+        closed: /投票(?:已)?(?:结束|关闭|截止)|已结束投票/i.test(status),
+        multiple: false,
+        ...(readonly ? { readonly: true } : {}),
+        ...(participants === undefined ? {} : { participantCount: Number(participants) }),
+        options
+      }
+    ];
+  }
   const options = parseVoteOptions(root);
   if (!options.length) {
     return undefined;
@@ -447,7 +497,10 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
         contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1] ||
         contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     ) || new Date().toISOString();
-  const polls = parseVotePolls(root, String(id || ''));
+  const voteContainer = root
+    .querySelectorAll('.vote-container')
+    .find((node) => !node.closest('.bbscontent, .recontent, .list-reply, .line1, .line2, blockquote'));
+  const polls = parseVotePolls(root, String(id || ''), voteContainer);
   const accessRequirement =
     yaohuoTopicAccessRequirementFromContent(contentHtml) || yaohuoTopicAccessRequirementFromContent(html);
   const latestReplyFloor = Math.max(
@@ -480,7 +533,15 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     role: 'opening',
     source: 'yaohuo',
     topicId: String(id || ''),
-    transformRoot: normalizeYaohuoTopicContent,
+    transformRoot: (contentRoot) => {
+      if (voteContainer && polls?.length) {
+        const originalPollHtml = voteContainer.toString();
+        contentRoot.querySelectorAll('.vote-container').forEach((node) => {
+          if (node.toString() === originalPollHtml) node.remove();
+        });
+      }
+      normalizeYaohuoTopicContent(contentRoot);
+    },
     afterSanitizeRoot: markYaohuoFaceImages
   });
   const result: TopicDetail = {

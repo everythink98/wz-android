@@ -67,6 +67,7 @@ export function NodeSeekCreditsScreen({
   );
   return (
     <FlatList
+      overScrollMode="never"
       testID="nodeseek-credits-list"
       style={styles.list}
       contentContainerStyle={styles.content}

@@ -1,4 +1,9 @@
-import type { TopicCreationContext, TopicDraftAttachment, TopicCreationSource } from '@/domain/forum/topicComposer';
+import {
+  yaohuoFileSizeLimit,
+  type TopicCreationContext,
+  type TopicDraftAttachment,
+  type TopicCreationSource
+} from '@/domain/forum/topicComposer';
 import type { Fetcher } from '@/platform/network/request';
 import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from '@/sources/discourse/actionRequest';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
@@ -13,8 +18,8 @@ export function validateTopicAttachment(file: TopicDraftAttachment, context: Top
   if (file.kind === 'yaohuo-file') {
     if (context.source !== 'yaohuo' || !context.allowedFileExtensions.includes(extension))
       throw new Error('原站不支持此文件类型');
-    if (!['image/jpeg', 'image/jpg', 'image/png'].includes(file.mimeType) && file.size > 1024 * 1024)
-      throw new Error('妖火的此类文件不能超过 1 MiB');
+    const limit = yaohuoFileSizeLimit(file);
+    if (file.size > limit) throw new Error(`妖火的此类文件不能超过 ${limit / 1024 / 1024} MiB`);
     return;
   }
   if (context.source === 'linuxdo') {

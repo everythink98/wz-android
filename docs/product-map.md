@@ -119,7 +119,7 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 通知同时携带评论 ID 和首帖楼号时保留评论 ID，待 Topic 详情确认主楼；不能先按楼号丢弃 ID。没有评论 ID 的 Discourse 首帖目标直接分类为 `opening`。目标缺失的 loading 跟随实际请求结束，不使用被禁用 Query 的 pending 状态制造永久转圈。
 
-`NAV-02/03`、`TOPIC-03`、`NOTIFY-02`：普通打开同主题不强制滚动；主楼目标在同主题回顶部、跨主题打开主楼，且不阻断正常评论加载。回复目标必须匹配唯一身份才提交定位窗口，成功读取不等于完成滚动；列表沿既有就绪/布局确认机制滚到楼层头部并高亮。显式主楼与新回复命令使旧目标读取失效；刷新不重发已消费命令，inactive route 不发定位。
+`NAV-02/03`、`TOPIC-03`、`NOTIFY-02`：普通打开同主题不强制滚动；主楼目标在同主题回顶部、跨主题打开主楼，且不阻断正常评论加载。回复目标必须匹配唯一身份才提交定位窗口，成功读取不等于完成滚动；列表等待当前楼层头部（续读时为内容锚点）进入实际原生视口后才确认定位，回复跳转的高亮计时从到位开始，不以滚动 Promise 的结束代替到位。已经对齐或受短页底部限制时，只要目标可见就能完成；旧命令、其他主题和 inactive route 的回调不能确认当前目标。显式主楼与新回复命令使旧目标读取失效；刷新不重发已消费命令，inactive route 不发定位。
 
 | 入口 / 目标来源 | linux.do | NodeSeek | V2EX | 妖火 | 生产者 → 消费者与 canonical evidence |
 | --- | --- | --- | --- | --- | --- |
@@ -191,6 +191,10 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 | `SEARCH-04` | 登录、验证、授权、空结果和来源错误必须有可理解状态。L/NS authenticated lane 保持原站搜索；public lane 保持 `public:omit` scope 但 transport 为 `none`，Controller 只构造 exact Google URL，单站显式打开 Custom Tab，「全部」只显示 settled action。Google HTML、DOM selector、SearchGuard、JS gate、隐藏 WebView connector 和会话失效后的隐式降级均已删除。Custom Tab 菜单「在阅坛中打开当前主题」以 explicit mutable `PendingIntent` 回到 `MainActivity`；Deep Link 只接受既有 L/NS 主题/楼层 URL，拒绝 Google 页、首页、用户页和非受信域名，不声明第三方 intent filter/App Links。provider 不可用时退回普通浏览器并提示只能浏览。会话变为 public 时停止展示旧原站结果且不自动弹窗；重新确认 authenticated 后新 scope 才请求原站。 | `src/domain/forum/externalSearch.ts`、`src/features/search/useSearchController.ts`、`src/platform/android/forumSearchCustomTab.ts`、`modules/forum-platform/android/src/main/java/com/wz/reader/navigation/ForumSearchCustomTabModule.kt`、`src/app/useAppDeepLinkNavigation.ts`、`src/domain/forum/readPlan.ts` | `src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts`、`src/platform/android/forumSearchCustomTab.test.ts`、`tests/integration/security-boundaries.test.ts`、`tests/tooling/forum-platform-package.test.ts`、`tests/ui/app/app-deep-link-navigation.test.tsx`、`tests/ui/search/search-screen.test.tsx`、`tests/ui/search/search-controller-ai.test.tsx` | 未登录 AVD 验证 L/NS exact Google 页面、浏览、菜单回到原生主题和 Back 保留 Search；若 Chrome 首启条款阻断则不代替用户接受并记 `BLOCKED_BY_ENV`。 |
 
 `SEARCH-02`、`SEARCH-04`：NodeSeek 搜索只统计当前解析器实际选择的数据面；正式 `.post-list` 为空时，即使页面其他区域含 `post-*` 链接或页面壳含旧 embedded topics 也必须显示正常空态，不能误报 `parse_empty`。合法 `.empty-state` 与无渲染搜索面时的 embedded 结果数组继续支持空结果；空响应、无可确认结果面的 HTML、只有表单或通用 `.alert/.notice` 提示均保持可重试失败，不能结束分页或复用旧 embedded topics。纯数字查询不改写为帖子直达。Canonical owner 为 `tests/integration/source-read-contracts/nodeseek.test.ts`。
+
+`SEARCH-02/03/04`、`USER-01` 及共享 `ACCOUNT-01`：妖火搜索与用户发帖列表共用列表解析，兼容原站 `.post-items > li.post-item` 与旧结构。现代行从 `.post-author/.post-count/.post-time` 读取作者、统计和时间，绝对时间按北京时间解析，保留原站时间文案；标题仅剥离 `.post-flag` 标记，保留搜索高亮和其他内联文字，不修改原 DOM；没有作者链接时不虚构 UID。搜索保持原站顺序和分页，用户首轮聚合不丢已消费页的条目。Canonical owner 为 `src/sources/yaohuo/reader.test.ts`、`src/sources/sourceUserRead.test.ts`。
+
+`USER-01` 及共享 `ACCOUNT-01`：妖火现代资料页优先从 `.uinfo-nickname` 读取可信昵称，保留旧资料结构兼容；用户标题、回复作者和摘要剥离共用该身份，不回退到数字 UID 占位。原站结构化帖子/回复统计与等级保持既有解析。Canonical owner 为 `src/sources/yaohuo/parser.test.ts`。
 
 `SEARCH-03` 的筛选状态 owner 固定为 `src/features/search/SearchFilterSheet.tsx`、`src/features/search/SearchFilterForm.tsx` 与 `src/features/search/DiscourseFilterPickers.tsx`：sheet 自持筛选入口、visibility 和草稿事务，picker 自持 visibility、debounce、候选 Query、取消和 stale-response 拒绝。关闭 picker 时，即使默认空标签查询的 key 未变，也要取消本 owner 从激活转为失活的 exact query key；不按来源前缀取消其他候选请求。重开重新读取，旧请求迟到不能覆盖新候选；对应可见行为由 `tests/ui/search/search-screen.test.tsx` 固定。
 
@@ -288,7 +292,15 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 `TOPIC-01/02/03`、`NAV-02/03`：语义 owner 先于物理预算。`pre`、独立块级 `code`、terminal code 与无离散媒体的连续富文本 subtree 不从内部切割；inline `code` 仍属于所在富文本 owner。details、callout、blockquote、list 只在自然子块或 list item 边界分段，table 只在完整 `tr`/rowspan 连通区域之间分段；图片、视频等离散媒体继续独立调度且每 row 最多 4 个网络媒体。malformed HTML、深度越界或单个不可拆媒体/table row 仍在最小单元 fail-close。
 
-`TOPIC-01/02/03`、`NAV-02/03`：可横滑的 code/table 只在明确横向拖动时接管手势；纵向滚动、多指、无溢出和静止长按继续交给外层滚动或文字选择。横向位置在同一内容内保持并受边界限制，无障碍增减滚动继续可用。
+`TOPIC-01/02/03`、`NAV-02/03`：可横滑的 code/table 只在明确横向拖动时接管手势；纵向滚动、多指、无溢出和静止长按继续交给外层滚动或文字选择。横向位置在同一内容内保持并受边界限制；拖到边缘后反向移动立即响应，不需要抵消此前越界距离，无障碍增减滚动继续可用。Canonical evidence 为 `tests/ui/topic/topic-table-rendering.test.tsx`。
+
+2026-10-09 主 AVD 冷启动后的真实来源补验：普通 APK `e876b8ac…` 打开 LinuxDo `2979626` 的宽表格，5 秒慢横拖录像有 152 个不同中间位置，实际横移 242 px，未误触长按；左右端点的同触摸反拖在 UP/CANCEL 四条路径均立即移动 81 px。双指后单指恢复、斜拖方向锁定、表格内纵拖交给整页及静止长按选择、Back 取消选择分别通过。原帧、输入时序和几何回执保留在 ignored `.codex-tmp/scroll-followup-20261009/`；这些 `LIVE_PASS` 只覆盖上述入口，不代表整页零掉帧、全部真实帖子或物理设备通过。
+
+`TOPIC-03`，共享 `TOPIC-01/02`：普通回复、分段回复、展开引用和采纳答案共用静止长按复制规则。单指按住 450 ms 可复制，移动超过 4 dp、多指、取消或抬起后不再触发该次复制；移回起点也不恢复长按。少评论或列表已到边缘时仍采用同一规则，不依赖外层列表先接管拖动。主楼的原生连续选择保持独立。正常阅读已加载内容时，悬浮回复按钮的显隐不使阅读列表重新渲染。Canonical evidence 为 `tests/ui/topic/topic-components.test.tsx` 与 `tests/ui/topic/topic-reply-filters.test.tsx`。
+
+`TOPIC-01/02/03`：详情列表关闭 Android 首尾边缘拉伸，避免同一次触摸内的反向拖动先被拉伸回收消耗；普通拖动与松手惯性保持原生行为。边界行为由 `scripts/check-topic-scroll-boundaries.mjs` 在隔离 AVD 的生产列表上比较实际位置，覆盖顶部/底部、回复文字/空白、UP/CANCEL；100% 与 140% 字号分别执行。它是设备补充证据，不代替真实来源 Replay、物理设备手感或帧率验收。
+
+`FEED-02`、`SEARCH-01/02/03`、`LIBRARY-*`、`NOTIFY-01`、`USER-*`、`MORE-01/03`、`ACCOUNT-*`、`WRITE-01/05/07` 与 `TOPIC-*` 的原生列表和横向选项栏采用相同边界策略：FlashList 沿用 `src/ui/list/performance.ts`，PillRail 与各页面的 ScrollView/FlatList 显式关闭 Android 边缘拉伸。手动驱动的代码/表格、图片手势与 WebView 按各自 owner 验收，不改变其滚动模型。`scripts/check-reader-scroll-boundaries.mjs` 在主 AVD 的 More 页面和真实 V2EX 分类栏验证同一次触摸内回拖立即移动，覆盖 UP/CANCEL，并先证明内容确实溢出；首页/消息的下拉刷新、惯性与 Pager 取消继续运行各自原生 oracle。该几何证据不等于全部页面或物理设备手感通过。
 
 `TOPIC-02`、`NAV-03`：文字选择取消在 JS 同步解除拖动和 Back 拦截，原生 `cancelSelection` 的 Promise 由 `TopicSelectionSurface` 接收；视图已移除等异步失败只记录脱敏诊断，不重试、不弹窗、不清除之后的新选区。换文档或页面失活的取消仍覆盖尚未触发的长按，不能仅依赖原生已形成选区时的清理。此边界由 `topic-rich-text-selection` 和 `topic-table-rendering` UI owner 覆盖。
 
@@ -311,6 +323,10 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 
 `TOPIC-01/02/03`：结构化 details 与 Callout 共用的 continuation Frame 在 `only/first/middle/last` 每个状态都必须提供确定的边框几何；展开切到收起时不得从 Native props 中移除上下 edge width。Android 上标题、图标和箭头必须继续绘制，正文仍按原状态挂载或卸载。
+
+`TOPIC-02/03`：正文折叠块只在整体末尾保留底部内边距，连续段落不重复显示分隔线。代码复制入口固定在横滚区域上方的工具栏，复制完整原文，工具栏标签随阅读字体与字号缩放，保留 48 dp 触摸目标、失败提示、原生文字选择与横向手势。details、Callout 与引用复用 200 ms 箭头过渡，并遵循系统减少动态效果设置；正文行继续即时挂载或卸载，Callout 标题不单独做尺寸动画，不对虚拟列表配置全局高度动画。冷引用的预先挂载行按完整内容确定末尾，测量完成后不把原中间行改成新的外框边界。Canonical evidence 为 `tests/ui/topic/topic-table-rendering.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/shared/expandable-controls.test.tsx` 与 `tests/ui/shared/forum-callout.test.tsx`。
+
+`TOPIC-02/03`、`MORE-03`、`NOTIFY-02`：共享 HTML 正文段落间距为 18 dp，作用于实际段落，不在每个物理拆分行额外叠加内边距；原生引用外框与 HTML 引用均使用 2 dp 左边线。提示块采用更淡的主题底色与边线。通知消息气泡保留独立的 6 dp 段距，详情和原文使用共享正文样式。Canonical evidence 为 `tests/ui/notifications/notifications-screen.test.tsx`、`tests/ui/topic/topic-rich-text-selection.test.tsx` 与 `tests/ui/shared/forum-callout.test.tsx`。
 
 `TOPIC-01`：linux.do 详情已取得可读主楼时，以本次读取成功为准；只有明确的 HTTP 或原站协议权限错误进入权限页。Feed、搜索、分类和历史列表的权限规则不变。
 
@@ -436,6 +452,8 @@ linux.do summary 的 `post_count` 是排除主题首帖的回复数，直接映�
 | `LIBRARY-02` | 关注用户支持来源筛选，能打开用户页和取消关注；数量与用户页状态一致。关注记录只保存 canonical ID，不保存 username-only `UserReference`；切换到关注用户时不显示分类筛选。 | `src/features/library/LibraryScreen.tsx`、`src/features/library/libraryScreenItems.ts` | `tests/tooling/android-smoke-guard.test.ts`、`src/domain/forum/userNavigation.test.ts`、`src/domain/reader/readerData.test.ts`、`tests/ui/library/library-screen.test.tsx` | 更多 → 收藏 → 关注用户 → 来源筛选 → User → 返回。 |
 | `LIBRARY-03` | 历史记录支持来源和分类筛选，可打开主题、删除单条或经确认后清空全部；读取、筛选和取消确认不能意外写原站。重读更新最近访问顺序，返回仍保留未点击的可见旧记录锚点。 | `src/features/library/LibraryScreen.tsx`、`src/domain/forum/text.ts`、`src/domain/reader/readerData.ts` | `tests/integration/feature-helper-contracts.test.ts`、`src/domain/reader/readerData.test.ts`、`src/app/useReaderRuntime.test.ts`、`tests/ui/library/library-screen.test.tsx` | 更多 → 收藏 → 历史 → 来源/分类筛选 → Topic → 返回；删除和清空按授权。 |
 
+`LIBRARY-01`、`TOPIC-01`：主题顶栏收藏优先保存同来源、同主题的已加载摘要，链接入口的占位信息不能覆盖真实标题、作者、分类和统计。详情缺失或失配时保留当前路由摘要；新增与取消使用同一主题键。既有 `topicSummary` 白名单在提交与落盘边界排除正文、回复和凭据。四站共用入口的 canonical owner 为 `tests/ui/topic/topic-route-external-links.test.tsx`。
+
 `DATA-02` 的资料权威为按记录 SQLite。旧资料完整迁移、事务提交并经新连接复核后立即定向删除 `reader-data` 与 `reader-settings`，清理失败下次重试且不回退旧快照。历史正常上限 5000，旧超额记录完整保留并在显式删除后自然收敛；读取和导出不裁剪。备份保持 v2 与现有容量保护。`LIBRARY-01..03` 只查询当前子页，每页 50 条，数据库筛选与稳定游标排序，保留卡片、横滑和返回位置。普通启动只准备设置、key 集合和计数；重复访问不重建已读集合。Canonical storage evidence 为 `src/platform/storage/readerDataStore.test.ts`，Android 事务与中断证据由 `dev/reader-storage-proof/index.tsx` 和隔离 runner 补充，不能以 JS mock 代替。
 
 清空历史、批量删除和容量裁剪按有界批次读写 SQLite，保留单事务、删除标记容量、同时间 ordinal、membership 与备份字节计数；不逐条跨桥查询和删除。现有 storage owner 同时核结果、工作量上界和故障回滚，Android proof 补充真实批量清理。
@@ -509,7 +527,7 @@ linux.do summary 的 `post_count` 是排除主题首帖的回复数，直接映�
 
 `ACCOUNT-04` 的 linux.do 等级刷新使用 error-first 语义：失败时可以保留旧可信数据，但必须返回本次错误、不得提示成功或自动重试。RNTL 固定成功/错误恢复入口和零自动重试；Device Replay 只确认「查看等级」入口，不发起实时 transport。动态等级由 `tests/live/agent-live.md` 独立核实，明确限流只阻塞数据验证，不得覆盖正确错误流程或阻断 Release。
 
-`ACCOUNT-04` 的 Connect 等级卡以页面语义为唯一事实：ring/bar 是「至少达到」的正向要求，quota/veto 是「不得超过」的风险上限。通过与否只采用 Connect 的 `met/unmet` class，配额上限从页面数字读取，不在 App 内猜测边界；风险配额显示已用与剩余段，零容忍项显示通过/未通过状态，汇总统一表达为「通过 X/Y 项」。
+`ACCOUNT-04` 的 Connect 等级卡以页面语义为唯一事实：ring/bar 是「至少达到」的正向要求，quota/veto 是「不得超过」的风险上限。通过与否只采用 Connect 的 `met/unmet` class，配额上限从页面数字读取，不在 App 内猜测边界；风险配额显示已用与剩余段，零容忍项显示通过/未通过状态，汇总统一表达为「通过 X/Y 项」。零容忍卡片保留 52 dp 最小高度，名称与状态在同一主行垂直居中，较上次变化单独右对齐显示在下方；有无变化说明均沿用该结构。Canonical UI owner 为 `tests/ui/account/account-site-panels.test.tsx`，原生视觉样本归 `tests/ui/visual/scenarios/account/manifest.tsx` 的 `account.services.linuxdo-level`，同时覆盖零值通过与带变化说明的未通过状态。
 
 `ACCOUNT-01/02` 的 NodeSeek `verified` 是访客 Cloudflare 验证状态，不是账号登录：它与 `anonymous` 一样保持 `isLoggedIn=false`、不增加网站登录计数、关闭写入，并让搜索展示受控 Google 外部入口而不是发起站内或外部搜索请求。隔离 AVD Replay 必须接受「未登录」与仅访客「已验证」两个准确终态，同时拒绝「已登录」、unknown 和未结算状态。
 
@@ -546,6 +564,8 @@ linux.do summary 的 `post_count` 是排除主题首帖的回复数，直接映�
 | `NOTIFY-03` | Android 通知默认关闭；首次主动启用才说明约 15 分钟调度并请求权限。首次 opt-in 只启用首发三站的意图，未来新增来源默认关闭。本地身份与通知设置恢复后，远端前台 snapshot 等首页首次内容 settled 再启动；普通前台约 5 分钟、消息中心约 60 秒刷新；后台 WorkManager 调度可能受 force-stop、省电和系统策略延迟。前后台共用同一身份门禁、baseline、200-ID 去重和每站摘要事务：后台每站沿 opaque cursor 逐页扫描，直到无下一页、cursor 重复、deadline 或累计 60 条；前台无论消息中心是否可见，发现新 @我、回复或私信都显示同一条 Android 每站摘要，中心可见性只改变前台未读 snapshot 的检查频率，不能跳过 native system sink 后仍消耗投递水位。列表另按 route focus、已加载页数与手动刷新控制请求。snapshot 持久化按来源 all-settled，单次失败不能阻断其他成功来源。摘要不含标题、正文或私信内容；首次启用、重新启用、换号和恢复本机旧未读只建立静默 baseline，不发原生 Toast。后台注册只接受当前可读取的 active 来源；真正 unknown、未登录、登录 surface barrier 或权限撤销均保留意图但暂停任务，注册/注销串行并以最新意图为准。代理恢复失败时整轮 fail-closed。快速连续换号时只有最新 identity reconciliation 能清水位和 Query。系统通知或 identifier 保存失败必须释放本轮投递 ID；记录后、发送前及 native `notify()` ack 后再次确认全局/来源开关和身份。摘要 identifier 绑定来源与账号，native present/exact dismiss 共用串行队列，同一 source/identity 的 worker 进程内 single-flight，并在读取前以 Store current 对账已知槽；状态已变时撤销 exact identifier、释放 ID，旧账号不得复活或误删新账号摘要。NodeSeek 私信只有对方发送且原站未读的会话行才进入系统投递，自己发出但对方未查看的行不得误报。NodeSeek 缺失远端 ID 时只能派生不含参与者/对端、标题、预览和顺序的稳定 opaque ID；同一时间产生歧义时保守丢弃而不是持久化 participant-derived ID。未读消息只点亮底栏「消息」；版本更新只点亮「更多」，两类提示独立。进入/返回消息中心与下拉刷新同步重读未读 snapshot；逐条/批量已读请求无论成功、失败或被返回取消，结算后都重新核对原站列表与总数，不能仅在详情仍挂载且成功时刷新。原站总数为零时消息红点消失，仍有未读或读取失败时不得强制清零。 | `src/features/notifications/useNotificationsRuntime.ts`、`src/app/notificationBackgroundTask.ts`、`src/platform/notifications/`、`app.json`、`index.ts` | `src/platform/notifications/notificationStore.test.ts`、`src/platform/notifications/notificationWorker.test.ts`、`src/platform/notifications/notificationSystem.test.ts`、`tests/integration/notification-delivery-contracts.test.ts`、`src/sources/nodeseek/notifications.test.ts`、`src/sources/notificationForegroundAccess.test.ts`、`tests/ui/notifications/notifications-screen.test.tsx`、`tests/ui/notifications/notifications-runtime.test.tsx`、`tests/ui/more/more-screen.test.tsx`、`tests/tooling/release-packaging.test.ts` | `tests/device/notifications-readonly.ad` 固定只读消息中心、未读开关、设置三站和系统返回；权限 grant/deny/revoke、前台/后台摘要替换、锁屏隐私和冷/热点击需一次性 Android 13+ AVD，不能清主登录设备。 |
 
 #### 三站消息能力与原站差异
+
+`NOTIFY-02`：妖火现有会话回复沿已存在表单的 hidden fields 发送纯文本，并设置原站 `ajax=1`；只有响应正文去除首尾空白后恰为 `OK`，或旧协议的明确发送成功提示，才确认发送、清空当前草稿并执行既有发送后刷新。错误、含糊或其他成功文案不确认，不自动重发；失败和未知保留草稿，继续沿用 route identity、取消与防重复提交边界。Canonical owner 为 `src/sources/yaohuo/actionRequest.test.ts`、`src/sources/yaohuo/actionClient.test.ts`、`src/sources/yaohuo/notifications.test.ts` 和 `tests/ui/notifications/notifications-route.test.tsx`；原站已发送但 App 未确认的事故与最终实装验收范围见 `REG-WRITE-134`。
 
 `NOTIFY-01/03`：妖火收件箱按当前原站 `.msglist-rows .msglist-row` 读取详情链接、`.msglist-text` 标题、`.msglist-from` 发送者、`.msglist-uid` 数字身份和 `.msglist-time` 的绝对时间；`is-unread` 是未读标记，`.msglist-page .msglist-empty` 是明确空态。分页仍由 `.showpage` 的页码确认。只解析当前页面协议，不保留旧 `.listmms` 收件箱分支；缺失列表/空态或无有效详情目标仍报错，部分损坏保留有效消息与质量证据。列表、后台未读扫描和打开后核对已读共用此 owner。Canonical evidence 为 `src/sources/yaohuo/notifications.test.ts`，后台组合接线沿用 `tests/ui/notifications/notifications-performance-stress.test.tsx`。
 
@@ -640,6 +660,14 @@ linux.do summary 的 `post_count` 是排除主题首帖的回复数，直接映�
 `WRITE-01/02/03/04`：普通写操作、模板使用、上传和阅读上报在实际发送前复核票据/归属，代理准备不能绕过校验；成功响应继续遵守现有 `serverConfirmed` 边界。分页中同一回复的一致重复观察可编辑，所有观察都须明确允许；未知/否定权限或内容冲突拒绝。Canonical evidence 为 `tests/ui/topic/topic-actions-controller.test.tsx`、`tests/ui/more/network-proxy-controller.test.tsx` 和 `src/sources/linuxdo/reading.test.ts`；不以受控 HTTP 证明真实发帖验收。
 
 `WRITE-01`、`TOPIC-03`：妖火普通回复和楼层回复在每次提交前，通过同一认证通道读取当前帖子表单，只从同站、同帖子回复表单取得 `__CSRFToken`，不缓存验证值。字段缺失、读取失败或写票据失效时不得发送 POST；仅接受明确的「评论成功」或原站「回复成功！」及其已确认的奖励/跳转尾文，随后完成提交并触发既有写后刷新。其他提示保留失败信息、草稿和当前列表，不关闭编辑器或跳到旧末楼。Canonical evidence 为 `src/sources/yaohuo/actionClient.test.ts` 与 `tests/ui/topic/topic-actions-controller.test.tsx`；真实提交仅按用户逐项授权验证。
+
+`WRITE-02/03`：妖火删除回复与投票仅在当前动作的明确完成文案下确认成功；过期、频繁、验证码、处理中、含糊提示或其他动作的成功文案均不得确认。删除请求与确认链接的 `action/id/reid/classid` 不允许重复或大小写变体造成歧义，确认链接的主题 `id` 与回复 `reid` 必须匹配原请求；异常链接不产生第二次请求。旧投票结构的多选读取与重复 `vid` 请求构造保留兼容；现代单选按当前页面已验证的按钮字段提交。Canonical evidence 为 `src/sources/yaohuo/actionRequest.test.ts`、`src/sources/yaohuo/actionClient.test.ts`；真实写入仍须逐项授权，设备证据与未验证范围见 `REG-WRITE-132/133`。
+
+`WRITE-03`：妖火取消收藏先读取独立收藏 CSRF 令牌，再向 `/bbs/favlist.aspx` 发送含动作、收藏记录目标、`ajax=1` 和令牌的表单 POST；只有 JSON `success=true` 才确认并更新本地状态，令牌失败或目标响应异常时不重放写入。现代未投单选从正文与回复之外的 `.vote-container/.vote-button` 读取选项、参与人数与计数；已投状态接受原站 `body[data-has-voted=true]` 或可信 `.vote-message` 的明确已投文案，不受正文、回复或选项中的状态文字影响。已投结果从 `.vote-option-result/.vote-option-label/.vote-chart-text` 读取，使用本地稳定选项键并标为只读，不虚构上游 `vid` 或本人所选项。已识别的原始投票控件与结果不重复作为正文显示，继续使用妖火既有尾部投票卡片，不扩大共享正文编译器。
+
+投票提交前读取当前主题的同源容器与选项元数据、取得新令牌，并按原站按钮字段发送单次 POST；同主题、站点、选项或按钮有效性无法确认时不提交。已投结果没有按钮或 `vid` 时拒绝再次提交，不退回旧 GET，不缓存令牌。Canonical owner 为 `src/sources/yaohuo/reader.test.ts`、`src/sources/yaohuo/actionRequest.test.ts`、`src/sources/yaohuo/actionClient.test.ts` 和 `tests/ui/topic/topic-actions-controller.test.tsx`；未投入口与首次提交已有匹配设备证据，最终已投只读结果的实装验收边界见 `REG-WRITE-133`。
+
+`WRITE-04/07`：妖火文件帖在本地选择与最终发布时共用原站大小规则：JPEG、PNG、WebP、HEIC、HEIF 按 MIME 或扩展名识别，最大 10 MiB；GIF 和其他文件最大 1 MiB。允许的扩展名仍来自原站，不能以图片大小规则放行被禁止的后缀。文件随帖 multipart 上传，正文图片继续走既有图床；两者不合并。Canonical owner 为 `src/domain/forum/topicComposer.test.ts`、`src/features/topic-composer/topicCreationActions.test.ts`。
 
 `TOPIC-01/03`、`NAV-02/03`、`WRITE-01`：分页窗口合并为展示列表时，按同一回复身份保留首个实体，去掉跨页重叠；保留原窗口、游标、完整性与顺序。评论 ID 优先，缺少 ID 时以楼层、作者身份和发表时间组成稳定备用 key，正文更新不改变 key，同楼层的不同作者/时间不相互吞并。列表单元格、媒体、引用展开与位置锚点共用 `replyKey`。Canonical evidence 为 `src/features/topic/model/replyPagination.test.ts` 和 `src/features/topic/model/replyListModel.test.ts`。
 

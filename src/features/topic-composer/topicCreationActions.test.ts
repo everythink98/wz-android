@@ -63,6 +63,32 @@ describe('创建主题附件边界', () => {
       '1 MiB'
     );
   });
+  it('妖火文件选择遵循静态图片 10 MiB 与其他文件 1 MiB 的原站限制', () => {
+    const context: TopicCreationContext = {
+      source: 'yaohuo',
+      categories: [],
+      kinds: ['files'],
+      allowedFileExtensions: ['webp', 'png', 'gif']
+    };
+    expect(() =>
+      validateTopicAttachment(
+        file({ name: 'large.webp', mimeType: 'image/webp', kind: 'yaohuo-file', size: 10 * 1024 * 1024 }),
+        context
+      )
+    ).not.toThrow();
+    expect(() =>
+      validateTopicAttachment(
+        file({ name: 'large.png', mimeType: 'image/png', kind: 'yaohuo-file', size: 10 * 1024 * 1024 + 1 }),
+        context
+      )
+    ).toThrow('10 MiB');
+    expect(() =>
+      validateTopicAttachment(
+        file({ name: 'large.gif', mimeType: 'image/gif', kind: 'yaohuo-file', size: 1024 * 1024 + 1 }),
+        context
+      )
+    ).toThrow('1 MiB');
+  });
   it('妖火正文图片复用已验证的图床协议并返回 UBB，不触发文件帖发布', async () => {
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe('https://aapi.helioho.st/upload.php');

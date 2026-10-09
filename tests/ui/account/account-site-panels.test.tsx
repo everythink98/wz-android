@@ -509,7 +509,7 @@ describe('Account site panels', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('shows official maximum requirements as risk usage instead of positive completion', async () => {
+  it('shows official risk usage with veto status aligned beside its label and changes below', async () => {
     const view = await render(
       <LinuxDoLevelPanel
         busy={false}
@@ -543,6 +543,13 @@ describe('Account site panels', () => {
     );
     expect(view.getByText('较上次 +1 · 变差')).toHaveStyle(styles.levelChangeDanger);
     expect(view.getByText('较上次 -1 · 改善')).toHaveStyle(styles.levelChangeSuccess);
+    expect(view.getByTestId('level-veto-connect:被禁言')).toHaveStyle({
+      flexDirection: 'column',
+      justifyContent: 'center'
+    });
+    const vetoLabel = view.getByText('被封禁');
+    expect(view.getByText('1 · 未通过').parent).toBe(vetoLabel.parent);
+    expect(view.getByText('较上次 +2 · 变差').parent).not.toBe(vetoLabel.parent);
   });
 
   it('announces an achieved minimum requirement with its actual value and bounded progress', async () => {

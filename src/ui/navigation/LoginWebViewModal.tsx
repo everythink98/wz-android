@@ -103,6 +103,7 @@ export function LoginWebViewModal({
         </View>
         {actions ? (
           <ScrollView
+            overScrollMode="never"
             horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.loginWebViewToolbar}

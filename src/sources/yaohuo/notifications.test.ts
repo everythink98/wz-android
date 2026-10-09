@@ -518,7 +518,7 @@ describe('Yaohuo notifications', () => {
     expect(replyFetcher).not.toHaveBeenCalled();
   });
 
-  it('posts the original reply form fields and confirms only the exact success text', async () => {
+  it('posts the original reply form fields with the AJAX acknowledgment request and preserves legacy confirmation', async () => {
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) =>
       init?.method === 'POST'
         ? html('<div class="tip">发送信息成功！</div>')
@@ -572,7 +572,8 @@ describe('Yaohuo notifications', () => {
         toid: '9',
         title: '回复内容',
         touseridlist: '9',
-        content: '收到\r\n谢谢'
+        content: '收到\r\n谢谢',
+        ajax: '1'
       })
     );
   });

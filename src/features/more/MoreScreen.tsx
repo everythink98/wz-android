@@ -27,6 +27,7 @@ export const MoreScreen = memo(function MoreScreen({
   const onPageLayout = useStartupPageLayout();
   return (
     <ScrollView
+      overScrollMode="never"
       onLayout={onPageLayout}
       ref={scrollRef}
       style={styles.content}

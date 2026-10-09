@@ -182,8 +182,10 @@ describe('topic visual scenarios', () => {
 
   it('renders content, reply collection, local favorite, and menu states through production owners', async () => {
     const structured = await renderScenario('topic.content.structured');
-    expect(structured.getByText('正文排版标题')).toBeTruthy();
-    expect(structured.getByText('引用内容用于检查层级与留白。')).toBeTruthy();
+    expect(structured.getByText('给长列表加上稳定的内容缓存')).toBeTruthy();
+    expect(
+      structured.getByText('缓存命中只说明找到了对应的数据。它不能代替内容版本检查，也不能决定页面应该滚动到哪里。')
+    ).toBeTruthy();
     await structured.unmount();
 
     const replies = await renderScenario('topic.replies.populated');

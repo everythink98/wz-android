@@ -52,6 +52,7 @@ function FilterChoiceGroup({
       <Text style={styles.searchFilterLabel}>{title}</Text>
       {horizontal ? (
         <ScrollView
+          overScrollMode="never"
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.searchFilterOptionRow}

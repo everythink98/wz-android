@@ -6,7 +6,8 @@ import {
   parseHtml,
   parsePositiveInteger,
   sortTopicsByTime,
-  textExcerpt
+  textExcerpt,
+  toIsoString
 } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
@@ -51,25 +52,33 @@ function parseListItem(
     return null;
   }
   const text = elementText(element);
-  const title = elementText(link);
+  const titleRoot = parseHtml(link?.innerHTML || '');
+  titleRoot.querySelectorAll('.post-flag').forEach((badge) => badge.remove());
+  const title = elementText(titleRoot);
   const resolvedClassId = classId || extractClassIdFromRow(element) || fallbackClassId;
   const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
   const replyCount = parsePositiveInteger(
-    element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item)))?.text
+    elementText(element.querySelector('.post-count a')) ||
+      element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item)))?.text
   );
+  const countText = elementText(element.querySelector('.post-count')) || text;
   const viewCount = parsePositiveInteger(
-    text.match(/阅\s*(\d+)/)?.[1] || text.match(/(\d+)\s*阅/)?.[1] || text.match(/\/\s*阅(\d+)/)?.[1]
+    countText.match(/阅\s*(\d+)/)?.[1] || countText.match(/(\d+)\s*阅/)?.[1] || countText.match(/\/\s*阅(\d+)/)?.[1]
   );
   const rightText = element.querySelectorAll('.right').map(elementText).find(Boolean) || '';
+  const postTime = element.querySelector('.post-time');
   const timeText =
+    elementText(postTime) ||
     rightText ||
     text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
     text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
     '';
   const displayTimeText = timeText;
-  const parsedCreatedAt = parseYaohuoDate(timeText || text, now);
+  const parsedCreatedAt =
+    toIsoString(postTime?.getAttribute('title'), '+08:00') || parseYaohuoDate(timeText || text, now);
   const createdAt = parsedCreatedAt || fallbackCreatedAt;
   const author =
+    elementText(element.querySelector('.post-author')) ||
     text
       .replace(title, '')
       .split('/')
@@ -77,7 +86,8 @@ function parseListItem(
       .find(
         (part) =>
           part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
-      ) || '';
+      ) ||
+    '';
   const authorLink = element.querySelector('a[href*="userinfo"], a[href*="touserid"]');
   const authorHref = authorLink?.getAttribute('href') || '';
   const authorId = extractUserIdFromHref(authorHref);
@@ -166,7 +176,7 @@ export function parseYaohuoListDocument(
     preserveOrder = false
   }: { classId?: string; limit?: number; page?: number; preserveOrder?: boolean; url?: string } = {}
 ): FeedResponse {
-  let rows = root.querySelectorAll('.listdata');
+  let rows = root.querySelectorAll('.listdata, .post-items > li.post-item');
   if (!rows.length) {
     rows = root.querySelectorAll('div.line1, div.line2');
   }

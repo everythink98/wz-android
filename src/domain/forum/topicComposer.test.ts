@@ -139,6 +139,34 @@ describe('topic draft validation and category changes', () => {
     ).toEqual({});
   });
 
+  it.each([
+    ['jpg', 'image/jpeg'],
+    ['jpeg', 'image/jpg'],
+    ['png', 'image/png'],
+    ['webp', 'image/webp'],
+    ['zip', 'image/webp'],
+    ['heic', 'application/octet-stream'],
+    ['heif', '']
+  ])('applies the 10 MiB image limit by MIME or extension to an allowed %s attachment', (extension, mimeType) => {
+    const file = {
+      id: 'one',
+      uri: `file:///one.${extension}`,
+      name: `one.${extension}`,
+      mimeType,
+      size: 10 * 1024 * 1024,
+      kind: 'yaohuo-file' as const,
+      status: 'queued' as const,
+      description: ''
+    };
+    const context: TopicCreationContext = { ...yh, allowedFileExtensions: [extension] };
+    const draft = { ...yaohuoDraft(), kind: 'files' as const, attachments: [file] };
+    expect(validateTopicDraft(draft, context)).toEqual({});
+    expect(validateTopicDraft({ ...draft, attachments: [{ ...file, size: file.size + 1 }] }, context)).toHaveProperty(
+      'attachments'
+    );
+    expect(validateTopicDraft(draft, { ...context, allowedFileExtensions: [] })).toHaveProperty('attachments');
+  });
+
   it('enforces current Yaohuo option and resource limits without truncating drafts', () => {
     const draft = yaohuoDraft();
     draft.kind = 'poll';

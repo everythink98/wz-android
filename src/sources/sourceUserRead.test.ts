@@ -916,13 +916,21 @@ describe('source user read', () => {
     const firstRows = Array.from(
       { length: 15 },
       (_, index) => `
-      <div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=201&id=${1540797 + index}">妖火资源 ${index}</a>/李慕婉o/阅1/2026-05-28 23:${String(index).padStart(2, '0')}</div>
+      <li class="post-item" data-id="${1540797 + index}"><a class="topic-link post-title" href="/bbs-${1540797 + index}.html">妖火资源 ${index}</a>
+        <div class="post-meta"><span class="post-stat"><span class="post-author">李慕婉o</span>
+          <span class="post-count">/<a href="/bbs/book_re.aspx?siteid=1000&classid=201&id=${1540797 + index}">0</a>回/1阅</span>
+        </span><time class="post-time" title="2026-05-28 23:${String(index).padStart(2, '0')}:00">05-28 23:${String(index).padStart(2, '0')}</time></div>
+      </li>
     `
     ).join('');
     const secondRows = Array.from(
       { length: 15 },
       (_, index) => `
-      <div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=201&id=${1540812 + index}">妖火资源 ${index + 15}</a>/李慕婉o/阅1/2026-05-29 00:${String(index).padStart(2, '0')}</div>
+      <li class="post-item" data-id="${1540812 + index}"><a class="topic-link post-title" href="/bbs-${1540812 + index}.html">妖火资源 ${index + 15}</a>
+        <div class="post-meta"><span class="post-stat"><span class="post-author">李慕婉o</span>
+          <span class="post-count">/<a href="/bbs/book_re.aspx?siteid=1000&classid=201&id=${1540812 + index}">0</a>回/1阅</span>
+        </span><time class="post-time" title="2026-05-29 00:${String(index).padStart(2, '0')}:00">05-29 00:${String(index).padStart(2, '0')}</time></div>
+      </li>
     `
     ).join('');
     const fetcher = vi.fn(async (input: string) => {
@@ -942,7 +950,7 @@ describe('source user read', () => {
       }
       if (input === 'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&key=36925&type=pub') {
         return new Response(`
-          ${firstRows}
+          <div class="search-page post-page"><ul class="post-items">${firstRows}</ul></div>
           <a href="/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=2">下一页</a>
         `);
       }
@@ -951,7 +959,7 @@ describe('source user read', () => {
         'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=2'
       ) {
         return new Response(`
-          ${secondRows}
+          <div class="search-page post-page"><ul class="post-items">${secondRows}</ul></div>
           <a href="/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=3">下一页</a>
         `);
       }

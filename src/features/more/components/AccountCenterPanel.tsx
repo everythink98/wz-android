@@ -384,6 +384,7 @@ function CredentialEditor({
           </View>
         </View>
         <ScrollView
+          overScrollMode="never"
           style={[styles.searchFilterBody, { maxHeight: Math.max(320, Math.round(height * 0.58)) }]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="always"

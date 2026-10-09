@@ -208,7 +208,6 @@ export function TopicHorizontalScroll({
   const horizontalPanClaimed = useSharedValue(false);
   const pointerStartX = useSharedValue(0);
   const pointerStartY = useSharedValue(0);
-  const gestureStartOffset = useSharedValue(0);
   const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
   const nativeContentGesture = useNativeGesture();
   const cancelNativeSelection = useTopicSelectionCancel();
@@ -264,11 +263,10 @@ export function TopicHorizontalScroll({
     onBegin: () => {
       'worklet';
       cancelAnimation(offset);
-      gestureStartOffset.value = offset.value;
     },
     onUpdate: (event) => {
       'worklet';
-      offset.value = Math.max(0, Math.min(maximumOffset.value, gestureStartOffset.value - event.translationX));
+      offset.value = Math.max(0, Math.min(maximumOffset.value, offset.value - event.changeX));
     },
     onDeactivate: (event) => {
       'worklet';

@@ -17,6 +17,7 @@ export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
   const onPageLayout = useStartupPageLayout();
   return (
     <ScrollView
+      overScrollMode="never"
       onLayout={onPageLayout}
       style={styles.content}
       contentContainerStyle={styles.moreContentInner}

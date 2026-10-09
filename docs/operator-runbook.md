@@ -115,6 +115,26 @@ npm run visual:gallery -- --port 8081
 
 交付前运行 `npm run test:architecture` 和视觉 catalog 测试，确认全部 App capability 已分类、场景可双主题挂载，并且生产入口不含视觉工具。截图和人工走查报告只写入任务专用的 ignored evidence 目录，不提交账号、凭据、日志或真实内容。
 
+详情列表首尾反向拖动在 `WZ_ForumSelection_Test_API35` 独立 AVD 验证。用显式 agent-device session 打开 Gallery，搜索 `topic.replies.populated`，选择字号并进入「全屏预览」，再运行：
+
+```powershell
+$env:ANDROID_SERIAL = '<isolated-device-serial>'
+$env:ANDROID_HOME = '<Android SDK directory>'
+node scripts/check-topic-scroll-boundaries.mjs '<gallery-session>' '<ignored-evidence-directory>'
+```
+
+100% 和 140% 字号分别执行。脚本拒绝其他 AVD 和真实帖子；复用 `TouchTrace.java` 注入顶部/底部 × 回复文字/空白 × UP/CANCEL 共 8 组触边反向动作，直接比较生产列表内回复的实际位移。输入时序偏差超过 50 ms 则中止，不能把失真的输入算作通过。结果只保存几何与事件时间，临时设备 jar 在结束时移除；模拟器和 App 保持打开。运行期间独占设备输入，不与其他手势、snapshot 或 instrumentation 并发。该检查只提供原生边界行为的补充证据，不计为 `DEVICE_REPLAY_PASS` 或 `LIVE_PASS`，惯性、横向代码/表格及物理设备手感仍须单独检查。
+
+主 AVD `WZ_Pixel_API_35` 的通用滚动边界从已打开主导航、无遮挡的 App 执行：
+
+```powershell
+$env:ANDROID_SERIAL = '<main-device-serial>'
+$env:ANDROID_HOME = '<Android SDK directory>'
+node scripts/check-reader-scroll-boundaries.mjs '<main-session>' '<ignored-evidence-directory>'
+```
+
+脚本临时展开「更多 → 外观」并恢复原展开状态，随后检查真实 V2EX 分类栏。先证明两处内容实际可滚动，再注入向外 151 px、同次触摸反向 81 px，分别以 UP/CANCEL 结束并比较锚点位移；不修改外观值、不点帖子、不执行远端写入。需要分类溢出且无验证页遮挡，否则前置条件失败不计为产品 verdict。证据目录、时序和设备输入隔离沿用上方要求；此检查补充通用原生容器的几何证据，下拉刷新、惯性、首页完整手势矩阵和真实帖子仍分别验收。
+
 ## Android 覆盖安装、Replay 与 Smoke
 
 关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态任务表覆盖 forum-platform、selection、App、ReactAndroid、Expo FileSystem 和 Expo Image 六类 JVM owner；App 通过 `tests/native/composer-keyboard.gradle` 挂入 Composer 与系统选图 IO 测试。每个预期测试类必须有本次新鲜报告、非跳过用例且零失败/错误；邻近测试通过不能替代缺席 owner。runner 输出每项耗时；selection 不能只编译 App。CI 使用 Node `22.22.2` 验证最低支持版本。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
@@ -593,6 +613,23 @@ Search 空态固定执行三批、每批 10 次 Feed → Search → Feed：每�
 Glide 5.0.5 与详情 FlashList 回收池 40 是当前固定基线，不再循环测试 5.0.9 或 32/24。已确认的 viewport、稳定 lease、尺寸元数据和 Native resize 竞争分别按自己的行为 oracle 修复；整体 PSS 改善不明显但行为正确且性能中性的修复继续保留。只有 Perfetto/heapprofd 证明同一 identity 重复解码、base 回滚解码或正文原图目标尺寸过大时，才分别增加有界 viewport 滞后、正文 base `memory-disk` 或受限 `useImage(maxWidth/maxHeight)` 原型；不提交清全局图片缓存、低色深、`largeHeap`、页面特判或新图片库。
 
 每个正式候选完成构建并覆盖安装后，先核对包名、版本、签名、APK SHA 和未变化的 `firstInstallTime`，再等待 `cmd package wait-for-handler --timeout 60000`、执行 `adb shell sync` 并静置，随后关闭同一 `WZ_Pixel_API_35`，确认原 emulator/qemu 进程已退出，再用 `-no-snapshot-load -no-snapshot-save` 冷启动并等待系统稳定；禁止 Quick Boot/快照恢复、切换其他 AVD、wipe data、卸载或清 App 数据。恢复后重新核对 AVD 名称、包版本、APK SHA、`firstInstallTime` 与登录态，身份不一致就停止设备变更。模拟器卡死也只执行这一流程。
+
+### 本机 WebView 图形配置
+
+主 API 35 模拟器的 WebView `156.0.8062.0` 在 ANGLE 与 host GL 交接时，曾每次 drawGl 执行 5602 次状态查询，导致真实回复表情列表停顿。已验证的本机配置改用 native EGL；App 的硬件层、HWUI renderer、provider、APK 和用户数据保持。因果对照与真实帖子证据见 `REG-WRITE-087`，不能把这个环境配置算作生产 App 或真机修复。
+
+先关闭正在编辑的面板，再执行：
+
+```powershell
+node scripts/configure-emulator-webview.mjs status --serial emulator-5554
+node scripts/configure-emulator-webview.mjs native-egl --serial emulator-5554
+```
+
+工具只接受显式 `emulator-*` 串号、精确 `WZ_Pixel_API_35` 名称和 `userdebug/eng` 模拟器，核对 App UID、版本与首次安装时间。它仅创建约定的 `/data/local/tmp/webview-command-line`，实际改变后刷盘并停止阅坛，随后手动重开 App；重复执行不改配置、不停止 App。未知内容、空文件、符号链接与非普通文件一律保留，不显示其内容。
+
+恢复默认使用 `node scripts/configure-emulator-webview.mjs default --serial emulator-5554`，只删除逐字节匹配的本工具文件，再重开 App。配置会保留到后续冷启动，并影响此模拟器上后续启动的 WebView 进程；不改变 Android 全局 GPU 后端、不安装或降级内核，不清登录、Cookie、缓存和草稿。关闭模拟器前仍须执行 `adb -s emulator-5554 shell sync`。
+
+[Chromium 官方说明](https://chromium.googlesource.com/chromium/src/+/main/android_webview/docs/commandline-flags.md)将此文件限定在可调试设备，并不保证任意 flags 下的正确性。标准 Release 性能门禁继续记录实际配置；默认配置的历史失败保留，本机 native EGL 样本单独报告，不能与默认样本混算。升级 WebView 后重新验证真实页面、键盘、图片及登录保持。
 
 ## Agent Live
 
