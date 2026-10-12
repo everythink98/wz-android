@@ -169,7 +169,8 @@ export function TopicSubmissionFixture({
   epoch = 0,
   active = true,
   routeActive = active,
-  reopenAfterSuccess = false
+  reopenAfterSuccess = false,
+  releaseOnEditedSnapshot = false
 }: {
   source?: SessionSite;
   entry?: Exclude<ComposerEntry, 'message'>;
@@ -180,6 +181,7 @@ export function TopicSubmissionFixture({
   active?: boolean;
   routeActive?: boolean;
   reopenAfterSuccess?: boolean;
+  releaseOnEditedSnapshot?: boolean;
 }) {
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const queryClient = useQueryClient();
@@ -325,7 +327,16 @@ export function TopicSubmissionFixture({
         onReplyComposerOpenChange={commands.composer.toggle}
         onReplyContentChange={commands.composer.changeContent}
         onReplyFaceChange={commands.composer.changeFace}
-        onReplySnapshot={commands.composer.changeSnapshot}
+        onReplySnapshot={(snapshot) => {
+          commands.composer.changeSnapshot(snapshot);
+          if (
+            releaseOnEditedSnapshot &&
+            transport.hold &&
+            transport.requests.length === 1 &&
+            snapshot.markdown !== (JSON.parse(transport.requests[0]!.body) as { content: string }).content
+          )
+            transport.release();
+        }}
         onSubmitReply={actions.submitReply}
         onUploadReplyImage={
           source === 'linuxdo' || source === 'nodeseek' ? actions.uploadReplyImageMarkup : actions.uploadReplyImage

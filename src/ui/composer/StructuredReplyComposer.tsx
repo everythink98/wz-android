@@ -21,6 +21,7 @@ import type {
   ComposerMode,
   ComposerPresentation,
   ComposerSnapshot,
+  ComposerSubmissionSettlement,
   PendingNodeSeekPoll
 } from '@/domain/forum/structuredComposer';
 import { recordUserInteraction } from '@/platform/network/userPresence';
@@ -159,7 +160,7 @@ export const StructuredReplyComposer = forwardRef<
     onReturnToEditor?: () => void;
     onPresentationChange?: (presentation: ComposerPresentation) => void;
     onSnapshot: (snapshot: ComposerSnapshot) => void;
-    onSubmit?: (snapshot: ComposerSnapshot) => unknown;
+    onSubmit?: (snapshot: ComposerSnapshot, settleSubmission: ComposerSubmissionSettlement) => unknown;
     onUploadImage?: () => unknown;
     onUseLinuxDoTemplate?: (id: string) => Promise<void>;
   }
@@ -203,6 +204,7 @@ export const StructuredReplyComposer = forwardRef<
   ) => {
     const { settings, styles, theme } = useReaderThemeStyles(createStyles);
     const uploadAvailable = useCommittedRef(visible && !readOnly && !actionBusy);
+    const currentReadOnly = useCommittedRef(readOnly);
     const mounted = useRef(true);
     useEffect(() => {
       mounted.current = true;
@@ -539,27 +541,30 @@ export const StructuredReplyComposer = forwardRef<
       send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
     }, [content, intent.kind, ready, send, sendInit]);
 
-    const requestSnapshot = useCallback(() => {
-      const trace = beginDiagnosticTrace('webview', 'composer-snapshot', {
-        site: intent.site,
-        isReady: ready,
-        revision: lastRevisionRef.current
-      });
-      if (!ready || initializingRef.current) {
-        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-        return Promise.reject(new Error('编辑器尚未就绪'));
-      }
-      const id = requestId();
-      return new Promise<ComposerSnapshot>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          snapshotResolversRef.current.delete(id);
-          finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
-          reject(new Error('无法取得最新正文，草稿已保留'));
-        }, 1500);
-        snapshotResolversRef.current.set(id, { resolve, reject, timer, trace });
-        send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: id } });
-      });
-    }, [intent.site, ready, send]);
+    const requestSnapshot = useCallback(
+      (submission?: { documentEpoch: number; revision: number }) => {
+        const trace = beginDiagnosticTrace('webview', 'composer-snapshot', {
+          site: intent.site,
+          isReady: ready,
+          revision: lastRevisionRef.current
+        });
+        if (!ready || initializingRef.current) {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+          return Promise.reject(new Error('编辑器尚未就绪'));
+        }
+        const id = requestId();
+        return new Promise<ComposerSnapshot>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            snapshotResolversRef.current.delete(id);
+            finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
+            reject(new Error('无法取得最新正文，草稿已保留'));
+          }, 1500);
+          snapshotResolversRef.current.set(id, { resolve, reject, timer, trace });
+          send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: id, ...(submission ? { submission } : {}) } });
+        });
+      },
+      [intent.site, ready, send]
+    );
 
     const insertMarkup = useCallback(
       async (markdown: string) => {
@@ -725,6 +730,20 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         const message = parsed.data;
+        if (message.type === 'ERROR') {
+          if (message.payload.documentEpoch !== undefined && message.payload.documentEpoch !== documentEpochRef.current)
+            return;
+          const pending = message.payload.requestId
+            ? snapshotResolversRef.current.get(message.payload.requestId)
+            : undefined;
+          if (message.payload.requestId && !pending) return;
+          if (pending && message.payload.requestId) {
+            clearTimeout(pending.timer);
+            snapshotResolversRef.current.delete(message.payload.requestId);
+            finishDiagnosticTrace(pending.trace, 'failure', { reason: 'invalid_response' });
+            pending.reject(new Error(message.payload.message));
+          }
+        }
         if (message.type === 'UPLOAD_COMMAND_RESULT') {
           const pending = uploadCommandRef.current;
           if (
@@ -1073,6 +1092,7 @@ export const StructuredReplyComposer = forwardRef<
     const submit = useCallback(() => {
       if (submissionRef.current || imageHandoffRef.current || panelHandoffRef.current || actionBusy) return;
       const submission = {};
+      const documentEpoch = documentEpochRef.current;
       submissionRef.current = submission;
       setSubmitting(true);
       setLocalError('');
@@ -1087,7 +1107,23 @@ export const StructuredReplyComposer = forwardRef<
             setLocalError('请输入回复内容');
             return;
           }
-          return onSubmit?.(snapshot);
+          const settleSubmission: ComposerSubmissionSettlement = async (complete) => {
+            if (documentEpochRef.current !== documentEpoch) return false;
+            let completed = false;
+            try {
+              const current = await requestSnapshot({ documentEpoch, revision: snapshot.revision });
+              if (documentEpochRef.current === documentEpoch && current.revision === snapshot.revision)
+                completed = complete();
+              return completed;
+            } catch {
+              return false;
+            } finally {
+              // A successful React settlement keeps the old document locked until its replacement INIT.
+              if (!completed && documentEpochRef.current === documentEpoch)
+                send({ type: 'SET_READ_ONLY', payload: { readOnly: Boolean(currentReadOnly.current) } });
+            }
+          };
+          return onSubmit?.(snapshot, settleSubmission);
         })
         .catch((snapshotError) => {
           if (submissionRef.current === submission)
@@ -1098,7 +1134,7 @@ export const StructuredReplyComposer = forwardRef<
           submissionRef.current = null;
           setSubmitting(false);
         });
-    }, [actionBusy, onSubmit, requestSnapshot]);
+    }, [actionBusy, currentReadOnly, onSubmit, requestSnapshot, send]);
 
     const displayError = localError || error || disabledReason;
     const fullscreenFeedback = displayError || status;

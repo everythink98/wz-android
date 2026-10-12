@@ -170,6 +170,10 @@ export function useUserController({
   });
   const canonicalUser = selectedNeedsResolution ? resolutionQuery.data || null : selectedUser;
   const identity = canonicalUser?.id || '';
+  const loginReadKey = `${selectedSource}:${identity}`;
+  const loginReadKeyRef = useCommittedRef(loginReadKey);
+  const yaohuoLoginIntentRef = useRef(0);
+  const handledYaohuoLoginIntentRef = useRef<{ key: string; intent: number } | null>(null);
   const profileReadPlan = readGateway.getReadPlan(selectedSource, 'user-profile');
   const profileSessionEpoch = isSessionSource(selectedSource) ? sessionEpochs[selectedSource] : 0;
   const profileKey = useMemo(
@@ -296,6 +300,21 @@ export function useUserController({
   const userError = queryError && selectedUser ? sourceErrorFromUnknown(selectedUser.source, queryError) : null;
   const currentUserFollowed = Boolean(userProfile && isUserFollowed(readerData, userProfile));
 
+  const showYaohuoLoginForRead = useCallback(
+    (message: string) => {
+      const intent = yaohuoLoginIntentRef.current;
+      const handled = handledYaohuoLoginIntentRef.current;
+      if (
+        !activeRef.current ||
+        loginReadKeyRef.current !== loginReadKey ||
+        (handled?.key === loginReadKey && handled.intent === intent)
+      )
+        return;
+      handledYaohuoLoginIntentRef.current = { key: loginReadKey, intent };
+      showYaohuoLogin(message);
+    },
+    [activeRef, loginReadKey, loginReadKeyRef, showYaohuoLogin]
+  );
   const handleError = useCallback(
     (
       error: unknown,
@@ -350,7 +369,9 @@ export function useUserController({
         };
         showNodeSeekVerification(sourceError.message, recovery);
       } else if (target === 'yaohuo-login') {
-        showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message);
+        showYaohuoLoginForRead(
+          sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message
+        );
       } else {
         notify(sourceError.message);
       }
@@ -366,7 +387,7 @@ export function useUserController({
       selectedUser,
       showLinuxDoVerification,
       showNodeSeekVerification,
-      showYaohuoLogin,
+      showYaohuoLoginForRead,
       topicKey
     ]
   );
@@ -422,6 +443,12 @@ export function useUserController({
 
   const refreshUser = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!active || !selectedUser) return 'stale';
+    if (selectedUser.source === 'yaohuo') {
+      yaohuoLoginIntentRef.current += 1;
+      handledUserErrorAtRef.current.profile = 0;
+      handledUserErrorAtRef.current.topics = 0;
+      handledUserErrorAtRef.current.replies = 0;
+    }
     const blockedPlan = selectedNeedsResolution ? resolutionReadPlan : profileReadPlan;
     if (blockedPlan.state === 'blocked') {
       if (
@@ -430,7 +457,7 @@ export function useUserController({
       ) {
         await onRetryIdentityStatus?.(selectedUser.source);
       } else if (blockedPlan.reason === 'login-required' && selectedUser.source === 'yaohuo') {
-        showYaohuoLogin('请先登录妖火后再读取。');
+        showYaohuoLoginForRead('请先登录妖火后再读取。');
       }
       return 'stale';
     }
@@ -482,7 +509,7 @@ export function useUserController({
     resolutionReadPlan,
     selectedNeedsResolution,
     selectedUser,
-    showYaohuoLogin,
+    showYaohuoLoginForRead,
     topicKey
   ]);
 
@@ -571,9 +598,27 @@ export function useUserController({
     userRepliesError: repliesQuery.error ? sourceErrorFromUnknown(selectedSource, repliesQuery.error) : null,
     userTopicsBusy: topicsQuery.isFetching,
     userRepliesBusy: repliesQuery.isFetching,
-    retryUserTopics: () => topicsQuery.refetch({ cancelRefetch: false }),
-    retryUserReplies: () => repliesQuery.refetch({ cancelRefetch: false }),
-    retryUserProfile: () => profileQuery.refetch({ cancelRefetch: false }),
+    retryUserTopics: () => {
+      if (selectedSource === 'yaohuo' && activeRef.current) {
+        yaohuoLoginIntentRef.current += 1;
+        handledUserErrorAtRef.current.topics = 0;
+      }
+      return topicsQuery.refetch({ cancelRefetch: false });
+    },
+    retryUserReplies: () => {
+      if (selectedSource === 'yaohuo' && activeRef.current) {
+        yaohuoLoginIntentRef.current += 1;
+        handledUserErrorAtRef.current.replies = 0;
+      }
+      return repliesQuery.refetch({ cancelRefetch: false });
+    },
+    retryUserProfile: () => {
+      if (selectedSource === 'yaohuo' && activeRef.current) {
+        yaohuoLoginIntentRef.current += 1;
+        handledUserErrorAtRef.current.profile = 0;
+      }
+      return profileQuery.refetch({ cancelRefetch: false });
+    },
     userLoadingMoreReplies: repliesQuery.isFetchingNextPage,
     userLoadingMoreTopics: topicsQuery.isFetchingNextPage,
     userProfile

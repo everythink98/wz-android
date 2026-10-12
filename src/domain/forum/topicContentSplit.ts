@@ -1,4 +1,4 @@
-import { HTMLElement, TextNode } from 'node-html-parser';
+import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { sanitizeContentHtmlWithRoot } from './contentSanitizer';
 import {
   FORUM_AUDIO_TAG,
@@ -10,6 +10,7 @@ import {
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG,
   escapeHtmlAttribute,
+  forumNodeText,
   parseForumContentHtml
 } from './html';
 import {
@@ -32,7 +33,7 @@ import type {
   TopicPoll
 } from './models';
 import { discourseQuotedPostMetadataFromNode } from './quotedPosts';
-import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
+import { isDiscourseSource, sourceCatalog } from './sourceCatalog';
 import {
   markNodeSeekReplyReferenceNodes,
   markV2exReplyReferenceNodes,
@@ -54,6 +55,8 @@ import {
 
 const MAX_MEDIA_PER_PLANNED_ROW = 4;
 const MAX_PLANNED_ELEMENT_DEPTH = 64;
+const MAX_SEMANTIC_ANCESTOR_REFERENCES = 16_384;
+const SEMANTIC_ANCESTOR_TAGS = new Set(['blockquote', 'details', 'ol', 'ul', 'li']);
 const MAX_DOM_NODES_PER_PLANNED_ROW = 80;
 const MAX_SERIALIZED_CHARS_PER_PLANNED_ROW = 16_384;
 const MAX_UNSPLIT_TEXT_CHARS = 12_000;
@@ -302,6 +305,10 @@ type PlanningNode = {
   toString: () => string;
 };
 
+function planningNodeText(node: PlanningNode | undefined) {
+  return node instanceof HTMLElement || node instanceof TextNode ? forumNodeText(node) : node?.text || '';
+}
+
 function sameCodeTextStyle(left: ForumCodeTextStyle | undefined, right: ForumCodeTextStyle | undefined) {
   return (
     left?.backgroundColor === right?.backgroundColor &&
@@ -349,7 +356,7 @@ function normalizedCodeRuns(node: PlanningNode) {
   const visit = (current: PlanningNode, inherited: ForumCodeTextStyle | undefined) => {
     const tagName = nodeTagName(current);
     if (!tagName) {
-      append(typeof current.text === 'string' ? current.text : current.toString(), inherited);
+      append(planningNodeText(current), inherited);
       return;
     }
     if (tagName === 'br') {
@@ -360,9 +367,7 @@ function normalizedCodeRuns(node: PlanningNode) {
     (current.childNodes || []).forEach((child) => visit(child, style));
   };
   visit(node, undefined);
-  const text = runs.map((run) => run.text).join('');
-  const expected = typeof node.text === 'string' ? node.text : text;
-  return text === expected ? runs : [{ text: expected }];
+  return runs;
 }
 
 function sourceSemanticNodes(nodes: readonly PlanningNode[], role: ForumContentCompileRole) {
@@ -552,7 +557,7 @@ function trailingCollapsedBreakIndex(children: readonly PlanningNode[]) {
     const child = children[index];
     const tagName = nodeTagName(child);
     if (tagName) return tagName === 'br' ? index : -1;
-    const text = typeof child.text === 'string' ? child.text : child.toString();
+    const text = planningNodeText(child);
     if (collapseForumSelectionWhitespace(text).replace(/ /g, '')) return -1;
   }
   return -1;
@@ -632,7 +637,7 @@ function forumSelectionUnitsWithBlockBreak(units: readonly ForumSelectionUnit[])
 function analyzedForumSelectionUnits(node: PlanningNode, childUnits: readonly ForumSelectionUnit[]) {
   const tagName = nodeTagName(node);
   if (!tagName) {
-    const text = typeof node.text === 'string' ? node.text : node.toString();
+    const text = planningNodeText(node);
     return text ? ([{ atom: { kind: 'text', text }, kind: 'atom' }] as const) : [];
   }
   if (tagName === 'br') return [{ atom: { kind: 'break' }, kind: 'atom' }] as const;
@@ -647,7 +652,7 @@ function analyzedForumSelectionUnits(node: PlanningNode, childUnits: readonly Fo
     ] as const;
   }
   if (tagName === FORUM_MATH_BLOCK_TAG || tagName === FORUM_MATH_INLINE_TAG) {
-    const source = typeof node.text === 'string' ? node.text : '';
+    const source = planningNodeText(node);
     if (!source) return [];
     const media = { atom: { kind: 'media' as const, text: source }, kind: 'atom' as const };
     return tagName === FORUM_MATH_BLOCK_TAG
@@ -701,24 +706,28 @@ function analyzeNodes(
     }
     const children = current.node.childNodes || [];
     const childMetrics = children.map((child) => metrics.get(child)!);
-    const trailingBreakIndex = trailingCollapsedBreakIndex(children);
-    const childSelectionUnits: ForumSelectionUnit[] = children
-      .slice(0, trailingBreakIndex < 0 ? children.length : trailingBreakIndex)
-      .flatMap((child) => selectionUnits.get(child) || []);
-    if (trailingBreakIndex >= 0) {
-      childSelectionUnits.push({ atom: { collapsed: true, kind: 'break' }, kind: 'atom' });
-    }
     const tagName = nodeTagName(current.node);
     const text = tagName ? '' : current.node.toString();
     const ownSerialized = tagName ? tagName.length * 2 + String(current.node.rawAttrs || '').length + 5 : text.length;
-    metrics.set(current.node, {
+    const nodeMetrics = {
       domNodes: 1 + childMetrics.reduce((total, child) => total + child.domNodes, 0),
       elementDepth: tagName ? 1 + childMetrics.reduce((maximum, child) => Math.max(maximum, child.elementDepth), 0) : 0,
       mediaSlots: ownMediaSlots(current.node) + childMetrics.reduce((total, child) => total + child.mediaSlots, 0),
       serializedChars: ownSerialized + childMetrics.reduce((total, child) => total + child.serializedChars, 0),
       textChars: tagName ? childMetrics.reduce((total, child) => total + child.textChars, 0) : text.length
-    });
-    selectionUnits.set(current.node, analyzedForumSelectionUnits(current.node, childSelectionUnits));
+    };
+    metrics.set(current.node, nodeMetrics);
+    // Deeper containers cannot be emitted; their eventual bounded fragments own selection text.
+    if (nodeMetrics.elementDepth <= MAX_PLANNED_ELEMENT_DEPTH) {
+      const trailingBreakIndex = trailingCollapsedBreakIndex(children);
+      const childSelectionUnits: ForumSelectionUnit[] = children
+        .slice(0, trailingBreakIndex < 0 ? children.length : trailingBreakIndex)
+        .flatMap((child) => selectionUnits.get(child) || []);
+      if (trailingBreakIndex >= 0) {
+        childSelectionUnits.push({ atom: { collapsed: true, kind: 'break' }, kind: 'atom' });
+      }
+      selectionUnits.set(current.node, analyzedForumSelectionUnits(current.node, childSelectionUnits));
+    }
     const typedDirective = typedDirectiveFromNode(current.node);
     if (typedDirective) typedDirectives.set(current.node, typedDirective);
     if (typedDirective || children.some((child) => containsTypedDirective.has(child))) {
@@ -1590,6 +1599,120 @@ type SemanticCompileEntry = {
   readonly path: string;
 };
 
+function flattenSemanticLeaf(root: HTMLElement) {
+  type Work =
+    | { children: Node[]; kind: 'commit'; node: HTMLElement }
+    | { children: Node[]; depth: number; kind: 'visit'; node: Node };
+  const children: Node[] = [];
+  const pending: Work[] = [{ children, kind: 'commit', node: root }];
+  for (let index = root.childNodes.length - 1; index >= 0; index -= 1) {
+    pending.push({ children, depth: 1, kind: 'visit', node: root.childNodes[index] });
+  }
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (current.kind === 'commit') {
+      current.node.set_content(current.children);
+      continue;
+    }
+    const { children: destination, depth, node } = current;
+    if (!(node instanceof HTMLElement)) {
+      destination.push(node);
+      continue;
+    }
+    const unwrap =
+      SEMANTIC_ANCESTOR_TAGS.has(nodeTagName(node)) ||
+      nodeTagName(node) === FORUM_TERMINAL_TAB_TAG ||
+      (depth >= MAX_PLANNED_ELEMENT_DEPTH - 1 && node.childNodes.length > 0);
+    const childNodes: Node[] = unwrap ? destination : [];
+    if (!unwrap) {
+      destination.push(node);
+      pending.push({ children: childNodes, kind: 'commit', node });
+    }
+    for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
+      pending.push({
+        children: childNodes,
+        depth: unwrap ? depth : depth + 1,
+        kind: 'visit',
+        node: node.childNodes[index]
+      });
+    }
+  }
+}
+
+function boundedSemanticContentNodes(nodes: PlanningNode[]) {
+  const containsSemantic = new WeakSet<object>();
+  const pending = nodes.map((node) => ({ ancestors: 0, depth: 0, node, visited: false }));
+  let ancestorReferences = 0;
+  let fits = true;
+  while (pending.length) {
+    const { ancestors, depth, node, visited } = pending.pop()!;
+    const children = node.childNodes || [];
+    const tagName = nodeTagName(node);
+    const ownsAncestor = SEMANTIC_ANCESTOR_TAGS.has(tagName) || tagName === FORUM_TERMINAL_TAB_TAG;
+    const semanticLeaf =
+      tagName === 'pre' ||
+      tagName === 'table' ||
+      tagName === 'aside' ||
+      isBlockCodeNode(node) ||
+      isTerminalCodeNode(node) ||
+      PLANNED_ISLAND_TAGS.has(tagName) ||
+      tagName === DISCOURSE_POLL_PLACEHOLDER_TAG ||
+      tagName === NODESEEK_POLL_PLACEHOLDER_TAG;
+    if (visited) {
+      if (ownsAncestor || semanticLeaf || children.some((child) => containsSemantic.has(child)))
+        containsSemantic.add(node);
+      continue;
+    }
+    // DOM nodes and minimum-size text fragments conservatively bound output rows before any ancestor copying.
+    const rowUpperBound = tagName ? 1 : 1 + Math.floor(node.toString().length / (MAX_UNSPLIT_TEXT_CHARS / 2));
+    ancestorReferences += (ancestors + Number(ownsAncestor)) * rowUpperBound;
+    if (depth >= MAX_PLANNED_ELEMENT_DEPTH || ancestorReferences > MAX_SEMANTIC_ANCESTOR_REFERENCES) fits = false;
+    pending.push({ ancestors, depth, node, visited: true });
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      pending.push({
+        ancestors: ancestors + Number(ownsAncestor),
+        depth: depth + 1,
+        node: children[index],
+        visited: false
+      });
+    }
+  }
+  if (fits) return { flattened: false, nodes };
+
+  const flattened: PlanningNode[] = [];
+  const remaining = [...nodes].reverse();
+  while (remaining.length) {
+    const node = remaining.pop()!;
+    const tagName = nodeTagName(node);
+    if (
+      !containsSemantic.has(node) ||
+      tagName === 'pre' ||
+      isBlockCodeNode(node) ||
+      isTerminalCodeNode(node) ||
+      tagName === 'table' ||
+      tagName === 'aside' ||
+      PLANNED_ISLAND_TAGS.has(tagName) ||
+      tagName === DISCOURSE_POLL_PLACEHOLDER_TAG ||
+      tagName === NODESEEK_POLL_PLACEHOLDER_TAG
+    ) {
+      if (containsSemantic.has(node) && node instanceof HTMLElement) flattenSemanticLeaf(node);
+      flattened.push(node);
+      continue;
+    }
+    if (tagName === FORUM_TERMINAL_TAB_TAG) {
+      const title = nodeAttribute(node, 'title').trim();
+      if (title) {
+        const paragraph = new HTMLElement('p', {});
+        paragraph.set_content(new TextNode(escapeHtmlAttribute(title)));
+        flattened.push(paragraph);
+      }
+    }
+    const children = node.childNodes || [];
+    for (let index = children.length - 1; index >= 0; index -= 1) remaining.push(children[index]);
+  }
+  return { flattened: true, nodes: flattened };
+}
+
 function semanticPart(index: number, length: number): ForumContentPart {
   if (length <= 1) return 'only';
   if (index === 0) return 'first';
@@ -1952,9 +2075,7 @@ function innerHtml(node: PlanningNode | undefined) {
 }
 
 function nodeText(node: PlanningNode | undefined) {
-  return String(node?.text || '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return planningNodeText(node).replace(/\s+/g, ' ').trim();
 }
 
 function boundedDisclosureTitle(node: PlanningNode | undefined, fallback: string) {
@@ -2435,9 +2556,18 @@ function compileParsedForumContent({
       if (source === 'v2ex') markV2exReplyReferenceNodes(body, topicId);
       previewImages = normalizeForumContentMediaNodes(body).previewImages;
     }
-    const nodes = (body?.childNodes || []).filter(planningNodeHasContent) as PlanningNode[];
-    if (raw.trim() && !nodes.length) throw new Error('Parser returned no renderable content.');
-    const analysis = analyzeNodes(nodes, (node) => {
+    const openingQuotes = new WeakMap<object, QuotedPostMetadata>();
+    if (extractsOpeningQuotes && body && topicId && isDiscourseSource(source)) {
+      for (const node of body.querySelectorAll('aside')) {
+        const quote = discourseQuotedPostMetadataFromNode(node, source, topicId);
+        if (quote) openingQuotes.set(node, quote);
+      }
+    }
+    const bounded = boundedSemanticContentNodes(
+      (body?.childNodes || []).filter(planningNodeHasContent) as PlanningNode[]
+    );
+    if (raw.trim() && !bounded.nodes.length) throw new Error('Parser returned no renderable content.');
+    const analysis = analyzeNodes(bounded.nodes, (node) => {
       const tagName = nodeTagName(node);
       if (isDiscourseSource(source) && tagName === DISCOURSE_POLL_PLACEHOLDER_TAG) {
         const poll = pollsByName.get(nodeAttribute(node, 'name'));
@@ -2450,13 +2580,14 @@ function compileParsedForumContent({
         return { poll, type: 'poll' };
       }
       if (extractsOpeningQuotes && tagName === 'aside' && topicId) {
-        const quote = discourseQuotedPostMetadataFromNode(node, source as DiscourseSource, topicId);
+        const quote = openingQuotes.get(node);
         return quote ? { quote, type: 'quote' } : null;
       }
       return null;
     });
     const unmatchedPolls = pollList.filter((poll) => !matchedPolls.has(poll));
-    const rows = semanticRowsFromParsedContent({ analysis, nodes, role, source, unmatchedPolls });
+    const rows = semanticRowsFromParsedContent({ analysis, nodes: bounded.nodes, role, source, unmatchedPolls });
+    if (bounded.flattened) rows.unshift(compilerNoticeRow('complex-content'));
     return compiledForumContentResult(rows, rows.length === 1 ? combinedSemanticRowMetrics(rows) : null, previewImages);
   } catch {
     return fallbackCompiledForumContent(raw, pollList, role, source);

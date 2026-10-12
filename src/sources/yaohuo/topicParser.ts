@@ -1,14 +1,19 @@
-import type { HTMLElement } from 'node-html-parser';
+import { HTMLElement, type Node } from 'node-html-parser';
 import type { RepliesResponse, TopicDetail, TopicPoll, TopicPollOption } from '@/domain/forum/models';
 import {
   absoluteUrl,
+  createForumTextIndex,
   elementText,
+  forumNodeText,
   escapeHtmlFully,
   hasRenderableHtmlContent,
   parseHtml,
+  parseForumContentHtml,
   parsePositiveInteger,
   textContentFromHtml,
-  textExcerpt
+  textExcerpt,
+  transformForumElements,
+  type ForumTextTape
 } from '@/domain/forum/html';
 import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from '@/domain/forum/forumContentMedia';
@@ -133,7 +138,7 @@ function collectFollowingYaohuoPostContent(mainContent: HTMLElement | null | und
       continue;
     }
     const html = node.toString();
-    const text = textContentFromHtml(html);
+    const text = forumNodeText(node).replace(/\s+/g, ' ').trim();
     if (!hasRenderableHtmlContent(html)) {
       continue;
     }
@@ -149,24 +154,72 @@ function collectFollowingYaohuoPostContent(mainContent: HTMLElement | null | und
 }
 
 function collectYaohuoDownloadContent(root: ReturnType<typeof parseHtml>, mainContent: HTMLElement | null | undefined) {
-  const selected = new Set<HTMLElement>();
   const mainAncestors = new Set<HTMLElement>();
   for (let node = mainContent; node; node = node.parentNode) mainAncestors.add(node);
-  for (const node of root.querySelectorAll('div, p, table, ul, ol, a')) {
-    if (mainAncestors.has(node) || hasExcludedYaohuoClass(node)) {
-      continue;
+  const textIndex = createForumTextIndex(root);
+  const tapeMatches = new WeakMap<ForumTextTape, { start: number; end: number }[]>();
+  const matchesText = (node: HTMLElement) => {
+    const segment = textIndex.range(node)[0];
+    if (!segment) return false;
+    const { tape, start, end } = segment;
+    let matches = tapeMatches.get(tape);
+    if (!matches) {
+      matches = [];
+      const pattern = new RegExp(yaohuoDownloadContentPattern.source, 'gi');
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(tape.text))) matches.push({ start: match.index, end: pattern.lastIndex });
+      tapeMatches.set(tape, matches);
     }
-    let parent = node.parentNode;
-    while (parent && parent !== mainContent && !selected.has(parent)) parent = parent.parentNode;
-    if (parent) continue;
-    const html = node.toString();
-    const text = elementText(node);
-    if (!yaohuoDownloadContentPattern.test(`${text} ${html}`)) {
-      continue;
+    let low = 0;
+    let high = matches.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (matches[middle].start < start) low = middle + 1;
+      else high = middle;
     }
-    selected.add(node);
+    const match = matches[low];
+    return (
+      Boolean(match && match.end <= end) ||
+      yaohuoDownloadContentPattern.test(tape.text.slice(Math.max(start, end - 24), end))
+    );
+  };
+  const nodes: Node[] = [];
+  const pending: Node[] = [root];
+  while (pending.length) {
+    const node = pending.pop()!;
+    nodes.push(node);
+    if (node instanceof HTMLElement)
+      for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]);
   }
-  return [...selected].map((node) => node.toString());
+  const rawMatches = new Map<Node, boolean>();
+  for (const node of nodes.reverse()) {
+    rawMatches.set(
+      node,
+      node instanceof HTMLElement
+        ? yaohuoDownloadContentPattern.test(`${node.rawTagName} ${node.rawAttrs}`) ||
+            node.childNodes.some((child) => rawMatches.get(child))
+        : yaohuoDownloadContentPattern.test(node.toString())
+    );
+  }
+  const candidates = new Set(root.querySelectorAll('div, p, table, ul, ol, a'));
+  const selected: HTMLElement[] = [];
+  const remaining = [...root.children].reverse();
+  while (remaining.length) {
+    const node = remaining.pop()!;
+    if (node === mainContent) continue;
+    if (
+      candidates.has(node) &&
+      !mainAncestors.has(node) &&
+      !hasExcludedYaohuoClass(node) &&
+      (rawMatches.get(node) || matchesText(node))
+    ) {
+      selected.push(node);
+      continue;
+    }
+    const children = node.children;
+    for (let index = children.length - 1; index >= 0; index--) remaining.push(children[index]);
+  }
+  return selected.map((node) => node.toString());
 }
 
 function appendYaohuoPostContent(
@@ -190,11 +243,9 @@ function yaohuoAttachmentHref(value: unknown) {
   }
 }
 
-function yaohuoAttachmentTrailingNodes(node: HTMLElement) {
-  const siblings = node.parentNode?.childNodes || [];
-  const trailing: unknown[] = [];
-  for (let index = siblings.indexOf(node) + 1; index > 0 && index < siblings.length; index += 1) {
-    const sibling = siblings[index];
+function yaohuoAttachmentTrailingNodes(node: HTMLElement, nextSiblings: Map<Node, Node | undefined>) {
+  const trailing: Node[] = [];
+  for (let sibling = nextSiblings.get(node); sibling; sibling = nextSiblings.get(sibling)) {
     if (!isHtmlElementNode(sibling)) {
       if (isEmptyYaohuoBoundaryNode(sibling)) {
         trailing.push(sibling);
@@ -204,14 +255,14 @@ function yaohuoAttachmentTrailingNodes(node: HTMLElement) {
     }
     const attachmentClass = String(sibling.getAttribute('class') || '')
       .split(/\s+/)
-      .some((name) => /^(?:attachment(?:info|number|name|itle|note)?|download(?:name|link|url|count))$/i.test(name));
+      .some((name) => /^(?:attachment(?:info|number|name|itle|note)|download(?:name|link|url|count))$/i.test(name));
     if (!attachmentClass) break;
     trailing.push(sibling);
   }
   return trailing;
 }
 
-function yaohuoAttachmentHtml(node: HTMLElement, trailingNodes: readonly unknown[]) {
+function yaohuoAttachmentHtml(node: HTMLElement, trailingNodes: readonly Node[]) {
   const scope = parseHtml(`${node.innerHTML}${trailingNodes.map((item) => String(item)).join('')}`);
   const summary = elementText(scope.querySelector('.attachmenSum'));
   const items = scope.querySelectorAll('.attachmentinfo');
@@ -245,24 +296,39 @@ function yaohuoAttachmentHtml(node: HTMLElement, trailingNodes: readonly unknown
   }${itemHtml}</div>`;
 }
 
-function isEmptyYaohuoBoundaryNode(node: unknown) {
-  if (!node || typeof node !== 'object') return true;
+function isEmptyYaohuoBoundaryNode(node: Node) {
   if (!isHtmlElementNode(node)) {
-    return !String((node as { text?: unknown }).text || '')
-      .replace(/\u00a0/g, ' ')
-      .trim();
+    return !forumNodeText(node).trim();
   }
   const tagName = String(node.rawTagName || node.tagName || '').toLowerCase();
   if (tagName === 'br') return true;
   return (
     ['div', 'p', 'span'].includes(tagName) &&
     !node.querySelector('img, video, forum-video, a[href]') &&
-    !textContentFromHtml(node.toString())
+    !elementText(node)
   );
 }
 
-function removeNode(node: unknown) {
-  (node as { remove?: () => void })?.remove?.();
+// Equal-size candidates are disjoint: a nonempty div wrapper always increases serialized size.
+function yaohuoSerializedLengths(root: HTMLElement) {
+  const lengths = new Map<Node, number>();
+  const nodes: Node[] = [];
+  const pending: Node[] = [root];
+  while (pending.length) {
+    const node = pending.pop()!;
+    nodes.push(node);
+    if (node instanceof HTMLElement)
+      for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]);
+  }
+  for (const node of nodes.reverse()) {
+    if (!(node instanceof HTMLElement) || (node.rawTagName && node.isVoidElement))
+      lengths.set(node, node.toString().length);
+    else {
+      const own = node.rawTagName ? node.rawTagName.length * 2 + (node.rawAttrs ? node.rawAttrs.length + 1 : 0) + 5 : 0;
+      lengths.set(node, own + node.childNodes.reduce((sum, child) => sum + lengths.get(child)!, 0));
+    }
+  }
+  return lengths;
 }
 
 function trimYaohuoArticleBoundaries(root: HTMLElement) {
@@ -284,11 +350,27 @@ function trimYaohuoArticleBoundaries(root: HTMLElement) {
 }
 
 function normalizeYaohuoTopicContent(root: HTMLElement) {
-  root.querySelectorAll('.attachment').forEach((node) => {
-    const trailingNodes = yaohuoAttachmentTrailingNodes(node);
-    node.replaceWith(yaohuoAttachmentHtml(node, trailingNodes));
-    trailingNodes.forEach(removeNode);
+  const consumed = new Set<Node>();
+  const siblingsByParent = new Map<HTMLElement, Map<Node, Node | undefined>>();
+  transformForumElements(root, root.querySelectorAll('*'), (node) => {
+    if (consumed.has(node)) return [];
+    if (!node.matches('.attachment')) return;
+    const parent = node.parentNode;
+    let nextSiblings = parent ? siblingsByParent.get(parent) : undefined;
+    if (!nextSiblings) {
+      const siblings = parent?.childNodes || [];
+      nextSiblings = new Map(siblings.map((sibling, index) => [sibling, siblings[index + 1]]));
+      if (parent) siblingsByParent.set(parent, nextSiblings);
+    }
+    const trailingNodes = yaohuoAttachmentTrailingNodes(node, nextSiblings);
+    for (const sibling of trailingNodes) consumed.add(sibling);
+    return parseForumContentHtml(yaohuoAttachmentHtml(node, trailingNodes)).childNodes;
   });
+  if (consumed.size) {
+    for (const parent of new Set([...consumed].map((node) => node.parentNode).filter((node) => node !== null))) {
+      if (parent) parent.set_content(parent.childNodes.filter((node) => !consumed.has(node)));
+    }
+  }
   trimYaohuoArticleBoundaries(root);
 }
 
@@ -466,9 +548,28 @@ export function parseYaohuoFavoriteRecordId(html: string, topicId: string | numb
   return parsePositiveInteger(row?.querySelector('[data-fav-id]')?.getAttribute('data-fav-id')) || undefined;
 }
 
+function yaohuoContentScopes(root: HTMLElement) {
+  const scopes = new Map<HTMLElement, { poll: boolean; navigation: boolean; emptyReply: boolean }>();
+  const pending = [{ node: root, inherited: { poll: false, navigation: false, emptyReply: false } }];
+  while (pending.length) {
+    const { node, inherited } = pending.pop()!;
+    const scope = {
+      poll: inherited.poll || node.matches('.bbscontent, .recontent, .list-reply, .line1, .line2, blockquote'),
+      navigation: inherited.navigation || node.matches('.bbscontent, .recontent, blockquote'),
+      emptyReply: inherited.emptyReply || node.matches('.bbscontent, blockquote')
+    };
+    scopes.set(node, scope);
+    const children = node.children;
+    for (let index = children.length - 1; index >= 0; index--)
+      pending.push({ node: children[index], inherited: scope });
+  }
+  return scopes;
+}
+
 export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; url?: string }): TopicDetail {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
+  const contentScopes = yaohuoContentScopes(root);
   const bbsContentElement = root.querySelector('div.bbscontent');
   const bbsContent = bbsContentElement?.innerHTML || '';
   const activitySummaryHtml = yaohuoActivitySummaryHtml(root);
@@ -497,9 +598,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
         contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1] ||
         contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     ) || new Date().toISOString();
-  const voteContainer = root
-    .querySelectorAll('.vote-container')
-    .find((node) => !node.closest('.bbscontent, .recontent, .list-reply, .line1, .line2, blockquote'));
+  const voteContainer = root.querySelectorAll('.vote-container').find((node) => !contentScopes.get(node)?.poll);
   const polls = parseVotePolls(root, String(id || ''), voteContainer);
   const accessRequirement =
     yaohuoTopicAccessRequirementFromContent(contentHtml) || yaohuoTopicAccessRequirementFromContent(html);
@@ -508,9 +607,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     ...root
       .querySelectorAll('a[href*="tofloor="], a[href*="reply="]')
       .filter(
-        (link) =>
-          extractTopicParts(link.getAttribute('href')).id === String(id) &&
-          !link.closest('.bbscontent, .recontent, blockquote')
+        (link) => extractTopicParts(link.getAttribute('href')).id === String(id) && !contentScopes.get(link)?.navigation
       )
       .map((link) =>
         parsePositiveInteger(link.getAttribute('href')?.match(/[?&](?:amp;)?(?:tofloor|reply)=(\d+)/i)?.[1])
@@ -523,8 +620,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     .querySelectorAll('div.view-no-reply-tip')
     .some(
       (node) =>
-        !node.closest('.bbscontent, blockquote') &&
-        /^暂无回复/.test(elementText(node.querySelector('.view-no-reply-text')))
+        !contentScopes.get(node)?.emptyReply && /^暂无回复/.test(elementText(node.querySelector('.view-no-reply-text')))
     );
   const replyCountMatch = html.match(/更多回帖\((\d+)\)/);
   const preparedContent = prepareSanitizedForumContent(contentHtml, {
@@ -536,9 +632,10 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     transformRoot: (contentRoot) => {
       if (voteContainer && polls?.length) {
         const originalPollHtml = voteContainer.toString();
-        contentRoot.querySelectorAll('.vote-container').forEach((node) => {
-          if (node.toString() === originalPollHtml) node.remove();
-        });
+        const lengths = yaohuoSerializedLengths(contentRoot);
+        transformForumElements(contentRoot, contentRoot.querySelectorAll('.vote-container'), (node) =>
+          lengths.get(node) === originalPollHtml.length && node.toString() === originalPollHtml ? [] : undefined
+        );
       }
       normalizeYaohuoTopicContent(contentRoot);
     },
@@ -561,7 +658,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
       .querySelectorAll('a[href]')
       .some(
         (link) =>
-          !link.closest('.bbscontent, .recontent, blockquote') &&
+          !contentScopes.get(link)?.navigation &&
           (/book_view_mod\.aspx/i.test(link.getAttribute('href') || '') || elementText(link) === '管理')
       ),
     replyCount: emptyReplies ? 0 : latestReplyFloor || (replyCountMatch ? Number(replyCountMatch[1]) : undefined),

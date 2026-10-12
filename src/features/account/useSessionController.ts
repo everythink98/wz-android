@@ -29,6 +29,7 @@ import {
 import {
   advanceCredentialWriteGeneration,
   createCredentialWriteGate,
+  isCredentialWriteCurrent,
   replaceCredentialWrite
 } from '@/platform/storage/credentialWriteGate';
 import {
@@ -724,7 +725,7 @@ export function useSessionController({
   }, []);
 
   const clearManagedLoginState = useCallback(
-    async (source: 'linuxdo' | 'nodeseek' | 'yaohuo') => {
+    async (source: 'linuxdo' | 'nodeseek' | 'yaohuo', isAccountCurrent: () => boolean = () => true) => {
       const trace = beginDiagnosticTrace('credential', 'clear', { source });
       const gate =
         source === 'nodeseek'
@@ -732,12 +733,23 @@ export function useSessionController({
           : source === 'linuxdo'
             ? linuxDoCredentialGateRef.current
             : yaohuoCredentialGateRef.current;
+      const sessionEpoch = forumSessionEpochsRef.current[source];
+      const generation = gate.generation + 1;
+      const isCurrent = () =>
+        isCredentialWriteCurrent(gate, generation) &&
+        forumSessionEpochsRef.current[source] === sessionEpoch &&
+        isAccountCurrent();
       try {
-        const cleared = await replaceCredentialWrite(gate, async ({ isCurrent }) => {
+        if (!isAccountCurrent()) {
+          finishDiagnosticTrace(trace, 'stale', { source, reason: 'stale' });
+          return false;
+        }
+        const cleared = await replaceCredentialWrite(gate, async () => {
+          if (!isCurrent()) return false;
           await clearManagedLoginCookies(source, undefined, trace);
           return isCurrent();
         });
-        if (!cleared) {
+        if (!cleared || !isCurrent()) {
           finishDiagnosticTrace(trace, 'stale', { source, reason: 'stale' });
           return false;
         }
@@ -748,6 +760,10 @@ export function useSessionController({
               ? LEGACY_COOKIE_SNAPSHOT_KEYS.slice(2, 3)
               : LEGACY_COOKIE_SNAPSHOT_KEYS.slice(3);
         const cleanup = await Promise.allSettled(legacyKeys.map((key) => SecureStore.deleteItemAsync(key)));
+        if (!isCurrent()) {
+          finishDiagnosticTrace(trace, 'stale', { source, reason: 'stale' });
+          return false;
+        }
         const legacyCleanupFailed = cleanup.some((result) => result.status === 'rejected');
         const event: SiteSessionEvent = { type: 'cleared' };
         if (source === 'nodeseek') {
@@ -766,6 +782,10 @@ export function useSessionController({
         }
         return true;
       } catch (error) {
+        if (!isCurrent()) {
+          finishDiagnosticTrace(trace, 'stale', { source, reason: 'stale' });
+          return false;
+        }
         const message = `${source === 'nodeseek' ? 'NodeSeek' : source === 'linuxdo' ? 'linux.do' : '妖火'} 登录清理未完成，请重试。`;
         if (source === 'nodeseek') {
           updateNodeSeekSession({ type: 'check-failed', message });
@@ -781,12 +801,21 @@ export function useSessionController({
         throw error;
       }
     },
-    [notify, updateLinuxDoSession, updateNodeSeekSession, updateYaohuoSession]
+    [forumSessionEpochsRef, notify, updateLinuxDoSession, updateNodeSeekSession, updateYaohuoSession]
   );
 
-  const clearNodeSeekLoginState = useCallback(() => clearManagedLoginState('nodeseek'), [clearManagedLoginState]);
-  const clearLinuxDoLoginState = useCallback(() => clearManagedLoginState('linuxdo'), [clearManagedLoginState]);
-  const clearYaohuoLoginState = useCallback(() => clearManagedLoginState('yaohuo'), [clearManagedLoginState]);
+  const clearNodeSeekLoginState = useCallback(
+    (isCurrent?: () => boolean) => clearManagedLoginState('nodeseek', isCurrent),
+    [clearManagedLoginState]
+  );
+  const clearLinuxDoLoginState = useCallback(
+    (isCurrent?: () => boolean) => clearManagedLoginState('linuxdo', isCurrent),
+    [clearManagedLoginState]
+  );
+  const clearYaohuoLoginState = useCallback(
+    (isCurrent?: () => boolean) => clearManagedLoginState('yaohuo', isCurrent),
+    [clearManagedLoginState]
+  );
 
   return {
     cancelLinuxDoBrowserHandoff,

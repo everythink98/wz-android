@@ -15,6 +15,7 @@ import type { SessionSite } from '@/domain/session/siteSessionState';
 import { MessageSubmissionFixture } from '../composerMessageFixture';
 import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
 import { appendReplyImageMarkup, replyImageMarkupForSource } from '@/sources/imageUpload';
+import { MAX_COMPOSER_MARKDOWN_LENGTH, type ComposerSnapshot } from '@/domain/forum/structuredComposer';
 
 jest.mock('react-native-reanimated', () => ({
   ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
@@ -62,14 +63,22 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 type Rendered = Awaited<ReturnType<typeof render>>;
+const editorDocuments = new WeakMap<Rendered, { documentEpoch: number; snapshot: ComposerSnapshot }>();
+const heldSettlements = new WeakSet<Rendered>();
 function messages(view: Rendered) {
   return view
     .getByTestId('structured-composer-webview', { includeHiddenElements: true })
     .props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
 }
-async function bridge(view: Rendered, type: string, payload: unknown) {
+async function bridge(view: Rendered, type: string, payload: unknown, updateDocument = true) {
   const documentEpoch = messages(view).findLast((message: { type: string }) => message.type === 'INIT')?.payload
     .documentEpoch;
+  if (type === 'SNAPSHOT' && updateDocument) {
+    const snapshot = (payload as { snapshot: ComposerSnapshot }).snapshot;
+    const previous = editorDocuments.get(view);
+    if (!previous || previous.documentEpoch !== documentEpoch || snapshot.revision >= previous.snapshot.revision)
+      editorDocuments.set(view, { documentEpoch, snapshot });
+  }
   await fireEvent(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }), 'message', {
     nativeEvent: { data: JSON.stringify({ type, payload: { documentEpoch, ...(payload as object) } }) }
   });
@@ -77,6 +86,34 @@ async function bridge(view: Rendered, type: string, payload: unknown) {
 async function ready(view: Rendered) {
   await fireEvent(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }), 'loadEnd');
   await waitFor(() => expect(messages(view).some((message: { type: string }) => message.type === 'INIT')).toBe(true));
+  const initial = messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload;
+  const initialize = (payload: typeof initial) => {
+    editorDocuments.set(view, {
+      documentEpoch: payload.documentEpoch,
+      snapshot: {
+        revision: 0,
+        markdown: payload.markdown,
+        mode: payload.mode,
+        isEmpty: !payload.markdown.trim(),
+        validationIssues: [],
+        pendingNodeSeekPolls: payload.pendingNodeSeekPolls || []
+      }
+    });
+  };
+  initialize(initial);
+  view
+    .getByTestId('structured-composer-webview', { includeHiddenElements: true })
+    .props.postMessageMock.mockImplementation((raw: string) => {
+      const message = JSON.parse(raw);
+      if (message.type === 'INIT') initialize(message.payload);
+      if (message.type === 'REQUEST_SNAPSHOT' && message.payload.submission) {
+        if (heldSettlements.has(view)) return;
+        const document = editorDocuments.get(view)!;
+        void Promise.resolve().then(() =>
+          bridge(view, 'SNAPSHOT', { requestId: message.payload.requestId, snapshot: document.snapshot })
+        );
+      }
+    });
   await bridge(view, 'READY', { revision: 0 });
 }
 async function submit(
@@ -99,6 +136,13 @@ async function submit(
       validationIssues,
       pendingNodeSeekPolls: []
     }
+  });
+}
+function editWithoutSnapshot(view: Rendered, markdown: string) {
+  const document = editorDocuments.get(view)!;
+  editorDocuments.set(view, {
+    ...document,
+    snapshot: { ...document.snapshot, revision: document.snapshot.revision + 1, markdown, isEmpty: !markdown.trim() }
   });
 }
 function sheetOpen(view: Rendered) {
@@ -175,6 +219,35 @@ describe('composer submission through the production controller and sheet', () =
     if (source !== 'yaohuo') await ready(view);
     return { view, transport };
   }
+  async function openMessage(
+    source: SessionSite = 'nodeseek',
+    outcome: Parameters<typeof createComposerTransport>[0] = 'success',
+    hold = false
+  ) {
+    const transport = createComposerTransport(outcome, hold);
+    transports.push(transport);
+    const view = await render(<MessageSubmissionFixture source={source} transport={transport} />, {
+      wrapper: QueryTestWrapper
+    });
+    const launcher = source === 'nodeseek' ? '发私信' : '回复私信';
+    await waitFor(() => expect(view.getByLabelText(launcher)).toBeTruthy());
+    await fireEvent.press(view.getByLabelText(launcher));
+    if (source === 'yaohuo') await fireEvent.changeText(view.getByLabelText('私信回复内容'), COMPOSER_DRAFT);
+    else {
+      await ready(view);
+      await bridge(view, 'SNAPSHOT', {
+        snapshot: {
+          revision: 1,
+          markdown: COMPOSER_DRAFT,
+          mode: 'rich',
+          isEmpty: false,
+          validationIssues: [],
+          pendingNodeSeekPolls: []
+        }
+      });
+    }
+    return { view, transport, launcher };
+  }
   it.each(['nodeseek', 'linuxdo'] as const)(
     '%s confirms through HTTP, clears the document and reopens empty',
     async (source) => {
@@ -204,6 +277,26 @@ describe('composer submission through the production controller and sheet', () =
       expect(state(view).content).toBe(COMPOSER_DRAFT);
       await act(async () => transport.release());
       await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
+    }
+  );
+  it.each(
+    (['nodeseek', 'linuxdo'] as const).flatMap((source) =>
+      (['reply', 'floor', 'edit'] as const).map((entry) => ({ source, entry }))
+    )
+  )(
+    'preserves text entered before autosnapshot after a confirmed $source $entry submission',
+    async ({ source, entry }) => {
+      const { view, transport } = await open(source, 'success', true, entry);
+      await submit(view, COMPOSER_DRAFT, entry === 'edit' ? '保存编辑' : '发送回复');
+      await waitFor(() => expect(transport.requests).toHaveLength(1));
+      const newerDraft = `${COMPOSER_DRAFT}\nNewer text entered while sending.`;
+      editWithoutSnapshot(view, newerDraft);
+      expect(state(view).content).toBe(COMPOSER_DRAFT);
+      await act(async () => transport.release());
+      await waitFor(() => expect(state(view).busy).toBe(false));
+      expect(state(view)).toEqual({ visible: true, content: newerDraft, busy: false });
+      expect(transport.requests).toHaveLength(1);
+      expect(transport.confirmations).toBe(1);
     }
   );
   it.each(
@@ -401,29 +494,10 @@ describe('composer submission through the production controller and sheet', () =
       (['success', 'refresh-error'] as const).map((outcome) => ({ source, outcome }))
     )
   )('$source private message settles once after confirmation with $outcome', async ({ source, outcome }) => {
-    const transport = createComposerTransport(outcome, true);
-    transports.push(transport);
-    const view = await render(<MessageSubmissionFixture source={source} transport={transport} />, {
-      wrapper: QueryTestWrapper
-    });
-    const launcher = source === 'nodeseek' ? '发私信' : '回复私信';
-    await waitFor(() => expect(view.getByLabelText(launcher)).toBeTruthy());
-    await fireEvent.press(view.getByLabelText(launcher));
+    const { view, transport, launcher } = await openMessage(source, outcome, true);
     if (source === 'yaohuo') {
-      await fireEvent.changeText(view.getByLabelText('私信回复内容'), COMPOSER_DRAFT);
       await fireEvent.press(view.getByLabelText('发送回复'));
     } else {
-      await ready(view);
-      await bridge(view, 'SNAPSHOT', {
-        snapshot: {
-          revision: 1,
-          markdown: COMPOSER_DRAFT,
-          mode: 'rich',
-          isEmpty: false,
-          validationIssues: [],
-          pendingNodeSeekPolls: []
-        }
-      });
       const count = () =>
         messages(view).filter((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT').length;
       const before = count();
@@ -452,22 +526,43 @@ describe('composer submission through the production controller and sheet', () =
     else
       expect(messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload.markdown).toBe('');
   });
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'preserves private-message text entered before autosnapshot after a confirmed %s submission',
+    async (source) => {
+      const { view, transport } = await openMessage(source, 'success', true);
+      await submit(view);
+      await waitFor(() => expect(transport.requests).toHaveLength(1));
+      const newerDraft = `${COMPOSER_DRAFT}\nNewer private message entered while sending.`;
+      editWithoutSnapshot(view, newerDraft);
+      await act(async () => transport.release());
+      await waitFor(() => expect(transport.confirmations).toBe(1));
+      expect(sheetOpen(view)).toBe(true);
+      await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
+      expect(messages(view).filter((message: { type: string }) => message.type === 'INIT')).toHaveLength(1);
+      expect(transport.requests).toHaveLength(1);
+    }
+  );
   it('retains the draft on snapshot timeout and ignores the late timed-out response', async () => {
     const { view, transport } = await open();
     await fireEvent.press(view.getByLabelText('发送回复'));
     const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
     await waitFor(() => expect(view.getByText('无法取得最新正文，草稿已保留')).toBeTruthy(), { timeout: 2500 });
-    await bridge(view, 'SNAPSHOT', {
-      requestId: request.payload.requestId,
-      snapshot: {
-        revision: 9,
-        markdown: 'expired body',
-        mode: 'rich',
-        isEmpty: false,
-        validationIssues: [],
-        pendingNodeSeekPolls: []
-      }
-    });
+    await bridge(
+      view,
+      'SNAPSHOT',
+      {
+        requestId: request.payload.requestId,
+        snapshot: {
+          revision: 9,
+          markdown: 'expired body',
+          mode: 'rich',
+          isEmpty: false,
+          validationIssues: [],
+          pendingNodeSeekPolls: []
+        }
+      },
+      false
+    );
     expect(transport.requests).toHaveLength(0);
     expect(state(view).content).toBe(COMPOSER_DRAFT);
     await submit(view);
@@ -479,31 +574,10 @@ describe('composer submission through the production controller and sheet', () =
     )
   )('$source private message preserves the draft after $outcome until explicit retry', async ({ source, outcome }) => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
-    const transport = createComposerTransport(outcome);
-    transports.push(transport);
-    const view = await render(<MessageSubmissionFixture source={source} transport={transport} />, {
-      wrapper: QueryTestWrapper
-    });
-    const launcher = source === 'nodeseek' ? '发私信' : '回复私信';
-    await waitFor(() => expect(view.getByLabelText(launcher)).toBeTruthy());
-    await fireEvent.press(view.getByLabelText(launcher));
+    const { view, transport } = await openMessage(source, outcome);
     if (source === 'yaohuo') {
-      await fireEvent.changeText(view.getByLabelText('私信回复内容'), COMPOSER_DRAFT);
       await fireEvent.press(view.getByLabelText('发送回复'));
-    } else {
-      await ready(view);
-      await bridge(view, 'SNAPSHOT', {
-        snapshot: {
-          revision: 1,
-          markdown: COMPOSER_DRAFT,
-          mode: 'rich',
-          isEmpty: false,
-          validationIssues: [],
-          pendingNodeSeekPolls: []
-        }
-      });
-      await submit(view);
-    }
+    } else await submit(view);
     const error =
       outcome === 'network-error'
         ? 'Mock network offline'
@@ -535,22 +609,7 @@ describe('composer submission through the production controller and sheet', () =
     expect(transport.confirmations).toBe(1);
   });
   it('isolates a pending private message when its conversation changes', async () => {
-    const transport = createComposerTransport('success', true);
-    transports.push(transport);
-    const view = await render(<MessageSubmissionFixture transport={transport} />, { wrapper: QueryTestWrapper });
-    await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('发私信'));
-    await ready(view);
-    await bridge(view, 'SNAPSHOT', {
-      snapshot: {
-        revision: 1,
-        markdown: COMPOSER_DRAFT,
-        mode: 'rich',
-        isEmpty: false,
-        validationIssues: [],
-        pendingNodeSeekPolls: []
-      }
-    });
+    const { view, transport } = await openMessage('nodeseek', 'success', true);
     await submit(view);
     await waitFor(() => expect(transport.requests).toHaveLength(1));
     await view.rerender(<MessageSubmissionFixture transport={transport} conversationId="10" />);
@@ -573,25 +632,10 @@ describe('composer submission through the production controller and sheet', () =
     expect(view.getByText('16 字符')).toBeTruthy();
   });
   it('blocks reopening a private-message editor while its original submission is pending', async () => {
-    const transport = createComposerTransport('success', true);
-    transports.push(transport);
-    const view = await render(<MessageSubmissionFixture transport={transport} />, { wrapper: QueryTestWrapper });
-    await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('发私信'));
-    await ready(view);
-    await bridge(view, 'SNAPSHOT', {
-      snapshot: {
-        revision: 1,
-        markdown: COMPOSER_DRAFT,
-        mode: 'rich',
-        isEmpty: false,
-        validationIssues: [],
-        pendingNodeSeekPolls: []
-      }
-    });
+    const { view, transport } = await openMessage('nodeseek', 'success', true);
     await submit(view);
     await waitFor(() => expect(transport.requests).toHaveLength(1));
-    await submit(view, COMPOSER_DRAFT, '取消', 2);
+    await submit(view, COMPOSER_DRAFT, '取消', 1);
     await waitFor(() => expect(sheetOpen(view)).toBe(false));
     expect(view.getByLabelText('继续编辑私信草稿').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText('继续编辑私信草稿'));
@@ -614,5 +658,86 @@ describe('composer submission through the production controller and sheet', () =
     await waitFor(() => expect(state(view).busy).toBe(false));
     expect(state(view).visible).toBe(true);
     expect(state(view).content).toBe(COMPOSER_DRAFT);
+  });
+  it('rechecks the account after the document settlement awaits its response', async () => {
+    const { view, transport } = await open('nodeseek', 'success', true);
+    await submit(view);
+    heldSettlements.add(view);
+    await act(async () => transport.release());
+    await waitFor(() =>
+      expect(
+        messages(view).some(
+          (message: { type: string; payload?: { submission?: unknown } }) =>
+            message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission
+        )
+      ).toBe(true)
+    );
+    const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+    await view.rerender(<TopicSubmissionFixture transport={transport} epoch={1} />);
+    await bridge(view, 'SNAPSHOT', {
+      requestId: request.payload.requestId,
+      snapshot: editorDocuments.get(view)!.snapshot
+    });
+    await waitFor(() => expect(state(view).busy).toBe(false));
+    expect(state(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
+    expect(transport.requests).toHaveLength(1);
+  });
+  it.each(
+    (['reply', 'private-message'] as const).flatMap((entry) =>
+      (['timeout', 'error'] as const).map((failure) => ({ entry, failure }))
+    )
+  )('keeps a confirmed $entry successful when document settlement ends with $failure', async ({ entry, failure }) => {
+    let view: Rendered;
+    let transport: ComposerTransport;
+    if (entry === 'reply') {
+      ({ view, transport } = await open('nodeseek', 'success', true));
+    } else {
+      ({ view, transport } = await openMessage('nodeseek', 'success', true));
+    }
+    await submit(view);
+    heldSettlements.add(view);
+    if (failure === 'error') {
+      editWithoutSnapshot(view, 'a'.repeat(MAX_COMPOSER_MARKDOWN_LENGTH + 1));
+    }
+    await act(async () => transport.release());
+    await waitFor(() =>
+      expect(
+        messages(view).some(
+          (message: { type: string; payload?: { submission?: unknown } }) =>
+            message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission
+        )
+      ).toBe(true)
+    );
+    if (failure === 'error') {
+      const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+      await bridge(view, 'ERROR', {
+        requestId: request.payload.requestId,
+        revision: 2,
+        code: 'too-long',
+        message: '正文超过允许长度'
+      });
+    }
+    await waitFor(
+      () =>
+        expect(view.getByTestId('composer-proof-notice').props.children).toBe(
+          entry === 'reply' ? '回复已提交' : '回复已发送'
+        ),
+      { timeout: 2500 }
+    );
+    expect(sheetOpen(view)).toBe(true);
+    if (entry === 'reply') expect(state(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
+    await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
+    const sent = messages(view);
+    const settlementRequest = sent.findLastIndex(
+      (message: { type: string; payload?: { submission?: unknown } }) =>
+        message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission
+    );
+    expect(sent.slice(settlementRequest + 1)).toContainEqual({ type: 'SET_READ_ONLY', payload: { readOnly: false } });
+    expect(messages(view).filter((message: { type: string }) => message.type === 'INIT')).toHaveLength(1);
+    expect(editorDocuments.get(view)!.snapshot.markdown).toBe(
+      failure === 'error' ? 'a'.repeat(MAX_COMPOSER_MARKDOWN_LENGTH + 1) : COMPOSER_DRAFT
+    );
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.confirmations).toBe(1);
   });
 });

@@ -14,9 +14,9 @@ import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
 import { linuxDoBrowserResponse } from '@/features/account/browserFetchQueue';
 
-function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'account') {
+function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'account', title = '') {
   window.history.pushState(null, '', url);
-  document.title = '';
+  document.title = title;
   document.body.innerHTML = html;
   Object.defineProperty(document.body, 'innerText', {
     configurable: true,
@@ -42,9 +42,9 @@ function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'accou
   };
 }
 
-function runLinuxDoBrowserFetchScript(url: string, html: string, innerText?: string) {
+function runLinuxDoBrowserFetchScript(url: string, html: string, innerText?: string, title = '') {
   window.history.pushState(null, '', url);
-  document.title = '';
+  document.title = title;
   document.body.innerHTML = html;
   Object.defineProperty(document.body, 'innerText', {
     configurable: true,
@@ -67,6 +67,25 @@ function runLinuxDoBrowserFetchJson(url: string, body: string) {
 }
 
 describe('hidden browser fetch scripts', () => {
+  it.each(['Just a moment...', '  Just a moment...  ', '\t请完成验证…\n', '  checking your browser!  '])(
+    'recognizes a challenge title in both generated scripts: %j',
+    (title) => {
+      vi.useFakeTimers();
+      try {
+        vi.spyOn(document, 'title', 'get').mockReturnValue(title);
+        const nodeSeek = runNodeSeekBrowserFetchScript('/', 'challenge', undefined, title);
+        const linuxDo = runLinuxDoBrowserFetchScript('/latest', 'challenge', undefined, title);
+        for (const { postMessage } of [nodeSeek, linuxDo]) {
+          expect(postMessage).toHaveBeenCalledTimes(1);
+          expect(JSON.parse(postMessage.mock.calls[0]![0])).toMatchObject({ challenge: true });
+        }
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    }
+  );
+
   afterEach(() => {
     document.body.innerHTML = '';
     delete (window as typeof window & { __config__?: unknown }).__config__;

@@ -3,13 +3,15 @@ import type { NodeSeekSearchFilter } from '@/domain/forum/searchFilters';
 import {
   absoluteUrl,
   elementText,
+  forumNodeText,
   isRecord,
   parseHtml,
   parsePositiveInteger,
   textExcerpt,
+  textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
-import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import { accessRequirementFromObject, accessRequirementFromPlainText } from '@/domain/forum/accessRequirements';
 import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 import {
   NODESEEK_BASE_URL,
@@ -152,9 +154,8 @@ export function parseHtmlTopics(document: NodeSeekPageDocument) {
       continue;
     }
     seen.add(id);
-    const row = link.parentNode as { text?: string } | null;
-    const text = String(row?.text || link.text || '');
-    const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
+    const text = forumNodeText(link.parentNode) || forumNodeText(link);
+    const accessRequirement = accessRequirementFromPlainText(text.replace(title, ' '));
     items.push({
       source: 'nodeseek',
       id,
@@ -164,7 +165,7 @@ export function parseHtmlTopics(document: NodeSeekPageDocument) {
       createdAt: new Date().toISOString(),
       lastReplyAt: new Date().toISOString(),
       replyCount: parsePositiveInteger(text.match(/回复\s*(\d+)/)?.[1]),
-      excerpt: textExcerpt(text),
+      excerpt: textExcerptFromPlainText(text),
       ...(accessRequirement ? { accessRequirement } : {})
     });
   }

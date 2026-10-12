@@ -111,7 +111,7 @@ export function stripHtml(html: string | undefined) {
     html || '',
     (segment) => {
       if (ignoredElement) return '';
-      return preDepth > 0 ? segment.replace(/\n/g, preLineBreakToken) : segment;
+      return decodeHtml(preDepth > 0 ? segment.replace(/\n/g, preLineBreakToken) : segment);
     },
     (tag) => {
       if (tag.startsWith('<!--')) return '';
@@ -137,14 +137,14 @@ export function stripHtml(html: string | undefined) {
       }
       if (!closing && name === 'img') {
         const label = tag.match(/\b(?:alt|title)=(["'])(.*?)\1/i)?.[2] || '';
-        return label ? ` ${label} ` : ' ';
+        return label ? ` ${decodeHtml(label)} ` : ' ';
       }
       if (!closing && (name === 'br' || name === 'li')) return '\n';
       if (closing && /^(?:p|div|blockquote|ul|ol|tr|h[1-6])$/.test(name)) return '\n';
       return '';
     }
   );
-  return decodeHtml(text)
+  return text
     .replace(/[ \t\f\v]+\n/g, '\n')
     .replace(/\n[ \t\f\v]+/g, '\n')
     .replace(/\n{2,}/g, '\n')

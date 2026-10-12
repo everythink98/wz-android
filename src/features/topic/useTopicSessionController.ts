@@ -107,6 +107,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
   const [replyComposer, dispatchReplyComposer] = useReducer(transitionReplyComposer, INITIAL_REPLY_COMPOSER_STATE);
   const [replyPendingNodeSeekPolls, setReplyPendingNodeSeekPolls] = useState<PendingNodeSeekPoll[]>([]);
+  const replyDraftRevisionRef = useRef(0);
   const [commentQuery, setCommentQuery] = useState('');
   const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
@@ -120,6 +121,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
 
   const toggleReplyComposer = useCallback(
     (open: boolean) => {
+      replyDraftRevisionRef.current += 1;
       if (!open && replyComposer.intent.kind === 'edit') setReplyPendingNodeSeekPolls([]);
       dispatchReplyComposer({ type: open ? 'open' : 'close' });
     },
@@ -132,6 +134,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
         notify('当前楼层信息不完整，刷新主题后再试。');
         return;
       }
+      replyDraftRevisionRef.current += 1;
       dispatchReplyComposer({
         type: 'reply-to-floor',
         target: {
@@ -145,33 +148,42 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   );
 
   const editReply = useCallback((target: ReplyEditTarget) => {
+    replyDraftRevisionRef.current += 1;
     setReplyPendingNodeSeekPolls([]);
     dispatchReplyComposer({ type: 'edit', target });
   }, []);
 
   const detachReplyEdit = useCallback(() => {
+    replyDraftRevisionRef.current += 1;
     dispatchReplyComposer({ type: 'detach-edit' });
   }, []);
 
-  const completeReplySubmission = useCallback(() => {
+  const completeReplySubmission = useCallback((expectedRevision?: number) => {
+    if (expectedRevision !== undefined && expectedRevision !== replyDraftRevisionRef.current) return false;
+    replyDraftRevisionRef.current += 1;
     setReplyPendingNodeSeekPolls([]);
     dispatchReplyComposer({ type: 'complete-submission' });
+    return true;
   }, []);
 
   const appendReplyMarkup = useCallback((markup: string) => {
+    replyDraftRevisionRef.current += 1;
     dispatchReplyComposer({ type: 'append-markup', markup });
   }, []);
 
   const changeReplyContent = useCallback((content: string) => {
+    replyDraftRevisionRef.current += 1;
     dispatchReplyComposer({ type: 'change-content', content });
   }, []);
 
   const changeReplySnapshot = useCallback((snapshot: ComposerSnapshot) => {
+    replyDraftRevisionRef.current += 1;
     dispatchReplyComposer({ type: 'change-content', content: snapshot.markdown });
     setReplyPendingNodeSeekPolls(snapshot.pendingNodeSeekPolls);
   }, []);
 
   const changeReplyFace = useCallback((face: string) => {
+    replyDraftRevisionRef.current += 1;
     dispatchReplyComposer({ type: 'change-face', face });
   }, []);
 
@@ -205,6 +217,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
         changeSnapshot: changeReplySnapshot,
         changeFace: changeReplyFace,
         completeSubmission: completeReplySubmission,
+        getDraftRevision: () => replyDraftRevisionRef.current,
         detachEdit: detachReplyEdit,
         editReply,
         replyToFloor,

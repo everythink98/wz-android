@@ -46,7 +46,7 @@ function Proof({ scenario }: { scenario: Scenario }) {
   const [transport] = useState(() =>
     createComposerTransport(
       scenario.outcome === 'enqueued' ? 'success' : scenario.outcome,
-      false,
+      scenario.stress === 'settlement-new-draft',
       scenario.stress === 'delay' || scenario.stress === 'image-upload' ? 2000 : 0,
       scenario.stress === 'image-upload'
     )
@@ -105,7 +105,7 @@ function Proof({ scenario }: { scenario: Scenario }) {
         uploads: transport.uploads,
         requests: transport.requests.length,
         confirmations: transport.confirmations,
-        ...(scenario.stress.startsWith('ime-')
+        ...(scenario.stress.startsWith('ime-') || scenario.stress === 'settlement-new-draft'
           ? {
               submittedContents: transport.requests.map(({ body }) => (JSON.parse(body) as { content: string }).content)
             }
@@ -145,15 +145,16 @@ function Proof({ scenario }: { scenario: Scenario }) {
                     transport={transport}
                     observe={observe}
                     reopenAfterSuccess={scenario.stress === 'reopen'}
+                    releaseOnEditedSnapshot={scenario.stress === 'settlement-new-draft'}
                   />
                 )}
               </Stack.Screen>
             </Stack.Navigator>
           </NavigationContainer>
         )}
-        <Text accessibilityLabel="Mock 隔离环境" style={{ position: 'absolute', bottom: 30 }}>
-          {scenario.token}
-        </Text>
+        <View pointerEvents="none" style={{ position: 'absolute', bottom: 30 }}>
+          <Text accessibilityLabel="Mock 隔离环境">{scenario.token}</Text>
+        </View>
         {!['topic', 'topic-edit'].includes(scenario.entry) && (
           <View style={{ position: 'absolute', bottom: 65 }}>
             <Button

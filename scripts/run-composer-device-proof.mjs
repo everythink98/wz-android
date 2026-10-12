@@ -22,6 +22,11 @@ const allowedProofAvds = [
   'WZ_TopicCreation_Test_API35',
   'WZ_ComposerExpressions_Test_API35_20261005'
 ];
+export function openComposerFixture(agent, launcher) {
+  agent(['open', pkg]);
+  agent(['wait', 'text', launcher, '15000']);
+  agent(['press', `text="${launcher}"`]);
+}
 export function assertComposerProofAvd(avd) {
   if (!allowedProofAvds.includes(avd)) throw new Error(`Refusing non-proof device: ${avd}`);
 }
@@ -213,6 +218,30 @@ export function captureComposerImeDom(document, phase) {
       : null
   };
 }
+// Observe the actual runtime reply to its public bridge command. Forward every
+// reply to the production native host and restore the bridge before returning.
+export function captureComposerSnapshotReply(window, requestId) {
+  const bridge = window.ReactNativeWebView;
+  if (!bridge?.postMessage) throw new Error('Composer native bridge unavailable');
+  const original = bridge.postMessage;
+  let reply;
+  bridge.postMessage = function (raw) {
+    const value = JSON.parse(raw);
+    if (['SNAPSHOT', 'ERROR'].includes(value.type) && value.payload.requestId === requestId) reply = value;
+    return original.call(this, raw);
+  };
+  try {
+    window.dispatchEvent(
+      new window.MessageEvent('message', {
+        data: JSON.stringify({ type: 'REQUEST_SNAPSHOT', payload: { requestId } })
+      })
+    );
+    if (!reply) throw new Error('Composer runtime did not answer the snapshot request');
+    return reply;
+  } finally {
+    bridge.postMessage = original;
+  }
+}
 async function connectComposerImeDom(adb) {
   const pid = adb('shell', 'pidof', pkg);
   if (!/^\d+$/.test(pid)) throw new Error('Expected one composer proof process for DOM diagnostics');
@@ -287,6 +316,8 @@ async function connectComposerImeDom(adb) {
     return {
       ...connection,
       capture,
+      snapshot: (requestId) =>
+        connection.evaluate(`(${captureComposerSnapshotReply.toString()})(window, ${JSON.stringify(requestId)})`),
       expressions: () => connection.evaluate(`(${captureComposerExpressionGeometry.toString()})(document)`)
     };
   } catch (error) {
@@ -368,6 +399,25 @@ export const topicCreationCases = [
   { id: 'topic-linuxdo-panel-keyboard', source: 'linuxdo', entry: 'topic', stress: 'panel-keyboard', dark: true }
 ];
 export const composerCases = [
+  ...['rich', 'source'].map((mode) => ({
+    id: `settlement-nodeseek-${mode}-new-draft`,
+    source: 'nodeseek',
+    entry: 'reply',
+    mode,
+    presentation: 'fullscreen',
+    keyboard: 'shown',
+    stress: 'settlement-new-draft',
+    outcome: 'success'
+  })),
+  {
+    id: 'snapshot-nodeseek-source-over-limit',
+    source: 'nodeseek',
+    entry: 'reply',
+    mode: 'source',
+    presentation: 'fullscreen',
+    keyboard: 'shown',
+    stress: 'snapshot-limit'
+  },
   ...['nodeseek', 'linuxdo'].map((source) => ({
     id: `expressions-${source}-large-font`,
     source,
@@ -613,6 +663,34 @@ export function assertComposerReceipt(receipt, expected) {
       receipt.requests !== (expected.requests ?? 1))
   )
     throw new Error('Submission did not settle exactly once into an empty closed composer');
+}
+export function assertComposerSettlementDraft(receipt, reply, expected) {
+  assertComposerReceipt(receipt, expected);
+  if (
+    receipt.requests !== 1 ||
+    receipt.confirmations !== 1 ||
+    receipt.busy !== false ||
+    receipt.visible !== true ||
+    receipt.submittedContents?.[0] !== expected.submitted ||
+    reply?.type !== 'SNAPSHOT' ||
+    reply.payload.requestId !== expected.requestId ||
+    reply.payload.documentEpoch !== expected.documentEpoch ||
+    reply.payload.snapshot.mode !== expected.mode ||
+    reply.payload.snapshot.revision <= expected.beforeRevision ||
+    reply.payload.snapshot.markdown !== receipt.content
+  )
+    throw new Error('Confirmed submission lost the newer runtime draft or dispatched again');
+  assertComposerImeEdit(expected.before, reply.payload.snapshot.markdown, expected.input);
+}
+export function assertComposerSnapshotLimit(reply, expected) {
+  if (
+    reply?.type !== 'ERROR' ||
+    reply.payload.requestId !== expected.requestId ||
+    reply.payload.documentEpoch !== expected.documentEpoch ||
+    reply.payload.revision <= expected.beforeRevision ||
+    reply.payload.code !== 'too-long'
+  )
+    throw new Error('Oversized runtime document did not produce a current request error');
 }
 
 export function assertComposerClosed(nodes, before, after) {
@@ -999,8 +1077,7 @@ async function main() {
         await receipt(token, undefined, 60000);
         if (scenario.entry === 'topic-edit') {
           await receipt(token, (value) => value.topic?.ready === true);
-          agent(['open', pkg]);
-          agent(['press', 'text="编辑测试主帖"']);
+          openComposerFixture(agent, '编辑测试主帖');
           await receipt(token, (value) => value.topic?.route === 'TopicComposer' && value.topic?.edit?.exists);
           const readyDeadline = Date.now() + 30000;
           let original;
@@ -1043,8 +1120,7 @@ async function main() {
             await receipt(token, (value) => value.topic?.route === 'MainTabs');
             launch(`'wzcomposerproof://${token}?source=${scenario.source}&entry=topic-edit&stress=restart'`);
             await receipt(token, (value) => value.topic?.ready && value.topic.route === 'MainTabs');
-            agent(['open', pkg]);
-            agent(['press', 'text="编辑测试主帖"']);
+            openComposerFixture(agent, '编辑测试主帖');
             const restored = await receipt(
               token,
               (value) => value.topic?.route === 'TopicComposer' && value.topic?.edit?.title === title
@@ -1109,8 +1185,7 @@ async function main() {
             throw new Error(`Topic title or editor did not become ready for ${source}`);
           };
           await receipt(token, (value) => value.topic?.ready === true);
-          agent(['open', pkg]);
-          agent(['press', 'text="打开测试发帖"']);
+          openComposerFixture(agent, '打开测试发帖');
           await waitForTitle(scenario.source, 'opened');
           capture(directory, 'opened');
           if (scenario.stress === 'expressions') {
@@ -1213,8 +1288,7 @@ async function main() {
           } else if (scenario.stress === 'restart') {
             launch(`'wzcomposerproof://${token}?source=${scenario.source}&entry=topic&stress=restart'`);
             await receipt(token, (value) => value.topic?.ready && value.topic?.route === 'MainTabs');
-            agent(['open', pkg]);
-            agent(['press', 'text="打开测试发帖"']);
+            openComposerFixture(agent, '打开测试发帖');
             await waitForTitle(scenario.source, 'restarted');
             capture(directory, 'restarted');
           }
@@ -1302,6 +1376,132 @@ async function main() {
           if (scenario.stress === 'expressions') {
             await verifyExpressions(scenario, token, directory, submitLabel);
             result.expressions = true;
+          }
+          if (scenario.stress === 'settlement-new-draft') {
+            replay('submit', submitLabel);
+            const posted = await receipt(token, (value) => value.requests === 1 && value.busy && value.visible);
+            assertComposerReceipt(posted, { token, buildId: artifact.buildId });
+            if (posted.confirmations !== 0 || !posted.submittedContents?.[0])
+              throw new Error('The synthetic POST must remain pending before editing');
+            writeFileSync(path.join(directory, 'posted.json'), JSON.stringify(posted));
+            let dom;
+            const evidence = { submitted: posted.submittedContents[0], edits: [] };
+            try {
+              dom = await connectComposerImeDom(adb);
+              const initial = await dom.snapshot(`${token}-posted`);
+              if (
+                initial.type !== 'SNAPSHOT' ||
+                initial.payload.snapshot.markdown !== evidence.submitted ||
+                initial.payload.snapshot.mode !== scenario.mode
+              )
+                throw new Error('Posted body differs from the actual runtime document');
+              evidence.initial = initial;
+              let previous = initial.payload.snapshot;
+              for (const cycle of [901, 902]) {
+                agent(['press', 'id="structured-composer-webview"']);
+                await receipt(token, (value) => value.visible && value.keyboardShown);
+                if (adb('shell', 'settings', 'get', 'secure', 'default_input_method') !== ime)
+                  throw new Error('Settlement input switched away from the real keyboard');
+                const input = composerImeInput(cycle, 32);
+                const edit = { before: previous.markdown, input, beforeDom: await dom.capture('start') };
+                evidence.edits.push(edit);
+                edit.batches = injectComposerImeInput(adb, input);
+                edit.afterInputDom = await dom.capture('read');
+                const settled = await receipt(
+                  token,
+                  (value) => value.confirmations === 1 && !value.busy && value.visible && value.content.includes(input)
+                );
+                const requestId = `${token}-edited-${cycle}`;
+                edit.reply = await dom.snapshot(requestId);
+                edit.receipt = settled;
+                edit.settledDom = await dom.capture('stop');
+                assertComposerSettlementDraft(settled, edit.reply, {
+                  token,
+                  buildId: artifact.buildId,
+                  requestId,
+                  documentEpoch: initial.payload.documentEpoch,
+                  mode: scenario.mode,
+                  submitted: evidence.submitted,
+                  before: previous.markdown,
+                  beforeRevision: previous.revision,
+                  input
+                });
+                previous = edit.reply.payload.snapshot;
+              }
+              replay('manual-close', submitLabel, launcher, closeLabel);
+              await receipt(
+                token,
+                (value) => !value.visible && !value.keyboardShown && value.content === previous.markdown
+              );
+              snapshot(directory, 'retained-after-close');
+              capture(directory, 'retained-after-close');
+              result.settlement = {
+                inputMethod: 'Android InputManager ASCII keyevents with the real IME active',
+                compositionInputVerified: false,
+                release: 'First changed production autosnapshot releases the held synthetic POST',
+                retainedRevision: previous.revision,
+                retainedChars: previous.markdown.length,
+                subsequentEditVerified: true
+              };
+              result.passed = true;
+            } finally {
+              dom?.close();
+              writeFileSync(path.join(directory, 'settlement.json'), JSON.stringify(evidence, null, 2));
+            }
+            persist();
+            console.log(`PASS ${scenario.id}: confirmed POST retained the newer editable runtime draft`);
+            continue;
+          }
+          if (scenario.stress === 'snapshot-limit') {
+            let dom;
+            const evidence = { insertedChars: 512 * 1024 + 1 };
+            try {
+              dom = await connectComposerImeDom(adb);
+              evidence.before = await dom.snapshot(`${token}-valid`);
+              if (evidence.before.type !== 'SNAPSHOT' || evidence.before.payload.snapshot.mode !== 'source')
+                throw new Error('A valid source document did not answer REQUEST_SNAPSHOT');
+              evidence.beforeDom = await dom.capture('start');
+              // Exercise public contenteditable input, never CodeMirror's private view/state.
+              await dom.evaluate(`(() => {
+                const editor = document.querySelector('.cm-content');
+                if (!editor) throw new Error('Source editor unavailable');
+                editor.focus();
+                if (!document.execCommand('insertText', false, 'a'.repeat(${evidence.insertedChars})))
+                  throw new Error('Source editor rejected the public insertText command');
+              })()`);
+              await delay(100);
+              evidence.afterDom = await dom.capture('stop');
+              const expected = {
+                documentEpoch: evidence.before.payload.documentEpoch,
+                beforeRevision: evidence.before.payload.snapshot.revision
+              };
+              evidence.replies = [];
+              for (const stage of ['over-limit', 'over-limit-again']) {
+                const requestId = `${token}-${stage}`;
+                const reply = await dom.snapshot(requestId);
+                evidence.replies.push(reply);
+                assertComposerSnapshotLimit(reply, { ...expected, requestId });
+              }
+              const settled = await receipt(token);
+              assertComposerReceipt(settled, { token, buildId: artifact.buildId });
+              if (settled.requests !== 0 || settled.confirmations !== 0)
+                throw new Error('Snapshot limit proof unexpectedly dispatched a POST');
+              result.snapshotLimit = {
+                maxChars: 512 * 1024,
+                inputMethod: 'Public DOM insertText command into the actual source editor',
+                validRequestAnswered: true,
+                repeatedOversizedRequestsRejected: true,
+                documentEpoch: expected.documentEpoch,
+                revision: evidence.replies[0].payload.revision
+              };
+              result.passed = true;
+            } finally {
+              dom?.close();
+              writeFileSync(path.join(directory, 'snapshot-limit.json'), JSON.stringify(evidence, null, 2));
+            }
+            persist();
+            console.log(`PASS ${scenario.id}: real runtime immediately rejected two oversized snapshot requests`);
+            continue;
           }
           let imeContent;
           if (['ime-fast', 'ime-slow'].includes(scenario.stress)) {

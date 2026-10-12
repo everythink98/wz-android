@@ -1,11 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from 'node:util';
+import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
+import os from 'node:os';
+import apkSigning from './apk-signing.cjs';
 import { buildDeviceProof } from './device-proof-build.mjs';
+import { proofDeviceForSerial } from './review-proof-checkpoint.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -31,16 +34,16 @@ if ([values['journal-only'], values['sidecar-only'], values['seed-only']].filter
   throw new Error('Choose --journal-only, --sidecar-only or --seed-only');
 if (values['seed-only'] && !['ordinary', 'supported', 'large', 'overbytes'].includes(values['seed-only']))
   throw new Error('Unsupported fixture profile');
-const adb = (...values) =>
-  execFileSync('adb', ['-s', serial, ...values], {
+const api = Number(
+  execFileSync('adb', ['-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'], {
     encoding: 'utf8',
     timeout: 60000,
     stdio: ['ignore', 'pipe', 'pipe']
-  });
-const avd = adb('emu', 'avd', 'name').split(/\r?\n/)[0].trim();
-if (!/^WZ_ReaderStorage_API(30|35)_20260910$/.test(avd)) throw new Error(`Refusing non-isolated AVD ${avd}`);
-const pkg = 'com.wz.reader';
-const identity = () => /firstInstallTime=([^\r\n]+)/.exec(adb('shell', 'dumpsys', 'package', pkg))?.[1]?.trim();
+  }).trim()
+);
+const device = proofDeviceForSerial(serial, api);
+const { adb, package: pkg } = device;
+const identity = () => device.identity();
 const before = identity();
 if (values.build) {
   values.apk = buildDeviceProof(root, {
@@ -50,20 +53,61 @@ if (values.build) {
   }).apk;
   console.log(`Proof APK: ${values.apk}`);
 }
+let apkHash;
 if (values.apk) {
-  adb('install', '-r', path.resolve(option('--apk')));
-  if (before && identity() !== before) throw new Error('Installation identity changed; device changes frozen');
+  const apk = path.resolve(values.apk);
+  apkHash = createHash('sha256').update(readFileSync(apk)).digest('hex');
+  const buildTools = path.join(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '', 'build-tools');
+  const signer = readdirSync(buildTools)
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+    .map((version) => path.join(buildTools, version, 'lib/apksigner.jar'))
+    .find(existsSync);
+  if (!signer) throw new Error('Android apksigner unavailable');
+  const aapt = path.join(path.dirname(path.dirname(signer)), process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
+  const packageInfo = (file) =>
+    /^package: name='([^']+)' versionCode='(\d+)'/mu.exec(
+      execFileSync(aapt, ['dump', 'badging', file], { encoding: 'utf8', windowsHide: true })
+    );
+  const signingIdentity = (file) =>
+    apkSigning.singleApkSignerSha256(
+      execFileSync('java', ['-jar', signer, 'verify', '--print-certs', file], { encoding: 'utf8', windowsHide: true })
+    );
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'wz-reader-storage-install-'));
+  try {
+    const installedCopy = path.join(scratch, 'previous.apk');
+    const installedPath = adb('shell', 'pm', 'path', pkg).trim().split(/\r?\n/u)[0]?.replace('package:', '');
+    adb('pull', installedPath, installedCopy);
+    if (createHash('sha256').update(readFileSync(installedCopy)).digest('hex') !== before.apkSha256)
+      throw new Error('Installed APK changed during preflight; device changes frozen');
+    const candidate = packageInfo(apk);
+    const previous = packageInfo(installedCopy);
+    if (
+      candidate?.[1] !== pkg ||
+      previous?.[1] !== pkg ||
+      !Number.isSafeInteger(Number(candidate?.[2])) ||
+      !Number.isSafeInteger(Number(previous?.[2])) ||
+      Number(previous?.[2]) < 1 ||
+      Number(candidate?.[2]) < Number(previous?.[2])
+    )
+      throw new Error('APK package mismatch or downgrade; installation frozen');
+    const certificate = signingIdentity(apk);
+    if (!certificate || certificate !== signingIdentity(installedCopy))
+      throw new Error('APK signer mismatch; installation frozen');
+    adb('install', '-r', apk);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
+const installedIdentity = identity();
+if (!isDeepStrictEqual({ ...installedIdentity, apkSha256: before.apkSha256 }, before))
+  throw new Error('Installation identity changed; device changes frozen');
+if (apkHash && installedIdentity.apkSha256 !== apkHash) throw new Error('Installed proof APK checksum mismatch');
 const results = [];
 mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
-const installedPath = adb('shell', 'pm', 'path', pkg).trim().split(/\r?\n/)[0]?.replace('package:', '');
-if (!installedPath?.startsWith('/data/app/')) throw new Error('Missing installed proof APK');
 const context = {
-  avd,
+  ...installedIdentity,
   serial,
-  api: adb('shell', 'getprop', 'ro.build.version.sdk').trim(),
-  firstInstallTime: identity(),
-  apkSha256: adb('shell', 'sha256sum', installedPath).trim().split(/\s/)[0]
+  api: String(api)
 };
 async function launch(mode, profile, checkpoint = 'passed') {
   adb('shell', 'am', 'force-stop', pkg);
@@ -112,7 +156,7 @@ if (values['journal-only']) {
   for (const mode of ['settings-hang', 'cleanup-remove-hang', 'cleanup-keys-hang']) {
     await launch('seed', 'ordinary');
     await launch(mode, 'ordinary');
-    await launch('verify', 'ordinary');
+    await launch(mode === 'settings-hang' ? 'verify-updated' : 'verify', 'ordinary');
   }
 } else if (values['seed-only']) {
   await launch('seed', option('--seed-only'));
@@ -136,5 +180,5 @@ if (values['journal-only']) {
   }
 }
 adb('shell', 'am', 'force-stop', pkg);
-if (identity() !== context.firstInstallTime) throw new Error('Installation identity changed');
+if (!isDeepStrictEqual(identity(), installedIdentity)) throw new Error('Installation identity changed');
 console.log(`Saved ${results.length} real Android receipts to ${output}`);

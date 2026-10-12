@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   discourseAvatarUrl,
   discourseQuoteMetadataFromRoot,
+  normalizeDiscourseCallouts,
   stripDiscourseCalloutMarkersFromExcerpt
 } from '@/sources/discourse/content';
 import { compileForumContent, discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
 import { prepareLinuxDoContent, sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
-import { parseHtml } from '@/domain/forum/html';
+import { forumNodeText, parseForumContentHtml, parseHtml } from '@/domain/forum/html';
+import { withHtmlWorkBudget } from '../helpers/htmlWorkBudget';
 
 function discourseQuoteMetadata(html: string, source: 'linuxdo', topicId?: string) {
   const root = parseHtml(html);
@@ -19,6 +21,108 @@ function discourseQuoteMetadata(html: string, source: 'linuxdo', topicId?: strin
 }
 
 describe('portable Discourse content parts', () => {
+  it('normalizes sibling Callouts under a shared deep ancestor chain with bounded DOM work', () => {
+    const depth = 512;
+    const root = parseForumContentHtml(
+      '<span>'.repeat(depth) +
+        '<blockquote><p>[!note]Title</p><p>Body</p></blockquote>'.repeat(depth) +
+        '</span>'.repeat(depth)
+    );
+    withHtmlWorkBudget(depth * 128 + 10_000, () => normalizeDiscourseCallouts(root));
+    expect(root.querySelectorAll('[data-forum-callout="true"]')).toHaveLength(depth);
+    expect(forumNodeText(root)).toBe('TitleBody'.repeat(depth));
+  });
+
+  it('keeps split math entities literal while decoding complete text leaves once', () => {
+    const result = sanitizeLinuxDoContentHtml('<span class="math">&nb<b>sp;</b> &amp;lt;x&amp;gt;</span>', []);
+    expect(forumNodeText(parseForumContentHtml(result))).toBe('&nbsp; &lt;x&gt;');
+    expect(result).toContain('forum-math-inline');
+  });
+  it.each(['nested math', 'wide math', 'wide polls', 'nested policy', 'wrapped Callout title'])(
+    'prepares %s with bounded DOM work and retains visible source semantics',
+    (layout) => {
+      const depth = 512;
+      const html =
+        layout === 'nested math'
+          ? '<div class="math">'.repeat(depth) + 'x &amp; y' + '</div>'.repeat(depth)
+          : layout === 'wide math'
+            ? '<span class="math">x</span>'.repeat(depth)
+            : layout === 'wide polls'
+              ? '<div class="poll" data-poll-name="a">A</div>'.repeat(depth)
+              : layout === 'nested policy'
+                ? '<div class="policy">'.repeat(depth) + 'ordinary' + '</div>'.repeat(depth)
+                : '<blockquote><p>[!warning] before ' +
+                  '<span>'.repeat(depth) +
+                  'Title\nBody' +
+                  '</span>'.repeat(depth) +
+                  ' after</p><p>Tail</p></blockquote>';
+      const { result } = withHtmlWorkBudget(depth * 384 + 10000, () =>
+        sanitizeLinuxDoContentHtml(html, [{ id: 'a', name: 'a', title: 'poll', options: [{ id: '1', label: 'A' }] }])
+      );
+      const root = parseForumContentHtml(result);
+      if (layout === 'nested math') expect(root.text).toBe('x & y');
+      else if (layout === 'wide math') expect(root.text).toBe('x'.repeat(depth));
+      else if (layout === 'wide polls') expect(root.querySelectorAll('forum-discourse-poll')).toHaveLength(depth);
+      else if (layout === 'nested policy') expect(root.text).toBe('ordinary');
+      else {
+        expect(root.querySelector('.forum-callout-title')?.text).toBe('before Title');
+        expect(root.querySelector('.forum-callout-content')?.text).toBe('Body afterTail');
+      }
+    }
+  );
+  it('strips forged semantics throughout a deep subtree while retaining ordinary content and a real Callout', () => {
+    const depth = 4096;
+    const root = parseForumContentHtml(
+      '<span class="safe forum-callout-title" data-forum-callout="true">'.repeat(depth) +
+        'ordinary' +
+        '</span>'.repeat(depth) +
+        '<blockquote><p>[!warning] Title<br>Body</p></blockquote>'
+    );
+
+    normalizeDiscourseCallouts(root);
+
+    const spans = root.querySelectorAll('span');
+    expect(spans).toHaveLength(depth);
+    expect(
+      spans.every((node) => node.getAttribute('class') === 'safe' && !node.hasAttribute('data-forum-callout'))
+    ).toBe(true);
+    expect(root.firstChild?.text).toBe('ordinary');
+    expect(root.querySelector('blockquote')?.getAttribute('data-forum-callout-type')).toBe('warning');
+    expect(root.querySelector('.forum-callout-title')?.text).toBe('Title');
+    expect(root.querySelector('.forum-callout-content')?.text).toBe('Body');
+  });
+
+  it('splits deeply wrapped Callout titles from their body without losing inline attributes or text order', () => {
+    const depth = 4096;
+    const root = parseForumContentHtml(
+      '<blockquote><p>[!warning] before ' +
+        '<span data-proof="kept" style="color:red">'.repeat(depth) +
+        'Title\nBody' +
+        '</span>'.repeat(depth) +
+        ' after</p><p>Tail</p></blockquote>'
+    );
+
+    normalizeDiscourseCallouts(root);
+
+    const title = root.querySelector('.forum-callout-title');
+    const body = root.querySelector('.forum-callout-content');
+    expect(title?.text).toBe('before Title');
+    expect(body?.children.map((node) => node.text)).toEqual(['Body after', 'Tail']);
+    const titleSpans = title?.querySelectorAll('span') || [];
+    const bodySpans = body?.querySelectorAll('span') || [];
+    expect(titleSpans).toHaveLength(depth);
+    expect(bodySpans).toHaveLength(depth);
+    expect(titleSpans.every((node) => node.getAttribute('data-proof') === 'kept' && !node.hasAttribute('style'))).toBe(
+      true
+    );
+    expect(
+      bodySpans.every(
+        (node) => node.getAttribute('data-proof') === 'kept' && node.getAttribute('style') === 'color:red'
+      )
+    ).toBe(true);
+    expect(root.querySelector('blockquote')?.getAttribute('data-forum-callout-type')).toBe('warning');
+  });
+
   it('renders a leading warning marker as semantic Callout content', () => {
     const html = sanitizeLinuxDoContentHtml('<blockquote><p>[!warning] 注意！！<br>正文</p></blockquote>', []);
 
@@ -109,13 +213,14 @@ describe('portable Discourse content parts', () => {
 
   it('recognizes an entity-encoded leading marker as DOM text', () => {
     const html = sanitizeLinuxDoContentHtml(
-      '<blockquote><p>&#91;!warning&#93; Encoded title<br>Body</p></blockquote>',
+      '<blockquote><p>&#91;!warning&#93; &amp;lt;x&amp;gt; &amp;#65;<br>Body</p></blockquote>',
       []
     );
 
     expect(html).not.toContain('[!warning]');
     expect(html).not.toContain('&#91;!warning&#93;');
     expect(html).toContain('data-forum-callout-type="warning"');
+    expect(forumNodeText(parseForumContentHtml(html))).toBe('&lt;x&gt; &#65;Body');
   });
 
   it('removes source inline colors from canonical Callout titles', () => {

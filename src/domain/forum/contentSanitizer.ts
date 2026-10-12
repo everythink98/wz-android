@@ -1,9 +1,11 @@
 import Anser from 'anser';
-import { TextNode, type HTMLElement } from 'node-html-parser';
+import { TextNode, HTMLElement } from 'node-html-parser';
 
 import {
   decodeHtml,
+  createForumTextIndex,
   elementText,
+  forumNodeText,
   escapeHtmlAttribute,
   escapeHtmlText,
   FORUM_AUDIO_TAG,
@@ -14,7 +16,9 @@ import {
   FORUM_VIDEO_TAG,
   isAllowedDataImageUrl,
   parseForumContentHtml,
-  textContentFromHtml
+  transformForumElements,
+  type ForumTextSegment,
+  type ForumTextTape
 } from './html';
 import { isNodeSeekHost } from './sourceCatalog';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
@@ -72,10 +76,10 @@ function restoreCloudflareEmails(root: HTMLElement, baseUrl: string) {
     const email = decodedCloudflareEmail(url.hash.slice(1));
     if (email !== undefined) node.setAttribute('href', `mailto:${email}`);
   }
-  for (const node of root.querySelectorAll('.__cf_email__[data-cfemail]')) {
+  transformForumElements(root, root.querySelectorAll('.__cf_email__[data-cfemail]'), (node) => {
     const email = decodedCloudflareEmail(node.getAttribute('data-cfemail') || '');
-    if (email !== undefined) node.replaceWith(new TextNode(escapeHtmlText(email)));
-  }
+    if (email !== undefined) return [new TextNode(escapeHtmlText(email))];
+  });
 }
 
 const safeCssColorPattern =
@@ -283,9 +287,9 @@ function inlineStyleHidesElement(value: string) {
 }
 
 function removeHiddenContent(root: HTMLElement) {
-  root.querySelectorAll('*').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('*'), (node) => {
     if (node.hasAttribute('hidden') || inlineStyleHidesElement(node.getAttribute('style') || '')) {
-      node.remove();
+      return [];
     }
   });
 }
@@ -302,20 +306,142 @@ function classTokens(value: string | undefined) {
     .filter(Boolean);
 }
 
-function removeForumImageMetadata(root: HTMLElement) {
-  root.querySelectorAll('div').forEach((node) => {
-    const text = decodeHtml(node.text).replace(/\s+/g, ' ').trim();
-    const looksLikeImageMetadata =
-      classTokens(node.getAttribute('class')).includes('meta') || imageMetadataPrefixPattern.test(text);
-    if (
-      !node.querySelector('img') &&
-      looksLikeImageMetadata &&
-      imageDimensionPattern.test(text) &&
-      imageFileSizePattern.test(text)
-    ) {
-      node.remove();
+type ImageMetadataText = {
+  prefix: string;
+  suffix: string;
+  full?: string;
+  dimension: boolean;
+  fileSize: boolean;
+};
+
+// Six digits distinguish the dimension limit (five) while retaining arbitrary-length file sizes.
+// Whitespace and digit runs are compacted only for matching; the DOM content is never changed.
+function compactImageMetadataText(text: string) {
+  return text.replace(/\s+/g, ' ').replace(/\d{7,}/g, (digits) => digits.slice(0, 6));
+}
+
+function imageMetadataText(text: string): ImageMetadataText {
+  const compact = compactImageMetadataText(text);
+  const surrounded = `_${compact}_`;
+  return {
+    prefix: compact.slice(0, 32),
+    suffix: compact.slice(-32),
+    full: compact.length <= 64 ? compact : undefined,
+    // Matches at either endpoint are provisional: a neighboring word character can invalidate \b.
+    dimension: imageDimensionPattern.test(surrounded),
+    fileSize: imageFileSizePattern.test(surrounded)
+  };
+}
+
+function mergeImageMetadataText(left: ImageMetadataText, right: ImageMetadataText): ImageMetadataText {
+  if (left.full !== undefined && right.full !== undefined) return imageMetadataText(left.full + right.full);
+  const boundary = imageMetadataText(left.suffix + right.prefix);
+  return {
+    prefix: left.full === undefined ? left.prefix : compactImageMetadataText(left.full + right.prefix).slice(0, 32),
+    suffix: right.full === undefined ? right.suffix : compactImageMetadataText(left.suffix + right.full).slice(-32),
+    dimension: left.dimension || right.dimension || boundary.dimension,
+    fileSize: left.fileSize || right.fileSize || boundary.fileSize
+  };
+}
+
+function imageMetadataTextIndex(text: string) {
+  const blockSize = 128;
+  let size = 1;
+  while (size * blockSize < text.length) size *= 2;
+  const empty = imageMetadataText('');
+  const tree: ImageMetadataText[] = Array.from({ length: size * 2 }, () => empty);
+  for (let block = 0; block * blockSize < text.length; block++) {
+    tree[size + block] = imageMetadataText(text.slice(block * blockSize, (block + 1) * blockSize));
+  }
+  for (let node = size - 1; node; node--) tree[node] = mergeImageMetadataText(tree[node * 2], tree[node * 2 + 1]);
+  const cached = new Map<string, ImageMetadataText>();
+  return (start: number, end: number) => {
+    const key = `${start}:${end}`;
+    const existing = cached.get(key);
+    if (existing) return existing;
+    let left = imageMetadataText(text.slice(start, Math.min(end, (Math.floor(start / blockSize) + 1) * blockSize)));
+    let right = empty;
+    let first = Math.floor(start / blockSize) + 1;
+    const last = Math.floor(end / blockSize);
+    if (first <= last) {
+      right = imageMetadataText(text.slice(last * blockSize, end));
+      first += size;
+      let after = last + size;
+      while (first < after) {
+        if (first & 1) left = mergeImageMetadataText(left, tree[first++]);
+        if (after & 1) right = mergeImageMetadataText(tree[--after], right);
+        first >>>= 1;
+        after >>>= 1;
+      }
     }
-  });
+    const result = mergeImageMetadataText(left, right);
+    cached.set(key, result);
+    return result;
+  };
+}
+
+function removeForumImageMetadata(root: HTMLElement) {
+  const candidates: { node: HTMLElement; imageStart: number; hasImage: boolean }[] = [];
+  const pending: { node: HTMLElement; candidate?: (typeof candidates)[number]; exit: boolean }[] = [
+    { node: root, exit: false }
+  ];
+  let images = 0;
+  while (pending.length) {
+    const entry = pending.pop();
+    if (!entry) break;
+    if (entry.exit) {
+      if (entry.candidate) entry.candidate.hasImage = images > entry.candidate.imageStart;
+      continue;
+    }
+    const tag = entry.node.rawTagName?.toLowerCase();
+    if (tag === 'img') images++;
+    const candidate = tag === 'div' ? { node: entry.node, imageStart: images, hasImage: false } : undefined;
+    if (candidate) candidates.push(candidate);
+    pending.push({ ...entry, candidate, exit: true });
+    for (let index = entry.node.childNodes.length - 1; index >= 0; index--) {
+      const child = entry.node.childNodes[index];
+      if (child instanceof HTMLElement) pending.push({ node: child, exit: false });
+    }
+  }
+  const text = createForumTextIndex(root);
+  const tapeQueries = new Map<ForumTextTape, ReturnType<typeof imageMetadataTextIndex>>();
+  function segmentSummary(segment: ForumTextSegment) {
+    let query = tapeQueries.get(segment.tape);
+    if (!query) {
+      query = imageMetadataTextIndex(segment.tape.text);
+      tapeQueries.set(segment.tape, query);
+    }
+    return query(segment.start, segment.end);
+  }
+  const imageByNode = new Map(candidates.map(({ node, hasImage }) => [node, hasImage]));
+  transformForumElements(
+    root,
+    candidates.map(({ node }) => node),
+    (node) => {
+      if (imageByNode.get(node)) return;
+      const range = text.range(node);
+      const summary = range.reduce(
+        (result, segment) => mergeImageMetadataText(result, segmentSummary(segment)),
+        imageMetadataText('')
+      );
+      const looksLikeImageMetadata =
+        classTokens(node.getAttribute('class')).includes('meta') ||
+        imageMetadataPrefixPattern.test(summary.prefix.trimStart());
+      const prefix = summary.full ?? `${summary.prefix}_`;
+      const suffix = summary.full ?? `_${summary.suffix}`;
+      if (
+        looksLikeImageMetadata &&
+        (summary.dimension || imageDimensionPattern.test(prefix) || imageDimensionPattern.test(suffix)) &&
+        (summary.fileSize || imageFileSizePattern.test(prefix) || imageFileSizePattern.test(suffix))
+      )
+        return [];
+    }
+  );
+}
+
+function replacementNodes(html: string) {
+  const nodes = parseForumContentHtml(html).childNodes;
+  return nodes.length ? nodes : [new TextNode(html)];
 }
 
 function referrerPolicyHtmlAttribute(name: string, value: unknown) {
@@ -324,7 +450,7 @@ function referrerPolicyHtmlAttribute(name: string, value: unknown) {
 }
 
 function oneboxText(node: HTMLElement | null | undefined, maxLength: number) {
-  const text = textContentFromHtml(node?.innerHTML || node?.text || '');
+  const text = elementText(node);
   return text.length > maxLength ? text.slice(0, maxLength).trim() : text;
 }
 
@@ -341,7 +467,7 @@ function fallbackHost(value: string) {
 }
 
 function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
-  root.querySelectorAll('aside').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('aside'), (node) => {
     if (!classTokens(node.getAttribute('class')).includes('onebox')) {
       return;
     }
@@ -352,8 +478,7 @@ function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
       node.getAttribute('data-onebox-src') || titleLink?.getAttribute('href') || sourceLink?.getAttribute('href') || '';
     const href = sanitizedUrlAttribute('href', rawHref, baseUrl);
     if (!href) {
-      node.remove();
-      return;
+      return [];
     }
     const site = oneboxText(sourceLink, 80) || fallbackHost(href);
     const title = oneboxText(titleLink, 160) || site;
@@ -362,18 +487,17 @@ function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
     const siteIcon = firstClassedImage(node, 'site-icon');
     const imageSrc = thumbnail ? sanitizedUrlAttribute('src', thumbnail.getAttribute('src') || '', baseUrl) || '' : '';
     const iconSrc = siteIcon ? sanitizedUrlAttribute('src', siteIcon.getAttribute('src') || '', baseUrl) || '' : '';
-    node.replaceWith(
+    return replacementNodes(
       `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="${escapeHtmlAttribute(site)}" title="${escapeHtmlAttribute(title)}" description="${escapeHtmlAttribute(description)}" image-src="${escapeHtmlAttribute(imageSrc)}" icon-src="${escapeHtmlAttribute(iconSrc)}"${referrerPolicyHtmlAttribute('image-referrerpolicy', thumbnail?.getAttribute('referrerpolicy'))}${referrerPolicyHtmlAttribute('icon-referrerpolicy', siteIcon?.getAttribute('referrerpolicy'))}></${FORUM_LINK_CARD_TAG}>`
     );
   });
 }
 
 function sanitizeIframes(root: HTMLElement, baseUrl: string) {
-  root.querySelectorAll('iframe').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('iframe'), (node) => {
     const embed = nsEmbedFromUrl(node.getAttribute('src'), baseUrl);
     if (!embed) {
-      node.remove();
-      return;
+      return [];
     }
     if (embed.type === 'bilibili') {
       for (const name of Object.keys(node.attributes)) {
@@ -383,21 +507,21 @@ function sanitizeIframes(root: HTMLElement, baseUrl: string) {
       node.setAttribute('allowfullscreen', 'true');
       return;
     }
-    node.replaceWith(
+    return replacementNodes(
       `<a class="embed-link" href="${escapeHtmlAttribute(embed.sourceUrl)}">嵌入内容 · ${escapeHtmlAttribute(embed.displayDomain)}</a>`
     );
   });
 }
 
 function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
-  root.querySelectorAll('img').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('img'), (node) => {
     const src = node.getAttribute('src');
     if (!/bilibili\.com/i.test(src || '')) return;
     const embedUrl = bilibiliEmbedUrlFromUrl(src, baseUrl);
     if (!embedUrl) {
       return;
     }
-    node.replaceWith(`<iframe src="${escapeHtmlAttribute(embedUrl)}" allowfullscreen="true"></iframe>`);
+    return replacementNodes(`<iframe src="${escapeHtmlAttribute(embedUrl)}" allowfullscreen="true"></iframe>`);
   });
 }
 
@@ -427,7 +551,7 @@ function safeStickerDimension(value: unknown, fallback = '100') {
 }
 
 function sanitizeNodeSeekStickerVideos(root: HTMLElement, baseUrl: string) {
-  root.querySelectorAll('video').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('video'), (node) => {
     if (!classTokens(node.getAttribute('class')).includes('sticker')) {
       return;
     }
@@ -445,7 +569,7 @@ function sanitizeNodeSeekStickerVideos(root: HTMLElement, baseUrl: string) {
     const height = safeStickerDimension(node.getAttribute('height'));
     const alt = String(node.getAttribute('alt') || node.getAttribute('title') || 'sticker');
     const stickerSrc = videoUrl || fallbackUrl || '';
-    node.replaceWith(
+    return replacementNodes(
       `<${FORUM_VIDEO_STICKER_TAG} class="sticker" src="${escapeHtmlAttribute(stickerSrc)}" data-fallback-src="${escapeHtmlAttribute(fallbackUrl || '')}" alt="${escapeHtmlAttribute(alt)}" width="${width}" height="${height}"${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}></${FORUM_VIDEO_STICKER_TAG}>`
     );
   });
@@ -465,31 +589,28 @@ function safeTagName(node: HTMLElement) {
 }
 
 function sanitizePlayableAudio(root: HTMLElement, baseUrl: string) {
-  root.querySelectorAll('audio').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('audio'), (node) => {
     const src = mediaSourceUrl(node, baseUrl);
-    node.querySelectorAll('source').forEach((source) => source.remove());
+    transformForumElements(node, node.querySelectorAll('source'), () => []);
     const fallbackHtml = node.innerHTML.trim();
     if (!src) {
-      if (fallbackHtml) node.replaceWith(fallbackHtml);
-      else node.remove();
-      return;
+      return fallbackHtml ? replacementNodes(fallbackHtml) : [];
     }
     const fallback = fallbackHtml || `<a href="${escapeHtmlAttribute(src)}">打开音频</a>`;
-    node.replaceWith(
+    return replacementNodes(
       `<${FORUM_AUDIO_TAG} src="${escapeHtmlAttribute(src)}"${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}>${fallback}</${FORUM_AUDIO_TAG}>`
     );
   });
 }
 
 function sanitizePlayableVideos(root: HTMLElement, baseUrl: string) {
-  root.querySelectorAll('video').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('video'), (node) => {
     const src = mediaSourceUrl(node, baseUrl);
     if (!src) {
-      node.remove();
-      return;
+      return [];
     }
     const poster = sanitizedUrlAttribute('src', node.getAttribute('poster') || '', baseUrl) || '';
-    node.replaceWith(
+    return replacementNodes(
       `<${FORUM_VIDEO_TAG} src="${escapeHtmlAttribute(src)}"${poster ? ` poster="${escapeHtmlAttribute(poster)}"` : ''}${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}></${FORUM_VIDEO_TAG}>`
     );
   });
@@ -517,7 +638,7 @@ const xtermAnsiColors = [
 ];
 
 function normalizeTerminalText(value: string) {
-  const lines = decodeHtml(value)
+  const lines = value
     .replace(/\u00a0/g, ' ')
     .replace(/\r\n?/g, '\n')
     .split('\n');
@@ -595,9 +716,9 @@ function nodeSeekTerminalText(node: HTMLElement) {
     node;
   const text = xtermRows
     ? xtermRowsInOrder(xtermRows)
-        .map((row) => row.text)
+        .map((row) => forumNodeText(row))
         .join('\n')
-    : source.text;
+    : forumNodeText(source);
   return normalizeTerminalText(text || '');
 }
 
@@ -691,20 +812,43 @@ function elementTerminalStyle(node: HTMLElement) {
 }
 
 function xtermNodeHtml(node: unknown): string {
-  if (!node || typeof node !== 'object') {
-    return '';
+  const parts: string[] = [];
+  const pending: ({ node: unknown } | { openingIndex: number })[] = [{ node }];
+  for (let current = pending.pop(); current; current = pending.pop()) {
+    if ('openingIndex' in current) {
+      if (parts.length > current.openingIndex + 1) parts.push('</span>');
+      else parts.pop();
+      continue;
+    }
+    if (!current.node || typeof current.node !== 'object') continue;
+    const element = current.node as Partial<HTMLElement>;
+    if (typeof element.getAttribute === 'function') {
+      const styleAttr = terminalStyleAttribute(elementTerminalStyle(element as HTMLElement));
+      if (Array.isArray(element.childNodes) && element.childNodes.length) {
+        if (styleAttr) {
+          const openingIndex = parts.length;
+          parts.push(`<span${styleAttr}>`);
+          pending.push({ openingIndex });
+        }
+        for (let index = element.childNodes.length - 1; index >= 0; index -= 1) {
+          pending.push({ node: element.childNodes[index] });
+        }
+      } else {
+        const html = terminalTextHtml(
+          current.node instanceof HTMLElement ? forumNodeText(current.node) : element.text || ''
+        );
+        if (html) parts.push(styleAttr ? `<span${styleAttr}>${html}</span>` : html);
+      }
+    } else {
+      const html = terminalTextHtml(
+        current.node instanceof TextNode
+          ? forumNodeText(current.node)
+          : String((current.node as { text?: unknown }).text || '')
+      );
+      if (html) parts.push(html);
+    }
   }
-  const element = node as Partial<HTMLElement>;
-  if (typeof element.getAttribute === 'function') {
-    const html =
-      Array.isArray(element.childNodes) && element.childNodes.length
-        ? element.childNodes.map(xtermNodeHtml).join('')
-        : terminalTextHtml(element.text || '');
-    const style = elementTerminalStyle(element as HTMLElement);
-    const styleAttr = terminalStyleAttribute(style);
-    return html && styleAttr ? `<span${styleAttr}>${html}</span>` : html;
-  }
-  return terminalTextHtml(String((node as { text?: unknown }).text || ''));
+  return parts.join('');
 }
 
 function xtermRowsTerminalHtml(xtermRows: HTMLElement) {
@@ -716,47 +860,38 @@ function xtermRowsTerminalHtml(xtermRows: HTMLElement) {
 }
 
 function nodeSeekMagicTabContentHtml(body: HTMLElement) {
-  const candidates = body.querySelectorAll('.terminal-container, .xterm-rows, pre, textarea');
-  const candidateSet = new Set(candidates);
-  const roots = candidates.filter((node) => {
-    let parent = node.parentNode;
-    while (parent && parent !== body) {
-      if (candidateSet.has(parent)) return false;
-      parent = parent.parentNode;
-    }
-    return true;
-  });
+  const roots = body.querySelectorAll('.terminal-container, .xterm-rows, pre, textarea');
   const meaningfulChildren = body.childNodes.filter((node) => Boolean(node.toString().trim()));
   if (!roots.length && meaningfulChildren.length === 1) {
     const onlyChild = meaningfulChildren[0] as HTMLElement;
     if (safeTagName(onlyChild) === 'code') roots.push(onlyChild);
   }
-  roots.forEach((root) => {
+  transformForumElements(body, roots, (root) => {
     const xtermRows = root.matches('.xterm-rows') ? root : root.querySelector('.xterm-rows');
     if (xtermRows) {
       const replacement = xtermRowsTerminalHtml(xtermRows);
-      if (replacement) xtermRows.replaceWith(replacement);
-      if (root !== xtermRows) root.replaceWith(root.innerHTML);
+      if (root === xtermRows) return replacement ? replacementNodes(replacement) : undefined;
+      if (replacement) transformForumElements(root, [xtermRows], () => replacementNodes(replacement));
+      if (root !== xtermRows) return replacementNodes(root.innerHTML);
       return;
     }
     if (root.matches('.terminal-container')) {
       const nestedTerminalRoots = root.querySelectorAll('pre, textarea');
       if (nestedTerminalRoots.length) {
-        nestedTerminalRoots.forEach((nestedRoot) => {
-          nestedRoot.replaceWith(terminalCodeBlockHtml(nodeSeekTerminalText(nestedRoot)));
-        });
-        root.replaceWith(root.innerHTML);
-        return;
+        transformForumElements(root, nestedTerminalRoots, (nestedRoot) =>
+          replacementNodes(terminalCodeBlockHtml(nodeSeekTerminalText(nestedRoot)))
+        );
+        return replacementNodes(root.innerHTML);
       }
     }
     const replacement = terminalCodeBlockHtml(nodeSeekTerminalText(root));
-    if (replacement) root.replaceWith(replacement);
+    if (replacement) return replacementNodes(replacement);
   });
   return body.innerHTML.trim();
 }
 
 function sanitizeNodeSeekMagicTabs(root: HTMLElement) {
-  root.querySelectorAll('.nsk-magic-tabs').forEach((node) => {
+  transformForumElements(root, root.querySelectorAll('.nsk-magic-tabs'), (node) => {
     const titles = node.querySelectorAll('.nsk-magic-tab-title');
     const bodies = node.querySelectorAll('.nsk-magic-tab-body');
     const sections = titles
@@ -771,20 +906,19 @@ function sanitizeNodeSeekMagicTabs(root: HTMLElement) {
       })
       .filter(Boolean);
     if (sections.length) {
-      node.replaceWith(terminalReportHtml(sections));
+      return replacementNodes(terminalReportHtml(sections));
     }
   });
 }
 
 function terminalTextFromAnsiCodeHtml(value: string) {
-  return normalizeTerminalText(
-    String(value || '')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<span\b[^>]*\bdata-ansicode=["']?27["']?[^>]*>\s*<\/span>/gi, '\x1B')
-      .replace(/<span\b[^>]*\bdata-ansicode=["']?\d+["']?[^>]*>\s*<\/span>/gi, '')
-      .replace(/<\/?span\b[^>]*>/gi, '')
-      .replace(/<[^>]*>/g, '')
-  );
+  const root = parseForumContentHtml(value);
+  transformForumElements(root, root.querySelectorAll('span[data-ansicode]'), (node) => {
+    const code = node.getAttribute('data-ansicode') || '';
+    if (/^\d+$/.test(code) && node.childNodes.every((child) => child instanceof TextNode && !child.rawText.trim()))
+      return code === '27' ? [new TextNode('\x1B')] : [];
+  });
+  return normalizeTerminalText(forumNodeText(root));
 }
 
 function sanitizeNodeSeekAnsiCodeBlocksHtml(html: unknown) {
@@ -799,6 +933,7 @@ function sanitizeNodeSeekAnsiCodeBlocksHtml(html: unknown) {
 }
 
 function sanitizeNodeSeekAnsiReportSections(root: HTMLElement) {
+  const replacements = new Map<HTMLElement, ReturnType<typeof replacementNodes>>();
   for (const parent of [root, ...root.querySelectorAll('*')]) {
     const siblings = parent.childNodes.filter((node) => !(node instanceof TextNode && !node.textContent.trim()));
     for (let index = 0; index < siblings.length;) {
@@ -818,19 +953,23 @@ function sanitizeNodeSeekAnsiReportSections(root: HTMLElement) {
         index += 2;
       }
       if (sections.length >= 2) {
-        sections[0].heading.replaceWith(
-          terminalReportHtml(
-            sections.map(({ heading, code }) => terminalTabHtml(elementText(heading), code.toString()))
+        replacements.set(
+          sections[0].heading,
+          replacementNodes(
+            terminalReportHtml(
+              sections.map(({ heading, code }) => terminalTabHtml(elementText(heading), code.toString()))
+            )
           )
         );
         sections.forEach(({ heading, code }, sectionIndex) => {
-          if (sectionIndex) heading.remove();
-          code.remove();
+          if (sectionIndex) replacements.set(heading, []);
+          replacements.set(code, []);
         });
       }
       if (!sections.length) index++;
     }
   }
+  transformForumElements(root, [...replacements.keys()], (node) => replacements.get(node));
 }
 
 export function sanitizeContentHtmlWithRoot(
@@ -845,7 +984,7 @@ export function sanitizeContentHtmlWithRoot(
   transformRoot?.(root);
   const markup = root.toString().toLowerCase();
   for (const selector of ['script', 'style', 'noscript']) {
-    if (markup.includes(`<${selector}`)) root.querySelectorAll(selector).forEach((node) => node.remove());
+    if (markup.includes(`<${selector}`)) transformForumElements(root, root.querySelectorAll(selector), () => []);
   }
   if (markup.includes('data-cfemail') || markup.includes('/cdn-cgi/l/email-protection#')) {
     restoreCloudflareEmails(root, baseUrl);

@@ -7,9 +7,10 @@ function accessRequirementFromLevel(value: unknown) {
   return level > 0 ? { type: 'level' as const, label: '需等级', detail: `Lv${level}` } : undefined;
 }
 
-function accessRequirementDetail(text: string, match: RegExpMatchArray) {
+function accessRequirementDetail(text: string, match: RegExpMatchArray, html: boolean) {
   const start = Math.max(0, (match.index ?? 0) - 12);
-  return textContentFromHtml(text.slice(start, start + 112)).slice(0, 80);
+  const detail = text.slice(start, start + 112);
+  return (html ? textContentFromHtml(detail) : detail).slice(0, 80);
 }
 
 const ACCESS_REQUIREMENT_LEVEL_PATTERN_SOURCE = String.raw`需要[^。；\n]{0,40}(?:等级|trust level|lv\s*\d+)|需要[^。；\n]{0,40}\d+\s*级[^。；\n]{0,24}(?:查看|阅读|才能|才可|以上|可见)|(?:等级|trust level|lv\s*\d+)[^。；\n]{0,40}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,40}(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|minimum (?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|must be (?:at least )?(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)`;
@@ -40,18 +41,35 @@ const accessRequirementEmbeddedPermissionPattern = new RegExp(
 );
 
 export function accessRequirementFromText(value: unknown) {
-  const text = textContentFromHtml(value);
+  return parseAccessRequirementText(textContentFromHtml(value), true);
+}
+
+// DOM text has already been decoded by the HTML parser. Literal tags/entities remain visible text.
+export function accessRequirementFromPlainText(value: unknown) {
+  return parseAccessRequirementText(
+    String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    false
+  );
+}
+
+function parseAccessRequirementText(text: string, html: boolean) {
   const levelMatch = text.match(accessRequirementLevelPattern);
   if (levelMatch) {
-    return { type: 'level' as const, label: '需等级', detail: accessRequirementDetail(text, levelMatch) };
+    return { type: 'level' as const, label: '需等级', detail: accessRequirementDetail(text, levelMatch, html) };
   }
   const loginMatch = text.match(accessRequirementLoginPattern);
   if (loginMatch) {
-    return { type: 'login' as const, label: '需登录', detail: accessRequirementDetail(text, loginMatch) };
+    return { type: 'login' as const, label: '需登录', detail: accessRequirementDetail(text, loginMatch, html) };
   }
   const permissionMatch = text.match(accessRequirementPermissionPattern);
   if (permissionMatch) {
-    return { type: 'permission' as const, label: '需权限', detail: accessRequirementDetail(text, permissionMatch) };
+    return {
+      type: 'permission' as const,
+      label: '需权限',
+      detail: accessRequirementDetail(text, permissionMatch, html)
+    };
   }
   return undefined;
 }

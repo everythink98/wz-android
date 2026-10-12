@@ -28,7 +28,11 @@ import { parseForumTopicDestination } from '@/domain/forum/links';
 import type { TopicLocationTarget, SourceErrorInfo, Topic, UserReference } from '@/domain/forum/models';
 import type { ForumNotification, NotificationCategory, NotificationDetail } from '@/domain/notifications/models';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
+import type {
+  ComposerSnapshot,
+  ComposerSubmissionSettlement,
+  PendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 import type { NotificationPermissionState } from './useNotificationsRuntime';
 import type { NotificationState } from '@/platform/notifications/notificationStore';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -937,7 +941,7 @@ export function NotificationDetailScreen({
   onReplyContentChange?: (content: string) => void;
   onReplySnapshot?: (snapshot: ComposerSnapshot) => void;
   onRetry: () => void;
-  onSubmitReply?: (snapshot?: ComposerSnapshot) => unknown;
+  onSubmitReply?: (snapshot?: ComposerSnapshot, settleSubmission?: ComposerSubmissionSettlement) => unknown;
   onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
   onResolveLinuxDoUpload?: (shortUrl: string) => Promise<string>;
   onLoadLinuxDoTemplates?: () => Promise<LinuxDoTemplate[]>;

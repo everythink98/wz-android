@@ -1,7 +1,98 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Fetcher } from '@/platform/network/request';
+import { withHtmlDecodedInputBudget, withHtmlWorkBudget } from '../../../tests/helpers/htmlWorkBudget';
 
 describe('NodeSeek reader', () => {
+  it('keeps an escaped permission example literal after reading a rendered feed row', async () => {
+    const [
+      { parseHtml },
+      { nodeSeekAccessRequirementFromListRow, parseNodeSeekPageDocument },
+      { parseNodeSeekSearchTopics }
+    ] = await Promise.all([import('@/domain/forum/html'), import('./protocol'), import('./feedParser')]);
+    const row = parseHtml('<div><a>sample</a><span>&amp;#30331;录后可查看</span></div>').querySelector('div')!;
+    expect(nodeSeekAccessRequirementFromListRow(row, 'sample')).toBeUndefined();
+    const restricted = parseHtml('<div><a>sample</a><span>登录后可查看</span></div>').querySelector('div')!;
+    expect(nodeSeekAccessRequirementFromListRow(restricted, 'sample')?.type).toBe('login');
+    const search = parseNodeSeekSearchTopics(
+      parseNodeSeekPageDocument('<div><a href="/post-1-1">sample</a><span>&amp;#32; &lt;x&gt;</span></div>')
+    );
+    expect(search.items[0].excerpt).toContain('&#32; <x>');
+  });
+  it.each([128, 512])('reads deep rendered permissions without revisiting text (%i layers)', async (depth) => {
+    const [
+      { parseHtml },
+      { nodeSeekAccessRequirementFromListRow, parseNodeSeekPageDocument, isNodeSeekChallengeResponse }
+    ] = await Promise.all([import('@/domain/forum/html'), import('./protocol')]);
+    const samples = [
+      { body: `${'<span>'.repeat(depth)}${'&amp;'.repeat(depth)}&amp;#30331;录后可查看${'</span>'.repeat(depth)}` },
+      {
+        body: `${'<span>'.repeat(depth)}${'&amp;'.repeat(depth)}登录后可查看${'</span>'.repeat(depth)}`,
+        type: 'login'
+      },
+      { body: `${'<span>&amp;ordinary'.repeat(depth)}tail${'</span>'.repeat(depth)}` }
+    ];
+    for (const { body, type } of samples) {
+      const rowHtml = `<div><a>sample</a>${body}</div>`;
+      const row = parseHtml(rowHtml).querySelector('div')!;
+      const noticeHtml = `<title>Just a moment</title>${body.replaceAll('<span>', '<span class="notice">')}`;
+      const document = parseNodeSeekPageDocument(noticeHtml);
+      const checks = [
+        {
+          html: rowHtml,
+          root: row,
+          read: () => nodeSeekAccessRequirementFromListRow(row, 'sample')?.type,
+          expected: type
+        },
+        {
+          html: noticeHtml,
+          root: document.root,
+          read: () =>
+            isNodeSeekChallengeResponse(
+              { status: 200, headers: new Headers({ 'content-type': 'text/html' }) },
+              noticeHtml,
+              'https://www.nodeseek.com/post-42-1',
+              document
+            ),
+          expected: type !== 'login'
+        }
+      ];
+      for (const { html, root, read, expected } of checks) {
+        const nativeExec = RegExp.prototype.exec;
+        let regexInputWork = 0;
+        const exec = vi.spyOn(RegExp.prototype, 'exec').mockImplementation(function (this: RegExp, input: string) {
+          const cursor = this.global || this.sticky ? this.lastIndex : 0;
+          const result = nativeExec.call(this, input);
+          regexInputWork += Math.max(
+            1,
+            (this.global || this.sticky ? (result ? result.index + result[0].length : input.length) : input.length) -
+              cursor
+          );
+          return result;
+        });
+        try {
+          const { result } = withHtmlDecodedInputBudget(html.length * 2, () =>
+            withHtmlWorkBudget(depth * 128 + 1000, () => read(), root)
+          );
+          expect(result.result).toBe(expected);
+        } finally {
+          exec.mockRestore();
+        }
+        // Cursor spans measure input scanned, not regex engine instructions or backtracking.
+        expect(regexInputWork).toBeLessThanOrEqual(html.length * 32);
+      }
+    }
+    const row = parseHtml(
+      '<div><a>sample</a><span>登录后可查看</span><span>需要等级 Lv2 才能查看</span></div>'
+    ).querySelector('div')!;
+    expect(nodeSeekAccessRequirementFromListRow(row, 'sample')?.type).toBe('login');
+    const split = parseHtml('<div><a>sample</a><span>登录后</span><span>可查看</span></div>').querySelector('div')!;
+    expect(nodeSeekAccessRequirementFromListRow(split, 'sample')?.type).toBe('login');
+    const title = 'ordinary'.repeat(20);
+    const nested = parseHtml(`<div><a>${title}</a><span>需要${title}等级 Lv2 才能查看</span></div>`).querySelector(
+      'div'
+    )!;
+    expect(nodeSeekAccessRequirementFromListRow(nested, title)?.type).toBe('level');
+  });
   it.each([false, true])(
     'publishes a reply watermark only for a proven terminal window (has next: %s)',
     async (hasNext) => {

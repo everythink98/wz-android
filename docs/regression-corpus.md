@@ -4,6 +4,224 @@
 
 表中的「当前 owner」指承担行为验证的测试或实现模块；oracle 指判断行为是否符合预期的可观察结果或断言。测试归属与证据分层见[测试标准](testing-standard.md)，剩余工作见[技术债务与待验收项](code-cleanup-map.md)。REG 编号、状态和字段名供文档检查器使用，保持原有标识。
 
+## `REG-TOPIC-195` 超长正文分享被整图位图预算拦截
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-04` |
+| 历史症状与根因 | 用户分享长正文时提示「正文过长，无法安全生成单张图片」，希望完整内容生成一张长截图。旧分享页按原生整图 24MP 或 32,000 px 高预算禁用生成；view-shot 在缩放前分配整张原生 Bitmap，单改输出尺寸不能解决分配问题。分享与相册保存共用此入口。 |
+| 当前 owner | `tests/ui/topic/topic-share-sheet.test.tsx`、`src/features/topic/topicShareContent.test.ts`、`src/features/topic/shareTopicImageFile.test.ts`、`src/platform/media/imageSave.test.ts`；原生编码和清理由 `TopicShareCaptureTest`，真实绘制与 JS/Expo/Fabric 链路由 `TopicShareCaptureInstrumentedTest` 及 `dev/topic-share-capture-proof/index.tsx` 承接。 |
+| 修复与红绿证据 | Android 超出整图预算后，使用单个最多 1080×256 Bitmap 循环绘制并流式编码为一张完整 PNG；短图沿用原捕获路径，不截断、不分页。关闭、失效与图片重新加载取消生成，失败删除本次半成品；成功文件保留到分享/保存消费者结算后释放。同批图片 start/display 必须同步取消，避免完成标记删后恢复而漏掉失效。超长分享/保存与图片同批重载均有实际修前 RED→GREEN。 |
+| 本轮门禁 | `STATIC_PASS`：lint、typecheck、定向格式、架构与文档检查。`UNIT_PASS`：正文/分享文件/相册/原生选择计划 95 项，seed `20261012` 与默认 `1791768393746`；模块 JVM 3 项，核对 35,001 行 PNG 全部 RGBA、CRC 和取消/写入/关闭失败清理，报告新鲜且非零。`UI_PASS`：三个分享相关 owner 44 项，seed `20261012` 与默认 `228877504`，覆盖分享和保存、消费者等待、取消、旧 APK 缺模块、失败重试及同批图片重载。 |
+| Android 原生证据 | 2026-10-12 隔离 `WZ_ImageRuntime_Test_API35`、API 35、开发签名 Release，buildId `85f46d97be8249aca9b9940ec3645102`、APK SHA-256 `dae1067b5d4020ef31c823b781b6b873decef0a5e3a09f726778b220e4ba548f`，三个指定 instrumentation 方法逐项成功，最终 `OK (3 tests)`。1080×40,001 及 1440 px 宽缩放、非整数输出高度的首尾/条带接缝通过；实际 Bitmap 分配不超过 1080×256。真实 JS helper→Fabric ScrollView→ExpoImage 生成单张 945×52,500 PNG，区域解码头部/正文图片/尾部像素均正确，滚动位置与布局保持，release 后文件不存在；取消、磁盘写入失败与布局变化清理通过。证据位于 ignored `.codex-tmp/topic-share-20261012-ebf886f1/`。首轮夹具的未测高、缩放色条抗锯齿和 Android 按钮大写问题单独修正，未以生产排版改动绕过断言。 |
+| 验收边界 | 原生 instrumentation 证明受控长图及真实桥接，不冒充 tracked 页面 Replay 或 `LIVE_PASS`。实际原帖、相册与外部接收 App 的完整流程、实体机仍为 `NOT_VERIFIED`；接收 App 可能限制可显示的图片高度。原 150,000 字符保护保持，新模块需要重新编译 APK，旧安装包的超长导出明确提示更新。 |
+
+## `REG-ACCOUNT-065` 关闭妖火登录后 Topic/User 自动重开窗口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/02`，共享 `TOPIC-01/03`、`USER-01` |
+| 历史症状与根因 | 未登录妖火时，用户关闭 Topic 的登录页后约两秒又被要求登录，连续关闭仍重开。关闭会释放认证屏障并重新核对账号，ReadPlan scope 与 Query 错误版本变化；Topic/User Controller 只按错误时间去重，同一阅读意图因此重新取得打开机会。主登录态设备不覆盖此反例，不能替代未登录验收。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/user/user-controller-session.test.tsx`；Feed/Search 既有同意图去重 owners 共同核对。 |
+| 修复与红绿证据 | 沿用既有页面意图模式，按活动主题或用户身份及显式读取意图消费一次打开机会；账号核对、scope/epoch 更新、Query 自动重读与前后台往返不重开，显式刷新或重试才增加新机会。旧路由迟到错误失效；同毫秒显式重试清除对应旧错误去重记录。三个公开 owner 反例实际 RED→GREEN，四个读取 owner 共 286/286，seed `191`。 |
+| 普通包验收 | 未登录隔离 AVD 的同源码普通 Release/Hermes APK 中，首次自动打开后关闭，账号核对结算和前后台往返均不重开；点击重试才重新打开，第二次关闭仍保持关闭。随后 NodeSeek 公开主题正常打开，无妖火迟到弹窗。普通包 buildId `403315a7cb25400686a02a27cf874b19`，两次关闭节点与回执位于 `.codex-tmp/native-body-selection-20261011/`。 |
+| 主设备复验与门禁 | 同一普通包在保留三站登录态的主 AVD 覆盖安装，卡住的模拟器按用户要求关闭后单独冷启动；包哈希、签名、UID、firstInstallTime 与通知权限复核不变。妖火版规、NodeSeek 主题的正文、原生长按及所选文字实际复制粘贴通过，账号前后均显示已登录 3/3。`STATIC_PASS`：完整 verify/typecheck；`UNIT_PASS`：247 文件、3,782 项，seed `1791707840991`；`UI_PASS`：97 suites、2,446 项，seed `-1220895914`。首轮 checkpoint 测试因设备取证占用同一 OS lease 报 EADDRINUSE，释放后原 seed 的 17/17 与完整门禁通过，失败日志保留。 |
+| 验收边界 | Topic 关闭与显式重试为隔离设备 `LIVE_PASS`，主设备真实正文与文字复制为独立 `LIVE_PASS`；User 的同根因边界为 `UI_PASS`。没有输入账号、清除 Cookie、清数据或卸载；已登录主设备不用于证明未登录关闭反例。当前仅主 AVD 可见运行。 |
+
+## `REG-TOPIC-194` 回复整条复制重新解码跨标签实体
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02/03` |
+| 历史症状与根因 | 原生长按回复整条复制时，stripHtml 先移除标签再整体解码；被真实标签切开的实体重新成立，字面 amp 与代码实体被改变。原生粘贴先确认实体失败；单行粘贴展示不能作为剪贴板换行 oracle。 |
+| 当前 owner | `src/domain/forum/text.test.ts`、`tests/ui/topic/topic-components.test.tsx`；生产 parser→compiler→renderer 固定 fixture 由 `tests/ui/visual/scenarios/topic/manifest.test.tsx` 承接。 |
+| 修复与红绿证据 | 共享 lexer 在文本片段及图片标签属性边界各解码一次，删除拼接后的整体解码；只改三行，保留表格、贴纸、终端、忽略内容和空白规则。最低层 5 RED→8 GREEN，相关 Vitest 35/35、ReplyItem UI 57/57，seed `191`；fixture 6/6，seed `20261011`。 |
+| 原生剪贴板验收 | 同源码 Release/R8/Hermes 隔离 proof buildId `a1ba3ec92e964c1eb1daf267be581f4e`，前台 `Clipboard.getStringAsync` 对固定字面 oracle 逐字符核对：主楼全选 145 UTF-16、整条回复 62、主楼代码 28、回复代码 25，以及滚动后的选区 4 均通过。主楼全选不含投票标签或回复，正文、表格、代码和投票标签可见实体均正确。两项投票分别勾选及取消、已投票禁用状态通过，无真实提交；复杂正文的段落、列表、引用和折叠区域正常显示。 |
+| 数据恢复与边界 | `.codex-tmp/native-body-selection-20261011/checkpoint-final-result.json` 为 `restored`，ReaderData、AsyncStorage、composer journal 及 WAL/SHM 共 9 文件恢复，logicalHash `d69850504989a32e8c272187c2bf3d680fdbbde289485135bd23aa5d61d2c1b7` 与本轮检查点相同。本项为 `DEVICE_REPLAY_PASS`，真实投票提交、实体机、完整选择性能及触感矩阵仍为 `NOT_VERIFIED`，不借此解决 REG-TOPIC-100 的全部验收项。 |
+
+## `REG-TOPIC-193` 正文与投票全链残余重复扫描
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03`，共享 `NOTIFY-02`、`WRITE-02`、`WRITE-07` |
+| 历史症状与根因 | 前几轮分别处理深树查询和实体边界，但宽兄弟净化仍逐个复制父数组；compiler 为不能物化的深祖先复制 selection units；NodeSeek 表单逐次查 label、回溯面板、读取重叠子树和切分整页 HTML，嵌套回复重复 scoped 查询；权限候选词命中但最终为负例时仍逐层净化 escaped tag、quote/script 和跨元素数字实体。其他来源的 math/policy/callout/妖火回退与附件重复读取；Callout 逐个回溯深祖先，妖火投票副本逐个序列化重叠容器，相邻附件还会吞掉后续附件并在 detached node 替换时崩溃。pending poll 物化按每个投票重复 split 整篇 Markdown。 |
+| 当前 owner | domain 的 html/contentSanitizer/topicContentHtml/forumContentMedia/topicContentSplit tests；NodeSeek topicParser/pendingPolls/reader tests；LinuxDo parser、Discourse content、Yaohuo topicParser tests；tooling 的 review-proof-checkpoint 与 review-content-chain-metrics tests。 |
+| 修复与红绿证据 | 清理阶段按父节点批量提交，selection 只在可物化深度创建；表单与回复复用元素区间、scoped lookup、祖先及文字摘要，HTML 一次拼接。用户确认 DOM 叶节点解码一次后，删除实体来源/多段切界、权限词法净化与二次解码桥，纯文本权限、摘要、终端、公式和代码消费共享入口。负区间以 DOM 栈管理生命周期、以 tape 包含关系剪枝，交错 br 不漏检也不重扫祖先。scope selector 缓存保留 cacheResults:false 和新 query 快照；Callout 深度一次预计算并保留逆序归一化；妖火附件独立保留，投票副本一次长度摘要及精确比较后批量删除；pending 物化保留预检、身份与 journal 次序，原 token ranges 一次生成正文。新增行为均有实际旧实现 RED→GREEN；1,107 个静态 HTML fixture 的 4,530 个节点文本对照无差异，特殊转义断言按授权迁移。相对本次重构前生产源码净减 721 行，统计含注释与格式；工作代理不等于 CPU 指令。 |
+| 完整门禁 | `STATIC_PASS`：typecheck、完整 verify 退出 0，包含 lint/format、架构、unused、版本与文档检查。`UNIT_PASS`：246 文件、3,774 项，seed `1791704192752`；`UI_PASS`：97 suites、2,441 项，seed `1989899630`。重复转义 metadata 的三个旧双解码期望按已授权语义迁移，并保留单次数字实体的正例。 |
+| 验收工具校准 | 首轮设备内 62 项通过，但 Hermes 原生 RegExp.test 不经过 exec 钩子，索引样本的旧 regexCalls 为 0，外层严格守卫拒绝并完成数据库恢复。探针改为分别观察 exec/test，test 内部 exec 单计，原预算不变；冻结旧探针实际 RED，新探针 48 组返回值/lastIndex 对照、6 类预算异常与 59 次 descriptor 恢复通过。runner 的 234 个负向输入仍全部拒绝，不把 Node 自检当作设备证据。 |
+| 设备证据 | `DEVICE_REPLAY_PASS`：2026-10-11 隔离 `WZ_ReaderStorage_API35_20260910`、API 35、Release/Hermes、`__DEV__=false`，构建 `5692a7dfd60c43e5a5b107aa686c586e`，APK SHA-256 `68f364e1f2d1c4c8e8dbec46ea24c129837f9715a401a00678d1471139f011ec`，sourceHash `42b8ee6cdc7ae5447fa37fc6597fc08a1f543243f37c4cec4bb6e078e3cc9ee0`。62/62 检查和全部严格守卫通过，217 个规模主样本、17 个辅助输出；其中正文全链为 39 布局、78 样本，代码复制 8 输出。16,384 层新增分支 root-first 的原始字符与 decoder 输入均为 16,389，parent 读取 1、child 读取 49,154，最多单一区间。回执 `.codex-tmp/body-poll-chain-audit-20261011/review-runtime-diagnostic.json`，成功日志 `review-rerun-final.log`。ReaderData、AsyncStorage、composer journal 及 WAL/SHM 共 9 文件的物理哈希和逻辑快照恢复；本轮扩展 journal 后的 logicalHash `9605edd6cfb85b806ea61b94379a1bca68b537c39383df1efa0799b8ed59c336` 与本轮检查点一致，不与旧六文件摘要直接比较。 |
+| 普通入口与收尾 | `APK_SANITY`：同源码普通入口 non-debuggable x86_64 Release，构建 `9292d55a1d004902adfd62699b7ab3e2`，APK SHA-256 `cc2807dc99fedb74f7951f0422070c39032d9b276a7435f1cdc88d6be4287339`。覆盖安装、冷启动、实装 APK hash 与签名、两份 JS/R8 档案核对通过；UID 10209、firstInstallTime `2026-09-10 04:04:05`、版本 1.3.154/158、通知权限 false 保持。初始 64 个 dirty 路径仍在，范围外 tracked diff 未变，HEAD 未变；初始 untracked 没有原始内容哈希，只证明路径存在，不声称内容独立逐字验证。独立审计为 `.codex-tmp/body-poll-chain-audit-20261011/final-audit.json`；task-owned emulator/qemu 和独立 state-dir daemon 已核对 PID、创建时间与路径后退出，session 关闭，无新增长期进程，共享 ADB 保留。进程证据为 `.codex-tmp/body-poll-chain-audit-20261011/final-process-audit.json`。 |
+| 当前结论与边界 | 本轮标准一次解码契约取代 REG-TOPIC-191/192 的多轮实体边界补缝，历史证据保留。重复转义与跨标签实体现在显示为文字；当前 parser 的 DOM/RAWTEXT 约束保留，不宣称浏览器完整兼容。权限词、写入身份守卫与投票提交行为不变，不截断候选回复来绕开工作。本项当时的模拟器仅合成数据和本地 journal；后续原生正文、选择、剪贴板及投票表单证据见 REG-TOPIC-194，真实已登录读取与复制见 REG-ACCOUNT-065。真实投票提交、完整手势性能矩阵及实体机仍独立验收。 |
+
+## `REG-TOPIC-192` 新增子树、重复投票和权限提示残余重复扫描
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03`，共享 `NOTIFY-02`、`WRITE-02` |
+| 历史症状与根因 | 索引只登记初始树，新增节点仍逐节点读取全文并解码。投票去重重复查询同一容器、扫描兄弟数组，marker 逐个替换又复制父数组；权限提示 eager 读取所有后代文字，实体/markup 负例重复净化，scoped selector 反复匹配祖先。固定 2,048 层新增数字实体的旧解码输入为 2,106,373 字符；宽 512 标记的旧父数组读取为 anchor 395,521 次、loaded text 2,240,769 次。 |
+| 当前 owner | `src/domain/forum/html.test.ts`、`src/sources/nodeseek/polls.test.ts`、`src/sources/nodeseek/topicParser.test.ts`、`tests/integration/html-sanitization-contracts.test.ts`；reader/source 接线仍归既有 owners。 |
+| 修复与红绿证据 | 首次未知查询一次登记最高未登记分支，WeakMap 直接复用稳定 tape，移入已知节点可重新登记，已返回区间及已知祖先保留阶段快照；metadata 按 tape 复用摘要。投票按阶段收集容器、数量、保护后代和兄弟链，按父节点批量提交删除及替换，延迟清壳保留两步邻居读取次序并保护已有投票。权限提示惰性判定、复用区间，候选词来自共享规则，精确结论仍由原 parser 决定；正文祖先事实缓存保留来源优先级与 class 语义。冻结旧实现的 forest、重复投票、宽 marker、权限扫描断言实际 RED；canonical 为 52/52、20/20、48/48。新增数字实体解码输入降至 2,053 字符；宽 512 标记的数组读取分别为 1,538、29,708 次。计数只表示真实读取/输入代理，不是 CPU 指令。 |
+| 独立语义证据 | 1,200 个新增树输入包含 21,600 次新分支查询与 3,600 次移入已知节点查询；另有 902 个 sanitizer、902 个 shell、6 个 form、12,883 次投票文字摘要查询、366 个浅层公开 parser 和 7 个边界对照。2,400 个 public marker 输入发现顺序全部一致，31 个差异均为避免旧实现丢失已有投票；2,400 个 placeholder 输入仅保留已确认的投票保护和去重后容器提升差异，无非预期清壳差异。 |
+| 完整测试与必要同步修正 | `STATIC_PASS`：typecheck 与完整 verify 通过。`UNIT_PASS`：3,686/245 文件，seed `1791693778888`；`UI_PASS`：2,441/97 文件，seed `-1169800862`。首次 3,686 个断言全通过，但编辑器测试留下 source→rich RAF，teardown 先销毁 Editor，随后 getter 抛出未捕获异常；原 seed `1791693420318` 的 166 项 owner 实际复现。仅在测试清理前等待既有 RAF 完成，再按原顺序销毁；同 seed 166/166 且零异步异常，未改 Composer 产品行为、断言或超时。 |
+| 设备证据 | `DEVICE_REPLAY_PASS`：2026-10-11 隔离 `WZ_ReaderStorage_API35_20260910`，Release/Hermes、`__DEV__=false`，构建 `7b2ada898eef427793942fa33e75a2e4`，APK SHA-256 `fb6d312e1ad2e93a6ddd7201d64af7df6c88e734c1917e34bf6ad1b66663b3a0`，sourceHash `cc64fc0a9a9da8df1a7133cd7d9672b6b75121de7cb967e56a92a2a5d6ec61e0`。60/60 检查通过，保留原 57 项；全部规模矩阵含 124 个主样本，新增 forest 36 个、重复投票 10 个、权限提示 10 个及 9 个辅助输出。严格 runner 的 151 个负向输入全部被拒绝。新增三组 2,048→16,384 层的合计读取增长约 7.981–7.999 倍；16,384 层 index 约 75.999–241.925 ms，poll 约 450.714–3,388.657 ms，permission 约 143.123–530.745 ms，均含计数探针且各组范围不同，不算跨运行时加速比。回执 `.codex-tmp/text-index-forest-fix-20261011/review-runtime-diagnostic.json`。checkpoint restored，logicalHash `23d14435ef27206753d5f4d40f11fd70dfd95fb969e8d1260dbb9f6d5b346d34` 与前轮不变，UID/firstInstallTime 保留。 |
+| 普通入口与收尾 | `APK_SANITY`：同源码普通入口 non-debuggable x86_64 Release，构建 `68a33097b4f54974a23ce869463d321b`，APK SHA-256 `4e2fc5f33ce497e88b3771b7ae507085d5a68f4251cc13fa4bd58a93848bf433`；覆盖安装后实装 hash 匹配，UID 10209、firstInstallTime `2026-09-10 04:04:05`、版本 1.3.154/158 与通知权限 false 保持。proof/normal/source hash、原始及归档 source map/R8、安装身份与初始 dirty 范围独立审计通过。原 64 个 dirty 路径保留，48 个本轮范围外 tracked diff 不变；额外门禁修正仅为 editorRuntime 测试的指定两行增量。本轮 emulator/qemu 与已核对归属、零活动 session 的 daemon 均已退出，共享 ADB 保留。安全审计摘要为 `.codex-tmp/text-index-forest-fix-20261011/final-task-audit.json`、`.codex-tmp/text-index-forest-fix-20261011/final-process-audit.json`。 |
+| 当前结论与边界 | 已移除新增子树的逐节点全文解码回退，并修复上述深树、宽投票与权限提示扫描。已知祖先仍是阶段快照，调用方在阶段之间重建索引。候选词预筛只覆盖必要文字判定；含候选词但最终不匹配的任意多层 HTML 净化不在复杂度保证内，不承诺任意 HTML 全流程线性。原生正文渲染、选择手势、真实帖子/投票、实体机与设备快速卸载编辑器为 `NOT_VERIFIED`。 |
+
+## `REG-TOPIC-191` 超长 HTML 实体被大量元素边界切开时重复解码
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03`，共享 `NOTIFY-02`、`WRITE-02` |
+| 历史症状与根因 | `REG-TOPIC-190` 的共享索引遇到切穿实体的文字区间时，回退读取并精确解码整个区间。超长数字实体被不同元素边界逐层切开时，同区间缓存无法复用；metadata 随后又逐区间压缩、匹配全文。固定 2,048 层数字实体样本中，索引的 TextNode 解码输入为 2,106,373 字符，随嵌套深度重复累计。 |
+| 当前 owner | `src/domain/forum/html.test.ts`，`tests/integration/html-sanitization-contracts.test.ts`，`src/sources/nodeseek/topicParser.test.ts`；来源、回复与通知的接线继续由既有 owners 承接。 |
+| 修复与证据 | 索引复用 raw、第一轮和最终解码文本，实体边界查询返回区间与有界补片；数字实体前缀只累计一次，保留 C1 替换、无效码点、第一轮宽松实体和第二轮分号语义。metadata 复用同一组区间摘要，避免重新压缩长区间。六个索引预算样本实际 RED；五个公开入口新增样本修前为四个 RED、一个保护对照 PASS，修后全部通过。canonical 为 36/36、59/59、28/28；独立原实现对照 1,120 个实体输入和 120 个多 br/手工子节点输入，22,854 次文字区间与 hasText 查询一致；另保留 902 个 sanitizer、902 个 shell、6 个 form 对照。固定 2,048 层索引解码输入降至 2,053 字符。计数是观测输入量，不代表 CPU 指令数。 |
+| 完整测试与必要同步修正 | 完整随机单测 3,639/245 文件，seed `1791661660159`；完整 UI 2,441/97 文件，seed `-1327518292`。首次单测与设备 runner 并行争用 checkpoint 的排他租约，原 seed `1791661078996` 重放 tooling owner 15/15 通过，设备 runner 结束后串行全量通过。首次 UI 中积分用例在第二页请求刚开始时捕获了第一页快照；原 seed 单文件重放 20/20，通过追加对既有 `summary.consistent=false` 结果的等待完成同步，再按原 seed 完整重跑通过。该用例不调用本次修改的共享正文路径，未改积分产品行为、超时或原有断言。 |
+| 设备证据 | 2026-10-11 隔离 `WZ_ReaderStorage_API35_20260910`，Release/Hermes、`__DEV__=false`，构建 `9321bfdf875c4458bf0b2fc0653d93fb`，APK SHA-256 `6da8fb497ccdb8416bfd06d88f6abc14f468432f3121c5c0af4d45fddb970dd2`，sourceHash `a140dc67791cc4b8585785515c930228146aab7620fa3acb014d908421a2b092`。57/57 检查通过，保留原 56 项；新增六种单/双层十进制、十六进制及首尾切边布局 × 2,048/16,384 层 × 索引、清洗、空壳三种操作的 36 个样本。所有输出、解码与正则输入预算通过；16,384 层索引构建及全部 hasText/range 查询约 35.589–104.776 ms，完整 sanitizer 约 393.479–914.500 ms，空壳归一化约 127.078–160.682 ms，包含探针开销且计时范围不同。深度八倍时，观测正则输入工作量增长约 7.830–10.094 倍，不能据此推断未观测的正则引擎内部成本。回执 `.codex-tmp/entity-boundary-fix-20261011/review-runtime-diagnostic.json`。 |
+| 恢复与普通入口 | checkpoint restored，logicalHash `23d14435ef27206753d5f4d40f11fd70dfd95fb969e8d1260dbb9f6d5b346d34` 不变。最终覆盖普通入口 non-debuggable x86_64 Release，构建 `bf2e4ce8195b4b13b2dc36c821c109a1`，APK SHA-256 `1a52b0df9c6482c3a76475568aafb2dc235c29be3e3e1c65be990e5b05a02cc9`，实装 hash 匹配并通过 `APK_SANITY`；UID 10209、firstInstallTime `2026-09-10 04:04:05`、版本 1.3.154/158 与通知权限 false 保持。本轮 emulator/qemu 和已确认归属的 daemon 已退出，共享 ADB 保留。 |
+| 当前结论与边界 | 已移除源树快照内上述长实体切边的重复全文解码与 metadata 扫描；br 手工子节点语义不变。索引构建按文字、元素和实体总量累计，边界查询及 metadata 摘要查询含对数开销，不承诺任意 HTML 全流程线性。本轮当时遗留的新增节点解码回退由后续 `REG-TOPIC-192` 修复。专项没有 tracked 页面 Replay；原生正文渲染、选择手势、真实帖子、真实投票与实体机为 `NOT_VERIFIED`。 |
+
+## `REG-TOPIC-190` 正文 metadata 与 rendered 投票表单重复扫描深树
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03`，共享 `NOTIFY-02`、`WRITE-02` |
+| 历史症状与根因 | `REG-TOPIC-189` 的投票归一化修复后，图片 metadata 仍逐个 div 重读完整文字并查找后代图片；rendered form 使用 closest 为每层祖先重新匹配子链；嵌套 embed/panel/p 空壳逐候选读取全文与查询媒体。这些独立路径在深树上重复扫描。2026-10-11 同输入 Node 22、4,096 层、无计数探针的基线：带图片空壳约 3,423.29 ms，空壳约 1,302.03 ms，正文清洗约 213.34–627.92 ms；不能与历史不同样本或 Hermes 耗时合算加速比。 |
+| 当前 owner | `tests/integration/html-sanitization-contracts.test.ts`，`src/sources/nodeseek/topicParser.test.ts`；主楼、回复和来源接线继续由既有 reader/source-read owners 承接。 |
+| 修复与证据 | 共用两级解码的文本区间索引，metadata 使用有界匹配摘要及一次图片后代统计；表单沿父节点匹配精确 class，空壳每阶段重建文字与保护后代事实，再按原 preorder 删除。三个 sanitizer 工作量断言实际 RED；最终二十五项 parser fixture 以冻结原实现复测，两个祖先与三个空壳实例超预算 RED，当前均 GREEN。另修复本次索引遗漏 br 手工子节点的差异，保留公开 root transform 的行为。canonical 为 57/57 与 25/25；完整随机单测 3,605/245 文件，seed 1791654666709；完整 UI 2,441/97 文件，seed 1975140237。首次与构建并行运行时场景目录用例超时，原 seed -112409499 定向重放 5/5 通过，随后串行完整 UI 通过，未修改超时或断言。独立输出对照包含 902 个 sanitizer、902 个 shell、6 个 form；长上下文 1,536 组覆盖全部 128 字符块对齐。同输入 4,096 层 Node 22 修复后带图片空壳约 5.81 ms、空壳约 3.58 ms、正文清洗约 7.62–29.00 ms，计时范围分别为 root normalizer 和完整 sanitizer。 |
+| 设备证据 | 隔离 `WZ_ReaderStorage_API35_20260910` 的 Release/Hermes `__DEV__=false`，构建 `ae002172a2304f5d9b9fff94e046328e`，APK SHA-256 `51000a07ab935f5b7c054dd8417b633da006ead835448bdecf678171d3499bab`，sourceHash `fe35cc178c87248cc4ade6e532c75319ea77cc20148c8d5ec57b3e120b1add47`。56/56 业务检查通过，保留原十个投票样本，新增 metadata 十个、form/空壳十二个。2,048→16,384 层的合计 tag/child/attribute 读取增加约 7.91–7.98 倍，均未超预算；16,384 层 metadata 约 233–788 ms、form 约 246–270 ms、shell 约 83–166 ms，含计数开销且三个 operation 范围不同。回执 `.codex-tmp/remaining-scan-fix-20261011/review-runtime-diagnostic.json`；checkpoint restored，logicalHash `23d14435ef27206753d5f4d40f11fd70dfd95fb969e8d1260dbb9f6d5b346d34` 不变，UID/firstInstallTime 保留。普通入口另行构建 `52d7d57ca47145bfb5a1a8c69c164afd`，APK SHA-256 `e7751eb8ec08ac8bfd7103fa0ac9ad2726812138b03350a95a4bd8b90ea13e04`，non-debuggable x86_64 Release 覆盖安装并通过 `APK_SANITY`；最终实装 hash、签名、安装身份与通知权限均匹配，own 模拟器/daemon 已退出。 |
+| 当前结论与边界 | 已修复这三类常规深树重复扫描，保留元数据判定、双解码、图片保护、表单范围、投票状态和空壳阶段次序。正常文本索引/匹配查询不是任意 HTML 全流程线性；本轮遗留的超长实体切边重复解码由后续 `REG-TOPIC-191` 修复，设备样本与预算另行记录。专项没有 tracked 页面 Replay；原生正文渲染、选择手势、真实帖子、真实投票与实体机为 `NOT_VERIFIED`。 |
+
+## `REG-TOPIC-189` 极深 NodeSeek 投票容器查找重复扫描祖先链
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03`，共享 `NOTIFY-02`、`WRITE-02` |
+| 历史症状与根因 | `REG-TOPIC-188` 修复栈溢出后，16,384 层 loaded-poll 的远处或缺失 div 样本曾约 22 秒。closest 为每层祖先重新匹配向下的单条链，工作量随深度平方增长；另一个清理循环在判断有无相邻已加载投票前读取每个 p/div 的全文，普通嵌套 div 仍重复扫描后代。2026-10-11 本轮独立固定输入的 Node 22 测量为 3,086.34 ms，不与此前不同样本的 22 秒合并计算。 |
+| 当前 owner | `src/sources/nodeseek/polls.test.ts`；主楼、回复与来源接线由 `src/sources/nodeseek/reader.test.ts`、`tests/integration/source-read-contracts/nodeseek.test.ts` 承接。 |
+| 修复与证据 | 三处 p/div 定位改为沿 parentNode 遍历，保留大小写、p 优先和最近 div；相邻投票检查移到空壳文字、媒体检查前，保留 previous/next 原有优先次序。四个 16,384 层远祖先实例实际 RED，父节点修复后另一个 1,024 层普通 div 实例仍在 textContent 超预算 RED；最终五项均 GREEN，canonical 9/9、相关 reader/source 160/160，通过固定少数投票下的线性 tag 读取预算与正文保护断言。15 个浅层输入与原实现输出相同。同一桌面输入、同一 Node 22.22.2 的归一化由 3,086.34 ms 降至 10.24 ms，解析不计入；原始红绿和计时回执在 `.codex-tmp/poll-depth-performance-20261011/`。 |
+| 设备证据 | 2026-10-11 隔离 API 35 Release Hermes，buildId `b11a8556d4e34be7b0f3475d5af02d73`，APK SHA-256 `1d5cabe7a0a28e3d1a0e94a0d3241be09a86ac95ab1eba4b2fbf2456099c73b6`，54/54 项通过。新增一项投票专项包含五种容器布局 × 2,048/16,384 层的十个样本；16,384 层为 44.82–226.39 ms，tag 读取数随八倍深度增长约八倍，均低于线性预算。耗时包含 rawTagName 计数和两次实际归一化，不包含解析、完整 sanitizer 或原生渲染，也不与桌面结果计算跨运行时加速比。回执 `.codex-tmp/poll-depth-performance-20261011/review-runtime-diagnostic.json`；checkpoint restored，logicalHash `23d14435ef27206753d5f4d40f11fd70dfd95fb969e8d1260dbb9f6d5b346d34` 不变，安装身份与通知权限保留。 |
+| 当前结论与边界 | 已修复上述投票归一化的两条平方路径；保持已加载投票去重次序、未加载标记、普通文字、代码与媒体。不承诺任意数量投票或任意 HTML 的全流程线性。该轮未修改或测量共享图片 metadata、rendered form 的 `.vote-panel` 祖先定位与嵌套空壳路径；后续修复和设备证据见 `REG-TOPIC-190`。专项没有 tracked 页面 Replay；原生正文渲染、选择手势、真实帖子、真实投票与实体机为 `NOT_VERIFIED`。 |
+
+## `REG-TOPIC-188` 极深合成 HTML 在进入正文编译器前读取失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03` |
+| 历史症状与根因 | 2026-10-10 追加只读探针走真实 getLinuxDoTopic 和合成 fetcher，pre/code 内 1,024 层 span 正常返回完整代码；2,048 层在一次请求后拒绝，异常为 RangeError。contentSanitizer 的 root.toString().toLowerCase() 触发 node-html-parser innerHTML/toString 递归，发生在 compiler 和其 fallback 之前；opening、reply 均复现。 |
+| 当前 owner | `tests/integration/html-sanitization-contracts.test.ts`、`src/sources/linuxdo/reader.test.ts`、`src/domain/forum/forumContentMedia.test.ts`、`tests/integration/discourse-content-contracts.test.ts`、`src/sources/nodeseek/polls.test.ts`、`src/sources/nodeseek/stardust.test.ts`；依赖补丁安装归 `tests/tooling/patch-artifacts.test.ts`。 |
+| 修复前设备证据 | 2026-10-10 隔离 API 35 Release Hermes 两轮 runtime 均为 49/51：256 层 list/callout 在 sanitizer 返回前失败，details/blockquote 通过。第二轮保留原输入与断言，追加阶段、stack 和匹配 buildId/APK 的 source map；两项均映射到 contentSanitizer.ts:846 的 root.toString()，调用方为 topicContentSplit.ts:2646，尚未进入 compiler guard。回执为 `.codex-tmp/share-fixes-device-20261010/review-runtime-diagnostic.json`，符号化结果为 `.codex-tmp/share-fixes-device-20261010/review-symbolicated.json`。异常被隔离 fixture 捕获，不证明 Android App 崩溃；Node 的 2,048 层与 Hermes 的 256 层是不同输入样本，均不是统一阈值。 |
+| 修复与证据 | 用户随后授权继续修复。共享 parser 的查询、文本与序列化改为显式栈，持久补丁同时覆盖 ESM/CJS；媒体索引、图片行扫描、Discourse Callout、NodeSeek 投票、Stardust 和终端归一移除前置递归，保留清洗、兄弟次序、属性、代码和空节点语义。sanitizer/reader 的最终 5 项断言、媒体两段、来源最终 6 项和终端断言均实际 RED→GREEN；未截断正文或减小失败输入。干净 `npm ci --ignore-scripts` 后全部 16 个 patch forward check、真实 postinstall 与 reverse gate 通过。 |
+| 修复后设备证据 | 2026-10-11 同一隔离 API 35、Release Hermes buildId `640e15d58ac34fc49f31a13a1158a009`、APK SHA-256 `410e1255aebfae23af0b0a9f766992b96cdf4d17dbc4fda3d6bd6de354518b64` 的 53/53 项通过：原 256 层四类输入保持不变，预算、正文、代码、表格、投票、媒体与选择序均通过；追加真实 linux.do reader 的主楼、回复、作者删除主楼读取和 NodeSeek 深层终端转换。回执 `.codex-tmp/topic-depth-fix-20261010/review-runtime-diagnostic.json`，数据库 checkpoint restored，logicalHash `23d14435ef27206753d5f4d40f11fd70dfd95fb969e8d1260dbb9f6d5b346d34` 不变，安装身份与通知权限保留。 |
+| 当前结论与边界 | 确定的前置调用栈溢出已修复。设备 proof 证明受控来源和 content plan，未执行 tracked 页面 Replay；原生正文渲染、选择手势、真实帖子与实体机仍为 `NOT_VERIFIED`。不承诺任意大小输入的内存或耗时；此前 loaded-poll 远祖先查询约 22 秒的性能边界由后续 `REG-TOPIC-189` 修复，独立保留该事故的计时与范围。 |
+
+## `REG-TOPIC-187` 语义正文绕过深度预算并大量复制祖先框架
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03` |
+| 历史症状与根因 | 2026-10-10 编译器反例确认，details、blockquote、list、callout 的语义分支绕过普通 fragment 的深度预算；256 层、11,933 字符的 details 可以产生 32,896 条祖先引用，analyzeNodes 的选择内容也在预算判断前复制层级。此证据未证明实际 Android 卡顿。 |
+| 当前 owner | `src/domain/forum/topicContentSplit.test.ts`，跨来源契约由 `tests/integration/topic-content-rendering-contracts.test.ts` 承接 |
+| 修复与证据 | 深树、宽树及空列表反例先红后绿；预算降级对表格和引用的新增反例也先红后绿。analyzeNodes 前迭代预检 64 层和祖先引用估算上限 16,384，超限展平语义容器；保留标题、正文顺序、代码、表格、引用元数据、媒体与选择内容。估算保守，实际引用未达到上限也可能触发降级。214 条相关断言通过，seed `1791628618250`。 |
+| 验收边界 | `UNIT_PASS`；降级取消折叠及祖先框架交互。初次隔离 API 35 Release Hermes 两轮 runtime 均为 49/51：details/blockquote 通过，list/callout 在前置 sanitizer 失败。随后 `REG-TOPIC-188` 修复以原四类输入通过 53/53 项，预算、内容/代码/表格/投票/媒体与选择序均通过，只证明该运行时的 content plan。原生正文渲染、选择手势、设备性能、Live 与实体机仍为 `NOT_VERIFIED`，不承诺任意深输入都可读。 |
+
+## `REG-WRITE-135` 旧回复或私信成功清空发送后的新输入
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/02/05`、`NOTIFY-02` |
+| 历史症状与根因 | 2026-10-10 代码复核确认，NodeSeek/linux.do 的回复、楼层回复、编辑回复和私信在发送期间仍允许编辑；旧请求成功后直接清稿，未比较实际编辑器版本。600 ms 自动快照尚未发出时，宿主保存的正文也不足以判断是否产生新输入。 |
+| 当前 owner | `tests/ui/topic/composer-submission.test.tsx`、`tests/ui/topic/topic-actions-controller.test.tsx`、`src/ui/composer/editorRuntime.test.ts` |
+| 修复与证据 | 八个未自动保存的新输入用例先红后绿，seed `20261010`。成功结算先读取文档版本，匹配时同步锁住正文并复核账号、主题、编辑目标，再清稿；新输入保留。原生正文使用同步递增版本防止改写后恢复原文的竞态。结算失败仅保稿，不撤销服务器已确认结果；成功后由新 INIT 或卸载结束旧文档锁。2026-10-10 隔离 API 35 Release Hermes Composer 批次 15/15；其中 NodeSeek 富文本和源码回复两项验证已产生生产 autosnapshot 的新稿在旧请求成功后保留，结算后可继续输入、手动关闭仍保稿。证据为 `.codex-tmp/share-fixes-device-20261010/composer-15/results.json`。 |
+| 验收边界 | 保留合成请求的 `UI_PASS` 与真实编辑器 `UNIT_PASS`；上述 NodeSeek 两项为限定场景的 `DEVICE_REPLAY_PASS`。设备以真实 IME 激活下的 ASCII 键事件输入，待新 autosnapshot 后才放行合成 POST；600 ms 尚未同步的新稿、中文 IME 组合输入、其他入口的发送中保稿、实体机与真实发送均为 `NOT_VERIFIED`。 |
+
+## `REG-WRITE-136` 编辑器快照超出桥接边界后只能等待超时
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/02/05`、`NOTIFY-02`，共享 `WRITE-07` 编辑器 |
+| 历史症状与根因 | 2026-10-10 执行真实 runtime 确认，超过既有长度上限的正文、101 条缺失投票诊断、21 个相同投票 token 均可生成宿主 schema 拒绝的 SNAPSHOT。正文长度上限已有共享常量，但失败没有带 requestId 返回；相同 localId 的附加数据也未去重。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts`、`tests/ui/topic/structured-reply-composer.test.tsx` |
+| 修复与证据 | 实际 runtime 与原生接收器的新断言修前失败，修后通过，seed `20261010`。超长正文或过多独立投票返回带 epoch/requestId 的 ERROR，宿主立即拒绝对应请求；正文留在编辑器，可修正后重新取快照。投票附加数据按 localId 去重，诊断限为 100 条，不截断正文或放宽桥接校验。2026-10-10 隔离 API 35 Release Hermes 的 NodeSeek 源码编辑器先正常回答合法快照，再经公共 DOM insertText 输入 524,289 字符；连续两次请求均返回与 documentEpoch/requestId 匹配的 too-long ERROR，未发出 POST。证据为 `.codex-tmp/share-fixes-device-20261010/composer-15/snapshot-nodeseek-source-over-limit/snapshot-limit.json`，所属 Composer 批次 15/15。 |
+| 验收边界 | `UNIT_PASS`、`UI_PASS`，上述源码超限拒绝为限定场景的 `DEVICE_REPLAY_PASS`；设备未验证纠错后重新取快照、投票数量边界、中文 IME、实体机或真实发送，不将两次超限拒绝计为完整修正流程通过。 |
+
+## `REG-WRITE-137` 编辑模式切换时向尚未显示的正文交接焦点
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-05`，共享 `WRITE-01/04/07`、`NOTIFY-02` 的结构化编辑器 |
+| 历史症状与根因 | 2026-10-11 全面回归中，linux.do 半屏源码回复从表情返回富文本，再切回源码时，真实 Gboard 间歇收起。同包十次原始及只读诊断验收共三次失败。失败现场 App 窗口和 WebView 仍聚焦、源码可见，但 DOM activeElement 为 BODY，源码未聚焦，IME 隐藏；无上传、确认或提交请求。模式切换用单次 requestAnimationFrame 聚焦，不能保证 React 已提交目标正文的可见状态。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts`、`src/ui/composer/structuredComposerBridge.test.ts`、`tests/ui/topic/structured-reply-composer.test.tsx`；真实 IME 的完整受控矩阵由匹配 APK 的 `scripts/run-composer-device-proof.mjs` 验收 |
+| 红绿证据与修复 | 最低 owner 在桥接更新提交前消费下一帧，修前实际向 inactive、display:none 的源码正文发出 focus，seed `1791747348000`。显式跨模式先同步提交可见状态，再调用现有 CodeMirror/Tiptap focus，删除两处外层 requestAnimationFrame；不新增延时、轮询或焦点状态，不改变 INIT、恢复及只读语义。最低断言、runtime/bridge 171 项及宿主 UI 67 项通过。2026-10-11 主模拟器匹配当前源码的 ordinary R3 x86_64 包在 linux.do 空回复中连续执行 10 轮表情搜索聚焦、ESC 收键盘、关闭与重开表情，再切富文本和源码；每轮原生正文焦点、真实 Gboard 与 IME 可见、正文为空及发送禁用均通过，无输入、上传、确认或发送。证据为 ignored `.codex-tmp/full-functional-regression-20261011/main-focus-safe-r3-result.json` 及同目录 20 份源码/富文本原生快照、对应 window 记录；APK SHA-256 为 `c8c60cf669254c81802c93bdeee8dfcab65beedf9847739a55b5946f46f8624c`。 |
+| 验收边界 | `UNIT_PASS`、`UI_PASS`；上述主模拟器普通半屏回复入口的 10 轮真实键盘验收为限定范围的 `LIVE_PASS`。NodeSeek 普通全屏/表情已有独立定向观察，不扩大为完整矩阵通过；其他受控场景（私信、发帖、退出恢复、系统大字号等）及 82 项完整矩阵未全验。三台合法 Composer AVD 均出现 `pkg=null`、APK 缺失并无法启动，本次新包完整受控矩阵为 `BLOCKED_BY_ENV`，不能把修前 81/82 局部通过转为修后 `DEVICE_REPLAY_PASS`。实体机及最终真机测试包的实际运行仍为 `NOT_VERIFIED`。修前证据位于 ignored `.codex-tmp/full-functional-regression-20261011/composer-default/`、`composer-linuxdo-source-sheet-replay-2/` 和 `composer-focus-diagnostic-7/`；隔离设备取证见 ignored `.codex-tmp/full-functional-regression-20261011/composer-avd-host-diagnosis-r2.json`。此事故未确认由正文解析重构引入。 |
+
+## `REG-DATA-015` 首次迁移将设置读取故障当作默认值并删除旧键
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02` |
+| 历史症状与根因 | 2026-10-10 首次迁移反例确认，旧 reader-settings 的 I/O 拒绝或 3 秒超时被 readLegacySettings 吞为 null；迁移随后保存默认设置、写完成标记并清理旧数据键，可能丢失原有主题、字号和来源偏好。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts` |
+| 修复与证据 | 两类故障断言先红后绿，seed `20261010`。I/O 拒绝和超时向外传播，停止迁移、不写完成标记、不删除旧键；后续正常读取可重试并恢复原设置。缺失或约定损坏格式仍沿用既有兼容规则。2026-10-10 隔离 API 35 Release Hermes sidecar 九阶段全部通过：settings-hang 在约 3.1 秒拒绝首次 load，完成标记和业务行未写入、旧键保留，迟到结果无效；恢复读取后重试恢复非默认设置与主数据，跨进程再核对。cleanup remove/keys 挂起对照也通过。`.codex-tmp/share-fixes-device-20261010/storage-sidecar.json` 保存九份同 buildId 回执，`.codex-tmp/share-fixes-device-20261010/storage-summary.json` 记录 checkpoint 已 restored。 |
+| 验收边界 | 临时 SQLite 的 `UNIT_PASS`，上述隔离故障 fixture 在 Android 专项通过，数据库 checkpoint 恢复已核对；设备通过受控 AsyncStorage 挂起验证真实 SQLite 链路，不证明真实用户首次升级、设备原生 I/O 拒绝、API 30 或实体机通过。 |
+
+## `REG-ACCOUNT-063` 旧清除登录终态覆盖新身份或新核对
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/02` |
+| 历史症状与根因 | 2026-10-10 三站受控异步反例确认，Cookie 清除后等待 SecureStore 清理期间，新身份或新 probe 已接管，但旧清理仍发布 cleared/check-failed 并取消新核对。linux.do 在进入 Session 前等待 barrier 也存在同样归属空窗。 |
+| 当前 owner | `tests/ui/account/session-controller-browser-flow.test.tsx`、`tests/ui/account/account-runtime.test.tsx`、`tests/ui/account/account-status-controller.test.tsx` |
+| 修复与证据 | identity、probe、重复 clear 与迟到失败用例先红后绿，seed `20261010`。清理捕获 AccountStatus 原有 probe generation，并在 Cookie、SecureStore 等待后和异常路径复核 Cookie generation、session epoch 与 probe generation；linux.do 在 barrier 前捕获。过期操作返回 false，不再发布账号事件。 |
+| 验收边界 | `UI_PASS`；未清除真实设备 Cookie、登录态或 App 数据，真实登录/清除并发为 `NOT_VERIFIED`。 |
+
+## `REG-ACCOUNT-064` 隐藏浏览器的挑战标题空白正则丢失转义
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-02`，共享 `FEED-01/02`、`TOPIC-01/02/03` 的浏览器读取回退 |
+| 历史症状与根因 | 2026-10-10 运行两站实际生成脚本确认，普通模板字符串中的单反斜杠 s 在输出脚本中变成字母 s，带首尾空白的挑战标题未命中；源码里的正则看似正确，不能证明输出脚本正确。 |
+| 当前 owner | `tests/integration/hidden-browser-scripts.test.ts` |
+| 修复与证据 | 两站生成脚本在中文、英文、空格和制表符标题下先红后绿，seed `20261010`。只修复模板中的空白转义，保留原有可读内容、挑战页面和账号证据判定。2026-10-10 隔离 API 35 Release Hermes proof 中，NodeSeek/linux.do 两项仅标题首尾 NBSP 的受控挑战页面均经实际 WebView 判为 challenge，未返回可读正文。证据为 `.codex-tmp/share-fixes-device-20261010/review-runtime.json` 的两项 whitespace-title-only-challenge。 |
+| 验收边界 | 生成脚本执行的 `UNIT_PASS`，上述两项在实际 Android WebView 专项通过；所属 runtime 批次仅 49/51，整组为 FAIL，不能据局部通过报告整组成功。页面为本地受控 HTML，新一轮真实站点挑战、账号登录与实体机均为 `NOT_VERIFIED`，不记 `LIVE_PASS`。 |
+
+## `REG-FEED-040` 重复候选占用聚合首页分页名额
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-01/02` |
+| 历史症状与根因 | 2026-10-10 真实 getFeed 反例确认，先对来源结果和 buffer 分配分页名额，再由最终消费者去重；30 个候选中含一个重复时只显示 29 条，另一条唯一候选仍留在 buffer。此反例未证明数据丢失。 |
+| 当前 owner | `src/sources/feedRead.test.ts` |
+| 修复与证据 | canonical 反例先红后绿。聚合入口复用 mergeTopics 合并身份、权限和状态，再平衡来源、分页并形成下一轮 buffer；展示和 buffer 使用同一归一化候选池。2026-10-10 隔离 API 35 Release Hermes 经真实 getFeed 的受控 HTTP 分支验证：仅启用 linux.do，首轮返回 30 条唯一候选并合并重复项权限，下一轮仅消费剩余 19 条 buffer，不重复请求。证据为 `.codex-tmp/share-fixes-device-20261010/review-runtime.json` 的 feed-hermes-unique-candidate-quota-and-buffer。 |
+| 验收边界 | `UNIT_PASS`，上述 Hermes 分支在 Android 专项通过；所属 runtime 批次仅 49/51，整组为 FAIL。该分支不证明真实四站聚合分页、设备列表滚动、原站 HTTP 或实体机通过，不记 `LIVE_PASS`。 |
+
+## `REG-OPS-022` 原生发布或文件故障专项缺席用例仍判通过
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-01`；原生 tooling 证据归属 |
+| 历史症状与根因 | 2026-10-10 tooling 反例确认，发布 helper 没有挂入 App 测试 overlay，也不校验本次报告，Gradle NO-SOURCE 仍可进入签名构建；文件故障 runner 指定四个方法，但只检查任意非零 OK 摘要，一项完成也可能被接受。 |
+| 当前 owner | `tests/tooling/release-environment.test.ts`、`tests/tooling/release-workflow.test.ts`、`tests/tooling/native-test-plan.test.ts` |
+| 修复与证据 | 缺失、陈旧、不完整、跳过、错误 owner 与仅摘要反例先红后绿，seed `20261010`。发布复用 App task spec 与 init overlay，签名前要求所有指定类有本次新鲜、实际执行且零失败的 XML；文件故障要求四个指定 class/method 各自成功完成，且摘要数量一致。2026-10-10 执行 `:app:testReleaseUnitTest`，复用 App overlay 后取得 62 条成功用例，五个指定类均有本次新鲜执行 XML；记录为 `.codex-tmp/share-fixes-device-20261010/app-native.json`。 |
+| 验收边界 | `UNIT_PASS` 包括 runner 验收规则与本次 App Gradle/JVM 用例；平台 file-faults 四方法 instrumentation、正式签名与发布流程均为 `NOT_VERIFIED`，不将 App XML 通过计为这些流程通过。 |
+
 ## `REG-DATA-014` 已加载主题收藏仍保存链接入口的占位摘要
 
 | 字段 | 内容 |

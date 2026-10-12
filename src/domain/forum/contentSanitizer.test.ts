@@ -3,6 +3,45 @@ import { parseHtml } from './html';
 import { sanitizeContentHtml } from './contentSanitizer';
 
 describe('forum content sanitizer media referrer policy', () => {
+  it('keeps repeated escapes and entity text cut by terminal spans visible', () => {
+    const html = sanitizeContentHtml(
+      '<div class="nsk-magic-tabs"><div class="nsk-magic-tab-title">Report</div>' +
+        '<div class="nsk-magic-tab-body"><pre>&amp;lt;safe&amp;gt;\n&am<span>p;#32;</span></pre></div></div>',
+      'https://www.nodeseek.com/post-1-1'
+    );
+    const root = parseHtml(html);
+    expect(root.querySelector('.forum-terminal-code')?.text).toBe('&lt;safe&gt;\n&amp;#32;');
+  });
+  it.each(['hidden', 'script', 'iframe', 'metadata'] as const)(
+    'cleans wide %s siblings without repeatedly copying the parent array',
+    (kind) => {
+      const count = 512;
+      const fragment = {
+        hidden: '<span hidden>hidden</span>',
+        script: '<script>hidden</script>',
+        iframe: '<iframe src="javascript:alert(1)"></iframe>',
+        metadata: '<div class="meta">12×34 1 KB</div>'
+      }[kind];
+      const nativeFilter = Array.prototype.filter;
+      let filterInput = 0;
+      const filter = vi.spyOn(Array.prototype, 'filter').mockImplementation(function (
+        this: unknown[],
+        callback,
+        thisArg
+      ) {
+        filterInput += this.length;
+        return Reflect.apply(nativeFilter, this, [callback, thisArg]);
+      });
+      let html: string;
+      try {
+        html = sanitizeContentHtml(`<section>${fragment.repeat(count)}<p>keep</p></section>`, 'https://example.com');
+      } finally {
+        filter.mockRestore();
+      }
+      expect(html).toBe('<section><p>keep</p></section>');
+      expect(filterInput).toBeLessThan(count * 32 + 10_000);
+    }
+  );
   it.each([
     '<p>important explanation</p><img src="https://example.com/proof.png">',
     '<ul><li>important explanation</li></ul>',

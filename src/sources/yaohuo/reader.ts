@@ -1,7 +1,7 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
 import { normalizeMediaReferrerPolicyHeader } from '@/domain/forum/mediaReferrer';
-import { elementText, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
+import { elementText, forumNodeText, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
 import type {
   FeedResponse,
   RepliesResponse,
@@ -331,12 +331,13 @@ export async function getYaohuoRepliesDirect({
   });
   const items = result.items;
   const identifiedReplyPage =
-    pageRoot.querySelector('title')?.text.trim() === '查看回复' &&
+    forumNodeText(pageRoot.querySelector('title')).trim() === '查看回复' &&
     pageRoot
       .querySelectorAll('a[href]')
       .some(
         (link) =>
-          link.text.trim() === '返回主题' && extractYaohuoTopicParts(link.getAttribute('href'))?.id === topicIdValue(id)
+          forumNodeText(link).trim() === '返回主题' &&
+          extractYaohuoTopicParts(link.getAttribute('href'))?.id === topicIdValue(id)
       );
   const hasPageField =
     parsePositiveInteger(

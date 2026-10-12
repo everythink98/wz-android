@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { RELEASE_REQUIRED_TRACKED_INPUTS, RELEASE_SIGNING_ENV_NAMES } from '../../scripts/release-environment.mjs';
+import { nativeTestTasks } from '../../scripts/native-test-plan.mjs';
 
 const root = path.resolve(__dirname, '../..');
 const signer = 'a'.repeat(64);
@@ -82,9 +83,13 @@ function release(options: { args?: string[]; failure?: Failure; platform?: strin
       files.set(name, Buffer.from(value));
       if (name.endsWith('release-manifest.json')) events.push('manifest');
     },
-    existsSync: (name: string) => files.has(name) || name === path.join(root, 'fixture-sdk/build-tools'),
-    statSync: (name: string) => ({ isFile: () => files.has(name) }),
-    readdirSync: () => [{ name: '36.0.0', isDirectory: () => true }]
+    existsSync: (name: string) =>
+      files.has(name) || [...files.keys()].some((file) => file.startsWith(`${name}${path.sep}`)),
+    statSync: (name: string) => ({ isFile: () => files.has(name), mtimeMs: Date.now() }),
+    readdirSync: (name: string) =>
+      name.endsWith('testReleaseUnitTest')
+        ? [...files.keys()].filter((file) => path.dirname(file) === name).map((file) => path.basename(file))
+        : [{ name: '36.0.0', isDirectory: () => true }]
   };
   const spawnSync = (command: string, argv: string[], config: { env: Record<string, string> }) => {
     const args = [...argv];
@@ -116,8 +121,15 @@ function release(options: { args?: string[]; failure?: Failure; platform?: strin
     else if (args.includes('prebuild')) {
       stage = 'prebuild';
       put('package.json', '{"name":"release-fixture","scripts":{"ios":"expo run:ios"}}');
-    } else if (args.includes(':app:compileReleaseKotlin')) stage = 'compile';
-    else if (args.includes(':app:assembleRelease')) {
+    } else if (args.includes(':app:compileReleaseKotlin')) {
+      stage = 'compile';
+      const nativeTest = nativeTestTasks[':app:testReleaseUnitTest'];
+      for (const name of nativeTest.classes)
+        put(
+          `${nativeTest.reports}/TEST-${name}.xml`,
+          `<testsuite name="${name}" tests="1" skipped="0" failures="0" errors="0"/>`
+        );
+    } else if (args.includes(':app:assembleRelease')) {
       stage = 'assemble';
       for (const abi of ['arm64-v8a', 'x86_64'])
         put(`android/app/build/outputs/apk/release/app-${abi}-release.apk`, apkBytes);
@@ -177,9 +189,9 @@ function release(options: { args?: string[]; failure?: Failure; platform?: strin
             ...require('node:util'),
             parseArgs: (config: Parameters<typeof parseArgs>[0]) => parseArgs({ ...config, args: options.args || [] })
           };
-        if (['node:path', 'node:url', 'node:crypto'].includes(name)) return require(name);
+        if (['node:path', 'node:url', 'node:crypto', 'fast-xml-parser'].includes(name)) return require(name);
         if (name === './diagnostic-symbols.mjs') return { archiveDiagnosticSymbols: () => events.push('archive') };
-        if (['./release-environment.mjs', './apk-signing.cjs'].includes(name))
+        if (['./release-environment.mjs', './apk-signing.cjs', './native-test-plan.mjs'].includes(name))
           return load(path.resolve(path.dirname(filename), name));
         throw new Error(`Unexpected fixture import: ${name}`);
       }

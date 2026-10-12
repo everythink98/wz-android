@@ -73,8 +73,11 @@ async function boundedLegacyIo<T>(operation: Promise<T>): Promise<T> {
 
 async function readLegacySettings(): Promise<ReaderSettings | null> {
   const trace = createTrace('reader-data', 'load-settings');
+  const raw = await boundedLegacyIo(AsyncStorage.getItem('reader-settings')).catch((error) => {
+    finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+    throw error;
+  });
   try {
-    const raw = await boundedLegacyIo(AsyncStorage.getItem('reader-settings'));
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     const valid = isRecord(parsed);
     finishDiagnosticTrace(trace, valid ? 'success' : raw === null ? 'noop' : 'partial', {

@@ -1,4 +1,14 @@
-import { elementText, escapeHtmlAttribute, escapeHtmlText, escapeQuotedHtmlTagDelimiters, parseHtml } from './html';
+import {
+  createForumTextIndex,
+  elementText,
+  escapeHtmlAttribute,
+  escapeHtmlText,
+  escapeQuotedHtmlTagDelimiters,
+  forumElementReplacementNodes,
+  parseHtml,
+  transformForumElements,
+  type ForumTextSegment
+} from './html';
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { isNodeSeekHost, sourceCatalog } from './sourceCatalog';
 
@@ -58,8 +68,10 @@ export function normalizeForumUserMentionNodes(root: HTMLElement) {
   const previousByParent = new Map<HTMLElement, Map<Node, Node | undefined>>();
   root.querySelectorAll('a[href]').forEach((link) => {
     const href = link.getAttribute('href') || '';
+    if (!isForumUserMentionHref(href)) return;
+    if (link.childNodes.some((child) => child instanceof HTMLElement && /^[a-z]/i.test(child.rawTagName || ''))) return;
     const label = elementText(link);
-    if (!isForumUserMentionHref(href) || /<[a-z][^>]*>/i.test(link.innerHTML)) return;
+    if (/<[a-z][^>]*>/i.test(link.innerHTML)) return;
     const parent = link.parentNode;
     let siblings = parent ? previousByParent.get(parent) : undefined;
     if (parent && !siblings) {
@@ -73,7 +85,7 @@ export function normalizeForumUserMentionNodes(root: HTMLElement) {
       previous.rawText = previousText.slice(0, -1);
     }
     appendClass(link, FORUM_USER_MENTION_CLASS);
-    link.set_content([new TextNode(mentionLabel(label))]);
+    link.set_content([new TextNode(escapeHtmlText(mentionLabel(label)))]);
   });
 }
 
@@ -212,19 +224,49 @@ function isNodeSeekFloorLink(url: URL, label: string) {
   return Boolean(floor) && /^\/post-\d+-\d+\/?$/i.test(url.pathname) && url.hash === `#${floor}`;
 }
 
+function referenceLabelRange(segments: ForumTextSegment[]) {
+  const segment = segments[0];
+  if (!segment) return { prefix: '', length: 0, label: () => '' };
+  const { text, nonWhitespacePrefix: counts } = segment.tape;
+  const first = counts[segment.start];
+  const last = counts[segment.end];
+  if (first === last) return { prefix: '', length: 0, label: () => '' };
+  const boundary = (target: number) => {
+    let low = segment.start + 1;
+    let high = segment.end;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (counts[middle] < target) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+  const start = boundary(first + 1) - 1;
+  const end = boundary(last);
+  return {
+    prefix: text.slice(start, Math.min(end, start + 2)),
+    length: end - start,
+    label: () => text.slice(start, end).replace(/\s+/g, ' ').trim()
+  };
+}
+
 function linkReferenceInfo(
   link: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
-  baseUrl?: string
+  baseUrl: string | undefined,
+  text: ReturnType<typeof createForumTextIndex>,
+  includeLabel = true
 ) {
-  const label = elementText(link);
   const href = link.getAttribute('href') || link.attributes?.href || '';
   const url = nodeSeekUrlFromHref(href, baseUrl);
   if (!url) {
     return undefined;
   }
-  if (isNodeSeekMentionLink(url, label)) {
-    return { type: 'mention' as const, label, href };
+  const range = referenceLabelRange(text.range(link));
+  if (isNodeSeekMentionLink(url, range.prefix)) {
+    return { type: 'mention' as const, label: includeLabel ? range.label() : range.prefix, href };
   }
+  if (range.length !== url.hash.length || range.prefix[0] !== '#') return undefined;
+  const label = range.label();
   if (isNodeSeekFloorLink(url, label)) {
     return { type: 'floor' as const, label, href };
   }
@@ -233,7 +275,8 @@ function linkReferenceInfo(
 
 function leadingReplyReferenceParagraphHtml(
   paragraph: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
-  baseUrl?: string
+  baseUrl: string | undefined,
+  text: ReturnType<typeof createForumTextIndex>
 ) {
   const children = paragraph.childNodes || [];
   let index = 0;
@@ -243,7 +286,12 @@ function leadingReplyReferenceParagraphHtml(
   const mentionNode = children[index];
   const mentionInfo =
     mentionNode && (mentionNode as { rawTagName?: string }).rawTagName === 'a'
-      ? linkReferenceInfo(mentionNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], baseUrl)
+      ? linkReferenceInfo(
+          mentionNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
+          baseUrl,
+          text,
+          false
+        )
       : undefined;
   if (mentionInfo?.type !== 'mention') {
     return undefined;
@@ -255,11 +303,16 @@ function leadingReplyReferenceParagraphHtml(
   const floorNode = children[index];
   const floorInfo =
     floorNode && (floorNode as { rawTagName?: string }).rawTagName === 'a'
-      ? linkReferenceInfo(floorNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], baseUrl)
+      ? linkReferenceInfo(
+          floorNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
+          baseUrl,
+          text
+        )
       : undefined;
   if (floorInfo?.type !== 'floor') {
     return undefined;
   }
+  const mentionLabel = referenceLabelRange(text.range(mentionNode as HTMLElement)).label();
   const restHtml = children
     .slice(index + 1)
     .map((child) => child.toString())
@@ -267,7 +320,7 @@ function leadingReplyReferenceParagraphHtml(
     .replace(/^\s+/, '');
   const referenceHtml = [
     `<${FORUM_REPLY_REFERENCE_TAG}`,
-    ` data-mention="${escapeHtmlAttribute(mentionInfo.label)}"`,
+    ` data-mention="${escapeHtmlAttribute(mentionLabel)}"`,
     ` data-floor="${escapeHtmlAttribute(floorInfo.label)}"`,
     ` data-floor-href="${escapeHtmlAttribute(floorInfo.href)}"`,
     ` data-user-href="${escapeHtmlAttribute(mentionInfo.href)}"`,
@@ -277,16 +330,21 @@ function leadingReplyReferenceParagraphHtml(
 }
 
 export function markNodeSeekReplyReferenceNodes(root: ReturnType<typeof parseHtml>, baseUrl?: string) {
+  if (!root.querySelector('a[href]')) return false;
   let changed = false;
-  root.querySelectorAll('p').forEach((paragraph) => {
-    const replacementHtml = leadingReplyReferenceParagraphHtml(paragraph, baseUrl);
+  const paragraphText = createForumTextIndex(root);
+  transformForumElements(root, root.querySelectorAll('p'), (paragraph) => {
+    const replacementHtml = leadingReplyReferenceParagraphHtml(paragraph, baseUrl, paragraphText);
     if (replacementHtml) {
-      paragraph.replaceWith(replacementHtml);
       changed = true;
+      return forumElementReplacementNodes(paragraph, replacementHtml);
     }
   });
-  root.querySelectorAll('a[href]').forEach((link) => {
-    const info = linkReferenceInfo(link, baseUrl);
+  const links = root.querySelectorAll('a[href]');
+  if (!links.length) return changed;
+  const linkText = createForumTextIndex(root);
+  links.forEach((link) => {
+    const info = linkReferenceInfo(link, baseUrl, linkText, false);
     if (!info) return;
     appendClass(link, info.type === 'mention' ? NODESEEK_MENTION_CLASS : NODESEEK_FLOOR_CLASS);
     changed = true;

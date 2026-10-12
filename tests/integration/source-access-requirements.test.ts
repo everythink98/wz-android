@@ -10,7 +10,11 @@ vi.mock('expo-secure-store', () => ({
 import { getLinuxDoFeed, getLinuxDoTopic } from '@/sources/linuxdo/reader';
 import { getNodeSeekFeed, getNodeSeekTopic } from '@/sources/nodeseek/reader';
 import { getV2exFeed, getV2exTopic } from '@/sources/v2ex/reader';
-import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import {
+  accessRequirementFromObject,
+  accessRequirementFromPlainText,
+  accessRequirementFromText
+} from '@/domain/forum/accessRequirements';
 import { parseYaohuoListHtml } from '@/sources/yaohuo/feedParser';
 import { parseYaohuoTopicHtml } from '@/sources/yaohuo/topicParser';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';
@@ -22,6 +26,31 @@ function json(value: unknown) {
 }
 
 describe('Android local access requirement detection', () => {
+  it('matches already decoded DOM text without reinterpreting literal markup or entities', () => {
+    expect(accessRequirementFromPlainText('<script>权限不足</script>')).toEqual({
+      type: 'permission',
+      label: '需权限',
+      detail: '<script>权限不足</script>'
+    });
+    expect(accessRequirementFromPlainText('&#26435;&#38480;&#19981;&#36275;')).toBeUndefined();
+    expect(accessRequirementFromPlainText('请先\n登录')).toEqual({
+      type: 'login',
+      label: '需登录',
+      detail: '请先 登录'
+    });
+    expect(accessRequirementFromPlainText('需要 trust level 2 才可查看')).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: '需要 trust level 2 才可查看'
+    });
+    expect(accessRequirementFromText('<script>权限不足</script>')).toBeUndefined();
+    expect(accessRequirementFromText('&#26435;&#38480;&#19981;&#36275;')).toEqual({
+      type: 'permission',
+      label: '需权限',
+      detail: '权限不足'
+    });
+  });
+
   it('does not treat ordinary linux.do notification level fields as access requirements', () => {
     expect(
       accessRequirementFromObject({

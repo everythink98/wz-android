@@ -29,10 +29,19 @@ function isTextNode(node: Node): node is TextNode {
 const VISIBLE_EMPTY_ELEMENTS = new Set(['audio', 'br', 'hr', 'iframe', 'img', 'input', 'svg', 'video']);
 
 function nodeHasMeaningfulContent(node: Node): boolean {
-  if (isTextNode(node)) {
-    return Boolean(node.rawText.trim());
+  const pending = [node];
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (isTextNode(current)) {
+      if (current.rawText.trim()) return true;
+      continue;
+    }
+    if (VISIBLE_EMPTY_ELEMENTS.has(current.rawTagName.toLowerCase())) return true;
+    for (let index = current.childNodes.length - 1; index >= 0; index -= 1) {
+      pending.push(current.childNodes[index]);
+    }
   }
-  return VISIBLE_EMPTY_ELEMENTS.has(node.rawTagName.toLowerCase()) || node.childNodes.some(nodeHasMeaningfulContent);
+  return false;
 }
 
 function firstMeaningfulNode(nodes: Node[]) {
@@ -88,56 +97,90 @@ type InlineSplit = {
   separated: boolean;
 };
 
-function splitInlineNode(node: Node): InlineSplit {
-  if (isTextNode(node)) {
-    const separator = node.rawText.search(/[\r\n]/);
-    if (separator < 0) {
-      return { before: [node], after: [], separated: false };
-    }
-    const before = node.rawText.slice(0, separator);
-    const after = node.rawText.slice(separator).replace(/^[\r\n]+/, '');
-    node.rawText = before;
-    return {
-      before: before ? [node] : [],
-      after: after ? [new TextNode(after)] : [],
-      separated: true
-    };
-  }
-  const element = node as HTMLElement;
-  if (element.rawTagName.toLowerCase() === 'br') {
-    return { before: [], after: [], separated: true };
-  }
-  const split = splitInlineNodes([...element.childNodes]);
-  if (!split.separated) {
-    return { before: [element], after: [], separated: false };
-  }
-  element.set_content(split.before);
-  const afterElement = new HTMLElement(element.rawTagName, {}, element.rawAttrs);
-  afterElement.set_content(split.after);
-  return {
-    before: split.before.some(nodeHasMeaningfulContent) ? [element] : [],
-    after: split.after.some(nodeHasMeaningfulContent) ? [afterElement] : [],
-    separated: true
-  };
-}
-
 function splitInlineNodes(nodes: Node[]): InlineSplit {
-  const before: Node[] = [];
-  const after: Node[] = [];
-  let separated = false;
-  for (const node of nodes) {
-    if (separated) {
-      after.push(node);
+  type Frame = InlineSplit & {
+    element?: HTMLElement;
+    index: number;
+    nodes: Node[];
+    beforeMeaningful: boolean;
+    afterMeaningful: boolean;
+  };
+  const root: Frame = {
+    after: [],
+    before: [],
+    index: 0,
+    nodes,
+    separated: false,
+    beforeMeaningful: false,
+    afterMeaningful: false
+  };
+  const pending = [root];
+  while (pending.length) {
+    const frame = pending.at(-1)!;
+    if (frame.index < frame.nodes.length) {
+      const node = frame.nodes[frame.index++];
+      if (frame.separated) {
+        frame.after.push(node);
+        frame.afterMeaningful ||= nodeHasMeaningfulContent(node);
+      } else if (isTextNode(node)) {
+        const separator = node.rawText.search(/[\r\n]/);
+        if (separator < 0) {
+          frame.before.push(node);
+          frame.beforeMeaningful ||= Boolean(node.rawText.trim());
+          continue;
+        }
+        const before = node.rawText.slice(0, separator);
+        const after = node.rawText.slice(separator).replace(/^[\r\n]+/, '');
+        node.rawText = before;
+        if (before) {
+          frame.before.push(node);
+          frame.beforeMeaningful ||= Boolean(before.trim());
+        }
+        if (after) {
+          frame.after.push(new TextNode(after));
+          frame.afterMeaningful ||= Boolean(after.trim());
+        }
+        frame.separated = true;
+      } else if (node.rawTagName.toLowerCase() === 'br') {
+        frame.separated = true;
+      } else {
+        pending.push({
+          after: [],
+          before: [],
+          element: node as HTMLElement,
+          index: 0,
+          nodes: [...node.childNodes],
+          separated: false,
+          beforeMeaningful: false,
+          afterMeaningful: false
+        });
+      }
       continue;
     }
-    const split = splitInlineNode(node);
-    before.push(...split.before);
-    if (split.separated) {
-      separated = true;
-      after.push(...split.after);
+    pending.pop();
+    const element = frame.element;
+    if (!element) continue;
+    const parent = pending.at(-1)!;
+    if (!frame.separated) {
+      parent.before.push(element);
+      parent.beforeMeaningful ||=
+        frame.beforeMeaningful || VISIBLE_EMPTY_ELEMENTS.has(element.rawTagName.toLowerCase());
+      continue;
     }
+    element.set_content(frame.before);
+    const afterElement = new HTMLElement(element.rawTagName, {}, element.rawAttrs);
+    afterElement.set_content(frame.after);
+    if (frame.beforeMeaningful) {
+      parent.before.push(element);
+      parent.beforeMeaningful = true;
+    }
+    if (frame.afterMeaningful) {
+      parent.after.push(afterElement);
+      parent.afterMeaningful = true;
+    }
+    parent.separated = true;
   }
-  return { before, after, separated };
+  return { after: root.after, before: root.before, separated: root.separated };
 }
 
 function removeEmptyMarkerWrapper(textNode: TextNode, paragraph: HTMLElement) {
@@ -151,23 +194,10 @@ function removeEmptyMarkerWrapper(textNode: TextNode, paragraph: HTMLElement) {
   }
 }
 
-function calloutDepth(blockquote: HTMLElement) {
-  let depth = 1;
-  let parent = blockquote.parentNode;
-  while (parent) {
-    if (parent.rawTagName?.toLowerCase() === 'blockquote' && calloutMarker(parent)) {
-      depth += 1;
-      if (depth > MAX_CALLOUT_DEPTH) {
-        return depth;
-      }
-    }
-    parent = parent.parentNode;
-  }
-  return depth;
-}
-
 function stripForgedCalloutSemantics(root: HTMLElement) {
-  const visit = (node: HTMLElement) => {
+  const pending = [...root.children].reverse();
+  while (pending.length) {
+    const node = pending.pop()!;
     Object.keys(node.attributes).forEach((name) => {
       if (name.toLowerCase().startsWith('data-forum-callout')) {
         node.removeAttribute(name);
@@ -185,27 +215,28 @@ function stripForgedCalloutSemantics(root: HTMLElement) {
         node.setAttribute('class', next);
       }
     }
-    node.children.forEach(visit);
-  };
-  root.children.forEach(visit);
+    const children = node.children;
+    for (let index = children.length - 1; index >= 0; index -= 1) pending.push(children[index]);
+  }
 }
 
 function stripCalloutTitleInlineStyles(nodes: Node[]) {
-  const visit = (node: Node) => {
+  const pending = [...nodes].reverse();
+  while (pending.length) {
+    const node = pending.pop()!;
     if (!isElementNode(node)) {
-      return;
+      continue;
     }
     Object.keys(node.attributes)
       .filter((name) => name.toLowerCase() === 'style')
       .forEach((name) => node.removeAttribute(name));
-    node.childNodes.forEach(visit);
-  };
-  nodes.forEach(visit);
+    for (let index = node.childNodes.length - 1; index >= 0; index -= 1) pending.push(node.childNodes[index]);
+  }
 }
 
-function normalizeCallout(blockquote: HTMLElement) {
+function normalizeCallout(blockquote: HTMLElement, depth: number) {
   const marker = calloutMarker(blockquote);
-  if (!marker || calloutDepth(blockquote) > MAX_CALLOUT_DEPTH) {
+  if (!marker || depth > MAX_CALLOUT_DEPTH) {
     return;
   }
   if (marker.rawMatch) {
@@ -262,7 +293,25 @@ export function discourseContentNeedsCalloutNormalization(html: unknown) {
 
 export function normalizeDiscourseCallouts(root: HTMLElement) {
   stripForgedCalloutSemantics(root);
-  root.querySelectorAll('blockquote').reverse().forEach(normalizeCallout);
+  const blockquotes = root.querySelectorAll('blockquote');
+  const depths = new Map<HTMLElement, number>();
+  // Ancestor markers remain source markers until their descendants have been normalized.
+  // Snapshot their cumulative depth once before the reverse mutation phase.
+  for (const blockquote of blockquotes) {
+    const pending: HTMLElement[] = [];
+    let node: HTMLElement | null = blockquote;
+    while (node && !depths.has(node)) {
+      pending.push(node);
+      node = node.parentNode;
+    }
+    let depth = (node && depths.get(node)) || 0;
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (current.rawTagName?.toLowerCase() === 'blockquote' && calloutMarker(current)) depth++;
+      depths.set(current, depth);
+    }
+  }
+  blockquotes.reverse().forEach((blockquote) => normalizeCallout(blockquote, depths.get(blockquote)!));
 }
 
 export function stripDiscourseCalloutMarkersFromExcerpt(value: unknown) {

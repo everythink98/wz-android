@@ -15,7 +15,11 @@ import { isDiscourseSource, sourceCatalog } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification, NotificationMessage } from '@/domain/notifications/models';
 import { notificationPageError } from '@/domain/notifications/notificationQuality';
 
-import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
+import type {
+  ComposerSnapshot,
+  ComposerSubmissionSettlement,
+  PendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 import { parseForumTopicLink } from '@/domain/forum/links';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
@@ -772,10 +776,16 @@ function EnabledNotificationDetailRoute({
   const [markMessage, setMarkMessage] = useState('');
   const [replyBusy, setReplyBusy] = useState(false);
   const [replyContent, setReplyContent] = useState('');
+  const replyDraftRevisionRef = useRef(0);
+  const changeReplyContent = useCallback((content: string) => {
+    replyDraftRevisionRef.current += 1;
+    setReplyContent(content);
+  }, []);
   const [replyPendingNodeSeekPolls, setReplyPendingNodeSeekPolls] = useState<PendingNodeSeekPoll[]>([]);
   const [replyError, setReplyError] = useState('');
   const [replyStatus, setReplyStatus] = useState('');
   const [replyVisible, setReplyVisible] = useState(false);
+  const replyScopeRef = useCommittedRef({ canAccessSource, identityKey, itemId: item.id, replySessionEpoch });
   const policyControllerRef = useRef<AbortController | undefined>(undefined);
   const [policyBusy, setPolicyBusy] = useState(false);
   const [policyError, setPolicyError] = useState('');
@@ -1384,9 +1394,10 @@ function EnabledNotificationDetailRoute({
       ]);
   });
   const submitReply = useCallback(
-    (snapshot?: ComposerSnapshot) => {
+    (snapshot?: ComposerSnapshot, settleSubmission?: ComposerSubmissionSettlement) => {
       const submittedSnapshot = snapshot && Array.isArray(snapshot.validationIssues) ? snapshot : undefined;
       const submittedContent = submittedSnapshot?.markdown ?? replyContent;
+      const submittedDraftRevision = replyDraftRevisionRef.current;
       if (
         !routeFocused ||
         !focusManager.isFocused() ||
@@ -1419,10 +1430,27 @@ function EnabledNotificationDetailRoute({
             }
             uncertainRepliesRef.current.delete(contentKey);
             pendingReplyRef.current = undefined;
-            setReplyContent('');
-            setReplyPendingNodeSeekPolls([]);
-            setReplyStatus('');
-            setReplyVisible(false);
+            const isCurrent = () =>
+              !controller.signal.aborted &&
+              replyControllerRef.current === controller &&
+              replyScopeRef.current.canAccessSource &&
+              replyScopeRef.current.identityKey === identityKey &&
+              replyScopeRef.current.itemId === item.id &&
+              replyScopeRef.current.replySessionEpoch === replySessionEpoch;
+            const complete = () => {
+              if (!isCurrent() || (!settleSubmission && replyDraftRevisionRef.current !== submittedDraftRevision))
+                return false;
+              replyDraftRevisionRef.current += 1;
+              setReplyContent('');
+              setReplyPendingNodeSeekPolls([]);
+              setReplyStatus('');
+              setReplyVisible(false);
+              return true;
+            };
+            if (!isCurrent()) return;
+            if (settleSubmission) await settleSubmission(complete);
+            else complete();
+            if (!isCurrent()) return;
             runtime.notify('回复已发送');
             await Promise.allSettled([
               queryClient.invalidateQueries({ queryKey: detailQueryKey }),
@@ -1501,6 +1529,8 @@ function EnabledNotificationDetailRoute({
       queryClient,
       refreshSnapshots,
       replyContent,
+      replyScopeRef,
+      replySessionEpoch,
       routeFocused,
       detailQuery,
       runtime
@@ -1649,9 +1679,9 @@ function EnabledNotificationDetailRoute({
         setReplyVisible(true);
       }}
       onReplyClose={() => setReplyVisible(false)}
-      onReplyContentChange={setReplyContent}
+      onReplyContentChange={changeReplyContent}
       onReplySnapshot={(snapshot) => {
-        setReplyContent(snapshot.markdown);
+        changeReplyContent(snapshot.markdown);
         setReplyPendingNodeSeekPolls(snapshot.pendingNodeSeekPolls);
       }}
       onSubmitReply={submitReply}

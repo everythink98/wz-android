@@ -19,6 +19,75 @@ function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
 
+it.each(['opening', 'reply'] as const)(
+  'copies %s code as once-decoded text, including entities cut by child markup',
+  (role) => {
+    const compilation = compileForumContent({
+      html: '<pre><code>&amp;lt;safe&amp;gt;\n&am<span>p;#32;</span></code></pre>',
+      source: 'nodeseek',
+      role
+    });
+    const code = compilation.rows.find((row) => row.type === 'codeBlock');
+    expect(code?.type === 'codeBlock' ? code.copyText : undefined).toBe('&lt;safe&gt;\n&amp;#32;');
+  }
+);
+
+it.each(['opening', 'reply'] as const)(
+  'preserves code text when %s reference and sticker paragraphs are replaced',
+  (role) => {
+    for (const prefix of [
+      '<a href="/member?t=alice">@alice</a> <a href="/post-2-1#3">#3</a>',
+      '<img class="sticker" src="https://www.nodeseek.com/static/image/sticker/1.png">'
+    ]) {
+      const plan = compileForumContent({
+        role,
+        source: 'nodeseek',
+        html: `<p>${prefix} <pre><code>&lt;safe&gt;\ncode</code></pre></p>`
+      });
+      const code = plan.rows.find((row) => row.type === 'codeBlock');
+      expect(code?.type === 'codeBlock' ? code.copyText : undefined).toBe('<safe>\ncode');
+    }
+  }
+);
+
+it.each(['span', 'div'])('bounds selection analysis before copying deeply nested %s content', (tag) => {
+  const depth = 2_048;
+  const nativeFlatMap = Array.prototype.flatMap;
+  let selectionUnitsCopied = 0;
+  const flatMap = vi.spyOn(Array.prototype, 'flatMap').mockImplementation(function (
+    this: unknown[],
+    callback,
+    thisArg
+  ) {
+    const result: unknown[] = Reflect.apply(nativeFlatMap, this, [callback, thisArg]);
+    if (
+      result.some(
+        (item) =>
+          item &&
+          typeof item === 'object' &&
+          'kind' in item &&
+          (item.kind === 'atom' || item.kind === 'owner' || item.kind === 'boundary')
+      )
+    ) {
+      selectionUnitsCopied += result.length;
+    }
+    return result;
+  });
+  let compilation: CompiledForumContent;
+  try {
+    compilation = compileForumContent({
+      html: `<${tag}>x`.repeat(depth) + 'last' + `</${tag}>`.repeat(depth),
+      role: 'opening',
+      source: 'nodeseek'
+    });
+  } finally {
+    flatMap.mockRestore();
+  }
+  const copiedText = compilation.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('');
+  expect(copiedText.replace(/\s/g, '')).toContain('x'.repeat(depth) + 'last');
+  expect(selectionUnitsCopied).toBeLessThan(depth * 128 + 10_000);
+});
+
 it('preserves text order and image previews between separate ANSI report sections', () => {
   const html = sanitizeContentHtml(
     '<p>💻 CPU</p><code class="language-ansi">first</code><p>important explanation</p><img src="https://example.com/proof.png"><p>🌐 Network</p><code class="language-ansi">second</code>',
@@ -185,6 +254,144 @@ function maxElementDepth(html: string) {
   }
   return maxDepth;
 }
+
+it.each([
+  ['details', '<details open><summary>Title</summary>', '</details>'],
+  ['blockquote', '<blockquote>', '</blockquote>'],
+  ['list', '<ul><li>', '</li></ul>'],
+  [
+    'callout',
+    '<blockquote data-forum-callout="true" data-forum-callout-type="tip"><div class="forum-callout-title">Title</div><div class="forum-callout-content">',
+    '</div></blockquote>'
+  ]
+])('bounds deep %s ancestors while preserving safe content, media order, and selection', (_kind, opening, closing) => {
+  const body =
+    '<p>before <a href="https://example.com/link">link</a></p><img src="https://example.com/first.png" alt="first">' +
+    '<pre><code>&lt;safe&gt;\ncode</code></pre><table><tr><td>cell</td></tr></table>' +
+    '<forum-discourse-poll name="choice"></forum-discourse-poll>' +
+    '<img src="https://example.com/second.png" alt="second"><p>after</p>';
+  const html = `${opening.repeat(256)}${body}${closing.repeat(256)}`;
+  const prepared = prepareSanitizedForumContent(html, {
+    baseUrl: 'https://linux.do/t/1',
+    polls: [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }],
+    role: 'opening',
+    source: 'linuxdo',
+    topicId: '1'
+  });
+  const plan = prepared.contentPlan;
+  expect(plan.rows.every((row) => row.ancestorFrames.length <= 64)).toBe(true);
+  expect(plan.rows.reduce((count, row) => count + row.ancestorFrames.length, 0)).toBeLessThanOrEqual(16_384);
+  expect(plan.rows.filter((row) => row.type === 'poll').map((row) => row.poll.name)).toEqual(['choice']);
+  const rendered = renderedContentRows(plan)
+    .map((row) => row.html)
+    .join('');
+  expect(rendered).toContain('https://example.com/link');
+  const selected = plan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('\n');
+  expect(selected).toMatch(/before link[\s\S]*<safe>\ncode[\s\S]*cell[\s\S]*after/);
+  expect(plan.previewImages.map((image) => image.source)).toEqual([
+    'https://example.com/first.png',
+    'https://example.com/second.png'
+  ]);
+  expect(renderedContentRows(plan).flatMap(imageUrlsInPlannedRow)).toEqual([
+    'https://example.com/first.png',
+    'https://example.com/second.png'
+  ]);
+});
+
+it('bounds total semantic ancestors in wide content without dropping the tail', () => {
+  const body = Array.from(
+    { length: 1000 },
+    (_, index) => `<details open><summary>Title ${index}</summary><p>Body ${index}</p></details>`
+  ).join('');
+  const html = `${'<blockquote>'.repeat(16)}${body}${'</blockquote>'.repeat(16)}`;
+  const plan = prepareSanitizedForumContent(html, {
+    baseUrl: 'https://linux.do/t/1',
+    role: 'reply',
+    source: 'linuxdo'
+  }).contentPlan;
+  expect(plan.rows.reduce((count, row) => count + row.ancestorFrames.length, 0)).toBeLessThanOrEqual(16_384);
+  const selected = plan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('\n');
+  expect(selected.match(/Title \d+/g)).toEqual(Array.from({ length: 1000 }, (_, index) => `Title ${index}`));
+  expect(selected.match(/Body \d+/g)).toEqual(Array.from({ length: 1000 }, (_, index) => `Body ${index}`));
+});
+
+it('bounds ancestors for empty list items that still produce rows', () => {
+  const plan = compileForumContent({
+    html: `<ul>${'<li></li>'.repeat(10_000)}</ul>`,
+    role: 'opening',
+    source: 'linuxdo'
+  });
+  expect(plan.rows.reduce((count, row) => count + row.ancestorFrames.length, 0)).toBeLessThanOrEqual(16_384);
+});
+
+it('preserves table cells when their semantic wrappers exceed the content budget', () => {
+  const html =
+    '<details open><summary>Title</summary>'.repeat(256) +
+    '<table><tr><td><blockquote><p>first <a href="https://example.com/link">link</a></p>' +
+    '<img src="https://example.com/cell.png" alt="cell"></blockquote></td><td>second</td></tr></table>' +
+    '</details>'.repeat(256);
+  const plan = prepareSanitizedForumContent(html, {
+    baseUrl: 'https://linux.do/t/1',
+    role: 'opening',
+    source: 'linuxdo'
+  }).contentPlan;
+  const table = plan.rows.find((row) => row.type === 'table');
+  expect(table).toBeDefined();
+  const cells = parseHtml(table?.html || '').querySelectorAll('td');
+  expect(cells.map((cell) => cell.text)).toEqual(['first link', 'second']);
+  expect(cells[0].querySelector('a')?.getAttribute('href')).toBe('https://example.com/link');
+  expect(plan.previewImages.map((image) => image.source)).toEqual(['https://example.com/cell.png']);
+  const selected = plan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('\n');
+  expect(selected).toMatch(/first link[\s\S]*second/);
+});
+
+it('preserves opening quote metadata when its deep semantic body is flattened', () => {
+  const html =
+    '<details open><summary>Title</summary>'.repeat(256) +
+    '<aside class="quote" data-topic="2" data-post="3" data-username="alice">' +
+    '<div class="title"><a href="https://linux.do/t/quoted/2/3">Quoted topic</a></div>' +
+    '<blockquote><p>quoted body</p></blockquote></aside>' +
+    '</details>'.repeat(256);
+  const plan = prepareSanitizedForumContent(html, {
+    baseUrl: 'https://linux.do/t/1',
+    role: 'opening',
+    source: 'linuxdo',
+    topicId: '1'
+  }).contentPlan;
+  expect(plan.rows.find((row) => row.type === 'quote')?.quote).toMatchObject({
+    reference: { source: 'linuxdo', topicId: '2', postNumber: 3 },
+    author: { username: 'alice' },
+    preview: 'quoted body',
+    topicTitle: 'Quoted topic'
+  });
+});
+
+it.each([
+  ['code', '<pre><code>', '&lt;safe&gt;\ncode', '</code></pre>'],
+  ['island', '<forum-link-card href="https://example.com" title="Card">', 'body', '</forum-link-card>']
+])('bounds deep nodes inside %s before content analysis', (kind, opening, body, closing) => {
+  let sanitizedRoot: ReturnType<typeof parseHtml> | undefined;
+  const plan = prepareSanitizedForumContent(
+    `${opening}${'<span>'.repeat(1024)}${body}${'</span>'.repeat(1024)}${closing}`,
+    {
+      afterSanitizeRoot: (root) => {
+        sanitizedRoot = root;
+      },
+      baseUrl: 'https://linux.do/t/1',
+      role: 'opening',
+      source: 'linuxdo'
+    }
+  ).contentPlan;
+  if (!sanitizedRoot) throw new Error('Expected a sanitized content root.');
+  expect(maxElementDepth(sanitizedRoot.toString())).toBeLessThanOrEqual(64);
+  if (kind === 'code') expect(plan.rows.find((row) => row.type === 'codeBlock')?.text).toBe('<safe>\ncode');
+  else
+    expect(
+      renderedContentRows(plan)
+        .map((row) => row.html)
+        .join('')
+    ).toContain('<forum-link-card');
+});
 
 function rawHtmlStructure(html: string) {
   const voidTags = new Set([

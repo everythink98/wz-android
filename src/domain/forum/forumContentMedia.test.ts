@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { HTMLElement } from 'node-html-parser';
 
 import { parseHtml } from './html';
 import {
@@ -15,6 +16,63 @@ function normalizeForumContentMediaHtml(html: string) {
 }
 
 describe('forum content media normalization', () => {
+  it('normalizes wide sticker paragraphs without copying the siblings for each replacement', () => {
+    const count = 512;
+    const html =
+      '<section>' +
+      '<p><img class="sticker" src="https://www.nodeseek.com/static/image/sticker/1.png"></p>'.repeat(count) +
+      '</section>';
+    const nativeSlice = Array.prototype.slice;
+    let copied = 0;
+    const slice = vi.spyOn(Array.prototype, 'slice').mockImplementation(function (this: unknown[], start, end) {
+      const result = Reflect.apply(nativeSlice, this, [start, end]);
+      copied += result.length;
+      return result;
+    });
+    let result: string;
+    try {
+      result = normalizeForumStickerMediaHtml(html);
+    } finally {
+      slice.mockRestore();
+    }
+    expect(parseHtml(result).querySelectorAll('forum-sticker')).toHaveLength(count);
+    expect(copied).toBeLessThan(count * 32 + 10_000);
+  });
+  it('keeps deeply nested media in authored order and recomputes each image line', () => {
+    const root = parseHtml(
+      '<p>before<img src="https://img.invalid/first.jpg"><br>' +
+        '<span>'.repeat(8192) +
+        '<img src="https://img.invalid/deep.jpg">' +
+        '</span>'.repeat(8192) +
+        '<br><a class="lightbox" href="https://img.invalid/original.jpg"><img src="https://img.invalid/thumb.jpg"></a>' +
+        '<br><img src="https://img.invalid/last.jpg"></p>'
+    );
+    const pending = [...root.childNodes].reverse();
+    const images: HTMLElement[] = [];
+    while (pending.length) {
+      const node = pending.pop()!;
+      if (node instanceof HTMLElement && node.rawTagName === 'img') images.push(node);
+      for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]!);
+    }
+
+    const result = normalizeForumContentMediaNodes(root);
+
+    expect(result.previewImages.map((image) => image.source)).toEqual([
+      'https://img.invalid/first.jpg',
+      'https://img.invalid/deep.jpg',
+      'https://img.invalid/thumb.jpg',
+      'https://img.invalid/last.jpg'
+    ]);
+    expect(result.previewImages[2]?.lightboxOriginal).toBe('https://img.invalid/original.jpg');
+    expect(images.map((image) => image.rawTagName)).toEqual(['forum-inline-image', 'img', 'img', 'img']);
+    expect(images.map((image) => image.getAttribute('data-forum-flow-image-context'))).toEqual([
+      undefined,
+      'standalone',
+      undefined,
+      'standalone'
+    ]);
+  });
+
   it('scans nested image containers with linear work while preserving their authored anchors', () => {
     const normalizeNested = (count: number) => {
       const root = parseHtml(

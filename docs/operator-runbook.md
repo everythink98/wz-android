@@ -51,6 +51,10 @@ agent-device 打开入口可能启用无界面的测试输入法；runner 在表
 
 真实系统键盘保持激活，但发送的是键事件，不能据此声称中文组合输入或候选词提交通过。`inputToReceiptMs` 包含输入、bridge 与自动保存，不能作为纯渲染耗时。
 
+发送后新稿与快照超限可定向运行 `--cases settlement-nodeseek-rich-new-draft,settlement-nodeseek-source-new-draft,snapshot-nodeseek-source-over-limit`，沿用上述 `--serial`、`--build` 或 `--apk` 及新输出目录参数。前两项保持合成 POST pending，在实际富文本/源码编辑器输入 ASCII 新稿，待生产 autosnapshot 后才放行旧请求；核对新稿保留、结算后继续输入及手动关闭保稿。它们不覆盖 600 ms 尚未同步的新输入、中文 IME 组合输入或其他站点和入口。
+
+第三项通过公共 DOM insertText 向实际源码编辑器输入 524,289 字符，连续两次 REQUEST_SNAPSHOT 均须返回与 documentEpoch/requestId 匹配的 too-long ERROR，且零 POST。该场景只证明超限请求关联与拒绝，不证明纠错后恢复、投票数量边界或真实发送；不得将这三项或其他局部批次通过计为完整 Composer 矩阵或 `LIVE_PASS`。
+
 发帖专项复用同一隔离构建，不另开 Metro：
 
 ```powershell
@@ -197,9 +201,11 @@ HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 
 
 ### 备份、诊断分享与图片保存验证
 
+长图分享的原生验证使用 `node scripts/run-network-image-instrumented-tests.mjs --topic-share`，同样只接受独立 `WZ_ImageRuntime_Test_API35`。三项指定方法必须各自成功结算：生成单张 1080×40,001 PNG 并按区域解码检查首尾和条带接缝，另验 1440 px 宽正文缩至 1080 px 及非整数输出高度；实际位图分配不超过 1080×256，原预览尺寸与滚动位置不变；取消、磁盘写入失败和布局变化必须删除本次临时文件。隔离入口 `dev/topic-share-capture-proof/index.tsx` 通过生产 JS helper、Fabric ScrollView 和 ExpoImage 生成 PNG，核对头部、实际图片、尾部像素及 release 后文件删除，不启动 Feed 或账号请求。JVM 编码与失败清理由 `:forum-platform:testDebugUnitTest --tests '*TopicShareCaptureTest'` 验证。原生像素证据不替代真实帖子、相册及接收 App 的完整流程验收；旧安装包缺少新模块时，长图页提示更新，必须重新编译 APK 后验证。
+
 同一隔离 AVD 上执行 `node scripts/run-network-image-instrumented-tests.mjs --platform-exports`，运行大文件流式下载和系统文件联合 owner；只重放系统保存、延迟接收和相册流程使用 `--platform-export-ui`。系统文件联合 owner 包含主动销毁备份模块，必须在独立 instrumentation 进程运行，避免已销毁的 Expo 模块污染其他 owner；两个选项都由 runner 自动分批并在批次前仅停止隔离 App。runner 恢复本次临时图片权限，owner 只删除本次创建的 provider、相册、诊断和缓存文件。
 
-`node scripts/run-network-image-instrumented-tests.mjs --platform-file-faults` 只运行四项文件故障 owner：备份部分写入后的 EIO/ENOSPC、图片 ENOSPC 与已存在临时文件清理、可靠 descriptor 已报告的关闭错误，以及真实备份桥失败后释放操作锁。沿用 `WZ_ImageRuntime_Test_API35` 隔离检查、开发签名 Release proof 入口和安装身份检查；仅允许 `127.0.0.1` 明文，不授予 `READ_MEDIA_IMAGES`。故障 provider 只打包进测试 APK，校验调用方 UID 与签名；这些用例验证受控 provider 的真实 Android errno/错误协议传播，不代表实际 Android 分区耗尽。关闭检查只处理本地关闭前已经到达的远端错误，不等待或证明云端同步完成；失败不删除外部 provider 文档。
+`node scripts/run-network-image-instrumented-tests.mjs --platform-file-faults` 只运行四项文件故障 owner：备份部分写入后的 EIO/ENOSPC、图片 ENOSPC 与已存在临时文件清理、可靠 descriptor 已报告的关闭错误，以及真实备份桥失败后释放操作锁。runner 必须收到指定四个 class/method 各自的 `INSTRUMENTATION_STATUS_CODE: 0`，并核对四项成功摘要；只启动、跳过、缺项、错误 owner、重复项代替另一项或仅摘要均失败。沿用 `WZ_ImageRuntime_Test_API35` 隔离检查、开发签名 Release proof 入口和安装身份检查；仅允许 `127.0.0.1` 明文，不授予 `READ_MEDIA_IMAGES`。故障 provider 只打包进测试 APK，校验调用方 UID 与签名；这些用例验证受控 provider 的真实 Android errno/错误协议传播，不代表实际 Android 分区耗尽。关闭检查只处理本地关闭前已经到达的远端错误，不等待或证明云端同步完成；失败不删除外部 provider 文档。
 
 使用隔离测试安装验证系统文件和相册操作，不能把 provider 或原生单测当成真实交付证据。备份由系统保存文件对话框选择目标，固定 JSON MIME；逐项验证取消、Unicode/重名、接近 5 MiB 备份及读回重导入。provider 的打开、写入、flush/close 失败必须报失败；Activity 重建和重复发起不能交错两份 JSON，失败不删除外部文档。保存成功仅表示 provider 已接受并关闭。
 
@@ -249,7 +255,23 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --b
 
 runner 精确拒绝其他 AVD，包括主登录设备；仅覆盖安装开发签名的 Release Hermes proof APK，保留安装身份。临时 Gradle overlay 选择 `dev/review-remediation-proof/index.tsx`，不修改生产入口或持久原生配置。HTTP 使用已有四站样本和明确故障注入；WebView 使用禁远端资源的内联页面，禁止测试入口未经隔离的 fetch。通知测试临时撤销再授予该测试 App 的系统权限，finally 恢复原权限；只清理本轮合成摘要，恢复原通知存储键。
 
-receipt 核对 token、Release/Hermes、44 项结果和 APK hash。覆盖真实 WebView 脚本、User Query 竞态、Feed 原生宿主、Account 恢复核心、发送前校验、通知存储与系统投递事务；通知质量包含失败、恢复后静默基线和重复分页的真实 Store/Android sink。Account 探针隔离了面板和身份核对边界，不代表 TopicRoute 到原站 Cloudflare 的完整验证；受控 HTTP 也不代表真实写操作。失败保留部分结果，不计为全通过。proof APK 不装主设备；普通入口另行构建并做匹配 APK 只读验收，正式发布不用于开发验证。
+receipt 核对 token、Release/Hermes、62 项结果和 APK hash，保留原 60 项检查。覆盖真实 WebView 脚本、User Query 竞态、Feed 原生宿主、Account 恢复核心、发送前校验、通知存储与系统投递事务；通知质量包含失败、恢复后静默基线和重复分页的真实 Store/Android sink。深层正文保留原 256 层 details/blockquote/list/callout 断言，另经真实 linux.do reader 验证主楼、回复、作者删除主楼的嵌套代码与媒体，并验证 NodeSeek 深层终端转换。
+
+原投票专项为五种容器布局 × 2,048/16,384 层的十个样本，保留文字、投票、代码、媒体及 tag 预算；计时只包两次归一化，不含解析、完整 sanitizer 或原生渲染。正文 metadata 十个样本和 rendered form/空壳十二个样本使用相同深度，按 tag、childNodes、getAttribute 合计执行 `256*elementCount+10000` 预算。metadata 计时含 parse、计数设置与完整 sanitizer；表单从已解析 document 开始，包含公开 parser 和正文准备；空壳只包含公开 root normalizer。
+
+实体边界专项为六种单/重复转义、十进制/十六进制及首尾切界布局 × 两种深度 × index/sanitizer/shell 三入口，共 36 个样本。按 DOM 叶节点解码一次，重复转义与真实标签切开的实体保留为文字。累计 decoder UTF-16 输入执行 `rawTextChars*16+10000` 预算；RegExp.exec 游标消费跨度与 RegExp.test 全输入合计按 `(rawTextChars+elementCount)*256*(1+ceil(log2(rawTextChars+1)))+10000` 验证。test 内部 exec 不重复计数，两种原生方法分别观察，覆盖 Hermes test 不经过 exec 的行为。index 不物化长文字，每节点最多单一区间，抽查首、中、尾输出；公共入口核对文字、代码和未加载投票。index/shell 计时不含 parse；sanitizer 计时含 parse，字符计数从 transformRoot 开始。
+
+新增子树专项为同六种实体布局 × 两种深度 × root-first/leaves-first/moved-known 三种顺序，共 36 个样本，并核对五个具名输出：多新增分支、脱离子树、替换子树、br 手工后代、已返回 tape 不变。先建立索引再插入子树，每个节点执行两轮 hasText/range。首次未知查询登记整棵最高未登记分支；已知祖先和已返回 tape 保留原阶段快照，移入已知节点在新分支登记时更新。累计 TextNode.text 与 HTMLElement.rawText 输入合计执行 `32*inputChars+10000`；parentNode 执行 `8*elementCount+1000`，childNodes 执行 `64*elementCount+10000`，正则跨度沿用对数预算。
+
+重复投票专项为 p 内占位符、嵌套 div、根级宽占位符、宽 anchor、宽文本标记五种布局 × 两种深度，共 10 个样本；真实 tag、childNodes、getAttribute、parentNode 和数组索引/length 读取合计执行 `128*elementCount+10000`。宽文本布局另计转换生成的 depth 个占位符，预算为 `128*(elementCount+depth)+10000`；elementCount 仍记录原树元素数。数组替换后仍继续计数。公开正文准备另核对 1/2/2,048/16,384 个同投票标记始终产生唯一投票行；空壳清理不得吞掉已有投票，仅按加载 ID 去重。批量替换保留深度优先的标记发现次序。
+
+权限提示专项为原九种布局、br 独立分支交错的负例/末尾真权限和实际 script/style 内容排除，共十二种布局 × 两种深度、24 个公开 parser 样本。TextNode.text、HTMLElement.rawText 输入和 String.replace 输入各执行 `32*inputChars+10000`，parentNode 执行 `8*elementCount+1000`，childNodes 执行 `128*elementCount+10000`；正则跨度沿用对数预算。纯文本权限函数保持匹配规则，负区间栈仅剪枝同一 tape 的包含范围；字面标签不作 HTML 净化，独立分支不漏检或反复扫描祖先。该组不代表任意 HTML 全流程线性。
+
+正文与投票全链专项为 39 种布局 × 512/4,096 节点，compiler 两布局改用 2,048/16,384 层，共 78 个样本。覆盖宽兄弟净化、终端、媒体和引用、嵌套普通链接、selection 分析、表单/label/面板、嵌套回复、三站正文转换、深祖先下大量 Callout、妖火宽投票副本/深层不匹配容器及 fresh scoped selector。另核对主楼/回复的八个代码复制输出，包含字面重复转义和跨标签实体。真实原生数组 callback 访问及复制量执行 `512*fixtureNodes+10000`；DOM getter/数组索引读取执行 `1024*fixtureNodes+10000`；解码与 rawText、序列化、String.slice 输出各执行 `64*inputChars+10000`，String.replace 输入执行 `128*inputChars+10000`。只计公开操作，输入构建和输出断言不在计时内；所有 observer 在 finally 还原并保留 DOM 修改后的值。
+
+pending poll 专项使用真实本地 SQLite journal 预置 20 个已知 ID，物化 512 KiB Markdown，创建 callback 必须零次；正文、代码、媒体、逆序 marker 和身份守卫精确核对。原生 String.split 输入与 String.slice 输出合计执行 `6*inputChars+10000`；不发送上游请求。检查点覆盖 reader-data.db、AsyncStorage、composer-journal.db 及各 WAL/SHM，逐文件哈希与独立 SQLite 逻辑快照同时恢复。
+
+所有原型包装仅在同步测量期间生效，finally 精确还原 descriptor 和当前数组。runner 拒绝缺失、重复、无效计数、错误布局/入口、输出错误或超预算回执。耗时包含探针开销，计时范围不同，不使用绝对毫秒门槛；输入字符、读取次数与正则游标跨度不代表引擎指令数或回溯次数。这些检查证明受控来源读取和 content plan，不证明原生正文显示、手势或真实帖子。Account 探针隔离了面板和身份核对边界，不代表 TopicRoute 到原站 Cloudflare 的完整验证；受控 HTTP 不代表真实写操作。失败保留部分结果，不计为全通过。proof APK 不装主设备；普通入口另行构建并做匹配 APK 只读验收，正式发布不用于开发验证。
 
 保持上述 proof APK 安装在同一隔离设备，执行 `node scripts/run-notification-background-device-proof.mjs --serial <隔离serial> --output .codex-tmp/<任务目录>/background.json`。runner 先建立数据库 checkpoint，再在系统 HOME 下通过 JobScheduler 显式触发真实 WorkManager；合成读取验证正常完成和原 50 秒超时。receipt 必须同时证明全程 background、同一 PID、业务终态和原生 headless finish。结束注销自己的 task、恢复通知权限与数据库；不得用该结果声称自然唤醒通过。
 
@@ -274,7 +296,7 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --a
 node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance notification --output .codex-tmp/<任务目录>/notification.json
 ```
 
-`boundaries` 经生产 storage 导入并用独立 Android SQLite 连接核对三类集合 × 999/1000/1001 删除标记 × 三种时间关系的 27 个组合，最后还原原 fixture。`recovery` 挂载完整 App，在读取边界注入一次失败，使用真实系统文件选择器分别导入无效与仅启用 V2EX 的有效备份；核对恢复前业务请求为零、原资料/通知意图不变、恢复后来源准确、收藏可见，结束由 runner 停止 App 后还原六个白名单数据库文件并独立重读。`notification` 使用真实 NotificationDetailRoute、gateway 和 native stack，隔离 adapter 响应；核对失焦取消、同一实例返回、失败/未确认重试、刷新不循环、防并发和确认后不重复。后两者执行 `dev/review-remediation-proof/recovery.ad`、`dev/review-remediation-proof/notification.ad`，零重试，最终还要核对包含当次 token 和构建身份的设备 receipt；UI 回放退出 0 不替代业务断言。picker 关闭后等待一次平台过渡动画，再操作 App；等待不作为导入成功 oracle。runner 只删除自己以当次 token 命名的 Download 文件。验收不连接原站，不证明真实写入或系统自然故障。
+`boundaries` 经生产 storage 导入并用独立 Android SQLite 连接核对三类集合 × 999/1000/1001 删除标记 × 三种时间关系的 27 个组合，最后还原原 fixture。`recovery` 挂载完整 App，在读取边界注入一次失败，使用真实系统文件选择器分别导入无效与仅启用 V2EX 的有效备份；核对恢复前业务请求为零、原资料/通知意图不变、恢复后来源准确、收藏可见，结束由 runner 停止 App 后还原 ReaderData、AsyncStorage、Composer journal 及各自 WAL/SHM 的九个白名单文件并独立重读。`notification` 使用真实 NotificationDetailRoute、gateway 和 native stack，隔离 adapter 响应；核对失焦取消、同一实例返回、失败/未确认重试、刷新不循环、防并发和确认后不重复。后两者执行 `dev/review-remediation-proof/recovery.ad`、`dev/review-remediation-proof/notification.ad`，零重试，最终还要核对包含当次 token 和构建身份的设备 receipt；UI 回放退出 0 不替代业务断言。picker 关闭后等待一次平台过渡动画，再操作 App；等待不作为导入成功 oracle。runner 只删除自己以当次 token 命名的 Download 文件。验收不连接原站，不证明真实写入或系统自然故障。
 
 ### Forum selection Native 验证
 
@@ -536,13 +558,15 @@ node scripts/check-cold-start.mjs --serial <serial> --apk <匹配的本地APK路
 
 ### ReaderData SQLite 升级验收
 
+首次迁移中的旧设置 I/O 拒绝或 3 秒超时须停止迁移、保留旧键并保持 marker 未推进；恢复 I/O 后重试须恢复非默认设置及全部主数据。缺失或约定损坏格式仍按兼容规则验收，不能用它们替代读取失败。对应最低层 owner 为 `src/platform/storage/readerDataStore.test.ts`；以下隔离设备流程另行取得设备证据。
+
 投票 journal 的独立设备验证复用同一隔离 runner：`node scripts/run-reader-storage-device-proof.mjs --serial <serial> --build --journal-only --output .codex-tmp/<新文件>.json`。也可传匹配源码的 `--apk` 替代 `--build`。该模式不 seed 或删除数据库，以唯一 token 隔离投票账号，验证并发/超过 32 条/严格迁移/损坏阻断/ReaderData 导入清空隔离，随后 force-stop 重开并核对已知和未知结果；恢复原 ReaderData 并删除本轮 fixture 后才通过。它仍只接受既有允许的 ReaderStorage 专用 AVD，不能改用于保留真实账号的主设备。
 
 该模式同时经过真实 action/client/request：最终合成 transport 前用第二 SQLite 连接确认 claim，网络请求仍 pending 时 force-stop，重开必须保留未知并拒绝再次发送（transport 次数为 0）。终端不访问原站，不创建真实投票。
 
-`--sidecar-only` 与 `--journal-only` 互斥，使用同一构建和输出参数。分别运行 settings read、cleanup remove、cleanup keys 挂起的 seed→启动→新进程验证，共九阶段；只 gate 对应 AsyncStorage 操作，SQLite 使用真实实现。该模式会写入专属 fixture，已有隔离状态须用 `scripts/review-proof-checkpoint.mjs` 的 `withProofCheckpoint` 包围，完成后核对六个白名单文件及独立逻辑快照还原。
+`--sidecar-only` 与 `--journal-only` 互斥，使用同一构建和输出参数。分别运行 settings read、cleanup remove、cleanup keys 挂起的 seed→启动→新进程验证，共九阶段；只 gate 对应 AsyncStorage 操作，SQLite 使用真实实现。该模式会写入专属 fixture，已有隔离状态须用 `scripts/review-proof-checkpoint.mjs` 的 `withProofCheckpoint` 包围，完成后核对白名单数据库、各 WAL/SHM 及独立逻辑快照还原。
 
-只使用新建隔离 AVD `WZ_ReaderStorage_API30_20260910` / `WZ_ReaderStorage_API35_20260910`，分别安装 Google APIs x86_64 的 API 30 / 35 系统镜像。先完成 fresh prebuild；不在主登录设备运行 fixture，不卸载或清数据。使用同一测试包覆盖安装第二台隔离 AVD：
+只使用专用隔离 AVD `WZ_ReaderStorage_API30_20260910` / `WZ_ReaderStorage_API35_20260910`，分别使用 Google APIs x86_64 的 API 30 / 35 系统镜像。storage runner 读取实际 SDK，核对对应的精确 AVD 名称；名称与镜像版本不匹配时拒绝运行，无需额外 CLI 参数。先完成 fresh prebuild；不在主登录设备运行 fixture，不卸载或清数据。使用同一测试包覆盖安装第二台隔离 AVD：
 
 ```powershell
 npx expo prebuild --platform android --clean --no-install
@@ -693,7 +717,7 @@ WZ_ANDROID_SMOKE_ABI=x86_64
 npm run release:android
 ```
 
-脚本会执行 preflight、`npm run verify`、clean Expo prebuild、Release native 测试与编译、正式 arm64 签名构建、签名/版本校验、同代码开发签名 x86_64 Smoke 构建及 manifest 生成。签名变量只注入正式 `assembleRelease` 子进程；正式 APK 禁止 debug 签名。
+脚本会执行 preflight、`npm run verify`、clean Expo prebuild、Release native 测试与编译、正式 arm64 签名构建、签名/版本校验、同代码开发签名 x86_64 Smoke 构建及 manifest 生成。原生测试复用 `scripts/native-test-plan.mjs` 的 App task spec 与 init overlay；签名构建前检查本次生成的 XML，全部指定 class 必须有实际执行的成功结果。缺失、过期、失败或全部跳过报告均阻止打包，Gradle 退出 0 或 `NO-SOURCE` 不能单独放行。签名变量只注入正式 `assembleRelease` 子进程；正式 APK 禁止 debug 签名。
 
 用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify --replay-directory <专项目录>`。`--skip-verify` 跳过脚本内的全量 `npm run verify`；`--replay-directory` 将 Smoke 后的默认设备 Replay 批次替换为指定目录中的 `.ad` 文件，仍先执行覆盖安装、首次安装时间与 APK_SANITY 检查。版本、clean-tree、prebuild、原生测试/编译和签名校验仍执行；manifest 的 `verificationScope` 记为 `targeted`，默认发布记为 `full`。未指定 Replay 目录时仍使用 `tests/device`，不能假定 `--skip-verify` 同时跳过默认 Replay。专项目录只放本次实际需要的回放文件，并遵守各脚本的设备与偏好前置条件；例如 Feed 手势发布可单独选择 `tests/device/feed-gesture-priority.ad`，不能把含其他专项的整个目录当成最小回归。发布说明必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
 
@@ -716,7 +740,7 @@ npm run release:android
 
 ### 自动视觉回归与 checkpoint 续接
 
-使用已存在的 `WZ_ReaderStorage_API35_20260910` 专用 AVD；不得借用主登录设备或重置 AVD。两个 runner 共享本机 127.0.0.1:42187 的 OS 排他租约，进程退出后租约释放，checkpoint 状态继续约束下一次运行。端口被占用时先确认正在运行的 owner，不杀未知进程。
+使用已存在的 `WZ_ReaderStorage_API35_20260910` 专用 AVD；不得借用主登录设备或重置 AVD。两个 runner 与 `tests/tooling/review-proof-checkpoint.test.ts` 共享本机 `127.0.0.1:42187` 的 OS 排他租约，必须串行执行；完整 `npm test` 也包含该 tooling owner。进程退出后租约释放，checkpoint 状态继续约束下一次运行。端口被占用时先确认正在运行的 owner，不杀未知进程。
 
 固定条件为 API 35、1080×2400、420 dpi、系统字号 100%、en-US；环境清单另记录镜像 fingerprint、时区、导航模式、系统主题及工具版本。14 帧中的 140% 是应用字号，列表密度保持标准；搜索和用户主题样本使用固定展示日期，不能依赖当天相对时间。Gallery 仅证明这些生产组件的设备视觉结果，不替代业务导航与原站链路。
 
@@ -738,4 +762,4 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --a
 
 基准持久保存在 ignored `.codex-tmp/visual-baselines/<环境目录>/`；每轮画面、差异图、步骤、失败材料及环境清单在 `.codex-tmp/visual-runs/`。不提交截图、APK 或数据库。只有 `DEVICE_REPLAY_PASS` 代表已有批准基准的比较与数据还原共同通过；`NEEDS_REVIEW` 只是三次稳定候选，须逐帧审阅关键操作区、遮挡和长文本再批准。后续更新仍须显式捕获与批准，并审阅相对旧基准的差异，不能在回归中自动修脚本或自动放宽阈值。该入口独立于普通 `verify`。
 
-checkpoint 在 `.codex-tmp/review-remediation-checkpoints/<AVD>/`。恢复失败保留业务与恢复错误，阻止下一轮；旧 `running` 即使 runner 被杀也不能自动还原或覆盖，应先保留数据并人工检查。`restoring` 续接先核对安装身份及每个文件哈希，发现后来变化便拒绝。数据库还原不等同权限/通知业务成功，须同时查看两部分结果；安装身份变化时冻结设备变更。
+checkpoint 在 `.codex-tmp/review-remediation-checkpoints/<AVD>/`。恢复失败保留业务与恢复错误，阻止下一轮；旧 `running` 即使 runner 被杀也不能自动还原或覆盖，应先保留数据并人工检查。`restoring` 续接先核对安装身份及每个文件的哈希与权限配对，缺少原权限记录或发现后来变化便拒绝。数据库还原不等同权限/通知业务成功，须同时查看两部分结果；安装身份变化时冻结设备变更。

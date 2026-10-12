@@ -2,6 +2,9 @@ export type ComposerSite = 'linuxdo' | 'nodeseek';
 export type ComposerMode = 'rich' | 'source';
 export type ComposerPresentation = 'sheet' | 'fullscreen';
 export const MAX_COMPOSER_MARKDOWN_LENGTH = 512 * 1024;
+export const MAX_COMPOSER_POLL_COUNT = 20;
+export const MAX_COMPOSER_VALIDATION_ISSUES = 100;
+export type ComposerSubmissionSettlement = (complete: () => boolean) => Promise<boolean>;
 
 export type ComposerIntent =
   | { kind: 'edit-topic'; site: ComposerSite; topicId: string; draftId: string }

@@ -1762,6 +1762,54 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenLastCalledWith('账号状态部分刷新失败：NodeSeek、linux.do、妖火');
   });
 
+  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+    'supersedes a %s clear when a new identity flow, terminal event, or clear replaces it',
+    async (source) => {
+      const user = source === 'nodeseek' ? nodeSeekUser : source === 'linuxdo' ? linuxUser : yaohuoUser;
+      const onAccountStatusChanged = jest.fn();
+      const { hook } = await renderStatusController({ onAccountStatusChanged });
+      await act(async () => {
+        hook.result.current.applyAccountSessionEvent({
+          site: source,
+          type: 'session-updated',
+          loggedIn: true,
+          currentUser: user
+        });
+        hook.result.current.beginAccountIdentityCheck(source, 10);
+      });
+      const beforeNewLogin = hook.result.current.beginAccountSessionClear(source);
+      expect(beforeNewLogin()).toBe(true);
+      await act(async () => {
+        hook.result.current.beginAccountIdentityCheck(source, 1);
+      });
+      expect(beforeNewLogin()).toBe(false);
+      await waitFor(() =>
+        expect(hook.result.current.accountSessionViewModels[source]).toMatchObject({
+          currentUser: user,
+          isVerifying: true
+        })
+      );
+      const beforeTerminal = hook.result.current.beginAccountSessionClear(source);
+      onAccountStatusChanged.mockClear();
+      await act(async () => {
+        hook.result.current.applyAccountSessionEvent({
+          site: source,
+          type: 'session-updated',
+          loggedIn: true,
+          currentUser: user
+        });
+      });
+      expect(beforeTerminal()).toBe(false);
+      expect(onAccountStatusChanged).not.toHaveBeenCalled();
+      const beforeReplacement = hook.result.current.beginAccountSessionClear(source);
+      const replacement = hook.result.current.beginAccountSessionClear(source);
+      expect(beforeReplacement()).toBe(false);
+      expect(replacement()).toBe(true);
+      await hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSources: [] });
+      expect(replacement()).toBe(false);
+    }
+  );
+
   it('never clears NodeSeek login cookies for an ordinary HTTP 404', async () => {
     mockGetCurrentUser.mockRejectedValueOnce(
       Object.assign(new Error('HTTP 404'), {

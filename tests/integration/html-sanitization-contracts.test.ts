@@ -1,10 +1,153 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { decodeHtml, parseHtml, textContentFromHtml } from '@/domain/forum/html';
-import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { sanitizeContentHtml, sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
+import { withHtmlDecodedInputBudget, withHtmlWorkBudget } from '../helpers/htmlWorkBudget';
 
 describe('Android local HTML helpers', () => {
+  it.each([
+    ['decimal once', '&#', '32'],
+    ['hexadecimal twice', '&amp;#x', '20']
+  ])('sanitizes long %s entities across metadata boundaries with bounded decoding', (_name, prefix, value) => {
+    const depth = 1024;
+    const nested = (leaf: string) =>
+      '<div class="meta">' +
+      prefix +
+      '0<div class="meta">'.repeat(depth) +
+      value +
+      ';12×34 1 KB' +
+      leaf +
+      '</div>'.repeat(depth + 1);
+    const protectedContent = nested('<img src="https://example.com/proof.png">ordinary body');
+    const html = nested('') + protectedContent + '<p>ordinary body</p>';
+
+    const { result, units } = withHtmlDecodedInputBudget(depth * 128, () =>
+      sanitizeContentHtml(html, 'https://example.com/')
+    );
+
+    expect(units).toBeLessThanOrEqual(depth * 128);
+    expect(result).toBe(protectedContent + '<p>ordinary body</p>');
+  });
+
+  it.each(['ordinary', 'image-protected', 'distinct-meta-text', 'dimension-only', 'file-size-only'] as const)(
+    'preserves deep %s div content with bounded image metadata work',
+    (kind) => {
+      const depth = 1024;
+      const opening = kind === 'ordinary' ? '<div>' : '<div class="meta">';
+      const leaf =
+        kind === 'image-protected'
+          ? '图片1920×1080 210 KB<img src="https://example.com/proof.png">'
+          : kind === 'dimension-only'
+            ? '1920×1080'
+            : kind === 'file-size-only'
+              ? '210 KB'
+              : 'ordinary body';
+      const html =
+        (opening + (['distinct-meta-text', 'dimension-only', 'file-size-only'].includes(kind) ? 'x ' : '')).repeat(
+          depth
+        ) +
+        leaf +
+        '</div>'.repeat(depth);
+      const budget = depth * 80;
+      const { result: contentHtml, reads } = withHtmlWorkBudget(budget, () =>
+        sanitizeContentHtml(html, 'https://example.com/')
+      );
+
+      expect(contentHtml).toBe(html);
+      expect(reads).toBeLessThanOrEqual(budget);
+    }
+  );
+
+  it.each([
+    ['12×34<span>x</span> 1 KB', true, false],
+    ['12×34 1<span> KB</span><span>x</span>', true, false],
+    ['12×34 a123 KB', true, false],
+    ['12345×12345 1 KB', true, true],
+    ['123456×12345 1 KB', true, true],
+    ['12345×123456 1 KB', true, false],
+    ['image123456×12345 1 KB', false, false],
+    ['image12345×12345 1 KB', false, true],
+    ['图<span>片</span>6<span>00</span>×4<span>00</span> 1.5<span> M</span>B', false, true],
+    ['&#49;&#50;×&#51;&#52; 1 KB', true, true],
+    ['&amp;#49;&amp;#50;×&amp;#51;&amp;#52; 1 KB', true, false],
+    ['&am<span>p;#49;</span>&amp;#50;×&amp;#51;&amp;#52; 1 KB', true, false],
+    ['&amp;#<span>49;</span>&amp;#50;×&amp;#51;&amp;#52; 1 KB', true, false],
+    [' \t<span>image</span> 12<br>×34 &amp;nbsp;1 KB ', false, true],
+    ['12×34 1 KB<img src="https://example.com/proof.png">', true, false]
+  ] as const)('retains image metadata matching boundaries for %s', (body, meta, removed) => {
+    const html = `<div id="candidate"${meta ? ' class="meta"' : ''}>${body}</div>`;
+    const result = sanitizeContentHtml(html, 'https://example.com/');
+
+    expect(result.includes('id="candidate"')).toBe(!removed);
+    if (!removed) expect(result).toBe(html);
+  });
+
+  it('decodes candidate entity fragments independently from neighboring content', () => {
+    const result = sanitizeContentHtml(
+      '&amp;<div id="candidate" class="meta">#49;2×34 1 KB</div>' +
+        '<div id="removed" class="meta">&#00000000000000000000000049;2×34 1 KB</div>',
+      'https://example.com/'
+    );
+
+    expect(result).toBe('&amp;<div id="candidate" class="meta">#49;2×34 1 KB</div>');
+  });
+
+  it('removes metadata appended below a void element by a root transform', () => {
+    const { root } = sanitizeContentHtmlWithRoot('<div>ordinary body</div><br>', 'https://example.com/', (parsed) => {
+      const child = parseHtml('<div id="candidate" class="meta">12×34 1 KB</div>').firstChild;
+      if (child) parsed.querySelector('br')?.appendChild(child);
+    });
+
+    expect(root.querySelector('#candidate')).toBeNull();
+    expect(root.text).toBe('ordinary body\n');
+  });
+
+  it.each([4096, 8192])('sanitizes %i nested wrappers without losing safe leaf content', (depth) => {
+    const leaf =
+      '<section id="safe-body"><P id="literal" data-label="&quot; &amp; &lt; &gt;" OnCliCk="danger()">before &amp; &lt;literal&gt; &#x1F600;</P>' +
+      '<!--comment sentinel--><BR><IMG id="safe-image" SRC="/proof.png" OnErRoR="danger()">' +
+      '<a id="unsafe-link" href="javascript:alert(1)" onclick="bad()">unsafe link</a>' +
+      '<a id="safe-link" href="/safe?q=1&amp;x=2">safe link</a><script>bad()</script><p>after</p></section>';
+    const baseUrl = 'https://example.com/base/';
+    const shallow = sanitizeContentHtml(leaf, baseUrl);
+    const result = sanitizeContentHtml(`${'<DIV>'.repeat(depth)}${leaf}${'</DIV>'.repeat(depth)}`, baseUrl);
+
+    expect(result).toContain(shallow);
+    expect(textContentFromHtml(result)).toBe('before & <literal> 😀 unsafe link safe link after');
+    expect(result).toContain('SRC="https://example.com/proof.png"');
+    expect(result).toContain('href="https://example.com/safe?q=1&x=2"');
+    expect(result).toContain('data-label="&quot; &amp; &lt; &gt;"');
+    expect(result).not.toMatch(/onclick|onerror|javascript:|<script|comment sentinel/i);
+    expect(result).not.toMatch(/<\/(?:BR|IMG)>/i);
+  });
+
+  it('flattens deeply nested xterm wrappers while preserving terminal text and styles', () => {
+    const leaf =
+      '<span class="xterm-fg-46 xterm-bg-18">colored &lt;safe&gt; &amp; &quot;quote&quot;</span>' +
+      '<span style="color: #ff0000"><span style="background-color: #ff00ff"></span></span>';
+    const report = (depth: number) =>
+      '<div class="nsk-magic-tabs"><div class="nsk-magic-tab-title">Report</div><div class="nsk-magic-tab-body">' +
+      '<div class="terminal-container"><div class="xterm-rows"><div class="xterm-row">' +
+      'before <span style="color: rgb(34, 211, 238)">' +
+      '<span>'.repeat(depth) +
+      leaf +
+      '</span>'.repeat(depth) +
+      '</span> after</div><div class="xterm-row">second line</div></div></div></div></div>';
+    const baseUrl = 'https://www.nodeseek.com/';
+    const shallow = sanitizeContentHtml(report(0), baseUrl);
+    const result = sanitizeContentHtml(report(8192), baseUrl);
+
+    expect(result).toBe(shallow);
+    expect(result).toContain('<forum-terminal-tab title="Report">');
+    expect(textContentFromHtml(result)).toBe('before colored <safe> & "quote" after second line');
+    expect(
+      parseHtml(result)
+        .querySelectorAll('span')
+        .map((node) => node.getAttribute('style'))
+    ).toEqual(['color: rgb(34, 211, 238)', 'color: #00ff00; background-color: #000087']);
+  });
+
   it('extracts visible text without script or style contents', () => {
     expect(textContentFromHtml('<style>.x{color:red}</style><p>A&nbsp;B<br>C</p><script>alert(1)</script>')).toBe(
       'A B C'

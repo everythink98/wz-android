@@ -8,13 +8,37 @@ import type { TopicDetail } from '@/domain/forum/models';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { act, fireEvent, render, within } from '../render';
 
+const native = require('react-native') as typeof import('react-native');
+
 const mockCaptureRef = jest.fn<(...args: unknown[]) => Promise<string>>();
 const mockReleaseCapture = jest.fn<(uri: string) => void>();
 const mockShareAsync = jest.fn<(uri: string, options: unknown) => Promise<void>>();
 const mockCreateAsset = jest.fn<(uri: string) => Promise<void>>();
 const mockRequestPermissions = jest.fn<() => Promise<{ granted: boolean }>>();
+const mockLongCapture = jest.fn<(id: string, tag: number) => Promise<{ uri: string; width: number; height: number }>>();
+const mockCancelLongCapture = jest.fn<(id: string) => void>();
+const mockReleaseLongCapture = jest.fn<(id: string) => void>();
+let mockLongCaptureAvailable = true;
 const mockFiles = new Map<string, Uint8Array>();
 let mockCopyWait: Promise<void> | undefined;
+
+jest.mock('expo', () => {
+  const actual = jest.requireActual<typeof import('expo')>('expo');
+  return {
+    ...actual,
+    requireOptionalNativeModule: (name: string) =>
+      name === 'TopicShareCapture'
+        ? mockLongCaptureAvailable
+          ? {
+              createCapture: () => 'long-capture',
+              capture: (id: string, tag: number) => mockLongCapture(id, tag),
+              cancelCapture: (id: string) => mockCancelLongCapture(id),
+              releaseCapture: (id: string) => mockReleaseLongCapture(id)
+            }
+          : null
+        : actual.requireOptionalNativeModule(name)
+  };
+});
 
 jest.mock('react-native-view-shot', () => ({
   captureRef: (...args: unknown[]) => mockCaptureRef(...args),
@@ -108,6 +132,13 @@ beforeEach(() => {
   jest.useFakeTimers({ doNotFake: ['performance'] });
   jest.spyOn(PixelRatio, 'get').mockReturnValue(1);
   mockCaptureRef.mockReset().mockResolvedValue(captureUri);
+  mockLongCapture.mockReset().mockImplementation(async () => {
+    mockFiles.set(captureUri, imageBytes);
+    return { uri: captureUri, width: 1080, height: 30_000 };
+  });
+  mockCancelLongCapture.mockReset();
+  mockLongCaptureAvailable = true;
+  mockReleaseLongCapture.mockReset().mockImplementation(() => mockFiles.delete(captureUri));
   mockReleaseCapture.mockReset().mockImplementation((uri) => {
     mockFiles.delete(uri);
   });
@@ -331,32 +362,152 @@ describe('Topic body image sharing', () => {
     expect(StyleSheet.flatten(view.getByLabelText('表情图').props.style)).toMatchObject({ width: 20, height: 20 });
   });
 
-  it('rejects an oversized native bitmap, including layout growth while a capture is queued', async () => {
+  it.each(['share', 'save'])(
+    'exports the complete high density long body through bounded capture for %s',
+    async (action) => {
+      jest.replaceProperty(Platform, 'OS', 'android');
+      jest.spyOn(Platform, 'Version', 'get').mockReturnValue(35);
+      jest.spyOn(PixelRatio, 'get').mockReturnValue(3);
+      jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+      const view = await render(<TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />);
+      await layout(view, action === 'share' ? 10_000 : 1200);
+      expect(view.getByText('主帖开头')).toBeTruthy();
+      expect(view.getByText('主帖结尾')).toBeTruthy();
+      const button = view.getByRole('button', { name: action === 'share' ? '分享图片' : '保存到相册' });
+      expect(button).toBeEnabled();
+      const consumer = Promise.withResolvers<void>();
+      if (action === 'share') mockShareAsync.mockReturnValueOnce(consumer.promise);
+      else mockCreateAsset.mockReturnValueOnce(consumer.promise);
+      await fireEvent.press(button);
+      // Read the current size after the final layout, including growth while export waits for its frames.
+      await layout(view, 100_000);
+      await settleFrames();
+      expect(view.queryByRole('alert')).toBeNull();
+      expect(mockLongCapture).toHaveBeenCalledWith('long-capture', 73);
+      expect(mockCaptureRef).not.toHaveBeenCalled();
+      expect(mockShareAsync).toHaveBeenCalledTimes(action === 'share' ? 1 : 0);
+      expect(mockCreateAsset).toHaveBeenCalledTimes(action === 'save' ? 1 : 0);
+      expect(mockReleaseLongCapture).not.toHaveBeenCalled();
+      expect(mockFiles.get(captureUri)).toEqual(imageBytes);
+      await act(async () => {
+        consumer.resolve();
+        await consumer.promise;
+      });
+      expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
+    }
+  );
+
+  it('cancels a long capture on close and releases a late result without sharing it', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+    const pending = Promise.withResolvers<{ uri: string; width: number; height: number }>();
+    mockLongCapture.mockReturnValueOnce(pending.promise);
     const view = await render(<TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />);
-    await layout(view);
-    await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
     await layout(view, 100_000);
-    expect(view.getByRole('alert')).toHaveTextContent(/正文过长/);
+    await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
     await settleFrames();
-    expect(mockCaptureRef).not.toHaveBeenCalled();
+    expect(mockLongCapture).toHaveBeenCalledTimes(1);
+    await fireEvent.press(view.getByRole('button', { name: '关闭' }));
+    expect(mockCancelLongCapture).toHaveBeenCalledWith('long-capture');
+    await act(async () => {
+      pending.resolve({ uri: captureUri, width: 1080, height: 100_000 });
+      await pending.promise;
+    });
     expect(mockShareAsync).not.toHaveBeenCalled();
+    expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
   });
 
-  it('shows a capture failure and lets the user retry successfully', async () => {
-    mockCaptureRef.mockRejectedValueOnce(new Error('capture unavailable'));
-    const view = await render(<TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />);
-    await layout(view);
+  it('invalidates a long capture if an image starts decoding again, even when it redisplays before capture returns', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+    const pending = Promise.withResolvers<{ uri: string; width: number; height: number }>();
+    mockLongCapture.mockReturnValueOnce(pending.promise);
+    const view = await render(
+      <TopicShareSheet
+        topic={{ ...topic, contentHtml: '<p>正文</p><img src="https://example.com/image.png" alt="正文图">' }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    await fireEvent(view.getByLabelText('正文图'), 'load', { source: { width: 640, height: 480 } });
+    await fireEvent(view.getByLabelText('正文图'), 'display');
+    await layout(view, 100_000);
     await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
     await settleFrames();
-    expect(view.getByRole('alert')).toHaveTextContent(/capture unavailable/);
-    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
+    expect(mockLongCapture).toHaveBeenCalledTimes(1);
+    await fireEvent(view.getByLabelText('正文图'), 'loadStart');
+    expect(mockCancelLongCapture).toHaveBeenCalledWith('long-capture');
+    await fireEvent(view.getByLabelText('正文图'), 'display');
+    await act(async () => {
+      pending.resolve({ uri: captureUri, width: 1080, height: 100_000 });
+      await pending.promise;
+    });
     expect(mockShareAsync).not.toHaveBeenCalled();
+    expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
+    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
+  });
+
+  it('invalidates a long capture when decoding restarts and redisplays in one React batch', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+    const pending = Promise.withResolvers<{ uri: string; width: number; height: number }>();
+    mockLongCapture.mockReturnValueOnce(pending.promise);
+    const view = await render(
+      <TopicShareSheet
+        topic={{ ...topic, contentHtml: '<p>正文</p><img src="https://example.com/image.png" alt="正文图">' }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    await fireEvent(view.getByLabelText('正文图'), 'load', { source: { width: 640, height: 480 } });
+    await fireEvent(view.getByLabelText('正文图'), 'display');
+    await layout(view, 100_000);
     await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
     await settleFrames();
-    expect(mockCaptureRef).toHaveBeenCalledTimes(2);
-    expect(mockShareAsync).toHaveBeenCalledTimes(1);
-    expect(view.queryByRole('alert')).toBeNull();
+    expect(mockLongCapture).toHaveBeenCalledTimes(1);
+    const image: ComponentProps<typeof Image> = view.getByLabelText('正文图').props;
+    await act(() => {
+      image.onLoadStart?.();
+      image.onDisplay?.();
+    });
+    await act(async () => {
+      pending.resolve({ uri: captureUri, width: 1080, height: 100_000 });
+      await pending.promise;
+    });
+    expect(mockShareAsync).not.toHaveBeenCalled();
+    expect(mockCancelLongCapture).toHaveBeenCalledWith('long-capture');
+    expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
+    expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
   });
+
+  it.each(['standard', 'long', 'unsupported'])(
+    'shows a %s capture failure and lets the user retry successfully',
+    async (mode) => {
+      const long = mode !== 'standard';
+      if (long) {
+        jest.replaceProperty(Platform, 'OS', 'android');
+        jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+        if (mode === 'unsupported') mockLongCaptureAvailable = false;
+        else mockLongCapture.mockRejectedValueOnce(new Error('capture unavailable'));
+      } else mockCaptureRef.mockRejectedValueOnce(new Error('capture unavailable'));
+      const view = await render(<TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />);
+      await layout(view, long ? 100_000 : 1200);
+      await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
+      await settleFrames();
+      expect(view.getByRole('alert')).toHaveTextContent(
+        mode === 'unsupported' ? /请更新后重试/ : /capture unavailable/
+      );
+      expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
+      expect(mockShareAsync).not.toHaveBeenCalled();
+      if (mode === 'long') expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
+      mockLongCaptureAvailable = true;
+      await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
+      await settleFrames();
+      expect(long ? mockLongCapture : mockCaptureRef).toHaveBeenCalledTimes(mode === 'unsupported' ? 1 : 2);
+      expect(mockShareAsync).toHaveBeenCalledTimes(1);
+      expect(view.queryByRole('alert')).toBeNull();
+    }
+  );
 
   it.each(['close button', 'Android back', 'Android back to options', 'unmount'])(
     'does not share a late capture after %s',

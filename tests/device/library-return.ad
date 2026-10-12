@@ -6,6 +6,7 @@ env APP_ID=com.wz.reader
 open ${APP_ID} --relaunch
 wait id="main-tab-more" 60000
 press id="main-tab-more"
+wait "role=button label=\"收藏\"" 10000
 find "role=button label=\"收藏\"" click
 wait id="library-favorites-ready" 60000
 wait "id=\"library-tab-favorites\" label=\"帖子，已选择\"" 10000

@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { nodeSeekPendingPollToken, normalizePendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
+import {
+  MAX_COMPOSER_MARKDOWN_LENGTH,
+  MAX_COMPOSER_POLL_COUNT,
+  nodeSeekPendingPollToken,
+  normalizePendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 import { prepareRequestToSend, withRequestBeforeSend } from '@/platform/network/request';
 import { runNodeSeekAction } from './actionClient';
 import { buildNodeSeekPollCreateRequest } from './actionRequest';
@@ -51,6 +56,76 @@ const context = () => ({
 beforeEach(() => journal.clear());
 
 describe('shared pending NodeSeek poll preparation', () => {
+  it('materializes the maximum draft once without rescanning the body for every known poll', async () => {
+    const polls = Array.from({ length: MAX_COMPOSER_POLL_COUNT }, (_, index) =>
+      normalizePendingNodeSeekPoll({
+        localId: `poll_work_${String(index).padStart(8, '0')}`,
+        title: `Question ${index}`,
+        options: ['A', 'B'],
+        multiple: false,
+        isPublic: false
+      })
+    );
+    for (const [index, poll] of polls.entries())
+      journal.set(`nodeseek:42/${poll.localId}/${poll.fingerprint}`, { ...poll, remoteId: String(index + 1) });
+    const tokens = [...polls]
+      .reverse()
+      .map((poll) => nodeSeekPendingPollToken(poll.localId))
+      .join('\n');
+    const controls = 'before\n<img src="/safe.png">\n```text\nordinary code\n```\nafter\n';
+    const prefix = controls + 'x'.repeat(MAX_COMPOSER_MARKDOWN_LENGTH - controls.length - tokens.length - 1) + '\n';
+    const content = prefix + tokens;
+    const budget = content.length * 6;
+    let units = 0;
+    const splitDescriptor = Object.getOwnPropertyDescriptor(String.prototype, 'split');
+    const sliceDescriptor = Object.getOwnPropertyDescriptor(String.prototype, 'slice');
+    if (!splitDescriptor?.value || !sliceDescriptor?.value) throw new Error('Expected the real draft string methods');
+    const split = String.prototype.split;
+    const slice = String.prototype.slice;
+    const tick = (length: number) => {
+      units += length;
+      if (units > budget) throw new Error(`Pending poll text exceeded ${budget} UTF-16 units`);
+    };
+    // eslint-disable-next-line no-extend-native -- Measure real string processing; the exact descriptor is restored below.
+    Object.defineProperty(String.prototype, 'split', {
+      ...splitDescriptor,
+      value(this: string, ...args: Parameters<typeof split>) {
+        tick(this.length);
+        return Reflect.apply(split, this, args);
+      }
+    });
+    // eslint-disable-next-line no-extend-native -- Count copied output ranges so moving the scan to slice cannot pass.
+    Object.defineProperty(String.prototype, 'slice', {
+      ...sliceDescriptor,
+      value(this: string, ...args: Parameters<typeof slice>) {
+        const result = Reflect.apply(slice, this, args);
+        tick(result.length);
+        return result;
+      }
+    });
+    const createPoll = vi.fn(async () => {
+      throw new Error('Known poll must not be created again');
+    });
+    let result: string;
+    try {
+      result = await materializePendingNodeSeekPolls({ ...context(), content, polls, createPoll });
+    } finally {
+      // eslint-disable-next-line no-extend-native -- Restore both methods even when the work budget rejects the draft.
+      Object.defineProperty(String.prototype, 'split', splitDescriptor);
+      // eslint-disable-next-line no-extend-native -- Restore the exact original slice descriptor.
+      Object.defineProperty(String.prototype, 'slice', sliceDescriptor);
+    }
+    expect(result).toBe(
+      prefix +
+        [...polls]
+          .reverse()
+          .map((_, index) => `nsapp://vote?id=${polls.length - index}`)
+          .join('\n')
+    );
+    expect(units).toBeLessThan(budget);
+    expect(createPoll).not.toHaveBeenCalled();
+  });
+
   it.each(
     [408, 409].flatMap((status) => [
       { status, body: 'upstream timeout or conflict' },
@@ -74,6 +149,39 @@ describe('shared pending NodeSeek poll preparation', () => {
       expect(fetcher).toHaveBeenCalledTimes(1);
     }
   );
+
+  it('retains rejection of pending tokens with extra internal whitespace', async () => {
+    journal.set(`nodeseek:42/${poll.localId}/${poll.fingerprint}`, { ...poll, remoteId: '91' });
+    const createPoll = vi.fn(async () => {
+      throw new Error('Known poll must not be created again');
+    });
+    await expect(
+      materializePendingNodeSeekPolls({
+        ...context(),
+        content: `<!-- wz:nodeseek-poll: ${poll.localId} -->`,
+        createPoll
+      })
+    ).rejects.toThrow('本地投票数据不完整');
+    expect(createPoll).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid known remote id before creating the next poll', async () => {
+    const next = normalizePendingNodeSeekPoll({ ...poll, localId: 'poll_next_123' });
+    journal.set(`nodeseek:42/${poll.localId}/${poll.fingerprint}`, { ...poll, remoteId: 'bad-id' });
+    const createPoll = vi.fn(async () => {
+      throw new Error('Next poll must not be created');
+    });
+    await expect(
+      materializePendingNodeSeekPolls({
+        ...context(),
+        polls: [poll, next],
+        content: `${nodeSeekPendingPollToken(poll.localId)}\n${nodeSeekPendingPollToken(next.localId)}`,
+        createPoll
+      })
+    ).rejects.toThrow('NodeSeek 投票 id 不正确');
+    expect(createPoll).not.toHaveBeenCalled();
+    expect(journal.size).toBe(1);
+  });
 
   it.each([408, 409])(
     'allows explicit retry after an HTTP %s business refusal confirms no poll was created',

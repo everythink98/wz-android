@@ -297,6 +297,7 @@ describe('NodeSeek chicken-leg ledger', () => {
       .mockResolvedValueOnce({ ...page(2, [entry(2, 1)], false), total: 81 });
     const hook = await controller(getCredits);
     await waitFor(() => expect(getCredits).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(hook.result.current.summary.consistent).toBe(false));
     await waitFor(() => expect(hook.result.current.busy).toBe(false));
     expect(hook.result.current.summary.today.complete).toBe(false);
     expect(hook.result.current.summary.days.every((day) => !day.complete)).toBe(true);

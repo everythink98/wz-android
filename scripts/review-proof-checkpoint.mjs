@@ -7,11 +7,11 @@ import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
 
-export const PROOF_DATABASE_FILES = ['files/SQLite/reader-data.db', 'databases/AsyncStorage'].flatMap((file) => [
-  file,
-  `${file}-wal`,
-  `${file}-shm`
-]);
+export const PROOF_DATABASE_FILES = [
+  'files/SQLite/reader-data.db',
+  'databases/AsyncStorage',
+  'files/SQLite/composer-journal.db'
+].flatMap((file) => [file, `${file}-wal`, `${file}-shm`]);
 
 const hash = (bytes) => (bytes === null ? null : createHash('sha256').update(bytes).digest('hex'));
 const manifestPath = (directory) => path.join(directory, 'checkpoint.json');
@@ -27,9 +27,27 @@ function readFiles(device) {
 function hashes(files) {
   return Object.fromEntries(PROOF_DATABASE_FILES.map((file) => [file, hash(files[file])]));
 }
+const validMode = (mode) => typeof mode === 'string' && /^(?:0|[1-7][0-7]{0,3})$/u.test(mode);
+function validFileModes(fileHashes, modes) {
+  const keys = [...PROOF_DATABASE_FILES].sort();
+  return (
+    isDeepStrictEqual(Object.keys(fileHashes || {}).sort(), keys) &&
+    isDeepStrictEqual(Object.keys(modes || {}).sort(), keys) &&
+    PROOF_DATABASE_FILES.every((file) =>
+      fileHashes[file] === null
+        ? modes[file] === null
+        : /^[a-f0-9]{64}$/u.test(fileHashes[file]) && validMode(modes[file])
+    )
+  );
+}
+function readModes(device, files) {
+  const modes = Object.fromEntries(PROOF_DATABASE_FILES.map((file) => [file, device.mode(file)]));
+  if (!validFileModes(hashes(files), modes)) throw new Error('Checkpoint file modes are missing or invalid');
+  return modes;
+}
 function assertIdentity(actual, expected) {
   if (
-    actual.avd !== 'WZ_ReaderStorage_API35_20260910' ||
+    !/^WZ_ReaderStorage_API(?:30|35)_20260910$/u.test(actual.avd) ||
     actual.package !== 'com.wz.reader' ||
     !actual.uid ||
     !actual.firstInstallTime ||
@@ -77,7 +95,22 @@ function logicalSnapshot(directory, files) {
       if (entries.find((entry) => entry.key === 'reader-storage-proof-owner')?.value !== 'isolated') {
         throw new Error('Refusing data without the isolated fixture owner');
       }
-      return hash(Buffer.from(JSON.stringify({ tables, entries })));
+      let journal = null;
+      if (files['files/SQLite/composer-journal.db'] !== null) {
+        const composer = new DatabaseSync(path.join(scratch, 'files/SQLite/composer-journal.db'), { readOnly: true });
+        try {
+          journal = {
+            version: composer.prepare('PRAGMA user_version').get(),
+            polls: composer
+              .prepare('SELECT * FROM nodeseek_poll_journal ORDER BY identity_key, local_id, fingerprint')
+              .all(),
+            migrations: composer.prepare('SELECT * FROM nodeseek_poll_migration ORDER BY identity_key').all()
+          };
+        } finally {
+          composer.close();
+        }
+      }
+      return hash(Buffer.from(JSON.stringify({ tables, entries, journal })));
     } finally {
       storage.close();
     }
@@ -88,19 +121,25 @@ function logicalSnapshot(directory, files) {
 
 function restore(directory, device, manifest) {
   if (
-    manifest.version !== 1 ||
+    manifest.version !== 2 ||
     manifest.phase !== 'restoring' ||
-    !isDeepStrictEqual(Object.keys(manifest.baseline).sort(), [...PROOF_DATABASE_FILES].sort())
+    !validFileModes(manifest.baseline, manifest.baselineModes) ||
+    !validFileModes(manifest.restoreFrom, manifest.restoreFromModes)
   ) {
-    throw new Error('Invalid or non-resumable checkpoint');
+    throw new Error('Invalid or non-resumable checkpoint; recorded file modes are required');
   }
   assertIdentity(device.identity(), manifest.identity);
   device.stop();
   assertIdentity(device.identity(), manifest.identity);
-  const current = hashes(readFiles(device));
+  const currentFiles = readFiles(device);
+  const current = hashes(currentFiles);
+  const currentModes = readModes(device, currentFiles);
   const originals = {};
   for (const file of PROOF_DATABASE_FILES) {
-    if (current[file] !== manifest.baseline[file] && current[file] !== manifest.restoreFrom[file]) {
+    if (
+      !(current[file] === manifest.baseline[file] && currentModes[file] === manifest.baselineModes[file]) &&
+      !(current[file] === manifest.restoreFrom[file] && currentModes[file] === manifest.restoreFromModes[file])
+    ) {
       throw new Error(`Checkpoint conflict; refusing to overwrite ${file}`);
     }
     originals[file] = manifest.baseline[file] === null ? null : readFileSync(path.join(directory, 'baseline', file));
@@ -109,11 +148,12 @@ function restore(directory, device, manifest) {
   }
   for (const file of PROOF_DATABASE_FILES) {
     if (originals[file] === null) device.remove(file);
-    else device.write(file, originals[file]);
+    else device.write(file, originals[file], manifest.baselineModes[file]);
   }
   const restored = readFiles(device);
   if (
     !isDeepStrictEqual(hashes(restored), manifest.baseline) ||
+    !isDeepStrictEqual(readModes(device, restored), manifest.baselineModes) ||
     logicalSnapshot(directory, restored) !== manifest.logicalHash
   )
     throw new Error('Checkpoint readback differs from baseline');
@@ -148,13 +188,15 @@ export async function withProofCheckpoint({ directory, device, prepare = () => {
     assertIdentity(identity, { ...previousIdentity, apkSha256: identity.apkSha256 });
     assertIdentity(device.identity(), identity);
     const originals = readFiles(device);
+    const baselineModes = readModes(device, originals);
     const logicalHash = logicalSnapshot(directory, originals);
     const manifest = {
-      version: 1,
+      version: 2,
       token: randomUUID(),
       identity,
       phase: 'running',
       baseline: hashes(originals),
+      baselineModes,
       logicalHash
     };
     for (const file of PROOF_DATABASE_FILES) {
@@ -179,7 +221,9 @@ export async function withProofCheckpoint({ directory, device, prepare = () => {
       assertIdentity(device.identity(), identity);
       device.stop();
       assertIdentity(device.identity(), identity);
-      manifest.restoreFrom = hashes(readFiles(device));
+      const restoreFromFiles = readFiles(device);
+      manifest.restoreFrom = hashes(restoreFromFiles);
+      manifest.restoreFromModes = readModes(device, restoreFromFiles);
       manifest.phase = 'restoring';
       saveManifest(directory, manifest);
       checkpoint = restore(directory, device, manifest);
@@ -201,7 +245,7 @@ export async function withProofCheckpoint({ directory, device, prepare = () => {
 }
 
 // ADB transport is shared by storage acceptance and the deterministic Gallery runner.
-export function proofDeviceForSerial(serial) {
+export function proofDeviceForSerial(serial, api = 35) {
   const adb = (...args) =>
     execFileSync('adb', ['-s', serial, ...args], {
       encoding: 'utf8',
@@ -209,25 +253,78 @@ export function proofDeviceForSerial(serial) {
       stdio: ['ignore', 'pipe', 'pipe']
     });
   const pkg = 'com.wz.reader';
-  const avd = adb('emu', 'avd', 'name').split(/\r?\n/u)[0].trim();
-  if (avd !== 'WZ_ReaderStorage_API35_20260910') throw new Error(`Refusing non-isolated AVD ${avd}`);
+  const environment = () => {
+    const avd = adb('emu', 'avd', 'name').split(/\r?\n/u)[0].trim();
+    if (
+      ![30, 35].includes(api) ||
+      avd !== `WZ_ReaderStorage_API${api}_20260910` ||
+      adb('shell', 'getprop', 'ro.build.version.sdk').trim() !== String(api)
+    )
+      throw new Error(`Refusing non-isolated AVD or mismatched SDK: ${avd}`);
+    return avd;
+  };
+  const avd = environment();
   const fixedFile = (file) => {
     if (!PROOF_DATABASE_FILES.includes(file)) throw new Error('Not a checkpoint database file');
     return file;
+  };
+  const fileExists = (file) => {
+    fixedFile(file);
+    const kind = adb(
+      'exec-out',
+      'run-as',
+      pkg,
+      'sh',
+      '-c',
+      `if test -L '${file}'; then echo symlink; elif test -f '${file}'; then echo regular; elif test -e '${file}'; then echo other; else echo missing; fi`
+    ).trim();
+    if (kind === 'symlink') throw new Error('Refusing a checkpoint symbolic link');
+    if (kind === 'regular') return true;
+    if (kind === 'missing') return false;
+    throw new Error('Checkpoint file type could not be verified');
   };
   return {
     adb,
     avd,
     package: pkg,
     identity: () => {
+      environment();
       const installed = adb('shell', 'pm', 'path', pkg).trim().split(/\r?\n/u)[0]?.replace('package:', '');
-      if (!installed?.startsWith('/data/app/')) throw new Error('Missing installed APK');
+      if (!/^\/data\/app\/[^\s]+\/base\.apk$/u.test(installed)) throw new Error('Missing installed APK');
+      const dump = adb('shell', 'dumpsys', 'package', pkg);
+      const uid = adb('shell', 'run-as', pkg, 'id', '-u').trim();
+      const packageUid = /^\s*(?:appId|userId)=(\d+)\b/mu.exec(dump)?.[1];
+      const firstInstallTime = /firstInstallTime=([^\r\n]+)/u.exec(dump)?.[1]?.trim();
+      const user = /^\s*User 0:([^\r\n]*)/mu.exec(dump)?.[1] || '';
+      const apkSha256 = adb('shell', 'sha256sum', installed).trim().split(/\s/u)[0];
+      const activity = adb(
+        'shell',
+        'cmd',
+        'package',
+        'resolve-activity',
+        '--brief',
+        '-a',
+        'android.intent.action.MAIN',
+        '-c',
+        'android.intent.category.LAUNCHER',
+        pkg
+      );
+      if (
+        !/^\d+$/u.test(uid) ||
+        uid !== packageUid ||
+        !firstInstallTime ||
+        !/\binstalled=true\b/u.test(user) ||
+        /\b(?:hidden|suspended)=true\b/u.test(user) ||
+        !/^[a-f0-9]{64}$/u.test(apkSha256) ||
+        !/^com\.wz\.reader\/(?:\.|com\.wz\.reader\.)MainActivity\s*$/mu.test(activity)
+      )
+        throw new Error('Incomplete installed proof identity or missing MainActivity; device changes frozen');
       return {
-        avd: adb('emu', 'avd', 'name').split(/\r?\n/u)[0].trim(),
+        avd,
         package: pkg,
-        uid: adb('shell', 'run-as', pkg, 'id', '-u').trim(),
-        firstInstallTime: /firstInstallTime=([^\r\n]+)/u.exec(adb('shell', 'dumpsys', 'package', pkg))?.[1]?.trim(),
-        apkSha256: adb('shell', 'sha256sum', installed).trim().split(/\s/u)[0]
+        uid,
+        firstInstallTime,
+        apkSha256
       };
     },
     stop: () => {
@@ -240,20 +337,21 @@ export function proofDeviceForSerial(serial) {
         throw new Error('App is still running; checkpoint writes refused');
     },
     read: (file) => {
-      fixedFile(file);
-      try {
-        adb('shell', 'run-as', pkg, 'test', '-f', file);
-      } catch (error) {
-        if (error.status === 1) return null;
-        throw error;
-      }
+      if (!fileExists(file)) return null;
       return execFileSync('adb', ['-s', serial, 'exec-out', 'run-as', pkg, 'cat', file], {
         timeout: 60000,
         maxBuffer: 128 * 1024 * 1024
       });
     },
-    write: (file, bytes) => {
+    mode: (file) => {
+      if (!fileExists(file)) return null;
+      const mode = adb('shell', 'run-as', pkg, 'stat', '-c', '%a', file).trim();
+      if (!validMode(mode)) throw new Error('Invalid checkpoint file mode');
+      return mode;
+    },
+    write: (file, bytes, mode) => {
       fixedFile(file);
+      if (!validMode(mode)) throw new Error('Invalid checkpoint file mode');
       const scratch = mkdtempSync(path.join(os.tmpdir(), 'wz-checkpoint-write-'));
       const source = path.join(scratch, 'data');
       const remote = `/data/local/tmp/wz-checkpoint-${randomUUID()}`;
@@ -262,6 +360,7 @@ export function proofDeviceForSerial(serial) {
         writeFileSync(source, bytes);
         adb('push', source, remote);
         adb('shell', 'run-as', pkg, 'cp', remote, `${file}.wz-proof-restore`);
+        adb('shell', 'run-as', pkg, 'chmod', mode, `${file}.wz-proof-restore`);
       } catch (error) {
         errors.push(error);
       }
@@ -282,6 +381,8 @@ export function proofDeviceForSerial(serial) {
         maxBuffer: 128 * 1024 * 1024
       });
       if (!staged.equals(bytes)) throw new Error('Checkpoint transport checksum failed');
+      if (adb('shell', 'run-as', pkg, 'stat', '-c', '%a', `${file}.wz-proof-restore`).trim() !== mode)
+        throw new Error('Checkpoint staged file mode differs from baseline');
       adb('shell', 'run-as', pkg, 'mv', `${file}.wz-proof-restore`, file);
     },
     remove: (file) => adb('shell', 'run-as', pkg, 'rm', '-f', fixedFile(file))

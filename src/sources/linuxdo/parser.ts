@@ -6,7 +6,10 @@ import {
   FORUM_LINK_CARD_TAG,
   FORUM_MATH_BLOCK_TAG,
   FORUM_MATH_INLINE_TAG,
-  hasRenderableHtmlContent
+  hasRenderableHtmlContent,
+  forumNodeText,
+  parseForumContentHtml,
+  transformForumElements
 } from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { discoursePollPlaceholder, prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
@@ -44,26 +47,25 @@ function linuxDoContentTransform(html: unknown, polls: TopicPoll[] | undefined) 
       ['div.math', FORUM_MATH_BLOCK_TAG],
       ['span.math', FORUM_MATH_INLINE_TAG]
     ] as const) {
-      root.querySelectorAll(selector).forEach((node) => {
-        const source = node.text.trim();
-        if (source) node.replaceWith(`<${tagName}>${escapeHtmlText(source)}</${tagName}>`);
-        else node.remove();
+      transformForumElements(root, root.querySelectorAll(selector), (node) => {
+        const source = forumNodeText(node).trim();
+        return source ? parseForumContentHtml(`<${tagName}>${escapeHtmlText(source)}</${tagName}>`).childNodes : [];
       });
     }
-    root.querySelectorAll('.poll').forEach((node) => {
+    transformForumElements(root, root.querySelectorAll('.poll'), (node) => {
       const name = String(node.getAttribute('data-poll-name') || '').trim();
       if (name && pollNames.has(name)) {
-        node.replaceWith(discoursePollPlaceholder(name));
+        return parseForumContentHtml(discoursePollPlaceholder(name)).childNodes;
       }
     });
-    root.querySelectorAll('iframe').forEach((node) => {
+    transformForumElements(root, root.querySelectorAll('iframe'), (node) => {
       const href = redditSourceUrl(node.getAttribute('src'));
       if (!href) {
         return;
       }
-      node.replaceWith(
+      return parseForumContentHtml(
         `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="Reddit" title="Reddit 帖子" description="在 Reddit 中查看原帖"></${FORUM_LINK_CARD_TAG}>`
-      );
+      ).childNodes;
     });
     if (normalizeCallouts) {
       normalizeDiscourseCallouts(root);

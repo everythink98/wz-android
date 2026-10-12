@@ -1,5 +1,11 @@
 import type { UserProfile, UserReplyActivity } from '@/domain/forum/models';
-import { elementText, parseHtml, parsePositiveInteger, sortTopicsByCreatedAt, textExcerpt } from '@/domain/forum/html';
+import {
+  elementText,
+  parseHtml,
+  parsePositiveInteger,
+  sortTopicsByCreatedAt,
+  textExcerptFromPlainText
+} from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   YAOHUO_BASE_URL as BASE_URL,
@@ -105,18 +111,18 @@ export function parseYaohuoUserRepliesDocument(
       }
       const text = elementText(row);
       const dateText = yaohuoDisplayTimeText(text);
-      const floor = parsePositiveInteger(text.match(/#\s*(\d+)/)?.[1]);
+      const floor = parsePositiveInteger(text.match(/(?:^|[^&])#\s*(\d+)/)?.[1]);
       const createdAt = parseYaohuoDate(dateText || text);
       const topicTitle = /^查看$/.test(elementText(viewLink)) ? '查看原帖' : elementText(viewLink) || '查看原帖';
       const contentText = text
         .replace(dateText, ' ')
         .replace(new RegExp(`^\\s*${author.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'i'), ' ')
         .replace(new RegExp(`\\(${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), ' ')
-        .replace(/#\s*\d+/g, ' ')
+        .replace(/#\s*\d+/g, (marker, offset, value) => (value[offset - 1] === '&' ? marker : ' '))
         .replace(/查看/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-      const excerpt = textExcerpt(contentText);
+      const excerpt = textExcerptFromPlainText(contentText);
       const replyIdentity = floor
         ? [topicId, floor, createdAt || ''].join(':')
         : contentText || createdAt

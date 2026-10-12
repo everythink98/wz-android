@@ -722,14 +722,15 @@ export function useAccountRuntime({
   const account = useAccountController({
     checkingRequestIdRef,
     clearLinuxDoLoginState: async () => {
+      const isCurrent = status.beginAccountSessionClear('linuxdo');
       cancelLinuxDoBrowserHandoff();
       linuxDoWebViewRef.current?.stopLoading();
       setMountLinuxDoWebView(false);
       await setLinuxDoCookieResponseBarrier(true, 'explicit-clear');
-      return session.clearLinuxDoLoginState();
+      return session.clearLinuxDoLoginState(isCurrent);
     },
-    clearNodeSeekLoginState: session.clearNodeSeekLoginState,
-    clearYaohuoLoginState: session.clearYaohuoLoginState,
+    clearNodeSeekLoginState: () => session.clearNodeSeekLoginState(status.beginAccountSessionClear('nodeseek')),
+    clearYaohuoLoginState: () => session.clearYaohuoLoginState(status.beginAccountSessionClear('yaohuo')),
     commitNodeSeekWebViewUserAgent,
     sessionEpochs: session.forumSessionEpochs,
     nodeSeekLoginPanelRequestRef,

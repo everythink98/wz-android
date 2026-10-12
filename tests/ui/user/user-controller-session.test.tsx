@@ -313,6 +313,90 @@ describe('user query controller', () => {
     expect(showYaohuoLogin).toHaveBeenCalledWith('请先登录该内容源');
   });
 
+  it('keeps dismissed Yaohuo User login closed through identity reconciliation until explicit retry', async () => {
+    const requested: UserReference = {
+      source: 'yaohuo',
+      id: '7',
+      username: 'alice',
+      url: 'https://www.yaohuo.me/space-7.html'
+    };
+    let identityBarriers: SessionSource[] = [];
+    let identityTrust: SessionRuntimeSnapshot['identityTrust'] = 'none';
+    let active = true;
+    let sessionEpochs = initialForumSessionEpochs;
+    const showYaohuoLogin = jest.fn<(message?: string) => void>();
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => {
+      const reason = identityBarriers.length
+        ? 'identity-pending'
+        : identityTrust === 'unknown'
+          ? 'identity-unavailable'
+          : 'login-required';
+      throw Object.assign(new Error(reason), {
+        kind: reason === 'login-required' ? 'login-required' : 'ordinary',
+        reason,
+        source: 'yaohuo'
+      });
+    });
+    const hook = await renderUserController({
+      getActive: () => active,
+      getIdentityBarriers: () => identityBarriers,
+      getIdentityTrust: () => identityTrust,
+      getSessionEpochs: () => sessionEpochs,
+      getUser: () => requested,
+      getUserProfile,
+      showYaohuoLogin
+    });
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+
+    for (const phase of ['open', 'unknown', 'anonymous', 'open', 'anonymous'] as const) {
+      const before = getUserProfile.mock.calls.length;
+      identityBarriers = phase === 'open' ? ['yaohuo'] : [];
+      identityTrust = phase === 'unknown' ? 'unknown' : 'none';
+      if (phase === 'anonymous') sessionEpochs = { ...sessionEpochs, yaohuo: sessionEpochs.yaohuo + 1 };
+      await act(async () => hook.rerender(undefined));
+      await waitFor(() => expect(getUserProfile.mock.calls.length).toBeGreaterThan(before));
+      await waitFor(() => expect(hook.result.current.userBusy).toBe(false));
+      expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+    }
+
+    await act(async () => hook.rerender(undefined));
+    active = false;
+    await act(async () => hook.rerender(undefined));
+    active = true;
+    await act(async () => hook.rerender(undefined));
+    await waitFor(() => expect(hook.result.current.userBusy).toBe(false));
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await expect(hook.result.current.refreshUser()).resolves.toBe('stale');
+    });
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(2);
+    for (const open of [true, false]) {
+      const before = getUserProfile.mock.calls.length;
+      identityBarriers = open ? ['yaohuo'] : [];
+      await act(async () => hook.rerender(undefined));
+      await waitFor(() => expect(getUserProfile.mock.calls.length).toBeGreaterThan(before));
+      await waitFor(() =>
+        expect(hook.result.current.userError?.reason).toBe(open ? 'identity-pending' : 'login-required')
+      );
+      expect(showYaohuoLogin).toHaveBeenCalledTimes(2);
+    }
+    const previousErrorAt = appQueryClient
+      .getQueryCache()
+      .findAll({ queryKey: ['forum', 'yaohuo', 'user'] })
+      .find((query) => query.isActive())?.state.errorUpdatedAt;
+    if (!previousErrorAt) throw new Error('Expected the settled current User error');
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(previousErrorAt);
+    try {
+      await act(async () => {
+        await hook.result.current.retryUserProfile();
+      });
+    } finally {
+      clock.mockRestore();
+    }
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(3));
+  });
+
   it('gates route queries and commands while inactive', async () => {
     let active = false;
     let signal: AbortSignal | undefined;

@@ -6,6 +6,7 @@ import {
 } from '../../scripts/composer-expression-geometry.mjs';
 import {
   assertComposerClosed,
+  openComposerFixture,
   assertComposerFullscreen,
   assertTopicCreationKeyboardGeometry,
   assertComposerReceipt,
@@ -16,6 +17,9 @@ import {
   composerImeInput,
   injectComposerImeInput,
   captureComposerImeDom,
+  captureComposerSnapshotReply,
+  assertComposerSettlementDraft,
+  assertComposerSnapshotLimit,
   assertComposerImeDom,
   composerCases,
   assertTopicCreationReceipt,
@@ -29,6 +33,136 @@ import {
 } from '../../scripts/run-composer-device-proof.mjs';
 
 describe('composer device evidence', () => {
+  it.each(['编辑测试主帖', '打开测试发帖'])(
+    'opens %s only after its native accessibility target becomes readable',
+    (launcher) => {
+      let appOpened = false;
+      let targetReadable = false;
+      let presses = 0;
+      openComposerFixture((args: string[]) => {
+        if (args[0] === 'open') {
+          appOpened = true;
+          targetReadable = false;
+        } else if (args[0] === 'wait') {
+          expect(appOpened).toBe(true);
+          expect(args.slice(1)).toEqual(['text', launcher, '15000']);
+          targetReadable = true;
+        } else if (args[0] === 'press') {
+          if (!targetReadable || args[1] !== `text="${launcher}"`)
+            throw new Error('Android snapshot helper returned insufficient foreground app content');
+          presses++;
+        }
+        return '';
+      }, launcher);
+      expect(presses).toBe(1);
+    }
+  );
+  it('preserves the readiness failure without pressing or relaunching the fixture', () => {
+    const failure = new Error('Native entry did not become readable before the deadline');
+    const commands: string[][] = [];
+    expect(() =>
+      openComposerFixture((args: string[]) => {
+        commands.push(args);
+        if (args[0] === 'wait') throw failure;
+        return '';
+      }, '编辑测试主帖')
+    ).toThrow(failure);
+    expect(commands.filter(([command]) => command === 'open')).toHaveLength(1);
+    expect(commands.filter(([command]) => command === 'wait')).toHaveLength(1);
+    expect(commands.some(([command]) => command === 'press')).toBe(false);
+  });
+  it('captures the matching real bridge reply, forwards every message and restores the public bridge', () => {
+    const dom = new JSDOM('');
+    const forwarded: string[] = [];
+    const bridge = { postMessage: (raw: string) => forwarded.push(raw) };
+    const original = bridge.postMessage;
+    Object.defineProperty(dom.window, 'ReactNativeWebView', { value: bridge });
+    dom.window.addEventListener('message', (event: MessageEvent<string>) => {
+      const request = JSON.parse(event.data) as { payload: { requestId: string } };
+      bridge.postMessage(JSON.stringify({ type: 'SNAPSHOT', payload: { requestId: 'unrelated' } }));
+      bridge.postMessage(
+        JSON.stringify({ type: 'ERROR', payload: { requestId: request.payload.requestId, code: 'too-long' } })
+      );
+    });
+    try {
+      expect(captureComposerSnapshotReply(dom.window, 'requested')).toEqual({
+        type: 'ERROR',
+        payload: { requestId: 'requested', code: 'too-long' }
+      });
+      expect(forwarded).toHaveLength(2);
+      expect(bridge.postMessage).toBe(original);
+    } finally {
+      dom.window.close();
+    }
+  });
+  it('rejects a silent snapshot runtime and restores its bridge after observation failure', () => {
+    const dom = new JSDOM('');
+    const bridge = { postMessage: () => undefined };
+    const original = bridge.postMessage;
+    Object.defineProperty(dom.window, 'ReactNativeWebView', { value: bridge });
+    try {
+      expect(() => captureComposerSnapshotReply(dom.window, 'missing')).toThrow('did not answer');
+      expect(bridge.postMessage).toBe(original);
+    } finally {
+      dom.window.close();
+    }
+  });
+  it('requires the retained runtime draft, exact native insertion and one original POST confirmation', () => {
+    const expected = {
+      token: 'run-a',
+      buildId: 'build-a',
+      requestId: 'current-request',
+      documentEpoch: 7,
+      mode: 'rich',
+      submitted: 'old',
+      before: 'old',
+      beforeRevision: 1,
+      input: 'new'
+    };
+    const proof = {
+      ...receipt,
+      visible: true,
+      content: 'oldnew',
+      submittedContents: ['old']
+    };
+    const reply = {
+      type: 'SNAPSHOT',
+      payload: {
+        requestId: expected.requestId,
+        documentEpoch: expected.documentEpoch,
+        snapshot: { mode: expected.mode, revision: 2, markdown: proof.content }
+      }
+    };
+    expect(() => assertComposerSettlementDraft(proof, reply, expected)).not.toThrow();
+    for (const change of [{ visible: false }, { requests: 2 }, { submittedContents: ['oldnew'] }])
+      expect(() => assertComposerSettlementDraft({ ...proof, ...change }, reply, expected)).toThrow();
+    expect(() =>
+      assertComposerSettlementDraft(
+        proof,
+        { ...reply, payload: { ...reply.payload, snapshot: { ...reply.payload.snapshot, revision: 1 } } },
+        expected
+      )
+    ).toThrow();
+    expect(() => assertComposerSettlementDraft(proof, reply, { ...expected, documentEpoch: 8 })).toThrow();
+    expect(() =>
+      assertComposerSettlementDraft(
+        { ...proof, content: 'new' },
+        { ...reply, payload: { ...reply.payload, snapshot: { ...reply.payload.snapshot, markdown: 'new' } } },
+        expected
+      )
+    ).toThrow('preserve the complete');
+  });
+  it('requires a current request ERROR for oversized snapshots rather than a stale reply or snapshot', () => {
+    const expected = { requestId: 'current-request', documentEpoch: 7, beforeRevision: 1 };
+    const reply = {
+      type: 'ERROR',
+      payload: { requestId: expected.requestId, documentEpoch: 7, revision: 2, code: 'too-long' }
+    };
+    expect(() => assertComposerSnapshotLimit(reply, expected)).not.toThrow();
+    expect(() => assertComposerSnapshotLimit({ ...reply, type: 'SNAPSHOT' }, expected)).toThrow();
+    expect(() => assertComposerSnapshotLimit(reply, { ...expected, requestId: 'expired' })).toThrow();
+    expect(() => assertComposerSnapshotLimit(reply, { ...expected, beforeRevision: 2 })).toThrow();
+  });
   it('checks the actual native picker bottom against the real IME and navigation frames', () => {
     const insets =
       'type=ime frame=[0,1517][1080,2400] visible=true\n' + 'type=navigationBars frame=[0,2274][1080,2400]';
@@ -443,12 +577,27 @@ describe('composer device evidence', () => {
     compressed[2].rect.y = compressed[3].rect.y - 60;
     expect(() => assertTopicCreationKeyboardGeometry(compressed, windowInsets(true), true)).toThrow('editing space');
   });
-  it('enumerates all sixteen structured reply success combinations', () => {
-    const matrix = composerCases.filter((scenario) =>
-      /^(nodeseek|linuxdo)-(rich|source)-(sheet|fullscreen)-(shown|hidden)$/.test(scenario.id)
+  it('covers every structured reply state, settlement draft and oversized snapshot exactly once', () => {
+    const ids = composerCases.map((scenario) => scenario.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const expected = ['nodeseek', 'linuxdo'].flatMap((source) =>
+      ['rich', 'source'].flatMap((mode) =>
+        ['sheet', 'fullscreen'].flatMap((panel) =>
+          ['shown', 'hidden'].map((ime) => `${source}-${mode}-${panel}-${ime}`)
+        )
+      )
     );
-    expect(matrix).toHaveLength(16);
-    expect(new Set(matrix.map((scenario) => scenario.id)).size).toBe(16);
+    expect(
+      new Set(ids.filter((id) => /^(nodeseek|linuxdo)-(rich|source)-(sheet|fullscreen)-(shown|hidden)$/.test(id)))
+    ).toEqual(new Set(expected));
+    expect(
+      new Set(
+        composerCases
+          .filter((scenario) => 'stress' in scenario && scenario.stress === 'settlement-new-draft')
+          .map(({ id }) => id)
+      )
+    ).toEqual(new Set(['settlement-nodeseek-rich-new-draft', 'settlement-nodeseek-source-new-draft']));
+    expect(ids).toContain('snapshot-nodeseek-source-over-limit');
   });
   it('requires durable topic outcomes, one dispatch and independent drafts', () => {
     const expectedTopic = { token: 'run-a', buildId: 'build-a', source: 'linuxdo', status: 'enqueued' };
@@ -488,7 +637,7 @@ describe('composer device evidence', () => {
     expect(() => assertTopicCreationReceipt(unknown, { ...expectedTopic, noWrites: true })).toThrow();
   });
   it('covers every creation provider, Yaohuo form kind and durable draft transition', () => {
-    expect(topicCreationCases).toHaveLength(20);
+    expect(new Set(topicCreationCases.map(({ id }) => id)).size).toBe(topicCreationCases.length);
     for (const source of ['nodeseek', 'linuxdo', 'yaohuo'])
       for (const outcome of ['success', 'rejected', 'unconfirmed'])
         expect(topicCreationCases).toContainEqual(expect.objectContaining({ source, outcome }));

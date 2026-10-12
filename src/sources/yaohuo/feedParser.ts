@@ -6,10 +6,10 @@ import {
   parseHtml,
   parsePositiveInteger,
   sortTopicsByTime,
-  textExcerpt,
+  textExcerptFromPlainText,
   toIsoString
 } from '@/domain/forum/html';
-import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import { accessRequirementFromPlainText } from '@/domain/forum/accessRequirements';
 import {
   annotateSourceDiagnosticSummary,
   sourceDiagnosticSummary
@@ -56,10 +56,10 @@ function parseListItem(
   titleRoot.querySelectorAll('.post-flag').forEach((badge) => badge.remove());
   const title = elementText(titleRoot);
   const resolvedClassId = classId || extractClassIdFromRow(element) || fallbackClassId;
-  const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
+  const accessRequirement = accessRequirementFromPlainText(text.replace(title, ' '));
   const replyCount = parsePositiveInteger(
     elementText(element.querySelector('.post-count a')) ||
-      element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item)))?.text
+      elementText(element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item))))
   );
   const countText = elementText(element.querySelector('.post-count')) || text;
   const viewCount = parsePositiveInteger(
@@ -106,7 +106,7 @@ function parseListItem(
     ...(displayTimeText ? { displayTimeText } : {}),
     replyCount,
     viewCount: viewCount || undefined,
-    excerpt: textExcerpt(text),
+    excerpt: textExcerptFromPlainText(text),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }
@@ -135,7 +135,7 @@ function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClass
       const parent = link.parentNode as HTMLElement | null;
       const row = parent && typeof parent.querySelectorAll === 'function' ? parent : list;
       const text = elementText(row);
-      const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
+      const accessRequirement = accessRequirementFromPlainText(text.replace(title, ' '));
       items.push({
         source: 'yaohuo',
         id,

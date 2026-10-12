@@ -73,6 +73,58 @@ function deletedReplyFetcher() {
 }
 
 describe('linux.do reader', () => {
+  it.each([
+    ['opening', false],
+    ['reply', false],
+    ['opening', true]
+  ] as const)(
+    'prepares a deeply nested %s while retaining code, media, and surrounding text (deleted: %s)',
+    async (role, userDeleted) => {
+      const cooked =
+        '<p>before</p><pre><code>' +
+        '<span>'.repeat(2048) +
+        '&lt;safe&gt;\ncode' +
+        '</span>'.repeat(2048) +
+        '</code></pre><img src="/proof.png"><p>after</p>';
+      const post = {
+        id: role === 'opening' ? 1 : 2,
+        username: 'alice',
+        cooked,
+        created_at: '2026-10-10T00:00:00.000Z',
+        post_number: role === 'opening' ? 1 : 2,
+        user_deleted: userDeleted,
+        deleted_at: null
+      };
+      const posts = role === 'opening' ? [post] : [{ ...post, id: 1, post_number: 1, cooked: '<p>opening</p>' }, post];
+      const fetcher = vi.fn(async () =>
+        json({
+          id: 1,
+          title: 'Synthetic depth',
+          slug: 'synthetic',
+          created_at: post.created_at,
+          posts_count: posts.length,
+          categories: [],
+          post_stream: { stream: posts.map((entry) => entry.id), posts }
+        })
+      );
+
+      const detail = await getLinuxDoTopic('1', { fetcher });
+      const prepared = role === 'opening' ? detail : detail.replies[0];
+      expect(prepared).toBeDefined();
+      if (!prepared) throw new Error('Expected the deeply nested post to remain readable');
+      const plan = requirePreparedForumContent(prepared.preparedContent, prepared.contentHtml, {
+        role,
+        source: 'linuxdo',
+        topicId: '1'
+      });
+
+      expect(plan.rows.filter((row) => row.type === 'codeBlock').map((row) => row.text)).toEqual(['<safe>\ncode']);
+      expect(plan.previewImages.map((image) => image.source)).toEqual(['https://linux.do/proof.png']);
+      expect(prepared.contentHtml).toMatch(/before[\s\S]*&lt;safe&gt;[\s\S]*code[\s\S]*after/);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('keeps the declaration while removing site-injected policy controls and user statistics', () => {
     const html = sanitizeLinuxDoContentHtml(
       '<p>原始公告</p><div class="policy"><div class="policy-body"><p>请确认已知晓</p></div><div class="policy-footer"><button>已阅读</button><span>私密用户列表</span></div><span class="policy-preview">PREVIEW</span></div><p>后续说明</p>',

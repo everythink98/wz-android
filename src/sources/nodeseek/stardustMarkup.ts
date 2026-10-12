@@ -1,5 +1,5 @@
 import type { HTMLElement } from 'node-html-parser';
-import { decodeHtml, escapeHtmlAttribute, escapeHtmlText, parseHtml } from '@/domain/forum/html';
+import { escapeHtmlAttribute, escapeHtmlText, forumNodeText, parseHtml } from '@/domain/forum/html';
 import { nodeSeekStardustMarkerRanges, type NodeSeekStardustReceive } from '@/domain/forum/structuredComposer';
 
 export const NODESEEK_STARDUST_PLACEHOLDER_TAG = 'forum-nodeseek-stardust';
@@ -15,7 +15,7 @@ export function nodeSeekStardustPlaceholderHtml(receive: NodeSeekStardustReceive
 function normalizeTextNode(parent: HTMLElement, childIndex: number) {
   const child = parent.childNodes[childIndex];
   if (!child || child.nodeType !== 3) return 0;
-  const text = child.text;
+  const text = forumNodeText(child);
   const ranges = nodeSeekStardustMarkerRanges(text).filter((range) => range.receive);
   if (!ranges.length) return 0;
   let cursor = 0;
@@ -35,28 +35,39 @@ function normalizeTextNode(parent: HTMLElement, childIndex: number) {
 }
 
 function completeStardustMarker(value: string) {
-  const marker = decodeHtml(value).trim();
+  const marker = value.trim();
   const [range, ...extra] = nodeSeekStardustMarkerRanges(marker);
   return !extra.length && range?.from === 0 && range.to === marker.length ? range.receive : undefined;
 }
 
 export function normalizeNodeSeekStardustMarkers(root: HTMLElement) {
-  const visit = (element: HTMLElement) => {
-    const tag = String(element.rawTagName || '').toLowerCase();
-    if (tag === 'pre' || tag === 'code') return;
-    if (tag === 'a') {
-      const dataHref = element.getAttribute('data-href');
-      const receive = completeStardustMarker(dataHref ?? element.textContent ?? '');
-      if (receive) element.replaceWith(nodeSeekStardustPlaceholderHtml(receive));
-      return;
+  const pending = [{ element: root, index: 0 }];
+  while (pending.length) {
+    const frame = pending.at(-1)!;
+    const { element } = frame;
+    if (frame.index === 0) {
+      const tag = String(element.rawTagName || '').toLowerCase();
+      if (tag === 'pre' || tag === 'code') {
+        pending.pop();
+        continue;
+      }
+      if (tag === 'a') {
+        const dataHref = element.getAttribute('data-href');
+        const receive = completeStardustMarker(dataHref ?? forumNodeText(element));
+        if (receive) element.replaceWith(nodeSeekStardustPlaceholderHtml(receive));
+        pending.pop();
+        continue;
+      }
     }
-    for (let index = 0; index < element.childNodes.length; index += 1) {
-      const child = element.childNodes[index];
-      if (child?.nodeType === 1) visit(child as HTMLElement);
-      else index += normalizeTextNode(element, index);
+    if (frame.index >= element.childNodes.length) {
+      pending.pop();
+      continue;
     }
-  };
-  visit(root);
+    const index = frame.index++;
+    const child = element.childNodes[index];
+    if (child?.nodeType === 1) pending.push({ element: child as HTMLElement, index: 0 });
+    else frame.index += normalizeTextNode(element, index);
+  }
 }
 
 export function nodeSeekStardustReceiveFromAttributes(attributes: Record<string, string>) {

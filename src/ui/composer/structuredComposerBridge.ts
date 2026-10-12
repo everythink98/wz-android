@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { MAX_COMPOSER_MARKDOWN_LENGTH } from '@/domain/forum/structuredComposer';
+import {
+  MAX_COMPOSER_MARKDOWN_LENGTH,
+  MAX_COMPOSER_POLL_COUNT,
+  MAX_COMPOSER_VALIDATION_ISSUES
+} from '@/domain/forum/structuredComposer';
 
 export { MAX_COMPOSER_MARKDOWN_LENGTH };
 
@@ -89,8 +93,8 @@ const snapshotSchema = strictObject({
   markdown: z.string().max(MAX_COMPOSER_MARKDOWN_LENGTH),
   mode: composerModeSchema,
   isEmpty: z.boolean(),
-  validationIssues: z.array(validationIssueSchema).max(100),
-  pendingNodeSeekPolls: z.array(pendingPollSchema).max(20)
+  validationIssues: z.array(validationIssueSchema).max(MAX_COMPOSER_VALIDATION_ISSUES),
+  pendingNodeSeekPolls: z.array(pendingPollSchema).max(MAX_COMPOSER_POLL_COUNT)
 });
 const editorThemeSchema = strictObject({
   dark: z.boolean(),
@@ -130,7 +134,7 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
       site: composerSiteSchema,
       intentKind: z.enum(['reply', 'edit-reply', 'private-message', 'create-topic', 'edit-topic']),
       markdown: z.string().max(MAX_COMPOSER_MARKDOWN_LENGTH),
-      pendingNodeSeekPolls: z.array(pendingPollSchema).max(20),
+      pendingNodeSeekPolls: z.array(pendingPollSchema).max(MAX_COMPOSER_POLL_COUNT),
       mode: composerModeSchema,
       readOnly: z.boolean().optional(),
       nodeSeekMemberId: z.string().regex(/^\d+$/).optional(),
@@ -178,7 +182,13 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
   strictObject({ type: z.literal('SET_READ_ONLY'), payload: strictObject({ readOnly: z.boolean() }) }),
   strictObject({
     type: z.literal('REQUEST_SNAPSHOT'),
-    payload: strictObject({ requestId: z.string().min(1).max(80) })
+    payload: strictObject({
+      requestId: z.string().min(1).max(80),
+      submission: strictObject({
+        documentEpoch: z.number().int().nonnegative(),
+        revision: z.number().int().nonnegative()
+      }).optional()
+    })
   }),
   strictObject({ type: z.literal('SET_THEME'), payload: editorThemeSchema }),
   strictObject({ type: z.literal('DESTROY') })
@@ -259,6 +269,8 @@ export const composerEditorMessageSchema = z.discriminatedUnion('type', [
   strictObject({
     type: z.literal('ERROR'),
     payload: strictObject({
+      documentEpoch: z.number().int().nonnegative().optional(),
+      requestId: z.string().min(1).max(80).optional(),
       code: z.string().min(1).max(80),
       message: z.string().min(1).max(300),
       revision: z.number().int()

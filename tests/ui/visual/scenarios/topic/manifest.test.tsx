@@ -1,4 +1,30 @@
 import React from 'react';
+import * as Clipboard from 'expo-clipboard';
+
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
+
+jest.mock('react-native', () => {
+  const actual = jest.requireActual<typeof import('react-native')>('react-native');
+  Object.defineProperty(actual.Platform, 'OS', { configurable: true, value: 'android' });
+  return actual;
+});
+
+jest.mock('expo-modules-core', () => {
+  const ReactModule = require('react') as typeof React;
+  const NativeView = require('react-native').View;
+  const actual = jest.requireActual<typeof import('expo-modules-core')>('expo-modules-core');
+  const NativeSelectionView = ReactModule.forwardRef(function NativeSelectionView(
+    props: Record<string, unknown> & { children?: React.ReactNode },
+    ref: React.Ref<unknown>
+  ) {
+    return ReactModule.createElement(NativeView, { ...props, ref }, props.children);
+  });
+  return {
+    ...actual,
+    requireNativeViewManager: (name: string) =>
+      name === 'ForumContentSelection' ? NativeSelectionView : actual.requireNativeViewManager(name)
+  };
+});
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -52,7 +78,7 @@ jest.mock('expo-video', () => ({
 jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
 
 import { QueryTestWrapper } from '../../../QueryTestWrapper';
-import { render } from '../../../render';
+import { fireEvent, render } from '../../../render';
 import { topicVisualScenarios } from './manifest';
 
 function renderScenario(id: string) {
@@ -232,6 +258,72 @@ describe('topic visual scenarios', () => {
       const scenario = topicVisualScenarios.find((candidate) => candidate.id === id);
       expect(scenario).toMatchObject({ id, kind: 'device-only' });
       expect(scenario?.note).toBeTruthy();
+    }
+  });
+
+  it('renders once-decoded NodeSeek bodies, native poll selections, and independent reply code', async () => {
+    const copy = jest.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
+    const view = await renderScenario('topic.content.entities');
+    try {
+      for (const text of [
+        'Heading &lt;H&gt;',
+        'Text <x> &lt;x&gt; &#32; &amp;nbsp;',
+        'Column &lt;H&gt;',
+        'Cell &#65; &amp;nbsp;',
+        'Poll &lt;P&gt;',
+        'Option &lt;A&gt;',
+        'Cross &amp;#32;',
+        'Reply <r> &lt;r&gt; &#32; &amp;nbsp;'
+      ]) {
+        expect(view.getByText(text)).toBeTruthy();
+      }
+      const options = view.getAllByRole('checkbox');
+      expect(options).toHaveLength(2);
+      expect(options[0].props.accessibilityState).toEqual({ checked: false, disabled: false });
+      expect(options[1].props.accessibilityState).toEqual({ checked: false, disabled: false });
+      await fireEvent.press(options[0]);
+      expect(view.getAllByRole('checkbox')[0].props.accessibilityState.checked).toBe(true);
+      expect(view.getAllByRole('checkbox')[1].props.accessibilityState.checked).toBe(false);
+      await fireEvent.press(view.getAllByRole('checkbox')[1]);
+      expect(view.getAllByRole('checkbox').every((option) => option.props.accessibilityState.checked)).toBe(true);
+      await fireEvent.press(view.getAllByRole('checkbox')[0]);
+      expect(view.getAllByRole('checkbox')[0].props.accessibilityState.checked).toBe(false);
+      expect(view.getAllByRole('checkbox')[1].props.accessibilityState.checked).toBe(true);
+
+      const copyButtons = view.getAllByLabelText('复制完整代码');
+      expect(copyButtons).toHaveLength(2);
+      await fireEvent.press(copyButtons[0]);
+      expect(copy).toHaveBeenLastCalledWith('line <x>\n&lt;x&gt;\n&amp;#32;');
+      await fireEvent.press(copyButtons[1]);
+      expect(copy).toHaveBeenLastCalledWith('reply &lt;r&gt;\n&amp;#32;');
+      expect(copy).toHaveBeenCalledTimes(2);
+
+      const selection = view.getByTestId('topic-selection-surface');
+      const rows: readonly { documentId: string; selectionToken: string }[] = selection.props.rows;
+      expect(rows.every((row) => row.documentId === 'opening')).toBe(true);
+      const opening = rows
+        .map((row) => {
+          const token: {
+            prefix: readonly { text: string }[];
+            owners: readonly { text: string; trailing: readonly { text: string }[] }[];
+          } = JSON.parse(row.selectionToken);
+          return (
+            token.prefix.map((run) => run.text).join('') +
+            token.owners.map((owner) => owner.text + owner.trailing.map((run) => run.text).join('')).join('')
+          );
+        })
+        .join('');
+      expect(opening).toBe(
+        'Heading &lt;H&gt;\n' +
+          'Text <x> &lt;x&gt; &#32; &amp;nbsp;\n' +
+          'Column &lt;H&gt;\n' +
+          'Cell &#65; &amp;nbsp;\n' +
+          'line <x>\n&lt;x&gt;\n&amp;#32;\n' +
+          'Before poll\nAfter poll\n'
+      );
+    } finally {
+      await view.unmount();
+      copy.mockRestore();
     }
   });
 });

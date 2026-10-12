@@ -4,7 +4,7 @@ import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
 import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
 import { getLinuxDoCategories, getLinuxDoFeed, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
 import { isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
-import { balanceTopicsBySource } from '@/domain/forum/feed';
+import { balanceTopicsBySource, mergeTopics } from '@/domain/forum/feed';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
@@ -235,10 +235,13 @@ export async function getFeed({
           })
         );
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-        const items = sortTopicsByTime([
-          ...bufferedItems,
-          ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
-        ]);
+        const items = mergeTopics(
+          [],
+          sortTopicsByTime([
+            ...bufferedItems,
+            ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
+          ])
+        );
         const selected = balanceTopicsBySource(items).slice(0, limit);
         const selectedKeys = new Set(selected.map(topicIdentity));
         const nextBuffers: Partial<Record<Source, Topic[]>> = {};

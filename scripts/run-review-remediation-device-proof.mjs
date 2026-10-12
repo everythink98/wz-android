@@ -8,6 +8,12 @@ import path from 'node:path';
 import { buildDeviceProof } from './device-proof-build.mjs';
 import { runAgentDevice } from './agent-device-runtime.mjs';
 import { proofDeviceForSerial, resumeProofCheckpoint, withProofCheckpoint } from './review-proof-checkpoint.mjs';
+import {
+  completeContentChainMetrics,
+  completeDeepContentMetrics,
+  completePendingPollMetrics,
+  completeReviewProofResults
+} from './review-content-chain-metrics.mjs';
 
 // Same dedicated storage AVD and ownership marker as the existing storage proof.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -273,8 +279,10 @@ if (values.acceptance) {
                 if (
                   !receipt.isHermes ||
                   receipt.isDev !== false ||
-                  receipt.results.length !== 44 ||
-                  !receipt.results.every((result) => result.passed)
+                  !completeReviewProofResults(receipt.results) ||
+                  !completeContentChainMetrics(receipt.results) ||
+                  !completePendingPollMetrics(receipt.results) ||
+                  !completeDeepContentMetrics(receipt.results)
                 )
                   throw new Error('Incomplete Release Hermes proof');
                 console.log(`All ${receipt.results.length} business checks passed; restoring checkpoint.`);

@@ -6,6 +6,7 @@ import { parseYaohuoListHtml } from './feedParser';
 import { parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
 import { parseYaohuoUserProfileDocument, parseYaohuoUserRepliesDocument } from './userParser';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import { withHtmlWorkBudget } from '../../../tests/helpers/htmlWorkBudget';
 
 function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepliesDocument>[1]) {
   return parseYaohuoRepliesDocument(parseHtml(html), options);
@@ -20,6 +21,83 @@ function parseUserReplies(html: string, options: Parameters<typeof parseYaohuoUs
 }
 
 describe('yaohuo reply parsing', () => {
+  it('keeps literal HTML and repeated escapes in parsed list and reply excerpts', () => {
+    const literal = '&amp;#32; &lt;x&gt;';
+    const list = parseYaohuoListHtml(
+      '<div class="listdata"><a href="/bbs-1.html">sample</a><span>' + literal + '</span></div>'
+    );
+    expect(list.items[0].excerpt).toContain('&#32; <x>');
+    const replies = parseUserReplies(
+      '<div class="listdata"><a href="/bbs-1.html">查看</a><span>' + literal + '</span></div>',
+      { id: '1' }
+    );
+    expect(replies[0].excerpt).toBe('&#32; <x>');
+    expect(replies[0].floor).toBeUndefined();
+  });
+  it.each(['ordinary outside divs', 'outside vote', 'outside floor link'])(
+    'parses deep %s with bounded work while keeping body and poll navigation semantics',
+    (layout) => {
+      const depth = 512;
+      const base = '<title>sample</title><section><div class="bbscontent">ordinary body</div></section>';
+      const content =
+        layout === 'ordinary outside divs'
+          ? '<div>'.repeat(depth) + 'ordinary other' + '</div>'.repeat(depth)
+          : '<span>'.repeat(depth) +
+            (layout === 'outside vote'
+              ? '<div class="vote-container"><div class="vote-option-row"><button class="vote-button" data-id="42" data-vid="1"></button><span class="vote-option-text">A</span></div></div>'
+              : '<a href="/bbs/book_re.aspx?id=42&amp;tofloor=12">12楼</a>') +
+            '</span>'.repeat(depth);
+      const { result } = withHtmlWorkBudget(depth * 256 + 10000, () =>
+        parseYaohuoTopicHtml(base + '<section>' + content + '</section>', { id: '42' })
+      );
+      expect(result.contentHtml).toBe('ordinary body');
+      if (layout === 'outside vote')
+        expect(result.polls?.[0].options).toEqual([{ id: '1', label: 'A', selected: false }]);
+      if (layout === 'outside floor link') expect(result.replyWatermark).toBe(12);
+    }
+  );
+
+  it('normalizes adjacent attachment blocks without processing already consumed siblings', () => {
+    const detail = parseYaohuoTopicHtml(
+      '<title>sample</title><div class="bbscontent">before<div class="attachment"><a href="/bbs/download.aspx?id=1">first</a></div><div class="attachment"><a href="/bbs/download.aspx?id=2">second</a></div>after</div>',
+      { id: '42' }
+    );
+    expect(detail.contentHtml).toContain('before');
+    expect(detail.contentHtml).toContain('after');
+    expect(parseHtml(detail.contentHtml).querySelectorAll('.forum-attachment')).toHaveLength(2);
+    expect(
+      parseHtml(detail.contentHtml)
+        .querySelectorAll('a')
+        .map((node) => node.getAttribute('href'))
+    ).toEqual(['https://www.yaohuo.me/bbs/download.aspx?id=1', 'https://www.yaohuo.me/bbs/download.aspx?id=2']);
+  });
+  it('removes repeated loaded poll copies in one phase while retaining the original poll and ordinary body', () => {
+    const width = 512;
+    const vote =
+      '<div class="vote-container"><div class="vote-option-row"><button class="vote-button" data-id="42" data-vid="1"></button><span class="vote-option-text">A</span></div></div>';
+    const html =
+      '<title>sample</title><section><div class="bbscontent">body' + vote.repeat(width) + '</div></section>' + vote;
+    const { result } = withHtmlWorkBudget(width * 700 + 10000, () => parseYaohuoTopicHtml(html, { id: '42' }));
+    expect(result.contentHtml).toBe('body');
+    expect(result.polls).toHaveLength(1);
+    expect(result.polls?.[0].options).toEqual([{ id: '1', label: 'A', selected: false }]);
+  });
+  it('retains nested nonmatching poll containers without serializing every ancestor subtree', () => {
+    const depth = 512;
+    const vote =
+      '<div class="vote-container"><div class="vote-option-row"><button class="vote-button" data-id="42" data-vid="1"></button><span class="vote-option-text">A</span></div></div>';
+    const html =
+      '<title>sample</title><section><div class="bbscontent">body' +
+      '<div class="vote-container">'.repeat(depth) +
+      'ordinary body' +
+      '</div>'.repeat(depth) +
+      '</div></section>' +
+      vote;
+    const { result } = withHtmlWorkBudget(depth * 700 + 10000, () => parseYaohuoTopicHtml(html, { id: '42' }));
+    expect(parseHtml(result.contentHtml).textContent).toBe('bodyordinary body');
+    expect(result.polls).toHaveLength(1);
+    expect(result.polls?.[0].options).toEqual([{ id: '1', label: 'A', selected: false }]);
+  });
   it('keeps reply totals distinct from origin floor evidence', () => {
     const onlyCount = parseYaohuoTopicHtml(
       '<div class="bbscontent">body</div><a href="/bbs/book_re.aspx?id=42">更多回帖(8)</a>',

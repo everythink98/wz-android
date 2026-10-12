@@ -553,7 +553,7 @@ describe('Topic real child components', () => {
     }
   });
 
-  it('keeps reply long-press copy available while opening-post selection is active', async () => {
+  it('copies literal reply entities and code line breaks while opening-post selection is active', async () => {
     const selection = jest.spyOn(TopicSelection, 'useTopicSelectionRowRef').mockReturnValue({
       active: true,
       nativeID: undefined,
@@ -563,14 +563,23 @@ describe('Topic real child components', () => {
     const toast = jest.spyOn(ToastAndroid, 'show').mockImplementation(() => undefined);
     copy.mockClear();
     try {
-      const view = await render(<ReplyItem {...replyProps({ bodyContent: compiledRichText('<p>正文内容</p>') })} />);
+      const html =
+        '<p>Reply &lt;r&gt; &amp;lt;r&amp;gt; &amp;#32; &am<span>p;nbsp;</span></p>' +
+        '<pre><code>reply &amp;lt;r&amp;gt;\n&am<span>p;#32;</span></code></pre>';
+      const view = await render(
+        <ReplyItem
+          {...replyProps({ reply: { ...replyProps().reply, contentHtml: html }, bodyContent: compiledRichText(html) })}
+        />
+      );
 
       await fireEvent(view.getByTestId('html-source'), 'touchStart', {
         nativeEvent: { pageX: 100, pageY: 100, touches: [{ pageX: 100, pageY: 100 }] }
       });
       await fireEvent(view.getByTestId('html-source'), 'longPress');
 
-      await waitFor(() => expect(copy).toHaveBeenCalledWith('正文内容'));
+      await waitFor(() =>
+        expect(copy).toHaveBeenCalledWith('Reply <r> &lt;r&gt; &#32; &amp;nbsp;\nreply &lt;r&gt;\n&amp;#32;')
+      );
       await waitFor(() => expect(toast).toHaveBeenCalledWith('评论已复制', ToastAndroid.SHORT));
     } finally {
       toast.mockRestore();

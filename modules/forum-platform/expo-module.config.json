@@ -1,4 +1,10 @@
 {
   "platforms": ["android"],
-  "android": { "modules": ["com.wz.reader.BackupExportModule", "com.wz.reader.ImageDownloadModule"] }
+  "android": {
+    "modules": [
+      "com.wz.reader.BackupExportModule",
+      "com.wz.reader.ImageDownloadModule",
+      "com.wz.reader.TopicShareCaptureModule"
+    ]
+  }
 }

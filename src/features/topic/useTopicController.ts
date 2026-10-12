@@ -197,6 +197,8 @@ export function useTopicController({
   const selectedSource = selectedTopic?.source || 'v2ex';
   const selectedTopicId = selectedTopic?.id || '';
   const selectedTopicKey = selectedTopic ? topicKey(selectedTopic) : '';
+  const yaohuoLoginIntentRef = useRef(0);
+  const handledYaohuoLoginIntentRef = useRef<{ topicKey: string; intent: number } | null>(null);
   const topicReadPlan = readGateway.getReadPlan(selectedSource, 'topic');
   const repliesReadPlan = readGateway.getReadPlan(selectedSource, 'replies');
   const topicReadBlocked = topicReadPlan.state === 'blocked';
@@ -640,6 +642,21 @@ export function useTopicController({
       topicQueryKey
     ]
   );
+  const showYaohuoLoginForRead = useCallback(
+    (message: string) => {
+      const intent = yaohuoLoginIntentRef.current;
+      const handled = handledYaohuoLoginIntentRef.current;
+      if (
+        !interactionActiveRef.current ||
+        topicCommands.getCurrentKey() !== selectedTopicKey ||
+        (handled?.topicKey === selectedTopicKey && handled.intent === intent)
+      )
+        return;
+      handledYaohuoLoginIntentRef.current = { topicKey: selectedTopicKey, intent };
+      showYaohuoLogin(message);
+    },
+    [interactionActiveRef, selectedTopicKey, showYaohuoLogin, topicCommands]
+  );
   const handleReadError = useCallback(
     (
       source: Source,
@@ -659,13 +676,15 @@ export function useTopicController({
       } else if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
         nodeSeekFallback?.(currentRecovery);
       } else if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
-        showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message);
+        showYaohuoLoginForRead(
+          sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message
+        );
       } else if (!isCanceledRequest(error)) {
         notify(sourceError.message);
       }
       return sourceError;
     },
-    [interactionActiveRef, isReadRecoveryCurrent, notify, showLinuxDoVerification, showYaohuoLogin]
+    [interactionActiveRef, isReadRecoveryCurrent, notify, showLinuxDoVerification, showYaohuoLoginForRead]
   );
 
   useEffect(() => {
@@ -893,7 +912,8 @@ export function useTopicController({
   }, [focused, cancelTopicQueries]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedTopic) return 'stale';
+    if (!selectedTopic || !interactionActiveRef.current) return 'stale';
+    if (selectedTopic.source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
     if (selectedReadBlocked) {
       const blockedPlan = topicReadBlocked ? topicReadPlan : repliesReadPlan;
       if (
@@ -907,7 +927,7 @@ export function useTopicController({
         blockedPlan.reason === 'login-required' &&
         selectedTopic.source === 'yaohuo'
       ) {
-        showYaohuoLogin('请先登录妖火后再读取。');
+        showYaohuoLoginForRead('请先登录妖火后再读取。');
       }
       return 'stale';
     }
@@ -954,6 +974,7 @@ export function useTopicController({
   }, [
     activeRepliesQueryIdentityRef,
     handleReadError,
+    interactionActiveRef,
     notify,
     onRetryIdentityStatus,
     onNodeSeekTopicVerificationRequired,
@@ -966,7 +987,7 @@ export function useTopicController({
     selectedReadBlocked,
     selectedTopic,
     setReplyWindowFailure,
-    showYaohuoLogin,
+    showYaohuoLoginForRead,
     detailQuery.refetch,
     topicReadBlocked,
     topicReadPlan,
@@ -979,6 +1000,10 @@ export function useTopicController({
       diagnosticTrace?: DiagnosticTrace
     ): Promise<LinuxDoReadResumeOutcome> {
       if (!selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
+      if (selectedTopic.source === 'yaohuo' && command.kind === 'manual' && !command.silent) {
+        yaohuoLoginIntentRef.current += 1;
+        handledRepliesErrorRef.current = 0;
+      }
 
       const generation = ++replyWindowGenerationRef.current;
       let createdTarget: ReplyLocationTarget | undefined;
@@ -1296,6 +1321,10 @@ export function useTopicController({
       const slot = edge || 'refresh';
       const failure = replyWindowFailures[slot];
       if (!failure || failure.retryMode === 'none') return failure ? 'failed' : 'completed';
+      if (selectedTopic.source === 'yaohuo' && failure.retryMode !== 'whole') {
+        yaohuoLoginIntentRef.current += 1;
+        handledRepliesErrorRef.current = 0;
+      }
       if (failure.retryMode === 'whole') return refreshWholeTopic();
       if (typeof failure.retryMode === 'object') return refreshTopicReplies(failure.retryMode);
       if (slot !== 'refresh') {

@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { nativeTestTasks } from '../../scripts/native-test-plan.mjs';
 import {
   RELEASE_REQUIRED_TRACKED_INPUTS,
   assertCleanReleaseCheckout,
@@ -21,6 +22,19 @@ const signing = {
   WZ_ANDROID_KEY_ALIAS: 'release-key',
   WZ_ANDROID_KEY_PASSWORD: 'key-secret'
 };
+
+function writeAppTestReports(androidDir: string) {
+  const plan = nativeTestTasks[':app:testReleaseUnitTest'];
+  const directory = path.resolve(androidDir, '..', plan.reports);
+  mkdirSync(directory, { recursive: true });
+  for (const name of plan.classes) {
+    writeFileSync(
+      path.join(directory, `TEST-${name}.xml`),
+      `<testsuite name="${name}" tests="1" skipped="0" failures="0" errors="0"/>`
+    );
+  }
+  return directory;
+}
 
 describe('Java version provenance', () => {
   it.each([
@@ -118,66 +132,39 @@ describe('release environment boundary', () => {
     }
   });
 
-  it('restores the exact package text after Expo adds only its default ios script', () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'wz-release-package-'));
-    const packageJsonPath = path.join(directory, 'package.json');
-    const original = '{\r\n  "scripts": {\r\n    "android": "expo run:android"\r\n  }\r\n}\r\n';
-    writeFileSync(
-      packageJsonPath,
-      JSON.stringify(
-        {
-          scripts: {
-            android: 'expo run:android',
-            ios: 'expo run:ios'
-          }
-        },
-        null,
-        2
-      )
-    );
-
-    try {
-      restorePackageJsonAfterPrebuild(packageJsonPath, original);
-      expect(readFileSync(packageJsonPath, 'utf8')).toBe(original);
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
+  it.each([
+    {
+      name: 'default Expo ios addition',
+      original: '{\r\n  "scripts": {\r\n    "android": "expo run:android"\r\n  }\r\n}\r\n',
+      prebuilt: '{"scripts":{"android":"expo run:android","ios":"expo run:ios"}}',
+      rejected: false
+    },
+    {
+      name: 'unexpected ios addition',
+      original: '{"scripts":{"android":"expo run:android"}}\n',
+      prebuilt: '{"scripts":{"android":"expo run:android","ios":"custom ios command"}}',
+      rejected: true
+    },
+    {
+      name: 'unchanged existing ios script',
+      original: '{"scripts":{"ios":"custom ios command"}}\n',
+      prebuilt: '{"scripts":{"ios":"custom ios command"}}\n',
+      rejected: false
+    },
+    {
+      name: 'overwritten existing ios script',
+      original: '{"scripts":{"ios":"custom ios command"}}\n',
+      prebuilt: '{"scripts":{"ios":"expo run:ios"}}\n',
+      rejected: true
     }
-  });
-
-  it('restores package.json and fails closed on any other prebuild change', () => {
+  ])('restores exact package bytes and validates $name', ({ original, prebuilt, rejected }) => {
     const directory = mkdtempSync(path.join(tmpdir(), 'wz-release-package-'));
     const packageJsonPath = path.join(directory, 'package.json');
-    const original = '{"scripts":{"android":"expo run:android"}}\n';
-    writeFileSync(
-      packageJsonPath,
-      JSON.stringify({
-        scripts: {
-          android: 'expo run:android',
-          ios: 'custom ios command'
-        }
-      })
-    );
-
+    writeFileSync(packageJsonPath, prebuilt);
     try {
-      expect(() => restorePackageJsonAfterPrebuild(packageJsonPath, original)).toThrow('package.json');
-      expect(readFileSync(packageJsonPath, 'utf8')).toBe(original);
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it('treats an existing ios script as part of the exact original package', () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'wz-release-package-'));
-    const packageJsonPath = path.join(directory, 'package.json');
-    const original = '{"scripts":{"ios":"custom ios command"}}\n';
-    writeFileSync(packageJsonPath, original);
-
-    try {
-      restorePackageJsonAfterPrebuild(packageJsonPath, original);
-      expect(readFileSync(packageJsonPath, 'utf8')).toBe(original);
-
-      writeFileSync(packageJsonPath, '{"scripts":{"ios":"expo run:ios"}}\n');
-      expect(() => restorePackageJsonAfterPrebuild(packageJsonPath, original)).toThrow('package.json');
+      const restore = () => restorePackageJsonAfterPrebuild(packageJsonPath, original);
+      if (rejected) expect(restore).toThrow('package.json');
+      else expect(restore).not.toThrow();
       expect(readFileSync(packageJsonPath, 'utf8')).toBe(original);
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -212,31 +199,76 @@ describe('release environment boundary', () => {
       const inherited = { PATH: 'tools', ...signing, ...entryOverride };
       const ordinary = unsignedReleaseChildEnv(inherited, {});
       const calls: { command: string; args: string[]; options: { cwd: string; env: Record<string, string> } }[] = [];
+      const directory = mkdtempSync(path.join(tmpdir(), 'wz-release-stages-'));
+      const androidDir = path.join(directory, 'android');
+      try {
+        runReleaseBuildStages({
+          androidDir,
+          builtAbis: ['arm64-v8a', 'x86_64'],
+          ordinaryEnv: ordinary,
+          releaseEnv: signing,
+          run: (command: string, args: string[], options: { cwd: string; env: Record<string, string> }) => {
+            calls.push({ command, args, options });
+            if (args.includes(':app:testReleaseUnitTest')) writeAppTestReports(androidDir);
+          }
+        });
 
-      runReleaseBuildStages({
-        androidDir: 'android',
-        builtAbis: ['arm64-v8a', 'x86_64'],
-        ordinaryEnv: ordinary,
-        releaseEnv: signing,
-        run: (command: string, args: string[], options: { cwd: string; env: Record<string, string> }) =>
-          calls.push({ command, args, options })
-      });
+        expect(calls).toHaveLength(2);
+        expect(calls[0]?.args).toEqual(
+          expect.arrayContaining([':app:testReleaseUnitTest', ':app:compileReleaseKotlin'])
+        );
+        expect(calls[0]?.args).not.toContain(':app:assembleRelease');
+        expect(calls[0]?.args).toEqual(expect.arrayContaining(['-I', '../tests/native/composer-keyboard.gradle']));
+        expect(calls[0]?.args.filter((arg) => arg.startsWith('-PreactNativeArchitectures='))).toEqual([
+          '-PreactNativeArchitectures=arm64-v8a,x86_64'
+        ]);
+        expect(calls[1]?.args).toContain(':app:assembleRelease');
+        for (const call of calls) {
+          expect(call.args).toContain('-PEX_DEV_CLIENT_NETWORK_INSPECTOR=false');
+          expect(call.args).not.toContain('-PnewArchEnabled=true');
+          expect(call.options.env.NODE_ENV).toBe('production');
+          expect(Object.keys(call.options.env).map((name) => name.toUpperCase())).not.toContain('ENTRY_FILE');
+        }
+        for (const name of Object.keys(signing)) {
+          expect(calls[0]?.options.env).not.toHaveProperty(name);
+          expect(calls[1]?.options.env[name]).toBe(signing[name as keyof typeof signing]);
+        }
+        expect(inherited).toMatchObject(entryOverride);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  );
 
-      expect(calls).toHaveLength(2);
-      expect(calls[0]?.args).toEqual(expect.arrayContaining([':app:testReleaseUnitTest', ':app:compileReleaseKotlin']));
-      expect(calls[0]?.args).not.toContain(':app:assembleRelease');
-      expect(calls[1]?.args).toContain(':app:assembleRelease');
-      for (const call of calls) {
-        expect(call.args).toContain('-PEX_DEV_CLIENT_NETWORK_INSPECTOR=false');
-        expect(call.args).not.toContain('-PnewArchEnabled=true');
-        expect(call.options.env.NODE_ENV).toBe('production');
-        expect(Object.keys(call.options.env).map((name) => name.toUpperCase())).not.toContain('ENTRY_FILE');
+  it.each(['stale', 'skipped'])(
+    'rejects %s App Native evidence before signed assembly even when Gradle exits successfully',
+    (failure) => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'wz-release-evidence-'));
+      const androidDir = path.join(directory, 'android');
+      const calls: string[][] = [];
+      try {
+        expect(() =>
+          runReleaseBuildStages({
+            androidDir,
+            builtAbis: ['arm64-v8a', 'x86_64'],
+            ordinaryEnv: {},
+            releaseEnv: signing,
+            run: (_command: string, args: string[]) => {
+              calls.push(args);
+              if (!args.includes(':app:testReleaseUnitTest')) return;
+              const reports = writeAppTestReports(androidDir);
+              const owner = nativeTestTasks[':app:testReleaseUnitTest'].classes[0];
+              const file = path.join(reports, `TEST-${owner}.xml`);
+              if (failure === 'stale') utimesSync(file, new Date(0), new Date(0));
+              else writeFileSync(file, `<testsuite name="${owner}" tests="1" skipped="1" failures="0" errors="0"/>`);
+            }
+          })
+        ).toThrow();
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).not.toContain(':app:assembleRelease');
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
       }
-      for (const name of Object.keys(signing)) {
-        expect(calls[0]?.options.env).not.toHaveProperty(name);
-        expect(calls[1]?.options.env[name]).toBe(signing[name as keyof typeof signing]);
-      }
-      expect(inherited).toMatchObject(entryOverride);
     }
   );
 });

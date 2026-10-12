@@ -10,7 +10,7 @@ import {
   type DiscourseLevelRequirement,
   type DiscourseSummaryInput
 } from '@/sources/discourse/level';
-import { isRecord } from '@/domain/forum/html';
+import { forumNodeText, isRecord } from '@/domain/forum/html';
 import { withLinuxDoConnectSessionRecoveryIntent } from './browserFallback';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { LINUXDO_BASE_URL } from './protocol';
@@ -114,7 +114,7 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
   }
   const requirements: LinuxDoLevelRequirement[] = [];
   for (const item of card.querySelectorAll('.tl3-ring')) {
-    const label = item.querySelector('.tl3-ring-label')?.text.trim();
+    const label = forumNodeText(item.querySelector('.tl3-ring-label')).trim();
     const circle = item.querySelector('.tl3-ring-circle');
     if (!label || !circle) {
       continue;
@@ -126,7 +126,7 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
     requirements.push(toConnectRequirement(label, current, required, met, 'minimum'));
   }
   for (const item of card.querySelectorAll('.tl3-bar-item')) {
-    const label = item.querySelector('.tl3-bar-label')?.text.trim();
+    const label = forumNodeText(item.querySelector('.tl3-bar-label')).trim();
     const fill = item.querySelector('.tl3-bar-fill');
     if (!label || !fill) {
       continue;
@@ -135,7 +135,7 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
     const fallbackCurrent = parseCssNumber(style, '--val');
     const fallbackRequired = parseCssNumber(style, '--max');
     const parsed = parseCurrentAndRequired(
-      item.querySelector('.tl3-bar-nums')?.text.trim() || '',
+      forumNodeText(item.querySelector('.tl3-bar-nums')).trim(),
       fallbackCurrent,
       fallbackRequired
     );
@@ -143,11 +143,11 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
     requirements.push(toConnectRequirement(label, parsed.current, parsed.required, met, 'minimum'));
   }
   for (const item of card.querySelectorAll('.tl3-quota-card')) {
-    const label = item.querySelector('.tl3-quota-label')?.text.trim();
+    const label = forumNodeText(item.querySelector('.tl3-quota-label')).trim();
     if (!label) {
       continue;
     }
-    const value = item.querySelector('.tl3-quota-nums')?.text.trim() || '';
+    const value = forumNodeText(item.querySelector('.tl3-quota-nums')).trim();
     const parsed = parseCurrentAndRequired(value, 0, 0);
     if (parsed.required <= 0) {
       continue;
@@ -158,11 +158,11 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
   for (const item of card.querySelectorAll('.tl3-veto-item')) {
     const met = connectRequirementMet(item.classNames);
     const face = met ? item.querySelector('.tl3-veto-front') || item : item.querySelector('.tl3-veto-back') || item;
-    const label = face.querySelector('.tl3-veto-label')?.text.trim();
+    const label = forumNodeText(face.querySelector('.tl3-veto-label')).trim();
     if (!label) {
       continue;
     }
-    const current = parseFirstNumber(face.querySelector('.tl3-veto-value')?.text.trim() || '');
+    const current = parseFirstNumber(forumNodeText(face.querySelector('.tl3-veto-value')).trim());
     requirements.push(toConnectRequirement(label, current, 0, met, 'maximum'));
   }
   if (!requirements.length) {

@@ -1156,6 +1156,29 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves a native reply draft changed and restored while its request is pending', async () => {
+    const transport = Promise.withResolvers<YaohuoActionResult>();
+    mockRunYaohuoAction.mockImplementationOnce(async () => transport.promise);
+    const yaohuoTopic = detailFor('yaohuo');
+    seedTopicCache(yaohuoTopic);
+    const hook = await renderActions({ topicDetail: yaohuoTopic });
+    let pending!: Promise<void>;
+    await act(async () => hook.result.current.topicSession.commands.composer.changeContent('original draft'));
+    await act(async () => {
+      pending = hook.result.current.actions.submitReply();
+    });
+    await waitFor(() => expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('changed draft');
+      hook.result.current.topicSession.commands.composer.changeContent('original draft');
+      transport.resolve({ status: 'confirmed', message: '评论成功' });
+      await pending;
+    });
+    expect(hook.result.current.topicSession.state.replyContent).toBe('original draft');
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('new');
+    expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1);
+  });
+
   it('reports an unexpected credential preparation failure to the user', async () => {
     const notify = jest.fn();
     seedTopicCache();

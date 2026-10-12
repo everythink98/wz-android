@@ -1,5 +1,6 @@
 import {
   fingerprintNodeSeekPoll,
+  nodeSeekPendingPollToken,
   nodeSeekPendingPollTokenRanges,
   replacePendingNodeSeekPollToken,
   type PendingNodeSeekPoll
@@ -47,20 +48,19 @@ export async function materializePendingNodeSeekPolls({
   createPoll: (poll: PendingNodeSeekPoll, lifecycle: PendingNodeSeekPollCreation) => Promise<unknown>;
   notify: (message: string) => void;
 }) {
-  let markdown = content;
   const invalid = (message: string) => {
     notify(message);
     return new PendingNodeSeekPollError(message);
   };
   const tokenRanges = nodeSeekPendingPollTokenRanges(content);
   const tokenIds = tokenRanges.map((range) => range.localId);
-  const pollIds = polls.map((poll) => poll.localId);
+  const pollIds = new Set(polls.map((poll) => poll.localId));
   if (
     content.split('<!-- wz:nodeseek-poll:').length - 1 !== tokenRanges.length ||
     tokenIds.length !== polls.length ||
     new Set(tokenIds).size !== tokenIds.length ||
-    new Set(pollIds).size !== pollIds.length ||
-    tokenIds.some((id) => !pollIds.includes(id))
+    pollIds.size !== polls.length ||
+    tokenIds.some((id) => !pollIds.has(id))
   )
     throw invalid('本地投票数据不完整，请移除后重新插入');
   for (const poll of polls) {
@@ -87,6 +87,7 @@ export async function materializePendingNodeSeekPolls({
   const key = (poll: PendingNodeSeekPoll) => `${identityKey}\u0000${poll.localId}\u0000${poll.fingerprint}`;
   // Check the entire draft before creating any remote object.
   for (const poll of polls) await creations.run(key(poll), () => checkedRemoteId(poll));
+  const markers = new Map<string, string>();
   for (const poll of polls) {
     const intent = { localId: poll.localId, fingerprint: poll.fingerprint };
     const remoteId = await creations.run(key(poll), async () => {
@@ -118,8 +119,23 @@ export async function materializePendingNodeSeekPolls({
         throw error;
       }
     });
-    markdown = replacePendingNodeSeekPollToken(markdown, poll.localId, remoteId);
+    markers.set(
+      poll.localId,
+      replacePendingNodeSeekPollToken(nodeSeekPendingPollToken(poll.localId), poll.localId, remoteId)
+    );
   }
+  const parts: string[] = [];
+  let offset = 0;
+  for (const range of tokenRanges) {
+    const token = content.slice(range.from, range.to);
+    parts.push(
+      content.slice(offset, range.from),
+      token === nodeSeekPendingPollToken(range.localId) ? markers.get(range.localId)! : token
+    );
+    offset = range.to;
+  }
+  parts.push(content.slice(offset));
+  const markdown = parts.join('');
   if (markdown.includes('<!-- wz:nodeseek-poll:')) throw invalid('本地投票数据不完整，请移除后重新插入');
   return markdown;
 }

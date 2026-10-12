@@ -1,0 +1,378 @@
+diff --git a/node_modules/node-html-parser/dist/index.cjs b/node_modules/node-html-parser/dist/index.cjs
+index 9f0c81b..e4da7ef 100644
+--- a/node_modules/node-html-parser/dist/index.cjs
++++ b/node_modules/node-html-parser/dist/index.cjs
+@@ -3434,29 +3434,38 @@ function compileGeneralSelector(next, selector, options, context, compileToken)
+ 				return adapter.getName(elem) === name && next(elem);
+ 			};
+ 		}
+-		case import_commonjs.SelectorType.Descendant: {
+-			if (options.cacheResults === false || typeof WeakSet === "undefined") return function descendant(elem) {
+-				let current = elem;
+-				while (current = getElementParent(current, adapter)) if (next(current)) return true;
++		case import_commonjs.SelectorType.Descendant:
++		case "_flexibleDescendant": {
++			const includeSelf = selector.type === "_flexibleDescendant";
++			if (options.cacheResults === false || typeof WeakMap === "undefined") return function descendant(elem) {
++				let current = includeSelf ? elem : getElementParent(elem, adapter);
++				while (current) {
++					if (next(current)) return true;
++					current = getElementParent(current, adapter);
++				}
+ 				return false;
+ 			};
+-			const isFalseCache = /* @__PURE__ */ new WeakSet();
++			const ancestry = /* @__PURE__ */ new WeakMap();
+ 			return function cachedDescendant(elem) {
+-				let current = elem;
+-				while (current = getElementParent(current, adapter)) if (!isFalseCache.has(current)) {
+-					if (adapter.isTag(current) && next(current)) return true;
+-					isFalseCache.add(current);
++				const pending = [];
++				let current = includeSelf ? elem : getElementParent(elem, adapter);
++				let result = false;
++				while (current) {
++					if (ancestry.has(current)) {
++						result = ancestry.get(current);
++						break;
++					}
++					pending.push(current);
++					if (next(current)) {
++						result = true;
++						break;
++					}
++					current = getElementParent(current, adapter);
+ 				}
+-				return false;
++				for (const node of pending) ancestry.set(node, result);
++				return result;
+ 			};
+ 		}
+-		case "_flexibleDescendant": return function flexibleDescendant(elem) {
+-			let current = elem;
+-			do
+-				if (next(current)) return true;
+-			while (current = getElementParent(current, adapter));
+-			return false;
+-		};
+ 		case import_commonjs.SelectorType.Parent: return function parent(elem) {
+ 			return adapter.getChildren(elem).some((elem) => adapter.isTag(elem) && next(elem));
+ 		};
+@@ -3678,9 +3687,7 @@ function removeSubsets(nodes) {
+ 	return nodes;
+ }
+ function existsOne(test, elems) {
+-	return elems.some((elem) => {
+-		return isTag(elem) ? test(elem) || existsOne(test, getChildren(elem)) : false;
+-	});
++	return findOne((node) => isTag(node) && test(node), elems) !== null;
+ }
+ function getSiblings(node) {
+ 	const parent = getParent(node);
+@@ -3690,25 +3697,24 @@ function hasAttrib(elem, name) {
+ 	return getAttributeValue(elem, name) !== void 0;
+ }
+ function findOne(test, elems) {
+-	let elem = null;
+-	for (let i = 0, l = elems === null || elems === void 0 ? void 0 : elems.length; i < l && !elem; i++) {
+-		const el = elems[i];
+-		if (test(el)) elem = el;
+-		else {
+-			const childs = getChildren(el);
+-			if (childs && childs.length > 0) elem = findOne(test, childs);
+-		}
++	const pending = Array.from(elems || []).reverse();
++	while (pending.length) {
++		const node = pending.pop();
++		if (test(node)) return node;
++		const children = getChildren(node) || [];
++		for (let index = children.length - 1; index >= 0; index--) pending.push(children[index]);
+ 	}
+-	return elem;
++	return null;
+ }
+ function findAll(test, nodes) {
+-	let result = [];
+-	for (let i = 0, j = nodes.length; i < j; i++) {
+-		const node = nodes[i];
++	const result = [];
++	const pending = Array.from(nodes).reverse();
++	while (pending.length) {
++		const node = pending.pop();
+ 		if (!isTag(node)) continue;
+ 		if (test(node)) result.push(node);
+-		const childs = getChildren(node);
+-		if (childs) result = result.concat(findAll(test, childs));
++		const children = getChildren(node) || [];
++		for (let index = children.length - 1; index >= 0; index--) pending.push(children[index]);
+ 	}
+ 	return result;
+ }
+@@ -4050,10 +4056,15 @@ var HTMLElement = class HTMLElement extends Node {
+ 	* @return {string} text content
+ 	*/
+ 	get rawText() {
+-		if (/^br$/i.test(this.rawTagName)) return "\n";
+-		return this.childNodes.reduce((pre, cur) => {
+-			return pre += cur.rawText;
+-		}, "");
++		const parts = [];
++		const pending = [this];
++		while (pending.length) {
++			const node = pending.pop();
++			if (!(node instanceof HTMLElement)) parts.push(node.rawText);
++			else if (/^br$/i.test(node.rawTagName)) parts.push("\n");
++			else for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]);
++		}
++		return parts.join("");
+ 	}
+ 	get textContent() {
+ 		return decode(this.rawText);
+@@ -4109,9 +4120,31 @@ var HTMLElement = class HTMLElement extends Node {
+ 		return this.innerHTML;
+ 	}
+ 	get innerHTML() {
+-		return this.childNodes.map((child) => {
+-			return child.toString();
+-		}).join("");
++		const parts = [];
++		const pending = this.childNodes.slice().reverse();
++		while (pending.length) {
++			const node = pending.pop();
++			if (typeof node === "string") {
++				parts.push(node);
++				continue;
++			}
++			if (!(node instanceof HTMLElement)) {
++				parts.push(node.toString());
++				continue;
++			}
++			const tag = node.rawTagName;
++			if (tag) {
++				const attrs = node.rawAttrs ? ` ${node.rawAttrs}` : "";
++				if (node.isVoidElement) {
++					parts.push(node.voidTag.formatNode(tag, attrs, ""));
++					continue;
++				}
++				parts.push(`<${tag}${attrs}>`);
++				pending.push(`</${tag}>`);
++			}
++			for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]);
++		}
++		return parts.join("");
+ 	}
+ 	set innerHTML(content) {
+ 		const r = parse$1(content, this._parseOptions);
+@@ -4328,16 +4361,14 @@ var HTMLElement = class HTMLElement extends Node {
+ 		let el = this;
+ 		let old = null;
+ 		function findOne(test, elems) {
+-			let elem = null;
+-			for (let i = 0, l = elems.length; i < l && !elem; i++) {
+-				const el = elems[i];
+-				if (test(el)) elem = el;
+-				else {
+-					const child = mapChild.get(el);
+-					if (child) elem = findOne(test, [child]);
+-				}
++			const pending = elems.slice().reverse();
++			while (pending.length) {
++				const node = pending.pop();
++				if (test(node)) return node;
++				const child = mapChild.get(node);
++				if (child) pending.push(child);
+ 			}
+-			return elem;
++			return null;
+ 		}
+ 		while (el) {
+ 			mapChild.set(el, old);
+diff --git a/node_modules/node-html-parser/dist/index.mjs b/node_modules/node-html-parser/dist/index.mjs
+index da2301f..33934c7 100644
+--- a/node_modules/node-html-parser/dist/index.mjs
++++ b/node_modules/node-html-parser/dist/index.mjs
+@@ -3430,29 +3430,38 @@ function compileGeneralSelector(next, selector, options, context, compileToken)
+ 				return adapter.getName(elem) === name && next(elem);
+ 			};
+ 		}
+-		case import_commonjs.SelectorType.Descendant: {
+-			if (options.cacheResults === false || typeof WeakSet === "undefined") return function descendant(elem) {
+-				let current = elem;
+-				while (current = getElementParent(current, adapter)) if (next(current)) return true;
++		case import_commonjs.SelectorType.Descendant:
++		case "_flexibleDescendant": {
++			const includeSelf = selector.type === "_flexibleDescendant";
++			if (options.cacheResults === false || typeof WeakMap === "undefined") return function descendant(elem) {
++				let current = includeSelf ? elem : getElementParent(elem, adapter);
++				while (current) {
++					if (next(current)) return true;
++					current = getElementParent(current, adapter);
++				}
+ 				return false;
+ 			};
+-			const isFalseCache = /* @__PURE__ */ new WeakSet();
++			const ancestry = /* @__PURE__ */ new WeakMap();
+ 			return function cachedDescendant(elem) {
+-				let current = elem;
+-				while (current = getElementParent(current, adapter)) if (!isFalseCache.has(current)) {
+-					if (adapter.isTag(current) && next(current)) return true;
+-					isFalseCache.add(current);
++				const pending = [];
++				let current = includeSelf ? elem : getElementParent(elem, adapter);
++				let result = false;
++				while (current) {
++					if (ancestry.has(current)) {
++						result = ancestry.get(current);
++						break;
++					}
++					pending.push(current);
++					if (next(current)) {
++						result = true;
++						break;
++					}
++					current = getElementParent(current, adapter);
+ 				}
+-				return false;
++				for (const node of pending) ancestry.set(node, result);
++				return result;
+ 			};
+ 		}
+-		case "_flexibleDescendant": return function flexibleDescendant(elem) {
+-			let current = elem;
+-			do
+-				if (next(current)) return true;
+-			while (current = getElementParent(current, adapter));
+-			return false;
+-		};
+ 		case import_commonjs.SelectorType.Parent: return function parent(elem) {
+ 			return adapter.getChildren(elem).some((elem) => adapter.isTag(elem) && next(elem));
+ 		};
+@@ -3674,9 +3683,7 @@ function removeSubsets(nodes) {
+ 	return nodes;
+ }
+ function existsOne(test, elems) {
+-	return elems.some((elem) => {
+-		return isTag(elem) ? test(elem) || existsOne(test, getChildren(elem)) : false;
+-	});
++	return findOne((node) => isTag(node) && test(node), elems) !== null;
+ }
+ function getSiblings(node) {
+ 	const parent = getParent(node);
+@@ -3686,25 +3693,24 @@ function hasAttrib(elem, name) {
+ 	return getAttributeValue(elem, name) !== void 0;
+ }
+ function findOne(test, elems) {
+-	let elem = null;
+-	for (let i = 0, l = elems === null || elems === void 0 ? void 0 : elems.length; i < l && !elem; i++) {
+-		const el = elems[i];
+-		if (test(el)) elem = el;
+-		else {
+-			const childs = getChildren(el);
+-			if (childs && childs.length > 0) elem = findOne(test, childs);
+-		}
++	const pending = Array.from(elems || []).reverse();
++	while (pending.length) {
++		const node = pending.pop();
++		if (test(node)) return node;
++		const children = getChildren(node) || [];
++		for (let index = children.length - 1; index >= 0; index--) pending.push(children[index]);
+ 	}
+-	return elem;
++	return null;
+ }
+ function findAll(test, nodes) {
+-	let result = [];
+-	for (let i = 0, j = nodes.length; i < j; i++) {
+-		const node = nodes[i];
++	const result = [];
++	const pending = Array.from(nodes).reverse();
++	while (pending.length) {
++		const node = pending.pop();
+ 		if (!isTag(node)) continue;
+ 		if (test(node)) result.push(node);
+-		const childs = getChildren(node);
+-		if (childs) result = result.concat(findAll(test, childs));
++		const children = getChildren(node) || [];
++		for (let index = children.length - 1; index >= 0; index--) pending.push(children[index]);
+ 	}
+ 	return result;
+ }
+@@ -4046,10 +4052,15 @@ var HTMLElement = class HTMLElement extends Node {
+ 	* @return {string} text content
+ 	*/
+ 	get rawText() {
+-		if (/^br$/i.test(this.rawTagName)) return "\n";
+-		return this.childNodes.reduce((pre, cur) => {
+-			return pre += cur.rawText;
+-		}, "");
++		const parts = [];
++		const pending = [this];
++		while (pending.length) {
++			const node = pending.pop();
++			if (!(node instanceof HTMLElement)) parts.push(node.rawText);
++			else if (/^br$/i.test(node.rawTagName)) parts.push("\n");
++			else for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]);
++		}
++		return parts.join("");
+ 	}
+ 	get textContent() {
+ 		return decode(this.rawText);
+@@ -4105,9 +4116,31 @@ var HTMLElement = class HTMLElement extends Node {
+ 		return this.innerHTML;
+ 	}
+ 	get innerHTML() {
+-		return this.childNodes.map((child) => {
+-			return child.toString();
+-		}).join("");
++		const parts = [];
++		const pending = this.childNodes.slice().reverse();
++		while (pending.length) {
++			const node = pending.pop();
++			if (typeof node === "string") {
++				parts.push(node);
++				continue;
++			}
++			if (!(node instanceof HTMLElement)) {
++				parts.push(node.toString());
++				continue;
++			}
++			const tag = node.rawTagName;
++			if (tag) {
++				const attrs = node.rawAttrs ? ` ${node.rawAttrs}` : "";
++				if (node.isVoidElement) {
++					parts.push(node.voidTag.formatNode(tag, attrs, ""));
++					continue;
++				}
++				parts.push(`<${tag}${attrs}>`);
++				pending.push(`</${tag}>`);
++			}
++			for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]);
++		}
++		return parts.join("");
+ 	}
+ 	set innerHTML(content) {
+ 		const r = parse$1(content, this._parseOptions);
+@@ -4324,16 +4357,14 @@ var HTMLElement = class HTMLElement extends Node {
+ 		let el = this;
+ 		let old = null;
+ 		function findOne(test, elems) {
+-			let elem = null;
+-			for (let i = 0, l = elems.length; i < l && !elem; i++) {
+-				const el = elems[i];
+-				if (test(el)) elem = el;
+-				else {
+-					const child = mapChild.get(el);
+-					if (child) elem = findOne(test, [child]);
+-				}
++			const pending = elems.slice().reverse();
++			while (pending.length) {
++				const node = pending.pop();
++				if (test(node)) return node;
++				const child = mapChild.get(node);
++				if (child) pending.push(child);
+ 			}
+-			return elem;
++			return null;
+ 		}
+ 		while (el) {
+ 			mapChild.set(el, old);

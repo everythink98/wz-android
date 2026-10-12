@@ -11,6 +11,7 @@ import type {
   ComposerIntent,
   ComposerPresentation,
   ComposerSnapshot,
+  ComposerSubmissionSettlement,
   PendingNodeSeekPoll
 } from '@/domain/forum/structuredComposer';
 import type { LinuxDoTemplate } from '@/sources/linuxdo/templates';
@@ -60,7 +61,7 @@ export function ReplyComposerSheet({
   onReplyContentChange: (value: string) => void;
   onReplyFaceChange: (value: string) => void;
   onReplySnapshot?: (snapshot: ComposerSnapshot) => void;
-  onSubmitReply: (snapshot?: ComposerSnapshot) => unknown;
+  onSubmitReply: (snapshot?: ComposerSnapshot, settleSubmission?: ComposerSubmissionSettlement) => unknown;
   onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
   onResolveLinuxDoUpload?: (shortUrl: string) => Promise<string>;
   onLoadLinuxDoTemplates?: () => Promise<LinuxDoTemplate[]>;

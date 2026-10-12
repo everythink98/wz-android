@@ -15,6 +15,8 @@ import { useTopicSessionController } from '@/features/topic/useTopicSessionContr
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import type { Reply, Source, SourceErrorInfo, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import { prepareTopicContent } from '@/domain/forum/topicContentSplit';
+import { parseNodeSeekPageDocument } from '@/sources/nodeseek/protocol';
+import { parseRenderedNodeSeekTopicHtml } from '@/sources/nodeseek/topicParser';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { contentWidthValue } from '@/ui/theme/tokens';
 import type { VisualScenarioDefinition } from '../../types';
@@ -30,6 +32,7 @@ type TopicScene =
   | 'replies-partial'
   | 'replies-populated'
   | 'replies-long'
+  | 'entities'
   | 'structured-content';
 
 const FIXED_TIME = '2026-08-29T08:00:00.000Z';
@@ -96,6 +99,29 @@ const STRUCTURED_CONTENT = [
   '<p>完成这些检查后，再观察长帖滚动、连续展开与收起，以及浅色和深色主题下的文字层级。</p>'
 ].join('');
 
+const ENTITY_CONTENT = [
+  '<a class="post-title" href="/post-424242-1">标准 HTML 实体与投票</a>',
+  '<div class="content-item" data-comment-id="1"><a href="/space/1">alice</a>',
+  '<article class="post-content">',
+  '<h2>Heading &amp;lt;H&amp;gt;</h2>',
+  '<p>Text &lt;x&gt; &amp;lt;x&amp;gt; &amp;#32; &am<span>p;nbsp;</span></p>',
+  '<table><thead><tr><th>Column &amp;lt;H&amp;gt;</th></tr></thead>',
+  '<tbody><tr><td>Cell &amp;#65; &am<span>p;nbsp;</span></td></tr></tbody></table>',
+  '<pre><code>line &lt;x&gt;\n&amp;lt;x&amp;gt;\n&am<span>p;#32;</span></code></pre>',
+  '<p>Before poll</p><div class="vote-panel">',
+  '<form class="vote-form" data-vote-id="901">',
+  '<legend>Poll &amp;lt;P&amp;gt;</legend>',
+  '<label><input type="checkbox" value="901-a">Option &amp;lt;A&amp;gt;</label>',
+  '<label><input type="checkbox" value="901-b">Cross &am<span>p;#32;</span></label>',
+  '<button>提交投票</button></form></div><p>After poll</p>',
+  '</article></div>',
+  '<li class="content-item" data-comment-id="2"><a href="/space/2">bob</a><a class="floor-link">#1</a>',
+  '<div class="post-content">',
+  '<p>Reply &lt;r&gt; &amp;lt;r&amp;gt; &amp;#32; &am<span>p;nbsp;</span></p>',
+  '<pre><code>reply &amp;lt;r&amp;gt;\n&am<span>p;#32;</span></code></pre>',
+  '</div></li>'
+].join('');
+
 function createReplies(): Reply[] {
   return [
     {
@@ -121,6 +147,16 @@ function createReplies(): Reply[] {
 }
 
 function createTopic(source: Source, state: ActionState, scene: TopicScene) {
+  if (scene === 'entities') {
+    const topic = parseRenderedNodeSeekTopicHtml(parseNodeSeekPageDocument(ENTITY_CONTENT), '424242');
+    if (!topic) throw new Error('Entity scene did not produce a rendered NodeSeek topic');
+    return prepareTopicContent({
+      ...topic,
+      createdAt: FIXED_TIME,
+      replies: topic.replies.map((reply) => ({ ...reply, createdAt: FIXED_TIME })),
+      url: 'https://visual.invalid/nodeseek/entities'
+    });
+  }
   const selected = state === 'selected' || state === 'success';
   const replies =
     scene.startsWith('replies-') && scene !== 'replies-empty' && scene !== 'replies-loading' ? createReplies() : [];
@@ -190,6 +226,9 @@ function decisionForScenario(
   pendingTarget?: PendingTarget
 ): TopicActionDecisionFor {
   return ({ action, interaction, reply }) => {
+    if (scene === 'entities') {
+      return action === 'vote' ? { allowed: true, reason: 'allowed' } : { allowed: false, reason: 'unsupported' };
+    }
     if (scene === 'replies-populated' || scene === 'replies-long') {
       const allowed =
         action === 'reply' ||
@@ -280,7 +319,11 @@ function TopicScenarioScreen({
         loadingPreviousReplies: false,
         loadingQuotedFloors: {},
         locateReply: async () => 'completed' as const,
-        replyCollectionComplete: scene === 'replies-empty' || scene === 'replies-populated' || scene === 'replies-long',
+        replyCollectionComplete:
+          scene === 'replies-empty' ||
+          scene === 'replies-populated' ||
+          scene === 'replies-long' ||
+          scene === 'entities',
         replyEndError,
         replyHasMore: scene === 'replies-loading-more',
         replyHasPrevious: false,
@@ -440,6 +483,14 @@ export const topicVisualScenarios: readonly VisualScenarioDefinition[] = [
   actionScenario('topic.actions.yaohuo.selected', '妖火主帖收藏·已收藏', 'yaohuo', 'selected', ['selected']),
   actionScenario('topic.actions.yaohuo.unknown', '妖火主帖收藏·状态未知', 'yaohuo', 'unknown', ['unknown']),
   actionScenario('topic.actions.v2ex.readonly', 'V2EX 主帖 UP 票·只读', 'v2ex', 'default', ['read-only']),
+  {
+    capabilityIds: ['TOPIC-02', 'TOPIC-03', 'WRITE-03'],
+    id: 'topic.content.entities',
+    kind: 'rendered',
+    tags: ['topic', 'content', 'entities', 'nodeseek', 'poll', 'reply', 'table', 'code'],
+    title: '标准 HTML 实体与投票',
+    render: () => <TopicScenarioScreen scene="entities" source="nodeseek" />
+  },
   {
     capabilityIds: ['TOPIC-02'],
     id: 'topic.content.structured',

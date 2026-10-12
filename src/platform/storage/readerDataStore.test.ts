@@ -181,33 +181,75 @@ describe('reader data storage authority', () => {
     expect(await store.readHistoryReplyBaseline(topicKey(topic))).toEqual({});
   });
 
-  it('settles a hung legacy settings read after three seconds and ignores its late value', async () => {
-    vi.useFakeTimers();
+  it.each(['rejected', 'timed-out'])(
+    'preserves legacy data after a %s settings read and restores the settings on retry',
+    async (failure) => {
+      if (failure === 'timed-out') vi.useFakeTimers();
+      const data = createEmptyReaderData();
+      data.settings.fontScale = 1.2;
+      data.history[topicKey(topic)] = { topic, savedAt: at };
+      seed(data);
+      const settings: ReaderData['settings'] = { ...data.settings, fontScale: 1.3, theme: 'dark' };
+      settings.contentSources = settings.contentSources.map((item) => ({
+        ...item,
+        enabled: item.source !== 'linuxdo'
+      }));
+      harness.legacy.set('reader-settings', JSON.stringify(settings));
+      const storage = (await import('@react-native-async-storage/async-storage')).default;
+      let resolveSettings: ((value: string) => void) | undefined;
+      vi.mocked(storage.getItem).mockImplementationOnce(async () => JSON.stringify(data));
+      if (failure === 'rejected') vi.mocked(storage.getItem).mockRejectedValueOnce(new Error('settings read failed'));
+      else
+        vi.mocked(storage.getItem).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveSettings = resolve;
+            })
+        );
+      const store = await reopen();
+      const loading = store.loadReaderState().then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      if (failure === 'timed-out') await vi.advanceTimersByTimeAsync(3_000);
+      const error = await loading;
+      resolveSettings?.(JSON.stringify({ ...settings, fontScale: 1.1 }));
+      expect(error).toMatchObject({ message: failure === 'rejected' ? 'settings read failed' : '旧资料存储读取超时' });
+      expect(harness.legacy.size).toBe(2);
+      expect(inspect('SELECT count(*) AS count FROM reader_meta')).toEqual({ count: 0 });
+      expect(await store.loadReaderState()).toMatchObject({ counts: { history: 1 }, settings });
+      expect(harness.legacy.size).toBe(0);
+      expect((await (await reopen()).loadReaderState()).settings).toEqual(settings);
+    }
+  );
+
+  it.each([null, '{broken', '[]'])(
+    'keeps the established source defaults for missing or malformed legacy settings: %j',
+    async (settings) => {
+      const data = createEmptyReaderData();
+      data.settings.fontScale = 1.2;
+      data.settings.contentSources[0].enabled = false;
+      seed(data);
+      if (settings === null) harness.legacy.delete('reader-settings');
+      else harness.legacy.set('reader-settings', settings);
+      expect((await (await reopen()).loadReaderState()).settings).toEqual({
+        ...data.settings,
+        contentSources: createEmptyReaderData().settings.contentSources
+      });
+      expect(harness.legacy.size).toBe(0);
+    }
+  );
+
+  it('preserves legacy keys when the main data read fails and retries without a committed marker', async () => {
     const data = createEmptyReaderData();
-    data.history[topicKey(topic)] = { topic, savedAt: at };
+    data.settings.fontScale = 1.2;
     seed(data);
     const storage = (await import('@react-native-async-storage/async-storage')).default;
-    let resolveSettings!: (value: string) => void;
-    vi.mocked(storage.getItem).mockImplementationOnce(async () => JSON.stringify(data));
-    vi.mocked(storage.getItem).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveSettings = resolve;
-        })
-    );
+    vi.mocked(storage.getItem).mockRejectedValueOnce(new Error('main read failed'));
     const store = await reopen();
-    let restored: Awaited<ReturnType<typeof store.loadReaderState>> | undefined;
-    const loading = store.loadReaderState().then((state) => {
-      restored = state;
-    });
-    await vi.advanceTimersByTimeAsync(3_000);
-    try {
-      expect(restored?.counts.history).toBe(1);
-      expect(restored?.settings).toEqual(data.settings);
-    } finally {
-      resolveSettings(JSON.stringify({ ...data.settings, fontScale: 1.8 }));
-      await loading;
-    }
+    await expect(store.loadReaderState()).rejects.toThrow('main read failed');
+    expect(harness.legacy.size).toBe(2);
+    expect(inspect('SELECT count(*) AS count FROM reader_meta')).toEqual({ count: 0 });
     expect((await store.loadReaderState()).settings).toEqual(data.settings);
   });
 

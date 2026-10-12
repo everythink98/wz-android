@@ -4,10 +4,13 @@ import {
   escapeQuotedHtmlTagDelimiters,
   FORUM_MATH_BLOCK_TAG,
   FORUM_VIDEO_STICKER_TAG,
+  forumElementReplacementNodes,
   isAllowedDataImageUrl,
   parseHtml,
+  transformForumElements,
   textContentFromHtml
 } from './html';
+import { HTMLElement, TextNode } from 'node-html-parser';
 import { isNodeSeekHost } from './sourceCatalog';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 
@@ -217,17 +220,21 @@ function collectForumContentMediaIndex(
     quoteAsides: [],
     stickerParagraphs: new Set()
   };
-  const visit = (
-    node: unknown,
+  const pending: {
+    node: unknown;
     context: {
       aside: ParsedForumImageNode | null;
       explicit: boolean;
       flowContainer: ParsedForumImageNode;
       lightboxHref: string;
       paragraph: ParsedForumImageNode | null;
-    }
-  ) => {
-    if (!node || typeof node !== 'object') return;
+    };
+  }[] = [
+    { node: root, context: { aside: null, explicit: false, flowContainer: root, lightboxHref: '', paragraph: null } }
+  ];
+  while (pending.length) {
+    const { node, context } = pending.pop()!;
+    if (!node || typeof node !== 'object') continue;
     const element = node as ParsedForumImageNode;
     const tagName = forumImageTagName(element);
     const className = tagName
@@ -278,15 +285,11 @@ function collectForumContentMediaIndex(
       lightboxHref: nextLightboxHref,
       paragraph: nextParagraph
     };
-    (element.childNodes || []).forEach((child) => visit(child, nextContext));
-  };
-  visit(root, {
-    aside: null,
-    explicit: false,
-    flowContainer: root,
-    lightboxHref: '',
-    paragraph: null
-  });
+    const children = element.childNodes || [];
+    for (let index = children.length - 1; index >= 0; index--) {
+      pending.push({ node: children[index], context: nextContext });
+    }
+  }
   return index;
 }
 
@@ -298,40 +301,38 @@ function authoredImageLines(container: ParsedForumImageNode) {
   const breakLine = () => {
     if (current().hasOtherContent || current().images.length) lines.push({ hasOtherContent: false, images: [] });
   };
-  const visit = (node: unknown, root = false) => {
-    if (!node || typeof node !== 'object') return;
+  const pending: { node: unknown; root: boolean }[] = [{ node: container, root: true }];
+  while (pending.length) {
+    const { node, root } = pending.pop()!;
+    if (!node || typeof node !== 'object') continue;
     const element = node as ParsedForumImageNode & { rawText?: unknown; text?: unknown };
     const tagName = forumImageTagName(element);
     if (tagName === 'br') {
       breakLine();
-      return;
+      continue;
     }
     if (tagName === 'img') {
       current().images.push(element);
-      return;
+      continue;
     }
     if (tagName.startsWith('forum-') || ['audio', 'canvas', 'iframe', 'svg', 'video'].includes(tagName)) {
       current().hasOtherContent = true;
-      return;
+      continue;
     }
     if (!root && tagName && (FORUM_CONTENT_BLOCK_TAGS.has(tagName) || ['td', 'th'].includes(tagName))) {
       breakLine();
-      return;
+      continue;
     }
-    if (!tagName) {
-      if (element.childNodes?.length) {
-        element.childNodes.forEach((child) => visit(child));
-        return;
-      }
-      const text = String(element.rawText ?? element.text ?? '')
+    if (!tagName && !element.childNodes?.length) {
+      const text = String(node instanceof TextNode ? node.text : (element.rawText ?? element.text ?? ''))
         .replace(/\u00a0/g, ' ')
         .trim();
       if (text) current().hasOtherContent = true;
-      return;
+      continue;
     }
-    (element.childNodes || []).forEach((child) => visit(child));
-  };
-  visit(container, true);
+    const children = element.childNodes || [];
+    for (let index = children.length - 1; index >= 0; index--) pending.push({ node: children[index], root: false });
+  }
   return lines;
 }
 
@@ -385,7 +386,11 @@ export function normalizeForumContentMediaNodes(root: ForumContentMediaRoot) {
     resolveImageUrl,
     resolveNodeAttributes
   );
-  upgradeForumStickerParagraphs([...mediaIndex.stickerParagraphs], resolveImageUrl);
+  upgradeForumStickerParagraphs(
+    root,
+    [...mediaIndex.stickerParagraphs].filter((node) => node instanceof HTMLElement),
+    resolveImageUrl
+  );
   flowQuoteTitleAvatars(
     mediaIndex.quoteAsides,
     mediaIndex.divsByAside,
@@ -786,24 +791,25 @@ function flowForumImageNode(image: ParsedForumImageNode, attributes: Record<stri
 }
 
 function upgradeForumStickerMedia(
-  root: { querySelectorAll?: (selector: string) => ParsedForumImageNode[] },
+  root: ForumContentMediaRoot,
   resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl
 ) {
-  return upgradeForumStickerParagraphs(root.querySelectorAll?.('p') || [], resolveImageUrl);
+  return upgradeForumStickerParagraphs(root, root.querySelectorAll('p'), resolveImageUrl);
 }
 
 function upgradeForumStickerParagraphs(
-  paragraphs: readonly ParsedForumImageNode[],
+  root: ForumContentMediaRoot,
+  paragraphs: readonly HTMLElement[],
   resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl
 ) {
   let changed = false;
-  paragraphs.forEach((paragraph) => {
+  transformForumElements(root, paragraphs, (paragraph) => {
     const html = paragraph.innerHTML || '';
     if (!/<img\b/i.test(html) && !FORUM_STICKER_MEDIA_PATTERN.test(html)) return;
     const replacementHtml = stickerRowHtmlFromParagraph(html, resolveImageUrl);
-    if (replacementHtml && typeof paragraph.replaceWith === 'function') {
-      paragraph.replaceWith(replacementHtml);
+    if (replacementHtml) {
       changed = true;
+      return forumElementReplacementNodes(paragraph, replacementHtml);
     }
   });
   return changed;

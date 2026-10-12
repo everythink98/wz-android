@@ -5,8 +5,17 @@ import {
   isCloudflareChallengeResponse
 } from '@/platform/network/cloudflareChallenge';
 import type { Topic, TopicDetail } from '@/domain/forum/models';
-import { absoluteUrl, elementText, isRecord, parseHtml, parsePositiveInteger, toIsoString } from '@/domain/forum/html';
-import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import {
+  absoluteUrl,
+  createForumTextIndex,
+  elementText,
+  isRecord,
+  parseHtml,
+  parsePositiveInteger,
+  toIsoString,
+  type ForumTextSegment
+} from '@/domain/forum/html';
+import { accessRequirementFromPlainText } from '@/domain/forum/accessRequirements';
 import { isNodeSeekHost, sourceCatalog } from '@/domain/forum/sourceCatalog';
 
 export const NODESEEK_BASE_URL: string = sourceCatalog.nodeseek.baseUrl;
@@ -169,17 +178,33 @@ export function safeNodeSeekTopicUrl(id: string, rawUrl?: unknown) {
   }
 }
 
+function accessRequirementFromElements(
+  root: HTMLElement,
+  elements: readonly HTMLElement[],
+  title = ''
+): Topic['accessRequirement'] | undefined {
+  if (!elements.length) return undefined;
+  const textIndex = createForumTextIndex(root);
+  let checked: ForumTextSegment | undefined;
+  for (const node of elements) {
+    const segment = textIndex.range(node)[0];
+    if (!segment) continue;
+    if (checked?.tape === segment.tape && segment.start >= checked.start && segment.end <= checked.end) continue;
+    // A negative enclosing text range cannot contain a matching permission notice.
+    checked = segment;
+    const { tape, start, end } = segment;
+    const text = tape.text.slice(start, end).replace(/\s+/g, ' ').trim().replace(title, ' ');
+    const requirement = accessRequirementFromPlainText(text);
+    if (requirement) return requirement;
+  }
+  return undefined;
+}
+
 export function nodeSeekAccessRequirementFromListRow(
   row: HTMLElement,
   title: string
 ): Topic['accessRequirement'] | undefined {
-  const direct = row
-    .querySelectorAll('*')
-    .map((node) => elementText(node).replace(title, ' ').trim())
-    .filter((text) => text && text !== '内版')
-    .map((text) => accessRequirementFromText(text))
-    .find(Boolean);
-  return direct || accessRequirementFromText(elementText(row).replace(title, ' '));
+  return accessRequirementFromElements(row, [...row.children, row], title);
 }
 
 function embeddedCandidates(html: string) {
@@ -241,9 +266,12 @@ function hasReadableNodeSeekTopic(root: ReturnType<typeof parseHtml>) {
 }
 
 function hasNodeSeekAccessNotice(root: ReturnType<typeof parseHtml>) {
-  return root
-    .querySelectorAll('.restricted-post, .post-restricted, .empty-state, .notice, .alert')
-    .some((node) => Boolean(accessRequirementFromText(elementText(node))));
+  return Boolean(
+    accessRequirementFromElements(
+      root,
+      root.querySelectorAll('.restricted-post, .post-restricted, .empty-state, .notice, .alert')
+    )
+  );
 }
 
 function hasNodeSeekSearchResultSurface(root: ReturnType<typeof parseHtml>, url?: string) {

@@ -94,6 +94,9 @@ async function execute(mode: string, profile: string, token: string, status: (te
       let intercepted = false;
       try {
         if (mode === 'settings-hang') {
+          const settings = fixture(profile).settings;
+          settings.theme = 'dark';
+          await AsyncStorage.setItem('reader-settings', JSON.stringify(settings));
           AsyncStorage.getItem = async (key) => {
             if (key !== 'reader-settings') return originalGet.call(AsyncStorage, key);
             intercepted = true;
@@ -113,6 +116,77 @@ async function execute(mode: string, profile: string, token: string, status: (te
           };
         }
         const loadStarted = performance.now();
+        if (mode === 'settings-hang') {
+          const expected = fixture(profile);
+          expected.settings.theme = 'dark';
+          const legacyData = await originalGet.call(AsyncStorage, 'reader-data');
+          const legacySettings = await originalGet.call(AsyncStorage, 'reader-settings');
+          const rejected = await store.loadReaderState().then(
+            () => false,
+            () => true
+          );
+          const loadMs = performance.now() - loadStarted;
+          check(
+            rejected && intercepted && loadMs >= 2900 && loadMs < 10000,
+            'Settings timeout did not reject migration'
+          );
+          const db = await openDatabaseAsync('reader-data.db', { useNewConnection: true });
+          try {
+            const rowCountSql =
+              'SELECT (SELECT COUNT(*) FROM reader_meta) + (SELECT COUNT(*) FROM reader_counts) + (SELECT COUNT(*) FROM reader_records) + (SELECT COUNT(*) FROM reader_deleted) AS count';
+            check((await readReaderMeta(db)) === null, 'Settings timeout advanced migration state');
+            check(
+              (await db.getFirstAsync<{ count: number }>(rowCountSql))?.count === 0,
+              'Settings timeout wrote ReaderData'
+            );
+            const keys = await originalKeys.call(AsyncStorage);
+            check(
+              keys.includes('reader-data') && keys.includes('reader-settings'),
+              'Settings timeout removed legacy keys'
+            );
+            pending.resolve();
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+            check((await readReaderMeta(db)) === null, 'Late settings advanced migration state');
+            check(
+              (await db.getFirstAsync<{ count: number }>(rowCountSql))?.count === 0,
+              'Late settings wrote ReaderData'
+            );
+            check(
+              (await originalGet.call(AsyncStorage, 'reader-data')) === legacyData &&
+                (await originalGet.call(AsyncStorage, 'reader-settings')) === legacySettings,
+              'Late settings changed legacy data'
+            );
+            AsyncStorage.getItem = originalGet;
+            const restored = await store.loadReaderState();
+            check(restored.counts.history === Object.keys(expected.history).length, 'Settings retry lost ReaderData');
+            check(
+              JSON.stringify(restored.settings) === JSON.stringify(expected.settings),
+              'Settings retry changed settings'
+            );
+            check(
+              JSON.stringify(await readReaderSnapshot(db)) === JSON.stringify(expected),
+              'Settings retry changed records/order'
+            );
+            check((await readReaderMeta(db))?.status === 'ready', 'Settings retry did not finish migration');
+            const afterKeys = await originalKeys.call(AsyncStorage);
+            check(
+              !afterKeys.includes('reader-data') && !afterKeys.includes('reader-settings'),
+              'Settings retry retained legacy keys'
+            );
+            write('passed', {
+              loadMs,
+              history: restored.counts.history,
+              initialLoadRejected: true,
+              legacyRetained: true,
+              lateResultIgnored: true,
+              retryRecovered: true,
+              cleanupStatus: 'ready'
+            });
+          } finally {
+            await db.closeAsync();
+          }
+          return;
+        }
         const restored = await store.loadReaderState();
         const loadMs = performance.now() - loadStarted;
         check(intercepted && loadMs >= 2900 && loadMs < 10000, 'Legacy I/O did not settle within its own deadline');
@@ -124,7 +198,7 @@ async function execute(mode: string, profile: string, token: string, status: (te
             JSON.stringify(restored.settings) === JSON.stringify(expected.settings),
             'Timed-out sidecar changed settings'
           );
-          const expectedStatus = mode === 'settings-hang' ? 'ready' : 'cleanup_pending';
+          const expectedStatus = 'cleanup_pending';
           check((await readReaderMeta(db))?.status === expectedStatus, 'Cleanup state was not retained');
           pending.resolve();
           await new Promise<void>((resolve) => setTimeout(resolve, 100));

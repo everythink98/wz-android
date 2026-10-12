@@ -1,6 +1,7 @@
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { nativeTestTasks, verifyNativeTestReports } from './native-test-plan.mjs';
 
 export const RELEASE_SIGNING_ENV_NAMES = Object.freeze([
   'WZ_ANDROID_KEYSTORE_PATH',
@@ -144,6 +145,8 @@ export function restorePackageJsonAfterPrebuild(packageJsonPath, originalContent
 }
 
 export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, releaseEnv, run }) {
+  const task = ':app:testReleaseUnitTest';
+  const nativeTest = nativeTestTasks[task];
   const releaseBuildEnv = { ...ordinaryEnv, NODE_ENV: 'production' };
   const commonArgs = [
     `-PreactNativeArchitectures=${builtAbis.join(',')}`,
@@ -151,6 +154,7 @@ export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, rele
     '-Pandroid.enableMinifyInReleaseBuilds=true',
     '-PEX_DEV_CLIENT_NETWORK_INSPECTOR=false'
   ];
+  const startedAt = Date.now();
   run(
     'java',
     [
@@ -158,12 +162,14 @@ export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, rele
       'gradle/wrapper/gradle-wrapper.jar',
       '--no-daemon',
       ':app:clean',
-      ':app:testReleaseUnitTest',
+      task,
       ':app:compileReleaseKotlin',
+      ...nativeTest.args.filter((arg) => !arg.startsWith('-PreactNativeArchitectures=')),
       ...commonArgs
     ],
     { cwd: androidDir, env: releaseBuildEnv }
   );
+  verifyNativeTestReports(path.resolve(androidDir, '..', nativeTest.reports), startedAt, nativeTest.classes);
   run(
     'java',
     [

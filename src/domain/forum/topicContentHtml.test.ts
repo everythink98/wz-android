@@ -7,8 +7,81 @@ import {
   normalizeRenderableHtml
 } from './topicContentHtml';
 import { parseHtml } from './html';
+import { HTMLElement } from 'node-html-parser';
 
 describe('Android topic content HTML', () => {
+  it.each([
+    ['<a href="/u/alice">@&amp;lt;x&amp;gt;</a>', '@&lt;x&gt;'],
+    ['@<a href="/u/alice">&amp;#65;</a>', '@&#65;']
+  ])('preserves once-decoded mention text when replacing its DOM leaf: %s', (html, expected) => {
+    const root = parseHtml(`<p>${html}</p>`);
+    normalizeForumUserMentionNodes(root);
+    expect(root.textContent).toBe(expected);
+    expect(root.querySelector('.forum-user-mention')).not.toBeNull();
+  });
+  it.each(['/member?t=alice', '/post-2-1#3'])(
+    'rejects nested %s links with ordinary labels before decoding each subtree',
+    (href) => {
+      const depth = 512;
+      const html = `<a href="${href}">x`.repeat(depth) + 'last' + '</a>'.repeat(depth);
+      const root = parseHtml(html);
+      const getter = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'text')?.get!;
+      let decoded = 0;
+      const text = vi.spyOn(HTMLElement.prototype, 'text', 'get').mockImplementation(function (this: HTMLElement) {
+        decoded += this.rawText.length;
+        return getter.call(this);
+      });
+      try {
+        markNodeSeekReplyReferenceNodes(root, 'https://www.nodeseek.com');
+      } finally {
+        text.mockRestore();
+      }
+      expect(root.toString()).toBe(html);
+      expect(decoded).toBeLessThan(depth * 16);
+    }
+  );
+  it('rejects unrelated nested links before decoding their subtrees', () => {
+    const depth = 512;
+    const html = '<a href="https://example.com">x'.repeat(depth) + 'last' + '</a>'.repeat(depth);
+    const root = parseHtml(html);
+    const getter = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'text')?.get!;
+    let decoded = 0;
+    const text = vi.spyOn(HTMLElement.prototype, 'text', 'get').mockImplementation(function (this: HTMLElement) {
+      decoded += this.rawText.length;
+      return getter.call(this);
+    });
+    try {
+      normalizeForumUserMentionNodes(root);
+      markNodeSeekReplyReferenceNodes(root, 'https://www.nodeseek.com');
+    } finally {
+      text.mockRestore();
+    }
+    expect(root.toString()).toBe(html);
+    expect(decoded).toBeLessThan(depth * 16);
+  });
+  it('replaces wide leading reply references without copying the siblings for each paragraph', () => {
+    const count = 512;
+    const root = parseHtml(
+      '<section>' +
+        '<p><a href="/member?t=alice">@alice</a> <a href="/post-2-1#3">#3</a> tail</p>'.repeat(count) +
+        '</section>'
+    );
+    const nativeSlice = Array.prototype.slice;
+    let copied = 0;
+    const slice = vi.spyOn(Array.prototype, 'slice').mockImplementation(function (this: unknown[], start, end) {
+      const result = Reflect.apply(nativeSlice, this, [start, end]);
+      copied += result.length;
+      return result;
+    });
+    try {
+      markNodeSeekReplyReferenceNodes(root, 'https://www.nodeseek.com');
+    } finally {
+      slice.mockRestore();
+    }
+    expect(root.querySelectorAll(FORUM_REPLY_REFERENCE_TAG)).toHaveLength(count);
+    expect(root.textContent).toBe('tail'.repeat(count));
+    expect(copied).toBeLessThan(count * 32 + 10_000);
+  });
   it('rebuilds a large explicit-reference parent once and preserves text order', () => {
     const text = Array.from({ length: 2_000 }, (_, index) => `@alice # ${index + 1} `).join('');
     const root = parseHtml(`<p>${text}</p>`);

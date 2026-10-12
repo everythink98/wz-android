@@ -19,6 +19,59 @@ function message(type: string, payload: unknown) {
 afterEach(() => setDiagnosticWriter(null));
 
 describe('StructuredReplyComposer', () => {
+  it('rejects a snapshot request immediately when the editor reports an oversized draft', async () => {
+    const ref = createRef<StructuredReplyComposerHandle>();
+    const view = await render(
+      <StructuredReplyComposer
+        ref={ref}
+        actionBusy={false}
+        content="保留正文"
+        initialMode="source"
+        intent={{ kind: 'reply', site: 'linuxdo', topicId: 'snapshot-error' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={jest.fn()}
+      />
+    );
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+    let settled = false;
+    const requested = ref.current!.requestSnapshot().catch((error: Error) => {
+      settled = true;
+      return error.message;
+    });
+    const sent = webView.props.postMessageMock.mock.calls
+      .map(([raw]: [string]) => JSON.parse(raw))
+      .findLast((event: { type: string }) => event.type === 'REQUEST_SNAPSHOT');
+    await fireEvent(
+      webView,
+      'message',
+      message('ERROR', {
+        documentEpoch: 0,
+        requestId: 'expired-request',
+        revision: 9,
+        code: 'too-long',
+        message: '迟到错误'
+      })
+    );
+    expect(settled).toBe(false);
+    expect(view.queryByText('迟到错误')).toBeNull();
+    await fireEvent(
+      webView,
+      'message',
+      message('ERROR', {
+        documentEpoch: 0,
+        requestId: sent.payload.requestId,
+        revision: 1,
+        code: 'too-long',
+        message: '正文超过允许长度'
+      })
+    );
+    expect(settled).toBe(true);
+    expect(await requested).toBe('正文超过允许长度');
+  });
+
   it.each(['success', 'reject', 'close-reopen', 'read-only-resume', 'missing-handoff'] as const)(
     'completes prepare-panel only after its current keyboard handoff: %s',
     async (outcome) => {
@@ -2061,7 +2114,9 @@ describe('StructuredReplyComposer', () => {
         }
       })
     );
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ markdown: 'current' })));
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ markdown: 'current' }), expect.any(Function))
+    );
     expect(onSnapshot).toHaveBeenCalledWith(expect.objectContaining({ revision: 2 }));
 
     postMessage.mockClear();

@@ -111,6 +111,16 @@ describe('large composer documents under repeated interaction', () => {
         const body = transport.requests[round]!.body;
         expect(source === 'nodeseek' ? JSON.parse(body).content : new URLSearchParams(body).get('raw')).toBe(markdown);
         await act(async () => transport.release());
+        await waitFor(() =>
+          expect(messages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')?.payload.submission).toEqual(
+            {
+              documentEpoch,
+              revision: snapshot.revision
+            }
+          )
+        );
+        const settlement = messages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')!;
+        await act(async () => send('SNAPSHOT', { requestId: settlement.payload.requestId, snapshot }));
         await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
         await act(async () => {
           for (let late = 0; late < 100; late++) send('SNAPSHOT', { snapshot: { ...snapshot, revision: late + 2 } });

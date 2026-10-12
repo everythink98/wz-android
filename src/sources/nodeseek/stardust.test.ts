@@ -2,9 +2,50 @@ import { describe, expect, it } from 'vitest';
 import { normalizeNodeSeekStardustStatus } from './stardust';
 import { normalizeNodeSeekStardustMarkers } from './stardustMarkup';
 import { prepareNodeSeekForumContent } from './topicParser';
-import { parseHtml } from '@/domain/forum/html';
+import { parseForumContentHtml, parseHtml } from '@/domain/forum/html';
 
 describe('NodeSeek composer write protocols', () => {
+  it('keeps repeated escapes and entities split across anchor elements inert', () => {
+    const suffix = 'sapp://stardust-receive?member_id=42&ref_id=7&description=Pay&diff=5&onetime=false';
+    const root = parseForumContentHtml(
+      '<a>&amp;#110;' +
+        suffix +
+        '</a>' +
+        '<a data-href="&amp;#110;' +
+        suffix +
+        '">ordinary link</a>' +
+        '<a>&#1<span>10;</span>' +
+        suffix +
+        '</a>'
+    );
+    normalizeNodeSeekStardustMarkers(root);
+    expect(root.querySelectorAll('forum-nodeseek-stardust')).toHaveLength(0);
+    expect(root.querySelectorAll('a')).toHaveLength(3);
+  });
+  it.each([false, true])(
+    'preserves a deep subtree and keeps Stardust markers in source order: markers=%s',
+    (markers) => {
+      const depth = 16_384;
+      const marker = 'nsapp://stardust-receive?member_id=42&ref_id=7&description=Pay&diff=5&onetime=false';
+      const source = markers ? `before ${marker} <a href="/jump/stardust">${marker}</a> after` : 'ordinary content';
+      const html =
+        '<p>' + '<span>'.repeat(depth) + source + '</span>'.repeat(depth) + `</p><pre><code>${marker}</code></pre>`;
+      const root = parseForumContentHtml(html);
+
+      normalizeNodeSeekStardustMarkers(root);
+
+      expect(root.querySelectorAll('span')).toHaveLength(depth);
+      expect(root.querySelector('pre')?.text).toBe(marker);
+      if (markers) {
+        expect(root.querySelectorAll('forum-nodeseek-stardust').map((node) => node.getAttribute('member-id'))).toEqual([
+          '42',
+          '42'
+        ]);
+        expect(root.querySelector('p')?.text).toBe('before   after');
+      } else expect(root.toString()).toBe(html);
+    }
+  );
+
   it('derives status only from the real Stardust records payload', () => {
     expect(
       normalizeNodeSeekStardustStatus({

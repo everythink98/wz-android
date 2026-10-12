@@ -26,10 +26,13 @@ import { Decoration as SourceDecoration, EditorView, WidgetType, keymap } from '
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from '@codemirror/commands';
 import DOMPurify from 'dompurify';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './editorRuntime.css';
 import {
+  MAX_COMPOSER_POLL_COUNT,
+  MAX_COMPOSER_VALIDATION_ISSUES,
   generateNodeSeekStardustRefId,
   nodeSeekPendingPollIdFromToken,
   nodeSeekPendingPollToken,
@@ -1346,11 +1349,11 @@ function validateMarkdown(
       }
     });
   }
-  return issues;
+  return issues.slice(0, MAX_COMPOSER_VALIDATION_ISSUES);
 }
 
 function readPollsFromEditor(editor: TiptapEditor | null) {
-  const result: PendingNodeSeekPoll[] = [];
+  const result = new Map<string, PendingNodeSeekPoll>();
   editor?.state.doc.descendants((node) => {
     if (node.type.name !== 'pendingNodeSeekPoll') return;
     try {
@@ -1364,17 +1367,17 @@ function readPollsFromEditor(editor: TiptapEditor | null) {
         ...(node.attrs.remoteId ? { remoteId: String(node.attrs.remoteId) } : {})
       });
       pendingPolls.set(poll.localId, poll);
-      result.push(poll);
+      result.set(poll.localId, poll);
     } catch {
       // The snapshot validation below reports the missing sidecar/node.
     }
   });
-  return result;
+  return [...result.values()];
 }
 
 function pollsForSource(markdown: string) {
-  return nodeSeekPendingPollTokenRanges(markdown)
-    .map((token) => pendingPolls.get(token.localId))
+  return [...new Set(nodeSeekPendingPollTokenRanges(markdown).map((token) => token.localId))]
+    .map((id) => pendingPolls.get(id))
     .filter((poll): poll is PendingNodeSeekPoll => Boolean(poll));
 }
 
@@ -2045,6 +2048,7 @@ export function ComposerEditorRuntime() {
   }, []);
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const configRef = useRef<RuntimeConfig | null>(null);
+  const submissionLockedRef = useRef(false);
   const maskedMarkdownRef = useRef<{ markdown: string; masked: string } | null>(null);
   const [mode, setMode] = useState<ComposerMode>('rich');
   const topicEditor = config?.intentKind === 'create-topic' || config?.intentKind === 'edit-topic';
@@ -2135,7 +2139,18 @@ export function ComposerEditorRuntime() {
   const visibleEmoji = filteredEmoji.slice(0, emojiLimit);
   const loadMoreEmoji = () => setEmojiLimit((limit) => Math.min(limit + 120, filteredEmoji.length));
 
-  const extensions = useMemo(() => composerEditorExtensions(() => configRef.current?.site), []);
+  const extensions = useMemo(
+    () => [
+      ...composerEditorExtensions(() => configRef.current?.site),
+      Extension.create({
+        name: 'submissionLock',
+        addProseMirrorPlugins: () => [
+          new Plugin({ filterTransaction: (transaction) => !submissionLockedRef.current || !transaction.docChanged })
+        ]
+      })
+    ],
+    []
+  );
   const editor = useEditor({
     extensions,
     content: '',
@@ -2210,10 +2225,23 @@ export function ComposerEditorRuntime() {
 
   const postSnapshot = useCallback(
     (requestId?: string, forcedMode?: ComposerMode) => {
+      const snapshot = makeSnapshot(forcedMode);
+      const context = { documentEpoch: configRef.current?.documentEpoch ?? 0, ...(requestId ? { requestId } : {}) };
+      if (
+        snapshot.markdown.length > MAX_COMPOSER_MARKDOWN_LENGTH ||
+        snapshot.pendingNodeSeekPolls.length > MAX_COMPOSER_POLL_COUNT
+      ) {
+        postMessage('ERROR', {
+          ...context,
+          revision: snapshot.revision,
+          code: snapshot.markdown.length > MAX_COMPOSER_MARKDOWN_LENGTH ? 'too-long' : 'too-many-polls',
+          message: snapshot.markdown.length > MAX_COMPOSER_MARKDOWN_LENGTH ? '正文超过允许长度' : '本地投票超过允许数量'
+        });
+        return;
+      }
       postMessage('SNAPSHOT', {
-        documentEpoch: configRef.current?.documentEpoch ?? 0,
-        ...(requestId ? { requestId } : {}),
-        snapshot: makeSnapshot(forcedMode)
+        ...context,
+        snapshot
       });
     },
     [makeSnapshot]
@@ -2261,7 +2289,7 @@ export function ComposerEditorRuntime() {
 
   const beginImageUpload = useCallback(
     (id: string, visible = true) => {
-      if (configRef.current?.readOnly) return false;
+      if (configRef.current?.readOnly || submissionLockedRef.current) return false;
       const editor = editorRef.current;
       const source = sourceViewRef.current;
       const pending =
@@ -2309,7 +2337,7 @@ export function ComposerEditorRuntime() {
 
   const finishImageUpload = useCallback(
     (id: string, markdown?: string) => {
-      if (markdown && configRef.current?.readOnly) return false;
+      if (markdown && (configRef.current?.readOnly || submissionLockedRef.current)) return false;
       const editor = editorRef.current;
       const source = sourceViewRef.current;
       const pending =
@@ -2358,7 +2386,7 @@ export function ComposerEditorRuntime() {
     (nextMode: ComposerMode) => {
       panelRequestRef.current = null;
       setPanelPending(false);
-      if (configRef.current?.readOnly) return;
+      if (configRef.current?.readOnly || submissionLockedRef.current) return;
       closeBuilder();
       if (nextMode === modeRef.current) {
         postSnapshot(undefined, nextMode);
@@ -2374,8 +2402,9 @@ export function ComposerEditorRuntime() {
         readPollsFromEditor(editorRef.current);
         setSource(markdown);
         modeRef.current = 'source';
-        setMode('source');
-        window.requestAnimationFrame(() => sourceViewRef.current?.focus());
+        // A browser frame does not guarantee that React has made the input visible.
+        flushSync(() => setMode('source'));
+        sourceViewRef.current?.focus();
         postSnapshot(undefined, 'source');
         postState();
         return;
@@ -2401,8 +2430,8 @@ export function ComposerEditorRuntime() {
         if (editorRef.current?.getMarkdown() !== markdown) replaceRichMarkdownDocument(editorRef.current, markdown);
         suppressChangesRef.current = false;
         modeRef.current = 'rich';
-        setMode('rich');
-        window.requestAnimationFrame(() => editorRef.current?.commands.focus());
+        flushSync(() => setMode('rich'));
+        editorRef.current?.commands.focus();
         postSnapshot(undefined, 'rich');
         postState();
       } catch {
@@ -2429,6 +2458,7 @@ export function ComposerEditorRuntime() {
 
   const applyInit = useCallback(
     (next: RuntimeConfig) => {
+      submissionLockedRef.current = false;
       cancelHostActions();
       maskedMarkdownRef.current = null;
       configRef.current = next;
@@ -2482,6 +2512,7 @@ export function ComposerEditorRuntime() {
         return;
       }
       if (message.type === 'SET_READ_ONLY') {
+        submissionLockedRef.current = false;
         const current = configRef.current;
         if (!current) return;
         const readOnly = message.payload.readOnly;
@@ -2508,6 +2539,15 @@ export function ComposerEditorRuntime() {
         return;
       }
       if (message.type === 'REQUEST_SNAPSHOT') {
+        const submission = message.payload.submission;
+        if (
+          submission &&
+          submission.documentEpoch === (configRef.current?.documentEpoch ?? 0) &&
+          submission.revision === revisionRef.current
+        ) {
+          submissionLockedRef.current = true;
+          editorRef.current?.setEditable(false, false);
+        }
         postSnapshot(message.payload.requestId);
         return;
       }
@@ -2523,11 +2563,21 @@ export function ComposerEditorRuntime() {
       const command = message.payload;
       if (command.name === 'toolbar-action') {
         const current = configRef.current;
-        if (!current || current.readOnly || command.documentEpoch !== (current.documentEpoch ?? 0)) return;
+        if (
+          !current ||
+          current.readOnly ||
+          submissionLockedRef.current ||
+          command.documentEpoch !== (current.documentEpoch ?? 0)
+        )
+          return;
         toolbarActionRef.current(command.action);
         return;
       }
-      if (configRef.current?.readOnly && ['insert-markdown', 'undo', 'redo', 'focus'].includes(command.name)) return;
+      if (
+        (configRef.current?.readOnly || submissionLockedRef.current) &&
+        ['insert-markdown', 'undo', 'redo', 'focus'].includes(command.name)
+      )
+        return;
       if (command.name === 'set-discourse-emoji') {
         const currentConfig = configRef.current;
         if (!currentConfig || currentConfig.site !== 'linuxdo') return;
@@ -2632,7 +2682,7 @@ export function ComposerEditorRuntime() {
           })),
           EditorState.changeFilter.of((transaction) => {
             if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
-            if (configRef.current?.readOnly) return false;
+            if (configRef.current?.readOnly || submissionLockedRef.current) return false;
             const source = transaction.startState.doc.toString();
             const ranges = [...nodeSeekPendingPollTokenRanges(source), ...nodeSeekRemotePollMarkerRanges(source)];
             let allowed = true;
@@ -2685,7 +2735,7 @@ export function ComposerEditorRuntime() {
 
   const showBuilder = (next: Exclude<ComposerBuilder, null>) => {
     const current = configRef.current;
-    if (!current || current.readOnly || panelRequestRef.current) return;
+    if (!current || current.readOnly || submissionLockedRef.current || panelRequestRef.current) return;
     const open = () => {
       if (next === 'emoji' || next === 'stickers') setExpressionsOpened(true);
       setBuilderError('');
@@ -2709,7 +2759,7 @@ export function ComposerEditorRuntime() {
         if (!isCurrent()) return;
         panelRequestRef.current = null;
         setPanelPending(false);
-        if (initializedRef.current && !configRef.current?.readOnly) open();
+        if (initializedRef.current && !configRef.current?.readOnly && !submissionLockedRef.current) open();
       },
       (error: unknown) => {
         if (!isCurrent()) return;
@@ -3111,7 +3161,7 @@ export function ComposerEditorRuntime() {
 
   useCommitRefValue(toolbarActionRef, (action) => {
     const current = configRef.current;
-    if (!initializedRef.current || !current || current.readOnly) return;
+    if (!initializedRef.current || !current || current.readOnly || submissionLockedRef.current) return;
     const isTopic = current.intentKind === 'create-topic' || current.intentKind === 'edit-topic';
     switch (action) {
       case 'emoji':

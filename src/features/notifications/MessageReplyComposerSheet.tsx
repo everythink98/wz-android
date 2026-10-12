@@ -7,7 +7,12 @@ import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { ReaderStyleSettings, ReaderTheme } from '@/ui/theme/tokens';
 import { StructuredReplyComposer, type StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
-import type { ComposerPresentation, ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
+import type {
+  ComposerPresentation,
+  ComposerSnapshot,
+  ComposerSubmissionSettlement,
+  PendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 import type { LinuxDoTemplate } from '@/sources/linuxdo/templates';
 import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
 
@@ -62,7 +67,7 @@ export function MessageReplyComposerSheet({
   visible: boolean;
   onChangeContent: (content: string) => void;
   onClose: () => void;
-  onSubmit: (snapshot?: ComposerSnapshot) => unknown;
+  onSubmit: (snapshot?: ComposerSnapshot, settleSubmission?: ComposerSubmissionSettlement) => unknown;
   onSnapshot?: (snapshot: ComposerSnapshot) => void;
   onUploadImage?: () => unknown;
   onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;

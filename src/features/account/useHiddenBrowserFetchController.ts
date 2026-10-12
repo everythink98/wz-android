@@ -11,7 +11,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   }
   window.__wzNodeSeekBrowserFetchRequestId = requestId;
   const bridgeMessageLimit = 900000;
-  const challengeTitlePattern = /^\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在进行安全验证|请完成验证)[.!…\s]*$/i;
+  const challengeTitlePattern = /^\\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在进行安全验证|请完成验证)[.!…\\s]*$/i;
   const challengeHeadingPattern = challengeTitlePattern;
   const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim().slice(0, limit);
   const jsonText = () => {
@@ -295,7 +295,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __LINUXDO_BROWSER_FETCH_ID__;
   const bridgeMessageLimit = 900000;
-  const challengeTitlePattern = /^\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在检查|正在进行安全验证|请完成验证)[.!…\s]*$/i;
+  const challengeTitlePattern = /^\\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在检查|正在进行安全验证|请完成验证)[.!…\\s]*$/i;
   const challengeHeadingPattern = challengeTitlePattern;
   const pageText = (limit) => {
     const text = (document.body?.innerText || document.documentElement?.innerText || "").trim();

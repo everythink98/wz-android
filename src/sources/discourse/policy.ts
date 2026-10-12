@@ -1,6 +1,6 @@
 import { parse, type HTMLElement } from 'node-html-parser';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
-import { isRecord } from '@/domain/forum/html';
+import { isRecord, transformForumElements } from '@/domain/forum/html';
 
 export function discoursePostPolicy(raw: unknown): DiscoursePostPolicy | undefined {
   if (!isRecord(raw) || typeof raw.cooked !== 'string') return undefined;
@@ -30,7 +30,16 @@ export function discoursePostPolicy(raw: unknown): DiscoursePostPolicy | undefin
 }
 
 export function normalizeDiscoursePolicyMarkup(root: HTMLElement) {
-  root.querySelectorAll('.policy').forEach((policy) => {
-    policy.querySelectorAll('.policy-footer, .policy-actions, .policy-preview').forEach((node) => node.remove());
-  });
+  const selected: HTMLElement[] = [];
+  const pending = root.children.map((node) => ({ node, insidePolicy: false })).reverse();
+  while (pending.length) {
+    const { node, insidePolicy } = pending.pop()!;
+    if (insidePolicy && node.matches('.policy-footer, .policy-actions, .policy-preview')) selected.push(node);
+    const nextInsidePolicy = insidePolicy || node.matches('.policy');
+    const children = node.children;
+    for (let index = children.length - 1; index >= 0; index--) {
+      pending.push({ node: children[index], insidePolicy: nextInsidePolicy });
+    }
+  }
+  transformForumElements(root, selected, () => []);
 }

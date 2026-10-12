@@ -7,12 +7,60 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 import { getCategories, getFeed } from './feedRead';
+import { mergeTopics } from '@/domain/forum/feed';
+import { accessRequirementLevelValue } from '@/domain/forum/presentation';
 import { getReplies, getTopic } from './sourceRead';
 import { searchTopics } from './searchRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import type { Fetcher } from '@/platform/network/request';
 import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+
+it('fills aggregate pages with unique candidates and merges access before buffering the remainder', async () => {
+  const buffered = Array.from({ length: 20 }, (_, index) => ({
+    source: 'linuxdo',
+    id: String(index + 1),
+    title: `Buffered ${index + 1}`,
+    url: `https://linux.do/t/topic/${index + 1}`,
+    createdAt: new Date(Date.UTC(2026, 9, 1, 0, 1, 60 - index)).toISOString()
+  }));
+  const topics = Array.from({ length: 30 }, (_, index) => ({
+    id: index === 0 ? 1 : 100 + index,
+    title: `Incoming ${index}`,
+    slug: 'topic',
+    created_at: new Date(Date.UTC(2026, 9, 1, 0, 0, 30 - index)).toISOString(),
+    posts_count: 1,
+    ...(index === 0 ? { required_trust_level: 3 } : {})
+  }));
+  const fetcher = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ topic_list: { topics }, categories: [], users: [] }), {
+        headers: { 'content-type': 'application/json' }
+      })
+  );
+  const cursor = encodeURIComponent(JSON.stringify({ buffers: { linuxdo: buffered }, nextPages: { linuxdo: 2 } }));
+  const first = await getFeed({ source: 'all', page: 2, cursor, limit: 30, includedSources: ['linuxdo'], fetcher });
+
+  expect(first.items).toHaveLength(30);
+  expect(mergeTopics([], first.items)).toHaveLength(30);
+  expect(first.items.map((item) => item.id)).toEqual([
+    ...buffered.map((item) => item.id),
+    ...Array.from({ length: 10 }, (_, index) => String(101 + index))
+  ]);
+  expect(first.items[0].accessRequirement).toMatchObject({ type: 'level', label: '需等级' });
+  expect(accessRequirementLevelValue(first.items[0].accessRequirement)).toBe(3);
+  const second = await getFeed({
+    source: 'all',
+    page: 3,
+    cursor: first.nextCursor ?? undefined,
+    limit: 30,
+    includedSources: ['linuxdo'],
+    fetcher
+  });
+  expect(second.items.map((item) => item.id)).toEqual(Array.from({ length: 19 }, (_, index) => String(111 + index)));
+  expect(second.hasMore).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({

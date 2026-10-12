@@ -6,20 +6,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { nativeTestTasks, relatedNativeTasks, verifyNativeTestReports } from '../../scripts/native-test-plan.mjs';
 
 describe('Native behavior test selection', () => {
-  it.each([
-    'modules/forum-content-selection/android/src/main/renamed.kt',
-    'src/features/topic/selection/TopicSelectionSurface.tsx',
-    'scripts/run-forum-selection-native-tests.mjs'
-  ])('runs the selection module tests for %s', (file) => {
-    expect(relatedNativeTasks([file])).toContain(':forum-content-selection:testDebugUnitTest');
-  });
-  it.each([
-    'patches/react-native+0.86.3.patch',
-    'patches/expo-document-picker+57.0.1.patch',
-    'src/platform/network/request.ts'
-  ])('runs generated app Native tests for %s', (file) => {
-    expect(relatedNativeTasks([file])).toContain(':app:testReleaseUnitTest');
-  });
   it('does not schedule Native tests for unrelated content and includes all owners after dependency changes', () => {
     expect(relatedNativeTasks(['README.md', 'src/features/user/UserScreen.tsx'])).toEqual([]);
     expect(relatedNativeTasks(['package-lock.json'])).toHaveLength(6);
@@ -49,6 +35,7 @@ describe('Native behavior test selection', () => {
       'ForumSearchCustomTabUrl',
       'NotificationDigestExecutor',
       'PreviewRegionImageMath',
+      'TopicShareCapture',
       'ForumPlatformPackage'
     ].map((name) => `com.wz.reader.${name}Test`);
     expect(nativeTestTasks[':forum-platform:testDebugUnitTest'].classes).toEqual(expect.arrayContaining(owners));
@@ -58,6 +45,12 @@ describe('Native behavior test selection', () => {
     ).toContain(':forum-platform:testDebugUnitTest');
   });
   it.each([
+    ['modules/forum-content-selection/android/src/main/renamed.kt', ':forum-content-selection:testDebugUnitTest'],
+    ['src/features/topic/selection/TopicSelectionSurface.tsx', ':forum-content-selection:testDebugUnitTest'],
+    ['scripts/run-forum-selection-native-tests.mjs', ':forum-content-selection:testDebugUnitTest'],
+    ['patches/react-native+0.86.3.patch', ':app:testReleaseUnitTest'],
+    ['patches/expo-document-picker+57.0.1.patch', ':app:testReleaseUnitTest'],
+    ['src/platform/network/request.ts', ':app:testReleaseUnitTest'],
     [
       'modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt',
       ':forum-platform:testDebugUnitTest'
@@ -130,8 +123,20 @@ describe('Native behavior test selection', () => {
 });
 
 describe('image instrumentation runner mode isolation', () => {
+  const fileFaultOwners = [
+    'PlatformFileFaultInstrumentedTest#backupWriterRejectsProviderIoAndQuotaErrorsAfterPartialWrites',
+    'PlatformFileFaultInstrumentedTest#managedImageDownloadPropagatesProviderEnospcAndRemovesItsPart',
+    'PlatformFileFaultInstrumentedTest#backupWriterRejectsAnAlreadyReportedReliableDescriptorErrorAtClose',
+    'PlatformExportInstrumentedTest#realBackupBridgeRejectsProviderWriteFailuresAndReleasesItsPendingOperation'
+  ].map((owner) => `com.wz.reader.${owner}`);
+  const topicShareOwners = [
+    'singleLongPngIncludesAllRowsAndKeepsEveryBitmapUnder256Rows',
+    'cancellationDiskFailureAndChangingLayoutDiscardThePartialPng',
+    'realFabricScrollViewAndExpoImageCaptureThroughTheJsBridge'
+  ].map((method) => `com.wz.reader.TopicShareCaptureInstrumentedTest#${method}`);
   it.each([
     ['--hardware-pressure', ['NetworkImageHardwarePressureInstrumentedTest'], 300_000],
+    ['--topic-share', [topicShareOwners.join(',')], 300_000],
     ['--svg-only', ['SvgRendererInstrumentedTest'], 180_000],
     [
       '--platform-export-ui',
@@ -149,13 +154,15 @@ describe('image instrumentation runner mode isolation', () => {
       ],
       300_000
     ],
-    [
-      '--platform-file-faults',
-      [
-        'PlatformFileFaultInstrumentedTest#backupWriterRejectsProviderIoAndQuotaErrorsAfterPartialWrites,com.wz.reader.PlatformFileFaultInstrumentedTest#managedImageDownloadPropagatesProviderEnospcAndRemovesItsPart,com.wz.reader.PlatformFileFaultInstrumentedTest#backupWriterRejectsAnAlreadyReportedReliableDescriptorErrorAtClose,com.wz.reader.PlatformExportInstrumentedTest#realBackupBridgeRejectsProviderWriteFailuresAndReleasesItsPendingOperation'
-      ],
-      300_000
-    ],
+    ['--platform-file-faults', [fileFaultOwners.join(',')], 300_000],
+    ...['missing', 'started', 'skipped', 'duplicate', 'wrong-owner', 'failed', 'summary-only'].map(
+      (failure): [string, string[], number, string] => [
+        '--platform-file-faults',
+        [fileFaultOwners.join(',')],
+        300_000,
+        failure
+      ]
+    ),
     [
       '',
       [
@@ -170,57 +177,88 @@ describe('image instrumentation runner mode isolation', () => {
       ],
       180_000
     ]
-  ] as const)('keeps %s restricted to its intended owners', async (mode, owners, timeout) => {
-    const originalArgv = process.argv;
-    const exec = vi.fn((_command: string, args: readonly string[], _options?: { timeout?: number }) => {
-      if (args[0] === 'devices') return 'List of devices attached\nemulator-5556\tdevice\n';
-      if (args.includes('emu')) return 'WZ_ImageRuntime_Test_API35\nOK\n';
-      if (args.includes('dumpsys')) return '';
-      return 'OK (1 test)\n';
-    });
-    const spawn = vi.fn(() => ({ status: 0 }));
-    vi.resetModules();
-    vi.doMock('node:child_process', () => ({ execFileSync: exec, spawnSync: spawn }));
-    vi.doMock('node:crypto', async (importOriginal) => ({
-      ...(await importOriginal<typeof import('node:crypto')>()),
-      randomUUID: () => 'fixture-build-id'
-    }));
-    vi.doMock('node:fs', async (importOriginal) => ({
-      ...(await importOriginal<typeof import('node:fs')>()),
-      existsSync: () => true,
-      mkdirSync: vi.fn(),
-      mkdtempSync: (prefix: string) => `${prefix}fixture`,
-      readdirSync: () => ['35.0.0'],
-      readFileSync: (file: string) =>
-        file.endsWith('BuildConfig.java') ? 'fixturebuildid' : Buffer.from('fixture-apk'),
-      rmSync: vi.fn(),
-      writeFileSync: vi.fn()
-    }));
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    try {
-      process.argv = [process.execPath, 'scripts/run-network-image-instrumented-tests.mjs', ...(mode ? [mode] : [])];
-      await import('../../scripts/run-network-image-instrumented-tests.mjs');
-      const instruments = exec.mock.calls.filter(([, args]) => args.includes('instrument'));
-      expect(instruments.map(([, args]) => args[args.indexOf('class') + 1])).toEqual(
-        owners.map((owner) => `com.wz.reader.${owner}`)
-      );
-      expect(instruments[0][2]?.timeout).toBe(timeout);
-      if (mode === '--hardware-pressure') {
-        const forceStop = exec.mock.calls.findIndex(([, args]) => args.includes('force-stop'));
-        expect(forceStop).toBeGreaterThan(-1);
-        expect(forceStop).toBeLessThan(exec.mock.calls.findIndex(([, args]) => args.includes('instrument')));
-        expect(instruments[0][1]).toEqual(expect.arrayContaining(['proofBuildId', 'fixturebuildid']));
-      }
-      expect(spawn).toHaveBeenCalledTimes(2);
-    } finally {
-      process.argv = originalArgv;
-      log.mockRestore();
-      output.mockRestore();
-      vi.doUnmock('node:child_process');
-      vi.doUnmock('node:crypto');
-      vi.doUnmock('node:fs');
+  ] satisfies [string, readonly string[], number, string?][])(
+    'keeps %s restricted to completed owners with %s at timeout %s and failure %s',
+    async (mode, owners, timeout, failure?: string) => {
+      const originalArgv = process.argv;
+      const exec = vi.fn((_command: string, args: readonly string[], _options?: { timeout?: number }) => {
+        if (args[0] === 'devices') return 'List of devices attached\nemulator-5556\tdevice\n';
+        if (args.includes('emu')) return 'WZ_ImageRuntime_Test_API35\nOK\n';
+        if (args.includes('dumpsys')) return '';
+        if (args.includes('instrument') && (mode === '--platform-file-faults' || mode === '--topic-share')) {
+          const expected = mode === '--topic-share' ? topicShareOwners : fileFaultOwners;
+          const completed = failure === 'missing' ? expected.slice(0, 1) : [...expected];
+          if (failure === 'duplicate') completed[3] = completed[0];
+          if (failure === 'wrong-owner') completed[3] = 'com.wz.reader.OtherTest#otherMethod';
+          const statuses =
+            failure === 'summary-only'
+              ? ''
+              : completed
+                  .map((owner, index) => {
+                    const [className, method] = owner.split('#');
+                    const code =
+                      index === 3 && failure
+                        ? failure === 'started'
+                          ? 1
+                          : failure === 'skipped'
+                            ? -3
+                            : failure === 'failed'
+                              ? -2
+                              : 0
+                        : 0;
+                    return `INSTRUMENTATION_STATUS: test=${method}\r\nINSTRUMENTATION_STATUS: class=${className}\r\nINSTRUMENTATION_STATUS_CODE: ${code}\r\n`;
+                  })
+                  .join('');
+          return `${statuses}OK (${completed.length} tests)\n`;
+        }
+        return 'OK (1 test)\n';
+      });
+      const spawn = vi.fn(() => ({ status: 0 }));
       vi.resetModules();
+      vi.doMock('node:child_process', () => ({ execFileSync: exec, spawnSync: spawn }));
+      vi.doMock('node:crypto', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('node:crypto')>()),
+        randomUUID: () => 'fixture-build-id'
+      }));
+      vi.doMock('node:fs', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('node:fs')>()),
+        existsSync: () => true,
+        mkdirSync: vi.fn(),
+        mkdtempSync: (prefix: string) => `${prefix}fixture`,
+        readdirSync: () => ['35.0.0'],
+        readFileSync: (file: string) =>
+          file.endsWith('BuildConfig.java') ? 'fixturebuildid' : Buffer.from('fixture-apk'),
+        rmSync: vi.fn(),
+        writeFileSync: vi.fn()
+      }));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        process.argv = [process.execPath, 'scripts/run-network-image-instrumented-tests.mjs', ...(mode ? [mode] : [])];
+        const running = import('../../scripts/run-network-image-instrumented-tests.mjs');
+        if (failure) await expect(running).rejects.toThrow('instrumentation');
+        else await running;
+        const instruments = exec.mock.calls.filter(([, args]) => args.includes('instrument'));
+        expect(instruments.map(([, args]) => args[args.indexOf('class') + 1])).toEqual(
+          owners.map((owner) => (owner.startsWith('com.wz.reader.') ? owner : `com.wz.reader.${owner}`))
+        );
+        expect(instruments[0][2]?.timeout).toBe(timeout);
+        if (mode === '--hardware-pressure') {
+          const forceStop = exec.mock.calls.findIndex(([, args]) => args.includes('force-stop'));
+          expect(forceStop).toBeGreaterThan(-1);
+          expect(forceStop).toBeLessThan(exec.mock.calls.findIndex(([, args]) => args.includes('instrument')));
+          expect(instruments[0][1]).toEqual(expect.arrayContaining(['proofBuildId', 'fixturebuildid']));
+        }
+        expect(spawn).toHaveBeenCalledTimes(2);
+      } finally {
+        process.argv = originalArgv;
+        log.mockRestore();
+        output.mockRestore();
+        vi.doUnmock('node:child_process');
+        vi.doUnmock('node:crypto');
+        vi.doUnmock('node:fs');
+        vi.resetModules();
+      }
     }
-  });
+  );
 });

@@ -1351,6 +1351,116 @@ describe('topic query controller', () => {
     expect(showYaohuoLogin).toHaveBeenCalledWith('请先登录该内容源');
   });
 
+  it('keeps dismissed Yaohuo Topic login closed through identity reconciliation until explicit retry', async () => {
+    const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
+    let identityBarriers: SessionSource[] = [];
+    let identityTrust: SessionRuntimeSnapshot['identityTrust'] = 'none';
+    let active = true;
+    let sessionEpochs = initialForumSessionEpochs;
+    const showYaohuoLogin = jest.fn<(message?: string) => void>();
+    const getTopic = jest.fn<TestGetTopic>(async () => {
+      const reason = identityBarriers.length
+        ? 'identity-pending'
+        : identityTrust === 'unknown'
+          ? 'identity-unavailable'
+          : 'login-required';
+      throw Object.assign(new Error(reason), {
+        kind: reason === 'login-required' ? 'login-required' : 'ordinary',
+        reason,
+        source: 'yaohuo'
+      });
+    });
+    const hook = await renderTopicController({
+      getActive: () => active,
+      getIdentityBarriers: () => identityBarriers,
+      getIdentityTrust: () => identityTrust,
+      getSessionEpochs: () => sessionEpochs,
+      readGateway: { getTopic },
+      showYaohuoLogin,
+      topic
+    });
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+
+    for (const phase of ['open', 'unknown', 'anonymous', 'open', 'anonymous'] as const) {
+      const before = getTopic.mock.calls.length;
+      identityBarriers = phase === 'open' ? ['yaohuo'] : [];
+      identityTrust = phase === 'unknown' ? 'unknown' : 'none';
+      if (phase === 'anonymous') sessionEpochs = { ...sessionEpochs, yaohuo: sessionEpochs.yaohuo + 1 };
+      await act(async () => hook.rerender(undefined));
+      await waitFor(() => expect(getTopic.mock.calls.length).toBeGreaterThan(before));
+      await waitFor(() => expect(hook.result.current.controller.topicBusy).toBe(false));
+      expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+    }
+
+    await act(async () => hook.rerender(undefined));
+    active = false;
+    await act(async () => hook.rerender(undefined));
+    const beforeBackgroundRead = getTopic.mock.calls.length;
+    await act(async () => {
+      await appQueryClient
+        .fetchQuery({
+          queryKey: hook.result.current.controller.topicQueryKey,
+          staleTime: 0
+        })
+        .catch(() => undefined);
+    });
+    expect(getTopic.mock.calls.length).toBeGreaterThan(beforeBackgroundRead);
+    active = true;
+    await act(async () => hook.rerender(undefined));
+    await waitFor(() => expect(hook.result.current.controller.topicBusy).toBe(false));
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('stale');
+    });
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(2);
+    identityBarriers = ['yaohuo'];
+    await act(async () => hook.rerender(undefined));
+    identityBarriers = [];
+    await act(async () => hook.rerender(undefined));
+    await waitFor(() => expect(hook.result.current.controller.topicBusy).toBe(false));
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let an inactive Yaohuo Topic error reopen login over the current source', async () => {
+    let active = true;
+    let fail = false;
+    const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
+    const detail = { ...firstDetail, ...topic };
+    const showYaohuoLogin = jest.fn<(message?: string) => void>();
+    const getTopic = jest.fn<TestGetTopic>(async () => {
+      if (fail) throw Object.assign(new Error('妖火登录已失效'), { kind: 'login-expired', source: 'yaohuo' });
+      return detail;
+    });
+    const previous = await renderTopicController({
+      getActive: () => active,
+      readGateway: { getTopic },
+      showYaohuoLogin,
+      topic
+    });
+    await waitFor(() => expect(previous.result.current.controller.topicDetail).toEqual(detail));
+    active = false;
+    await act(async () => previous.rerender(undefined));
+    const current = await renderTopicController({ readGateway: { getTopic: async () => firstDetail } });
+    await waitFor(() => expect(current.result.current.controller.topicDetail).toEqual(firstDetail));
+    fail = true;
+    await act(async () => {
+      await appQueryClient
+        .fetchQuery({
+          queryKey: previous.result.current.controller.topicQueryKey,
+          staleTime: 0
+        })
+        .catch(() => undefined);
+    });
+    expect(appQueryClient.getQueryState(previous.result.current.controller.topicQueryKey)?.error).toEqual(
+      expect.objectContaining({ kind: 'login-expired' })
+    );
+    expect(getTopic).toHaveBeenCalledTimes(2);
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+    expect(current.result.current.controller.topicDetail?.source).toBe('nodeseek');
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
+  });
+
   it('never reconciles identity for a disabled Topic', async () => {
     const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
     const onRetryIdentityStatus = jest.fn(async () => undefined);

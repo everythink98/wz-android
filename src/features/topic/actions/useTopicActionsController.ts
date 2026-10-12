@@ -77,7 +77,12 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { TopicSessionController } from '../useTopicSessionController';
-import type { ComposerSnapshot, NodeSeekStardustReceive, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
+import type {
+  ComposerSnapshot,
+  ComposerSubmissionSettlement,
+  NodeSeekStardustReceive,
+  PendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 import { nodeSeekStardustMarkerRanges } from '@/domain/forum/structuredComposer';
 import { materializePendingNodeSeekPolls, PendingNodeSeekPollError } from '@/sources/nodeseek/pendingPolls';
 import { fetchNodeSeekStardustStatus, nodeSeekStardustReceiverName } from '@/sources/nodeseek/stardust';
@@ -132,7 +137,7 @@ type MutationVariables = {
   isCurrent?: () => boolean;
   editTarget?: ReplyEditTarget;
   applyOptimistic?: () => void | (() => void);
-  applyResult?: (result: unknown, variables: MutationVariables) => void;
+  applyResult?: (result: unknown, variables: MutationVariables) => void | Promise<void>;
   afterSuccess?: (result: unknown, variables: MutationVariables) => Promise<boolean>;
   successMessage?: string | ((result: unknown, refreshed: boolean | undefined) => string);
 };
@@ -334,6 +339,7 @@ export function useTopicActionsController({
   const pendingActionReservationsRef = useRef(new Set<string>());
   const activeRef = useCommittedRef(active);
   const sessionEpochsRef = useCommittedRef(sessionEpochs);
+  const writableTicketCurrentRef = useCommittedRef(isWritableSessionTicketCurrent);
   const {
     state: { replyComposerIntent, replyContent, replyFace, replyOrder, selectedTopic },
     commands: { composer: topicComposer, topic: topicCommands }
@@ -513,7 +519,7 @@ export function useTopicActionsController({
       }
     },
     onSuccess: async (result, variables) => {
-      if (!isWritableSessionTicketCurrent(variables.ticket) || variables.isCurrent?.() === false) {
+      if (!writableTicketCurrentRef.current(variables.ticket) || variables.isCurrent?.() === false) {
         finishDiagnosticTrace(variables.trace, 'stale', {
           source: variables.source,
           reason: 'stale',
@@ -521,9 +527,12 @@ export function useTopicActionsController({
         });
         return;
       }
-      variables.applyResult?.(result, variables);
-      const refreshed = await variables.afterSuccess?.(result, variables);
-      if (!isWritableSessionTicketCurrent(variables.ticket) || variables.isCurrent?.() === false) {
+      await variables.applyResult?.(result, variables);
+      const refreshed =
+        writableTicketCurrentRef.current(variables.ticket) && variables.isCurrent?.() !== false
+          ? await variables.afterSuccess?.(result, variables)
+          : undefined;
+      if (!writableTicketCurrentRef.current(variables.ticket) || variables.isCurrent?.() === false) {
         finishDiagnosticTrace(variables.trace, 'stale', {
           source: variables.source,
           reason: 'stale',
@@ -1048,9 +1057,10 @@ export function useTopicActionsController({
   );
 
   const submitReply = useCallback(
-    async (snapshot?: ComposerSnapshot) => {
+    async (snapshot?: ComposerSnapshot, settleSubmission?: ComposerSubmissionSettlement) => {
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
       const submittedContent = snapshot?.markdown ?? replyContent;
+      const submittedDraftRevision = topicComposer.getDraftRevision();
       const submittedNodeSeekPolls = snapshot?.pendingNodeSeekPolls || [];
       const trace = beginDiagnosticTrace('reply', replyComposerIntent.kind === 'edit' ? 'edit' : 'submit', {
         ...(actionTopic ? { source: actionTopic.source } : {}),
@@ -1089,6 +1099,25 @@ export function useTopicActionsController({
         }
       }
       const actionTopicKey = topicKey(actionTopic);
+      const settleReply = async (ticket: WritableSessionTicket) => {
+        const complete = () => {
+          if (
+            !writableTicketCurrentRef.current(ticket) ||
+            topicCommands.getCurrentKey() !== actionTopicKey ||
+            replyComposerIntentRef.current !== replyComposerIntent
+          )
+            return false;
+          return topicComposer.completeSubmission(settleSubmission ? undefined : submittedDraftRevision);
+        };
+        if (
+          !writableTicketCurrentRef.current(ticket) ||
+          topicCommands.getCurrentKey() !== actionTopicKey ||
+          replyComposerIntentRef.current !== replyComposerIntent
+        )
+          return;
+        if (settleSubmission) await settleSubmission(complete);
+        else complete();
+      };
       if (replyComposerIntent.kind === 'edit') {
         const editTarget = replyComposerIntent.target;
         if (!isNodeSeekActionTopic(actionTopic) && !isDiscourseSource(actionTopic.source)) {
@@ -1153,18 +1182,14 @@ export function useTopicActionsController({
               }
             );
           },
-          applyResult: (_result, { replyKeys }) => {
+          applyResult: async (_result, { replyKeys, ticket }) => {
             replyKeys.forEach((repliesKey) => {
               updateReplyCache(queryClient, repliesKey, (replies) =>
                 applyEditedReplyContent(replies, { ...edit, contentMarkdown: sentEditContent }, actionTopic.source)
               );
               void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' });
             });
-            if (
-              topicCommands.getCurrentKey() === actionTopicKey &&
-              replyComposerIntentRef.current === replyComposerIntent
-            )
-              topicComposer.completeSubmission();
+            await settleReply(ticket);
           },
           afterSuccess: () =>
             refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
@@ -1239,13 +1264,8 @@ export function useTopicActionsController({
             ticket
           );
         },
-        applyResult: () => {
-          if (
-            topicCommands.getCurrentKey() === actionTopicKey &&
-            replyComposerIntentRef.current === replyComposerIntent
-          )
-            topicComposer.completeSubmission();
-          const { detailKey, replyKeys } = cacheKeys(actionTopic as TopicDetail);
+        applyResult: async (_result, { detailKey, replyKeys, ticket }) => {
+          await settleReply(ticket);
           void queryClient.invalidateQueries({ queryKey: detailKey, exact: true, refetchType: 'none' });
           replyKeys.forEach(
             (repliesKey) =>
@@ -1288,7 +1308,8 @@ export function useTopicActionsController({
       siteSessionViewModels.nodeseek.currentUser?.id,
       topicCommands,
       topicComposer,
-      topicDetail
+      topicDetail,
+      writableTicketCurrentRef
     ]
   );
 

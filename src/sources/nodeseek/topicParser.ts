@@ -2,17 +2,22 @@ import type { HTMLElement, Node } from 'node-html-parser';
 import type { Reply, TopicDetail, TopicPoll, TopicPollOption } from '@/domain/forum/models';
 import {
   absoluteUrl,
+  createForumTextIndex,
   elementText,
+  escapeHtmlText,
   hasRenderableHtmlContent,
   isRecord,
   parseForumContentHtml,
   parseHtml,
   parsePositiveInteger,
   textExcerpt,
-  toIsoString
+  toIsoString,
+  transformForumElements,
+  type ForumTextSegment,
+  type ForumTextTape
 } from '@/domain/forum/html';
 import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
-import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import { accessRequirementFromObject, accessRequirementFromPlainText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
   arrayField,
@@ -155,15 +160,30 @@ function nodeSeekParentElement(element: HTMLElement | null | undefined) {
   return element?.parentNode && 'rawTagName' in element.parentNode ? (element.parentNode as HTMLElement) : null;
 }
 
-function nearestNodeSeekLabel(element: HTMLElement) {
-  let current: HTMLElement | null = element;
-  while (current) {
-    if (String(current.rawTagName || '').toLowerCase() === 'label') {
-      return current;
+function nodeSeekPollAncestorIndex() {
+  const contexts = new Map<HTMLElement, { label: HTMLElement | null; panel: HTMLElement | null }>();
+  return (element: HTMLElement) => {
+    let current: HTMLElement | null = element;
+    const pending: HTMLElement[] = [];
+    while (current && !contexts.has(current)) {
+      pending.push(current);
+      current = nodeSeekParentElement(current);
     }
-    current = nodeSeekParentElement(current);
-  }
-  return null;
+    let context = (current && contexts.get(current)) || { label: null, panel: null };
+    while (pending.length) {
+      const node = pending.pop()!;
+      context = {
+        label: String(node.rawTagName || '').toLowerCase() === 'label' ? node : context.label,
+        panel: String(node.getAttribute('class') || '')
+          .split(/\s+/)
+          .includes('vote-panel')
+          ? node
+          : context.panel
+      };
+      contexts.set(node, context);
+    }
+    return context;
+  };
 }
 
 function nodeSeekPollCountFromElement(element: HTMLElement | null | undefined) {
@@ -193,38 +213,41 @@ function cleanNodeSeekPollOptionLabel(value: string, countText?: string) {
     .trim();
 }
 
-function nodeSeekPollIdFromForm(form: HTMLElement, fallbackIndex: number) {
-  const hiddenId = form
-    .querySelectorAll('input[type="hidden"]')
-    .find(
-      (input) =>
-        /^(?:vote_?id|id)$/i.test(String(input.getAttribute('name') || '')) &&
-        String(input.getAttribute('value') || '').trim()
-    );
-  const linkedId = elementText(form).match(/nsapp:\/\/vote\?id=(\d+)/i)?.[1];
+function nodeSeekPollIdFromForm(
+  form: HTMLElement,
+  fallbackIndex: number,
+  hiddenId: HTMLElement | undefined,
+  linkedId: () => string | undefined
+) {
   const rawId =
     form.getAttribute('data-vote-id') ||
     form.getAttribute('data-voteid') ||
     form.getAttribute('data-id') ||
     hiddenId?.getAttribute('value') ||
-    linkedId ||
+    linkedId() ||
     String(form.getAttribute('id') || '').match(/(?:vote|poll)[-_]?(\d+)/i)?.[1] ||
     '';
   return String(rawId || `rendered-${fallbackIndex}`).trim();
 }
 
-function nodeSeekPollTitleFromForm(form: HTMLElement) {
-  const titleElement =
-    form.querySelector('legend') ||
-    form.querySelector('.vote-title') ||
-    form.querySelector('.poll-title') ||
-    form.querySelector('[data-title]') ||
-    form.querySelector('h1, h2, h3, h4');
-  const title = titleElement?.getAttribute('data-title') || elementText(titleElement);
-  return title.trim() || undefined;
+function nodeSeekPollTitleFromForm(titleElement: HTMLElement | undefined, titles: Map<HTMLElement, string>) {
+  if (!titleElement) return undefined;
+  let title = titles.get(titleElement);
+  if (title === undefined) {
+    title = (titleElement.getAttribute('data-title') || elementText(titleElement)).trim();
+    titles.set(titleElement, title);
+  }
+  return title || undefined;
 }
 
-function nodeSeekPollOptionFromInput(form: HTMLElement, input: HTMLElement): TopicPollOption | null {
+type NodeSeekPollLabel = { label: string; count: number | undefined; selected: boolean };
+
+function nodeSeekPollOptionFromInput(
+  input: HTMLElement,
+  explicitLabel: HTMLElement | undefined,
+  wrappingLabel: HTMLElement | null,
+  labels: Map<HTMLElement, NodeSeekPollLabel>
+): TopicPollOption | null {
   const id = String(
     input.getAttribute('value') ||
       input.getAttribute('data-vote-item-id') ||
@@ -235,93 +258,383 @@ function nodeSeekPollOptionFromInput(form: HTMLElement, input: HTMLElement): Top
   if (!id) {
     return null;
   }
-  const inputId = String(input.getAttribute('id') || '').trim();
-  const explicitLabel = inputId
-    ? form.querySelectorAll('label').find((label) => label.getAttribute('for') === inputId)
-    : null;
-  const labelContainer = nearestNodeSeekLabel(input) || explicitLabel || nodeSeekParentElement(input);
-  const countElement = labelContainer?.querySelector('.vote-count, .poll-count, .count, [data-count], [data-votes]');
-  const countText = elementText(countElement);
-  const label = cleanNodeSeekPollOptionLabel(elementText(labelContainer), countText);
-  if (!label) {
-    return null;
+  const labelContainer = wrappingLabel || explicitLabel || nodeSeekParentElement(input);
+  if (!labelContainer) return null;
+  let content = labels.get(labelContainer);
+  if (!content) {
+    const countElement = labelContainer.querySelector('.vote-count, .poll-count, .count, [data-count], [data-votes]');
+    const countText = elementText(countElement);
+    const label = cleanNodeSeekPollOptionLabel(elementText(labelContainer), countText);
+    content = {
+      label,
+      count: label
+        ? (nodeSeekPollCountFromElement(countElement) ?? nodeSeekPollCountFromElement(labelContainer))
+        : undefined,
+      selected: /(?:selected|active|checked)/i.test(String(labelContainer.getAttribute('class') || ''))
+    };
+    labels.set(labelContainer, content);
   }
-  const count = nodeSeekPollCountFromElement(countElement) ?? nodeSeekPollCountFromElement(labelContainer);
+  if (!content.label) return null;
   return {
     id,
-    label,
-    ...(count !== undefined ? { count } : {}),
-    selected:
-      nodeSeekElementHasAttribute(input, 'checked') ||
-      /(?:selected|active|checked)/i.test(String(labelContainer?.getAttribute('class') || ''))
+    label: content.label,
+    ...(content.count !== undefined ? { count: content.count } : {}),
+    selected: nodeSeekElementHasAttribute(input, 'checked') || content.selected
   };
 }
 
-function nodeSeekElementHasContent(element: HTMLElement) {
-  if (elementText(element).trim()) {
-    return true;
+function nodeSeekPollLowerBound<T>(values: readonly T[], start: number, position: (value: T) => number) {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (position(values[middle]) < start) low = middle + 1;
+    else high = middle;
   }
-  return Boolean(
-    element.querySelector(
-      `img, video, audio, table, pre, code, svg, canvas, input, textarea, select, ${NODESEEK_STARDUST_PLACEHOLDER_TAG}`
-    )
+  return low;
+}
+
+function nodeSeekElementIndex(root: HTMLElement) {
+  const nodes = [root, ...root.querySelectorAll('*')];
+  const ranges = new Map<Node, { start: number; end: number }>(
+    nodes.map((node, index) => [node, { start: index, end: index }])
   );
+  for (let index = nodes.length - 1; index >= 0; index--) {
+    const range = ranges.get(nodes[index])!;
+    for (const child of nodes[index].childNodes) {
+      const descendant = ranges.get(child);
+      if (descendant) range.end = Math.max(range.end, descendant.end);
+    }
+  }
+  const position = (node: HTMLElement) => ranges.get(node)!.start;
+  const selections = new Map<string, HTMLElement[]>();
+  const selected = (selector: string) => {
+    let candidates = selections.get(selector);
+    if (!candidates) {
+      candidates = root.querySelectorAll(selector);
+      selections.set(selector, candidates);
+    }
+    return candidates;
+  };
+  const first = (candidates: readonly HTMLElement[], form: HTMLElement) => {
+    const range = ranges.get(form)!;
+    const candidate = candidates[nodeSeekPollLowerBound(candidates, range.start + 1, position)];
+    return candidate && position(candidate) <= range.end ? candidate : undefined;
+  };
+  const all = (candidates: readonly HTMLElement[], scope: HTMLElement) => {
+    const range = ranges.get(scope)!;
+    return candidates.slice(
+      nodeSeekPollLowerBound(candidates, range.start + 1, position),
+      nodeSeekPollLowerBound(candidates, range.end + 1, position)
+    );
+  };
+  const textValues = new Map<HTMLElement, string>();
+  const htmlValues = new Map<HTMLElement, string>();
+  const text = (node: HTMLElement | null | undefined) => {
+    if (!node) return '';
+    let value = textValues.get(node);
+    if (value === undefined) {
+      value = elementText(node);
+      textValues.set(node, value);
+    }
+    return value;
+  };
+  const html = (node: HTMLElement | null | undefined) => {
+    if (!node) return '';
+    let value = htmlValues.get(node);
+    if (value === undefined) {
+      value = node.innerHTML;
+      htmlValues.set(node, value);
+    }
+    return value;
+  };
+  const scoped = new Map<string, (scope: HTMLElement) => HTMLElement | undefined>();
+  // A descendant selector requires its qualifying ancestor inside the row, not merely elsewhere in the document.
+  // The maximum ancestor position skips nonmatching overlaps without rescanning each nested row's candidates.
+  function scopedFirst(key: string, candidates: HTMLElement[], ancestorSelector: string, selfSelector = '') {
+    let find = scoped.get(key);
+    if (find) return find;
+    if (!candidates.length) {
+      find = () => undefined;
+      scoped.set(key, find);
+      return find;
+    }
+    const ancestors = new Set(selected(ancestorSelector));
+    const self = new Set(selfSelector ? selected(selfSelector) : []);
+    const nearest = new Map<Node, number>();
+    for (const node of nodes) {
+      const parent = node.parentNode;
+      nearest.set(node, ancestors.has(node) ? position(node) : parent ? (nearest.get(parent) ?? -1) : -1);
+    }
+    let size = 1;
+    while (size < candidates.length) size *= 2;
+    const maximum = new Float64Array(size * 2).fill(-1);
+    candidates.forEach((node, index) => {
+      const parent = node.parentNode;
+      maximum[size + index] = self.has(node) ? Infinity : parent ? (nearest.get(parent) ?? -1) : -1;
+    });
+    for (let index = size - 1; index > 0; index--)
+      maximum[index] = Math.max(maximum[index * 2], maximum[index * 2 + 1]);
+    function search(
+      index: number,
+      start: number,
+      end: number,
+      from: number,
+      to: number,
+      scopeStart: number
+    ): HTMLElement | undefined {
+      if (end <= from || start >= to || maximum[index] <= scopeStart) return undefined;
+      if (end - start === 1) return candidates[start];
+      const middle = (start + end) >>> 1;
+      return (
+        search(index * 2, start, middle, from, to, scopeStart) ||
+        search(index * 2 + 1, middle, end, from, to, scopeStart)
+      );
+    }
+    find = (scope) => {
+      const range = ranges.get(scope)!;
+      return search(
+        1,
+        0,
+        size,
+        nodeSeekPollLowerBound(candidates, range.start + 1, position),
+        nodeSeekPollLowerBound(candidates, range.end + 1, position),
+        range.start
+      );
+    };
+    scoped.set(key, find);
+    return find;
+  }
+  let authors: HTMLElement[] | undefined;
+  const menuHaystacks = new Map<HTMLElement, string>();
+  const reactionCandidates = new Map<string, HTMLElement[]>();
+  const labels = new Map<string, HTMLElement[]>();
+  let labelsReady = false;
+  function prepareLabels() {
+    if (labelsReady) return;
+    labelsReady = true;
+    for (const label of selected('label')) {
+      const inputId = label.getAttribute('for');
+      if (inputId !== undefined) {
+        const candidates = labels.get(inputId) || [];
+        candidates.push(label);
+        labels.set(inputId, candidates);
+      }
+    }
+  }
+  let hiddenIds: HTMLElement[] | undefined;
+  return {
+    first(selector: string, form: HTMLElement) {
+      return first(selected(selector), form);
+    },
+    all(selector: string, scope: HTMLElement) {
+      return all(selected(selector), scope);
+    },
+    text,
+    html,
+    author(scope: HTMLElement) {
+      authors ||= selected('a[href*="/space/"]').filter((node) => text(node));
+      return text(first(authors, scope));
+    },
+    avatar(scope: HTMLElement) {
+      return scopedFirst(
+        'avatar',
+        selected('.comment-author img, .reply-author img, a[href*="/space/"] img, img.avatar'),
+        '.comment-author, .reply-author, a[href*="/space/"]',
+        'img.avatar'
+      )(scope);
+    },
+    reaction(keywords: string[], scope: HTMLElement) {
+      const key = keywords.join('|');
+      let candidates = reactionCandidates.get(key);
+      if (!candidates) {
+        candidates = selected('.comment-menu .menu-item').filter((item) => {
+          let haystack = menuHaystacks.get(item);
+          if (haystack === undefined) {
+            haystack = [
+              item.getAttribute('title'),
+              item.getAttribute('aria-label'),
+              item.getAttribute('class'),
+              html(item)
+            ]
+              .join(' ')
+              .toLowerCase();
+            menuHaystacks.set(item, haystack);
+          }
+          return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+        });
+        reactionCandidates.set(key, candidates);
+      }
+      return scopedFirst('reaction:' + key, candidates, '.comment-menu')(scope);
+    },
+    label(inputId: string, form: HTMLElement) {
+      prepareLabels();
+      return inputId ? first(labels.get(inputId) || [], form) : undefined;
+    },
+    hiddenId(form: HTMLElement) {
+      hiddenIds ||= selected('input[type="hidden"]').filter(
+        (input) =>
+          /^(?:vote_?id|id)$/i.test(String(input.getAttribute('name') || '')) &&
+          String(input.getAttribute('value') || '').trim()
+      );
+      return first(hiddenIds, form);
+    },
+    inputs(form: HTMLElement) {
+      const candidates = selected('input[type="radio"], input[type="checkbox"]');
+      const range = ranges.get(form)!;
+      return candidates.slice(
+        nodeSeekPollLowerBound(candidates, range.start + 1, position),
+        nodeSeekPollLowerBound(candidates, range.end + 1, position)
+      );
+    }
+  };
+}
+
+function nodeSeekPollFormTextIndex(root: HTMLElement) {
+  const index = createForumTextIndex(root);
+  const patterns = [/vote|poll/i, /不公开|匿名/, /公开/, /已关闭|投票关闭|closed/i, /已投票|已选择|voted/i];
+  type Match = { start: number; end: number };
+  const tapes = new Map<ForumTextTape, { flags: Match[][]; links: Match[]; digits: Match[] }>();
+  const capture = (source: string, pattern: RegExp) =>
+    [...source.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))].map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length
+    }));
+  const tapeMatches = (tape: ForumTextTape) => {
+    let matches = tapes.get(tape);
+    if (!matches) {
+      matches = {
+        flags: patterns.map((pattern) => capture(tape.text, pattern)),
+        links: capture(tape.text, /nsapp:\/\/vote\?id=(?=\d)/i),
+        digits: capture(tape.text, /\d+/)
+      };
+      tapes.set(tape, matches);
+    }
+    return matches;
+  };
+  return (node: HTMLElement) => {
+    const segment = index.range(node)[0];
+    if (!segment) return { marker: false, public: undefined, closed: false, voted: false, linkedId: () => undefined };
+    const matches = tapeMatches(segment.tape);
+    const flags = matches.flags.map((candidates) => {
+      const match = candidates[nodeSeekPollLowerBound(candidates, segment.start, (value) => value.start)];
+      return Boolean(match && match.end <= segment.end);
+    });
+    const linked = matches.links[nodeSeekPollLowerBound(matches.links, segment.start, (value) => value.start)];
+    const linkedId = () => {
+      if (!linked || linked.end >= segment.end) return undefined;
+      const run = matches.digits[nodeSeekPollLowerBound(matches.digits, linked.end + 1, (value) => value.end)];
+      return run && run.start <= linked.end
+        ? segment.tape.text.slice(linked.end, Math.min(run.end, segment.end)) || undefined
+        : undefined;
+    };
+    return {
+      marker: flags[0],
+      public: flags[1] ? false : flags[2] ? true : undefined,
+      closed: flags[3],
+      voted: flags[4],
+      linkedId
+    };
+  };
 }
 
 function removeEmptyRenderedNodeSeekPollShells(root: HTMLElement) {
-  root.querySelectorAll('.form-mask').forEach((element) => element.remove());
-  ['.embed-vote', '.vote-panel'].forEach((selector) => {
-    root.querySelectorAll(selector).forEach((element) => {
-      if (!nodeSeekElementHasContent(element)) {
-        element.remove();
+  transformForumElements(root, root.querySelectorAll('.form-mask'), () => []);
+  const protectedTags = new Set([
+    'img',
+    'video',
+    'audio',
+    'table',
+    'pre',
+    'code',
+    'svg',
+    'canvas',
+    'input',
+    'textarea',
+    'select',
+    NODESEEK_STARDUST_PLACEHOLDER_TAG
+  ]);
+  for (const selector of ['.embed-vote', '.vote-panel', 'p']) {
+    const candidates = root.querySelectorAll(selector);
+    if (!candidates.length) continue;
+    const text = createForumTextIndex(root);
+    const protectedSubtrees = new Map<Node, boolean>();
+    const elements = [root, ...root.querySelectorAll('*')];
+    for (let index = elements.length - 1; index >= 0; index--) {
+      const element = elements[index];
+      protectedSubtrees.set(
+        element,
+        protectedTags.has(String(element.rawTagName || '').toLowerCase()) ||
+          element.childNodes.some((child) => protectedSubtrees.get(child))
+      );
+    }
+    // Earlier preorder removals cannot change a later candidate's own subtree.
+    // Rebuild between phases, and exclude the candidate itself as querySelector did.
+    transformForumElements(root, candidates, (element) => {
+      if (!text.hasText(element) && !element.childNodes.some((child) => protectedSubtrees.get(child))) {
+        return [];
       }
     });
-  });
-  root.querySelectorAll('p').forEach((element) => {
-    if (!nodeSeekElementHasContent(element)) {
-      element.remove();
-    }
-  });
+  }
 }
 
 function parseRenderedNodeSeekPollForms(root: HTMLElement, html: string, contentOffset: number) {
+  const elements = nodeSeekElementIndex(root);
+  const text = nodeSeekPollFormTextIndex(root);
   const forms = root.querySelectorAll('form').filter((form) => {
     const marker = [
       form.getAttribute('class'),
       form.getAttribute('id'),
       form.getAttribute('action'),
       form.getAttribute('data-vote-id'),
-      form.getAttribute('data-voteid'),
-      elementText(form)
+      form.getAttribute('data-voteid')
     ].join(' ');
     return (
       /vote|poll/i.test(marker) ||
-      form
-        .querySelectorAll('input[type="radio"], input[type="checkbox"]')
+      text(form).marker ||
+      elements
+        .inputs(form)
         .some((input) => /^(?:ids?|ids\[\]|vote|vote-item|option)$/i.test(String(input.getAttribute('name') || '')))
     );
   });
   if (!forms.length) {
     return { html, polls: undefined };
   }
+  const ancestors = nodeSeekPollAncestorIndex();
+  const labels = new Map<HTMLElement, NodeSeekPollLabel>();
+  const titles = new Map<HTMLElement, string>();
   const parsedPolls = forms.map((form, index): TopicPoll | null => {
-    const inputs = form.querySelectorAll('input[type="radio"], input[type="checkbox"]');
+    const inputs = elements.inputs(form);
     const options = inputs
-      .map((input) => nodeSeekPollOptionFromInput(form, input))
+      .map((input) =>
+        nodeSeekPollOptionFromInput(
+          input,
+          elements.label(String(input.getAttribute('id') || '').trim(), form),
+          ancestors(input).label,
+          labels
+        )
+      )
       .filter((option): option is TopicPollOption => Boolean(option));
     if (!options.length) {
       return null;
     }
-    const formText = elementText(form);
+    const formText = text(form);
     const explicitMultiple = optionalBoolean(form.getAttribute('data-multiple') ?? form.getAttribute('multiple'));
     const multiple =
       explicitMultiple ?? inputs.some((input) => String(input.getAttribute('type') || '').toLowerCase() === 'checkbox');
-    const publicState = /不公开|匿名/.test(formText) ? false : /公开/.test(formText) ? true : undefined;
-    const closed = /已关闭|投票关闭|closed/i.test(formText) || undefined;
-    const voted = options.some((option) => option.selected) || /已投票|已选择|voted/i.test(formText) || undefined;
+    const publicState = formText.public;
+    const closed = formText.closed || undefined;
+    const voted = options.some((option) => option.selected) || formText.voted || undefined;
     return {
-      id: nodeSeekPollIdFromForm(form, index),
-      title: nodeSeekPollTitleFromForm(form),
+      id: nodeSeekPollIdFromForm(form, index, elements.hiddenId(form), formText.linkedId),
+      title: nodeSeekPollTitleFromForm(
+        elements.first('legend', form) ||
+          elements.first('.vote-title', form) ||
+          elements.first('.poll-title', form) ||
+          elements.first('[data-title]', form) ||
+          elements.first('h1, h2, h3, h4', form),
+        titles
+      ),
       multiple,
       ...(publicState !== undefined ? { public: publicState } : {}),
       ...(closed ? { closed } : {}),
@@ -333,7 +646,7 @@ function parseRenderedNodeSeekPollForms(root: HTMLElement, html: string, content
   const replacements = new Map<string, { end: number; html: string; start: number }>();
   forms.forEach((form, index) => {
     const poll = parsedPolls[index];
-    const target = poll?.id ? form.closest('.vote-panel') || form : form;
+    const target = poll?.id ? ancestors(form).panel || form : form;
     const start = target.range[0] - contentOffset;
     const end = target.range[1] - contentOffset;
     if (start < 0 || end < start || end > html.length) {
@@ -345,13 +658,30 @@ function parseRenderedNodeSeekPollForms(root: HTMLElement, html: string, content
       start
     });
   });
-  const replacedHtml = [...replacements.values()]
-    .sort((left, right) => right.start - left.start)
-    .reduce(
-      (source, replacement) =>
-        `${source.slice(0, replacement.start)}${replacement.html}${source.slice(replacement.end)}`,
-      html
-    );
+  // Keep right-to-left source offsets, including overlapping ranges, without copying each intermediate document.
+  type Piece = { source: string; start: number; end: number; next: Piece | null };
+  let tail: Piece | null = null;
+  let boundary = html.length;
+  for (const replacement of [...replacements.values()].sort((left, right) => right.start - left.start)) {
+    if (replacement.end < boundary) {
+      tail = { source: html, start: replacement.end, end: boundary, next: tail };
+    } else {
+      let skipped = replacement.end - boundary;
+      while (tail && skipped >= tail.end - tail.start) {
+        skipped -= tail.end - tail.start;
+        tail = tail.next;
+      }
+      if (tail) tail.start += skipped;
+    }
+    tail = { source: replacement.html, start: 0, end: replacement.html.length, next: tail };
+    boundary = replacement.start;
+  }
+  const pieces = [html.slice(0, boundary)];
+  while (tail) {
+    pieces.push(tail.source.slice(tail.start, tail.end));
+    tail = tail.next;
+  }
+  const replacedHtml = pieces.join('');
   return {
     html: replacedHtml.trim(),
     polls: polls.length ? polls : undefined
@@ -628,38 +958,55 @@ function renderedNodeSeekCommentId(element: ReturnType<ReturnType<typeof parseHt
   return match ? Number(match[1]) : undefined;
 }
 
-function renderedNodeSeekAuthor(element: HTMLElement | null | undefined) {
+type NodeSeekElementIndex = ReturnType<typeof nodeSeekElementIndex>;
+
+function renderedNodeSeekFirst(
+  element: HTMLElement | null | undefined,
+  selector: string,
+  elements: NodeSeekElementIndex
+) {
+  return element ? elements.first(selector, element) || null : null;
+}
+
+function renderedNodeSeekAll(
+  element: HTMLElement | null | undefined,
+  selector: string,
+  elements: NodeSeekElementIndex
+) {
+  return element ? elements.all(selector, element) : [];
+}
+
+function renderedNodeSeekText(element: HTMLElement | null | undefined, elements: NodeSeekElementIndex) {
+  return elements.text(element);
+}
+
+function renderedNodeSeekAuthor(element: HTMLElement | null | undefined, elements: NodeSeekElementIndex) {
   if (!element) {
     return '';
   }
   return (
-    elementText(element.querySelector('.author-name')) ||
-    elementText(element.querySelector('.comment-author')) ||
-    elementText(element.querySelector('.reply-author')) ||
-    element
-      .querySelectorAll('a[href*="/space/"]')
-      .map((link) => elementText(link))
-      .find(Boolean) ||
+    renderedNodeSeekText(renderedNodeSeekFirst(element, '.author-name', elements), elements) ||
+    renderedNodeSeekText(renderedNodeSeekFirst(element, '.comment-author', elements), elements) ||
+    renderedNodeSeekText(renderedNodeSeekFirst(element, '.reply-author', elements), elements) ||
+    elements.author(element) ||
     ''
   );
 }
 
-function renderedNodeSeekAvatar(element: HTMLElement | null | undefined) {
+function renderedNodeSeekAvatar(element: HTMLElement | null | undefined, elements: NodeSeekElementIndex) {
   if (!element) {
     return undefined;
   }
-  return absoluteUrl(
-    element
-      .querySelector(
-        '.author-info a[href*="/space/"] img, .post-info a[href*="/space/"] img, .comment-author img, .reply-author img, a[href*="/space/"] img, img.avatar'
-      )
-      ?.getAttribute('src'),
-    BASE_URL
-  );
+  return absoluteUrl(elements.avatar(element)?.getAttribute('src'), BASE_URL);
 }
 
-function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
-  const linkFloor = parsePositiveInteger(elementText(element.querySelector('.floor-link')));
+function renderedNodeSeekFloor(
+  element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
+  elements: NodeSeekElementIndex
+) {
+  const linkFloor = parsePositiveInteger(
+    renderedNodeSeekText(renderedNodeSeekFirst(element, '.floor-link', elements), elements)
+  );
   if (linkFloor) {
     return linkFloor;
   }
@@ -667,40 +1014,37 @@ function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>[
   return /^\d+$/.test(id) ? Number(id) : undefined;
 }
 
-function renderedNodeSeekReactionItem(element: HTMLElement | null | undefined, keywords: string[]) {
-  if (!element) {
-    return null;
-  }
-  return (
-    element.querySelectorAll('.comment-menu .menu-item').find((item) => {
-      const haystack = [
-        item.getAttribute('title'),
-        item.getAttribute('aria-label'),
-        item.getAttribute('class'),
-        item.innerHTML
-      ]
-        .join(' ')
-        .toLowerCase();
-      return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
-    }) || null
-  );
+function renderedNodeSeekReactionItem(
+  element: HTMLElement | null | undefined,
+  keywords: string[],
+  elements: NodeSeekElementIndex
+) {
+  return element ? elements.reaction(keywords, element) || null : null;
 }
 
-function renderedNodeSeekReactionCount(element: HTMLElement | null | undefined, keywords: string[]) {
-  const item = renderedNodeSeekReactionItem(element, keywords);
+function renderedNodeSeekReactionCount(
+  element: HTMLElement | null | undefined,
+  keywords: string[],
+  elements: NodeSeekElementIndex
+) {
+  const item = renderedNodeSeekReactionItem(element, keywords, elements);
   if (!item) {
     return undefined;
   }
   return optionalInteger(
-    elementText(item.querySelector('span')) ||
+    renderedNodeSeekText(renderedNodeSeekFirst(item, 'span', elements), elements) ||
       item.getAttribute('data-count') ||
       item.getAttribute('title') ||
-      elementText(item)
+      renderedNodeSeekText(item, elements)
   );
 }
 
-function renderedNodeSeekReactionClicked(element: HTMLElement | null | undefined, keywords: string[]) {
-  const item = renderedNodeSeekReactionItem(element, keywords);
+function renderedNodeSeekReactionClicked(
+  element: HTMLElement | null | undefined,
+  keywords: string[],
+  elements: NodeSeekElementIndex
+) {
+  const item = renderedNodeSeekReactionItem(element, keywords, elements);
   return item
     ? String(item.getAttribute('class') || '')
         .split(/\s+/)
@@ -708,30 +1052,32 @@ function renderedNodeSeekReactionClicked(element: HTMLElement | null | undefined
     : undefined;
 }
 
-function renderedNodeSeekSignature(element: HTMLElement | null | undefined) {
-  const signature = element?.querySelector('.signature, .post-signature, .content-signature');
-  return signature?.innerHTML ? prepareNodeSeekForumContent(signature.innerHTML, { role: 'signature' }) : undefined;
+function renderedNodeSeekSignature(element: HTMLElement | null | undefined, elements: NodeSeekElementIndex) {
+  const signature = renderedNodeSeekFirst(element, '.signature, .post-signature, .content-signature', elements);
+  const html = elements.html(signature);
+  return html ? prepareNodeSeekForumContent(html, { role: 'signature' }) : undefined;
 }
 
-function renderedNodeSeekIsOp(element: HTMLElement | null | undefined) {
+function renderedNodeSeekIsOp(element: HTMLElement | null | undefined, elements: NodeSeekElementIndex) {
   return (
     Boolean(
-      element?.querySelector('.is-poster, .poster-badge') ||
-      elementText(element?.querySelector('.role-tag')).trim() === '楼主'
+      renderedNodeSeekFirst(element, '.is-poster, .poster-badge', elements) ||
+      renderedNodeSeekText(renderedNodeSeekFirst(element, '.role-tag', elements), elements).trim() === '楼主'
     ) || undefined
   );
 }
 
-function renderedNodeSeekRoleLabel(element: HTMLElement | null | undefined) {
-  const authorInfo = element?.querySelector('.author-info, .post-info, .comment-author, .reply-author') || element;
-  const labels = (authorInfo?.querySelectorAll('.role-tag, .nsk-badge') || [])
+function renderedNodeSeekRoleLabel(element: HTMLElement | null | undefined, elements: NodeSeekElementIndex) {
+  const authorInfo =
+    renderedNodeSeekFirst(element, '.author-info, .post-info, .comment-author, .reply-author', elements) || element;
+  const labels = renderedNodeSeekAll(authorInfo, '.role-tag, .nsk-badge', elements)
     .filter(
       (badge) =>
         !String(badge.getAttribute('class') || '')
           .split(/\s+/)
           .some((className) => className === 'is-poster' || className === 'poster-badge')
     )
-    .map((badge) => elementText(badge))
+    .map((badge) => renderedNodeSeekText(badge, elements))
     .filter((label) => label && label !== '楼主');
   return labels.join(' · ') || undefined;
 }
@@ -760,38 +1106,58 @@ function nodeSeekRenderedTitle(root: ReturnType<typeof parseHtml>, restrictedNot
 }
 
 function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>) {
-  const restricted = root.querySelector('.restricted-post') || root.querySelector('.post-restricted');
-  const restrictedText = elementText(restricted);
-  if (accessRequirementFromText(restrictedText)) {
-    return restrictedText;
+  const textIndex = createForumTextIndex(root, new Set(root.querySelectorAll('script, style')));
+  const nodes = [root, ...root.querySelectorAll('*')];
+  const facts = new Map<Node, { start: number; end: number; media: boolean }>();
+  const mediaTags = new Set(['img', 'video', 'pre', 'code']);
+  for (let index = nodes.length - 1; index >= 0; index--) {
+    const node = nodes[index];
+    const fact = { start: index, end: index, media: mediaTags.has(String(node.rawTagName || '').toLowerCase()) };
+    for (const child of node.childNodes) {
+      const childFact = facts.get(child);
+      fact.media ||= childFact?.media === true;
+      fact.end = Math.max(fact.end, childFact?.end ?? index);
+    }
+    facts.set(node, fact);
   }
+  const text = (node: HTMLElement | null | undefined) => {
+    const segment = node && textIndex.range(node)[0];
+    return segment ? segment.tape.text.slice(segment.start, segment.end).replace(/\s+/g, ' ').trim() : '';
+  };
+  const restricted = root.querySelector('.restricted-post') || root.querySelector('.post-restricted');
+  const restrictedText = text(restricted);
+  if (accessRequirementFromPlainText(restrictedText)) return restrictedText;
   const readableContent = root
     .querySelectorAll('.post-content, .comment-content, .reply-content, .content-item .content')
-    .some((node) => elementText(node) || node.querySelector('img, video, pre, code'));
-  if (readableContent) {
+    .some((node) => textIndex.hasText(node) || node.childNodes.some((child) => facts.get(child)?.media));
+  if (readableContent) return '';
+  function findNotice(candidates: HTMLElement[], minLength = 0) {
+    const negatives: { through: number; segment: ForumTextSegment }[] = [];
+    for (const node of candidates) {
+      const fact = facts.get(node)!;
+      while (negatives.length && negatives[negatives.length - 1].through < fact.start) negatives.pop();
+      const segment = textIndex.range(node)[0];
+      if (!segment) continue;
+      const negative = negatives[negatives.length - 1]?.segment;
+      if (negative?.tape === segment.tape && segment.start >= negative.start && segment.end <= negative.end) continue;
+      const value = text(node);
+      if (value.length >= minLength && accessRequirementFromPlainText(value)) return value;
+      // DOM order controls lifetime; only a subrange of the same negative text snapshot can be skipped.
+      negatives.push({ through: fact.end, segment });
+    }
     return '';
   }
-  const explicitText =
-    root
-      .querySelectorAll('.empty-state, .notice, .alert')
-      .map((node) => elementText(node))
-      .find((text) => accessRequirementFromText(text)) || '';
-  if (explicitText) {
-    return explicitText;
-  }
-  if (!root.querySelector('#nsk-body')) {
-    return '';
-  }
+  const explicitText = findNotice(root.querySelectorAll('.empty-state, .notice, .alert'));
+  if (explicitText) return explicitText;
+  if (!root.querySelector('#nsk-body')) return '';
   const bodyLeft = root.querySelector('#nsk-body-left') || root.querySelector('#nsk-body');
-  const candidates = (bodyLeft?.querySelectorAll('*') || [])
-    .filter((node) => !['script', 'style', 'svg'].includes(String(node.rawTagName || '').toLowerCase()))
-    .map((node) => elementText(node))
-    .filter((text) => text.length >= 4);
-  const accessCandidate = candidates.find((text) => accessRequirementFromText(text));
-  if (accessCandidate) {
-    return accessCandidate;
-  }
-  return '';
+  const bodyRange = bodyLeft && facts.get(bodyLeft);
+  return findNotice(
+    (bodyRange ? nodes.slice(bodyRange.start + 1, bodyRange.end + 1) : []).filter(
+      (node) => !['script', 'style', 'svg'].includes(String(node.rawTagName || '').toLowerCase())
+    ),
+    4
+  );
 }
 
 export function parseRenderedNodeSeekTopicHtml(
@@ -802,25 +1168,30 @@ export function parseRenderedNodeSeekTopicHtml(
 ): TopicDetail | null {
   const { html, root } = document;
   const firstContentItem = root.querySelector('.content-item');
+  const contentRows = root.querySelectorAll(
+    '.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]'
+  );
+  const elements = nodeSeekElementIndex(root);
   const firstContentItemIsReplyContainer = String(firstContentItem?.rawTagName || '').toLowerCase() === 'li';
   const identifiedFirstReply = Boolean(
     page > 1 &&
     firstContentItem &&
-    (renderedNodeSeekFloor(firstContentItem) ||
+    (renderedNodeSeekFloor(firstContentItem, elements) ||
       renderedNodeSeekCommentId(firstContentItem) ||
       (firstContentItemIsReplyContainer &&
-        (renderedNodeSeekAuthor(firstContentItem) ||
+        (renderedNodeSeekAuthor(firstContentItem, elements) ||
           hasRenderableHtmlContent(
-            firstContentItem.querySelector('.post-content, .comment-content, .reply-content, .content')?.innerHTML
+            renderedNodeSeekFirst(
+              firstContentItem,
+              '.post-content, .comment-content, .reply-content, .content',
+              elements
+            )?.innerHTML
           ))))
   );
   const markdownByCommentId = new Map<number, unknown>();
   const markdownByFloor = new Map<number, unknown>();
-  const contentRows = root.querySelectorAll(
-    '.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]'
-  );
   const sourceFloor = (row: HTMLElement) =>
-    row === firstContentItem && !identifiedFirstReply ? 0 : renderedNodeSeekFloor(row);
+    row === firstContentItem && !identifiedFirstReply ? 0 : renderedNodeSeekFloor(row, elements);
   const postData = document.embedded?.postData;
   if (html.includes('terminal-container') && isRecord(postData)) {
     for (const comment of arrayField(postData.comments)) {
@@ -857,12 +1228,39 @@ export function parseRenderedNodeSeekTopicHtml(
     return floor === undefined ? undefined : markdownByFloor.get(floor);
   };
   const restrictedNotice = nodeSeekRestrictedNotice(root);
-  const contentElement =
-    firstContentItem?.querySelector('.post-content') ||
-    firstContentItem?.querySelector('.content') ||
-    root.querySelector('article .post-content') ||
-    root.querySelector('.post-detail .post-content') ||
-    root.querySelector('.post-content');
+  let contentElement =
+    firstContentItem?.querySelector('.post-content') || firstContentItem?.querySelector('.content') || null;
+  if (!contentElement) {
+    const contents = root.querySelectorAll('.post-content');
+    const ancestors = new Map<HTMLElement, { article: boolean; detail: boolean }>();
+    function contextFor(node: HTMLElement) {
+      const pending: HTMLElement[] = [];
+      let current: HTMLElement | null = node;
+      while (current && !ancestors.has(current)) {
+        pending.push(current);
+        current = current.parentNode;
+      }
+      let context = (current && ancestors.get(current)) || { article: false, detail: false };
+      while (pending.length) {
+        const parent = pending.pop()!;
+        context = {
+          article: context.article || String(parent.rawTagName || '').toLowerCase() === 'article',
+          detail:
+            context.detail ||
+            String(parent.getAttribute('class') || '')
+              .split(/\s+/)
+              .includes('post-detail')
+        };
+        ancestors.set(parent, context);
+      }
+      return context;
+    }
+    contentElement =
+      contents.find((node) => node.parentNode && contextFor(node.parentNode).article) ||
+      contents.find((node) => node.parentNode && contextFor(node.parentNode).detail) ||
+      contents[0] ||
+      null;
+  }
   const title = nodeSeekRenderedTitle(root, restrictedNotice);
   const renderedContentOuterHtml = contentElement ? html.slice(contentElement.range[0], contentElement.range[1]) : '';
   const renderedContentOpeningEnd = renderedContentOuterHtml.indexOf('>');
@@ -886,11 +1284,11 @@ export function parseRenderedNodeSeekTopicHtml(
         )
       : { html: renderedContentSource, polls: undefined };
   const renderedContentHtml = renderedPolls.html.trim();
-  const contentHtml = renderedContentHtml || restrictedNotice;
+  const contentHtml = renderedContentHtml || escapeHtmlText(restrictedNotice);
   if (!title || (!contentHtml && !identifiedFirstReply)) {
     return null;
   }
-  const accessRequirement = accessRequirementFromText(restrictedNotice);
+  const accessRequirement = accessRequirementFromPlainText(restrictedNotice);
   const authorContainer =
     firstContentItem || root.querySelector('article') || root.querySelector('.post-detail') || root;
   const categoryLink =
@@ -913,59 +1311,67 @@ export function parseRenderedNodeSeekTopicHtml(
   );
   const replyRows = contentRows.filter((row) => {
     if (row === firstContentItem && !identifiedFirstReply) return false;
-    const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+    const replyContent = renderedNodeSeekFirst(
+      row,
+      '.post-content, .comment-content, .reply-content, .content',
+      elements
+    );
     return Boolean(
       renderedNodeSeekCommentId(row) ||
-      renderedNodeSeekFloor(row) ||
-      renderedNodeSeekAuthor(row) ||
+      renderedNodeSeekFloor(row, elements) ||
+      renderedNodeSeekAuthor(row, elements) ||
       hasRenderableHtmlContent(replyContent?.innerHTML)
     );
   });
   const allReplies = replyRows.map((row) => {
-    const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+    const replyContent = renderedNodeSeekFirst(
+      row,
+      '.post-content, .comment-content, .reply-content, .content',
+      elements
+    );
     const preparedContent = prepareNodeSeekForumContent(
-      nodeSeekTerminalSourceHtml(replyContent?.innerHTML || '', sourceMarkdownFor(row)),
+      nodeSeekTerminalSourceHtml(elements.html(replyContent), sourceMarkdownFor(row)),
       { role: 'reply' }
     );
-    const preparedSignature = renderedNodeSeekSignature(row);
-    const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
+    const preparedSignature = renderedNodeSeekSignature(row, elements);
+    const authorHref = renderedNodeSeekFirst(row, 'a[href*="/space/"]', elements)?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
-    const authorLevelLabel = renderedNodeSeekRoleLabel(row);
+    const authorLevelLabel = renderedNodeSeekRoleLabel(row, elements);
     return {
-      author: renderedNodeSeekAuthor(row),
-      authorAvatar: renderedNodeSeekAvatar(row),
+      author: renderedNodeSeekAuthor(row, elements),
+      authorAvatar: renderedNodeSeekAvatar(row, elements),
       authorId,
       authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
       ...(authorLevelLabel ? { authorLevelLabel } : {}),
       contentHtml: preparedContent.contentHtml,
       preparedContent,
-      createdAt: renderedNodeSeekTime(row.querySelector('time')) || '',
-      floor: renderedNodeSeekFloor(row),
+      createdAt: renderedNodeSeekTime(renderedNodeSeekFirst(row, 'time', elements)) || '',
+      floor: renderedNodeSeekFloor(row, elements),
       commentId: renderedNodeSeekCommentId(row),
-      upvoteCount: renderedNodeSeekReactionCount(row, ['点赞', 'good-one', 'upvote']),
-      likeCount: renderedNodeSeekReactionCount(row, ['加鸡腿', 'chicken-leg']),
-      dislikeCount: renderedNodeSeekReactionCount(row, ['反对', 'bad-one', 'oppose', 'dislike']),
-      upvoted: renderedNodeSeekReactionClicked(row, ['点赞', 'good-one', 'upvote']),
-      liked: renderedNodeSeekReactionClicked(row, ['加鸡腿', 'chicken-leg']),
-      disliked: renderedNodeSeekReactionClicked(row, ['反对', 'bad-one', 'oppose', 'dislike']),
-      isOp: renderedNodeSeekIsOp(row),
-      hot: Boolean(row.querySelector('.hot-badge')) || undefined,
-      pinned: Boolean(row.querySelector('.pined-badge, .pinned-badge, .pin-badge')) || undefined,
+      upvoteCount: renderedNodeSeekReactionCount(row, ['点赞', 'good-one', 'upvote'], elements),
+      likeCount: renderedNodeSeekReactionCount(row, ['加鸡腿', 'chicken-leg'], elements),
+      dislikeCount: renderedNodeSeekReactionCount(row, ['反对', 'bad-one', 'oppose', 'dislike'], elements),
+      upvoted: renderedNodeSeekReactionClicked(row, ['点赞', 'good-one', 'upvote'], elements),
+      liked: renderedNodeSeekReactionClicked(row, ['加鸡腿', 'chicken-leg'], elements),
+      disliked: renderedNodeSeekReactionClicked(row, ['反对', 'bad-one', 'oppose', 'dislike'], elements),
+      isOp: renderedNodeSeekIsOp(row, elements),
+      hot: Boolean(renderedNodeSeekFirst(row, '.hot-badge', elements)) || undefined,
+      pinned: Boolean(renderedNodeSeekFirst(row, '.pined-badge, .pinned-badge, .pin-badge', elements)) || undefined,
       signatureHtml: preparedSignature?.contentHtml,
       ...(preparedSignature ? { preparedSignature } : {})
     };
   });
   const replies = allReplies.slice(0, replyLimit);
   const lastReplyAt = allReplies.at(-1)?.createdAt || createdAt;
-  const authorHref = authorContainer?.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
+  const authorHref = renderedNodeSeekFirst(authorContainer, 'a[href*="/space/"]', elements)?.getAttribute('href') || '';
   const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
-  const authorLevelLabel = renderedNodeSeekRoleLabel(authorContainer);
+  const authorLevelLabel = renderedNodeSeekRoleLabel(authorContainer, elements);
   return {
     source: 'nodeseek',
     id,
     title,
-    author: renderedNodeSeekAuthor(authorContainer),
-    authorAvatar: renderedNodeSeekAvatar(authorContainer),
+    author: renderedNodeSeekAuthor(authorContainer, elements),
+    authorAvatar: renderedNodeSeekAvatar(authorContainer, elements),
     authorId,
     authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
@@ -979,19 +1385,17 @@ export function parseRenderedNodeSeekTopicHtml(
     ...(renderedPolls.polls ? { polls: renderedPolls.polls } : {}),
     ...(accessRequirement ? { accessRequirement } : {}),
     commentId: firstContentItem ? renderedNodeSeekCommentId(firstContentItem) : undefined,
-    upvoteCount: renderedNodeSeekReactionCount(firstContentItem, ['点赞', 'good-one', 'upvote']),
-    likeCount: renderedNodeSeekReactionCount(firstContentItem, ['加鸡腿', 'chicken-leg']),
-    dislikeCount: renderedNodeSeekReactionCount(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike']),
-    upvoted: renderedNodeSeekReactionClicked(firstContentItem, ['点赞', 'good-one', 'upvote']),
-    liked: renderedNodeSeekReactionClicked(firstContentItem, ['加鸡腿', 'chicken-leg']),
-    disliked: renderedNodeSeekReactionClicked(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike']),
-    collectionCount: renderedNodeSeekReactionCount(firstContentItem, [
-      '收藏',
-      'star',
-      'favorite',
-      'collect',
-      'bookmark'
-    ]),
+    upvoteCount: renderedNodeSeekReactionCount(firstContentItem, ['点赞', 'good-one', 'upvote'], elements),
+    likeCount: renderedNodeSeekReactionCount(firstContentItem, ['加鸡腿', 'chicken-leg'], elements),
+    dislikeCount: renderedNodeSeekReactionCount(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike'], elements),
+    upvoted: renderedNodeSeekReactionClicked(firstContentItem, ['点赞', 'good-one', 'upvote'], elements),
+    liked: renderedNodeSeekReactionClicked(firstContentItem, ['加鸡腿', 'chicken-leg'], elements),
+    disliked: renderedNodeSeekReactionClicked(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike'], elements),
+    collectionCount: renderedNodeSeekReactionCount(
+      firstContentItem,
+      ['收藏', 'star', 'favorite', 'collect', 'bookmark'],
+      elements
+    ),
     replies,
     replyHasMore: allReplies.length > replyLimit,
     replyNextPage: allReplies.length > replyLimit ? 1 : null,

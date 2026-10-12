@@ -172,6 +172,15 @@ export function useAccountStatusController({
     delete activeProbeRef.current[source];
   }, []);
 
+  const beginAccountSessionClear = useCallback(
+    (source: StatusSource) => {
+      supersedeProbe(source);
+      const generation = probeGenerationRef.current[source];
+      return () => probeGenerationRef.current[source] === generation && enabledSourcesRef.current.has(source);
+    },
+    [supersedeProbe]
+  );
+
   const applyAccountSessionEvent = useCallback(
     (event: ScopedSiteSessionEvent) => {
       if (!enabledSourcesRef.current.has(event.site)) return false;
@@ -207,7 +216,7 @@ export function useAccountStatusController({
           finishDiagnosticTrace(activeProbe.trace, 'stale', { source, reason: 'superseded' });
           delete activeProbeRef.current[source];
         } else {
-          probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source], surfaceGeneration);
+          probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source] + 1, surfaceGeneration);
         }
       }
       commitAccountSnapshot(source, (current) => ({
@@ -626,6 +635,7 @@ export function useAccountStatusController({
     accountSessionViewModels,
     applyAccountSessionEvent,
     beginAccountIdentityCheck,
+    beginAccountSessionClear,
     hydrated,
     reconcileAccountStatus,
     refreshAccountStatus,

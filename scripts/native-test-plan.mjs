@@ -48,6 +48,7 @@ export const nativeTestTasks = {
       'SvgRendererPolicyTest',
       'BackupExportTest',
       'ImageDownloadTest',
+      'TopicShareCaptureTest',
       'ApkInstallerSignerTest',
       'ForumSearchCustomTabUrlTest',
       'NotificationDigestExecutorTest',

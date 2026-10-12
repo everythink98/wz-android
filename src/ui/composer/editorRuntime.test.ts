@@ -14,7 +14,13 @@ import {
   sanitizePastedHtml,
   setGfmColumnAlignment
 } from './editorRuntime';
-import type { ComposerToolbarAction } from './structuredComposerBridge';
+import { composerEditorMessageSchema, type ComposerToolbarAction } from './structuredComposerBridge';
+import {
+  MAX_COMPOSER_MARKDOWN_LENGTH,
+  nodeSeekPendingPollToken,
+  normalizePendingNodeSeekPoll,
+  type PendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 
 const TEST_THEME = {
   dark: false,
@@ -39,6 +45,7 @@ async function mountRuntime({
   markdown = '',
   mode = 'rich',
   nodeSeekMemberId,
+  pendingNodeSeekPolls = [],
   readOnly,
   runtimeStyle = false,
   site = 'linuxdo',
@@ -52,6 +59,7 @@ async function mountRuntime({
   markdown?: string;
   mode?: 'rich' | 'source';
   nodeSeekMemberId?: string | null;
+  pendingNodeSeekPolls?: PendingNodeSeekPoll[];
   readOnly?: boolean;
   runtimeStyle?: boolean;
   site?: 'linuxdo' | 'nodeseek';
@@ -95,7 +103,7 @@ async function mountRuntime({
       site,
       intentKind,
       markdown,
-      pendingNodeSeekPolls: [],
+      pendingNodeSeekPolls,
       mode,
       ...(documentEpoch === undefined ? {} : { documentEpoch }),
       ...(readOnly === undefined ? {} : { readOnly }),
@@ -141,6 +149,175 @@ function activateToolbarUpload(
 }
 
 describe('Composer editor runtime codec', () => {
+  it('blocks rich text mutations during settlement and unlocks on a replacement document', async () => {
+    const { host, send, postMessage } = await mountRuntime({ markdown: '已发送', documentEpoch: 3 });
+    await send({
+      type: 'REQUEST_SNAPSHOT',
+      payload: { requestId: 'settle', submission: { documentEpoch: 3, revision: 0 } }
+    });
+    expect(host.querySelector('.ProseMirror')?.getAttribute('contenteditable')).toBe('false');
+    await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '迟到写入' } });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'locked' } });
+    const reply = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((reply) => reply.payload.requestId === 'locked');
+    expect(reply.payload.snapshot).toMatchObject({ revision: 0, markdown: '已发送' });
+    await send({
+      type: 'INIT',
+      payload: {
+        documentEpoch: 4,
+        site: 'linuxdo',
+        intentKind: 'reply',
+        markdown: '',
+        pendingNodeSeekPolls: [],
+        mode: 'rich',
+        theme: TEST_THEME
+      }
+    });
+    expect(host.querySelector('.ProseMirror')?.getAttribute('contenteditable')).toBe('true');
+    await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '新文档' } });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'replacement' } });
+    const replacement = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((reply) => reply.payload.requestId === 'replacement');
+    expect(replacement.payload.snapshot.markdown).toBe('新文档');
+  });
+
+  it('returns a request error for oversized source text and recovers after editing', async () => {
+    const { host, send, postMessage } = await mountRuntime({ mode: 'source', markdown: '正文', documentEpoch: 7 });
+    const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+    await act(async () => {
+      source.dispatch({
+        changes: { from: 0, to: source.state.doc.length, insert: 'a'.repeat(MAX_COMPOSER_MARKDOWN_LENGTH + 1) }
+      });
+    });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'oversized' } });
+    const replies = () => postMessage.mock.calls.map(([raw]) => JSON.parse(String(raw)));
+    const error = replies().findLast((reply) => reply.payload.requestId === 'oversized');
+    expect(error.type).toBe('ERROR');
+    expect(error).toEqual({
+      type: 'ERROR',
+      payload: { documentEpoch: 7, requestId: 'oversized', revision: 1, code: 'too-long', message: '正文超过允许长度' }
+    });
+    expect(composerEditorMessageSchema.safeParse(error).success).toBe(true);
+    expect(source.state.doc.length).toBe(MAX_COMPOSER_MARKDOWN_LENGTH + 1);
+    await act(async () => {
+      source.dispatch({ changes: { from: 0, to: source.state.doc.length, insert: '修正后的正文' } });
+    });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'recovered' } });
+    const recovered = replies().findLast((reply) => reply.payload.requestId === 'recovered');
+    expect(composerEditorMessageSchema.safeParse(recovered).success).toBe(true);
+    expect(recovered.payload.snapshot.markdown).toBe('修正后的正文');
+  });
+
+  it('returns a request error when a new poll exceeds the sidecar limit', async () => {
+    const pendingNodeSeekPolls = Array.from({ length: 20 }, (_, index) =>
+      normalizePendingNodeSeekPoll({
+        localId: `existing_${index}`,
+        title: `投票 ${index}`,
+        multiple: false,
+        isPublic: false,
+        options: ['A', 'B']
+      })
+    );
+    const { host, send, postMessage, toolbarAction } = await mountRuntime({
+      site: 'nodeseek',
+      mode: 'source',
+      markdown: pendingNodeSeekPolls.map((poll) => nodeSeekPendingPollToken(poll.localId)).join('\n\n'),
+      pendingNodeSeekPolls
+    });
+    await toolbarAction('poll');
+    const title = host.querySelector<HTMLInputElement>('[aria-label="NodeSeek 投票"] input[aria-label="投票标题"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(title, '新增投票');
+      title?.dispatchEvent(new Event('input', { bubbles: true }));
+      host.querySelector<HTMLButtonElement>('[aria-label="NodeSeek 投票"] .primary')?.click();
+    });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'too-many-polls' } });
+    const error = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((reply) => reply.payload.requestId === 'too-many-polls');
+    expect(error.type).toBe('ERROR');
+    expect(error.payload).toMatchObject({ code: 'too-many-polls', message: '本地投票超过允许数量' });
+    expect(composerEditorMessageSchema.safeParse(error).success).toBe(true);
+    expect(
+      EditorView.findFromDOM(host.querySelector('.cm-editor')!)!
+        .state.doc.toString()
+        .match(/wz:nodeseek-poll:/g)
+    ).toHaveLength(21);
+  });
+
+  it('bounds missing poll diagnostics without rejecting or truncating the draft snapshot', async () => {
+    const markdown = Array.from({ length: 101 }, (_, i) => nodeSeekPendingPollToken(`missing_${i}`)).join('\n');
+    const { send, postMessage } = await mountRuntime({ site: 'nodeseek', mode: 'source', markdown });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'many-errors' } });
+    const reply = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((reply) => reply.payload.requestId === 'many-errors');
+    expect(composerEditorMessageSchema.safeParse(reply).success).toBe(true);
+    expect(reply.payload.snapshot.markdown.trim()).toBe(markdown.trim());
+    expect(reply.payload.snapshot.validationIssues).toHaveLength(100);
+  });
+
+  it.each(['rich', 'source'] as const)('sends each poll sidecar once for repeated %s poll tokens', async (mode) => {
+    const poll = normalizePendingNodeSeekPoll({
+      localId: 'repeated_poll',
+      title: '投票',
+      multiple: false,
+      isPublic: false,
+      options: ['A', 'B']
+    });
+    const markdown = Array.from({ length: 21 }, () => nodeSeekPendingPollToken(poll.localId)).join('\n\n');
+    const { send, postMessage } = await mountRuntime({
+      site: 'nodeseek',
+      mode,
+      markdown,
+      pendingNodeSeekPolls: [poll]
+    });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'repeated-polls' } });
+    const reply = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((reply) => reply.payload.requestId === 'repeated-polls');
+    expect(composerEditorMessageSchema.safeParse(reply).success).toBe(true);
+    expect(reply.payload.snapshot.pendingNodeSeekPolls).toEqual([poll]);
+    expect(reply.payload.snapshot.markdown.trim()).toBe(markdown.trim());
+  });
+
+  it('locks only a matching document revision during submission settlement', async () => {
+    const { host, send, postMessage } = await mountRuntime({
+      mode: 'source',
+      markdown: '已发送',
+      documentEpoch: 7,
+      waitForFrame: false
+    });
+    const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+    await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '后续输入' } }));
+    await send({
+      type: 'REQUEST_SNAPSHOT',
+      payload: { requestId: 'old', submission: { documentEpoch: 7, revision: 0 } }
+    });
+    const old = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((reply) => reply.payload.requestId === 'old');
+    expect(old.payload.snapshot).toMatchObject({ revision: 1, markdown: '已发送后续输入' });
+    await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '仍可输入' } }));
+    expect(source.state.doc.toString()).toBe('已发送后续输入仍可输入');
+    await send({
+      type: 'REQUEST_SNAPSHOT',
+      payload: { requestId: 'current', submission: { documentEpoch: 7, revision: 2 } }
+    });
+    const current = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((reply) => reply.payload.requestId === 'current');
+    expect(current.payload.snapshot.revision).toBe(2);
+    await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '结算期间' } }));
+    expect(source.state.doc.toString()).toBe('已发送后续输入仍可输入');
+    expect(host.querySelector('.source-pane')?.classList.contains('active')).toBe(true);
+    await send({ type: 'SET_READ_ONLY', payload: { readOnly: false } });
+    await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '恢复输入' } }));
+    expect(source.state.doc.toString()).toBe('已发送后续输入仍可输入恢复输入');
+  });
+
   it.each(
     (['rich', 'source'] as const).flatMap((mode) =>
       (['close', 'read-only'] as const).map((reason) => ({ mode, reason }))
@@ -1857,6 +2034,46 @@ describe('Composer editor runtime codec', () => {
     }
   );
 
+  it('focuses the source input only after its pane is visible and preserves the document', async () => {
+    const { host } = await mountRuntime({ markdown: '保留正文', runtimeStyle: true, waitForFrame: false });
+    const richInput = host.querySelector<HTMLElement>('.ProseMirror')!;
+    const sourceInput = host.querySelector<HTMLElement>('.cm-content')!;
+    const pane = sourceInput.closest<HTMLElement>('.source-pane')!;
+    await act(async () => richInput.focus());
+    expect(document.activeElement).toBe(richInput);
+
+    const frames: FrameRequestCallback[] = [];
+    const observedFocus: { active: boolean; display: string }[] = [];
+    const originalFocus = HTMLElement.prototype.focus;
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, options) {
+      if (this === sourceInput)
+        observedFocus.push({ active: pane.classList.contains('active'), display: getComputedStyle(pane).display });
+      originalFocus.call(this, options);
+    });
+    try {
+      await act(async () => {
+        window.dispatchEvent(
+          new MessageEvent('message', { data: JSON.stringify({ type: 'SET_MODE', payload: { mode: 'source' } }) })
+        );
+        // Exercise a frame before the external bridge update commits.
+        frames.splice(0).forEach((callback) => callback(performance.now()));
+      });
+      expect(pane.classList.contains('active')).toBe(true);
+      expect(document.activeElement).toBe(sourceInput);
+      expect(sourceInput.textContent).toBe('保留正文');
+      expect(richInput.textContent).toBe('保留正文');
+      expect(observedFocus.length).toBeGreaterThan(0);
+      expect(observedFocus.filter(({ active, display }) => !active || display === 'none')).toEqual([]);
+    } finally {
+      focus.mockRestore();
+      requestFrame.mockRestore();
+    }
+  });
+
   it.each(['rich', 'source'] as const)(
     'returns from expressions before focusing the next %s editing mode',
     async (mode) => {
@@ -2204,6 +2421,8 @@ describe('Composer editor runtime codec', () => {
 
   const editors: Editor[] = [];
   afterEach(async () => {
+    // Finish the previous interaction's queued frame while its editor is still mounted.
+    await act(async () => new Promise(requestAnimationFrame));
     editors.splice(0).forEach((editor) => editor.destroy());
     for (const { host, root } of mountedRuntimes.splice(0)) {
       if (!host.isConnected) continue;

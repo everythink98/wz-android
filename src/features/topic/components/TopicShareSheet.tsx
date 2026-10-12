@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Modal,
   PixelRatio,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,6 +20,7 @@ import type { TopicDetail } from '@/domain/forum/models';
 import { normalizeMediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { captureLongTopicImage } from '@/platform/media/topicShareCapture';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { errorMessage } from '@/platform/network/errors';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
@@ -136,6 +138,7 @@ export function TopicShareSheet({
   const scrollRef = useRef<ScrollView>(null);
   const mounted = useRef(true);
   const busyRef = useRef(false);
+  const captureAbort = useRef<AbortController | null>(null);
   const [operation, setOperation] = useState<'share' | 'save' | null>(null);
   const [saved, setSaved] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -163,6 +166,7 @@ export function TopicShareSheet({
   const onImageStart = useCallback(
     (index: number) => {
       if (!mounted.current || currentAttempt.current !== attempt) return;
+      captureAbort.current?.abort();
       setCompleted((current) => {
         if (!current.has(index)) return current;
         const next = new Set(current);
@@ -191,6 +195,7 @@ export function TopicShareSheet({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      captureAbort.current?.abort();
     };
   }, []);
   useEffect(() => {
@@ -202,8 +207,11 @@ export function TopicShareSheet({
   }, [attempt, completed.size, imageCount]);
 
   const density = PixelRatio.get();
-  // view-shot allocates the full native bitmap before any output resizing.
-  const tooLarge = width * height * density * density > 24_000_000 || height * density > 32_000;
+  // view-shot allocates the full native bitmap; Android streams larger captures in bounded strips.
+  const needsBoundedCapture = width * height * density * density > 24_000_000 || height * density > 32_000;
+  const boundedCapture = useRef(false);
+  boundedCapture.current = needsBoundedCapture;
+  const tooLarge = Platform.OS !== 'android' && needsBoundedCapture;
   const error =
     document.kind === 'error'
       ? document.message
@@ -213,12 +221,17 @@ export function TopicShareSheet({
   const ready = !error && height > 0 && completed.size === imageCount;
   const canCapture = useRef(false);
   canCapture.current = ready;
+  useEffect(() => {
+    if (!ready) captureAbort.current?.abort();
+  }, [ready]);
   const close = () => {
     mounted.current = false;
+    captureAbort.current?.abort();
     onClose();
   };
   const back = () => {
     mounted.current = false;
+    captureAbort.current?.abort();
     (onBack || onClose)();
   };
   const retry = () => {
@@ -236,19 +249,30 @@ export function TopicShareSheet({
     busyRef.current = true;
     setOperation(action);
     setShareError('');
+    const abort = new AbortController();
+    captureAbort.current = abort;
     let uri: string | undefined;
-    let release: ((uri: string) => void) | undefined;
+    let release: (() => void) | undefined;
     try {
       // Wait for the layout after the final decoded image before reading native pixels.
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       if (!mounted.current || !canCapture.current) return;
-      // Keep the native module outside the read-only Topic import path, including older development APKs.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const viewShot: typeof import('react-native-view-shot') = require('react-native-view-shot');
-      const { captureRef, releaseCapture } = viewShot;
-      release = releaseCapture;
-      if (!mounted.current || !canCapture.current) return;
-      uri = await captureRef(scrollRef, { format: 'png', result: 'tmpfile', snapshotContentContainer: true });
+      if (boundedCapture.current && Platform.OS === 'android') {
+        const captured = await captureLongTopicImage(scrollRef.current, abort.signal);
+        uri = captured.uri;
+        release = captured.release;
+      } else {
+        // Keep the native module outside the read-only Topic import path, including older development APKs.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const viewShot: typeof import('react-native-view-shot') = require('react-native-view-shot');
+        uri = await viewShot.captureRef(scrollRef, {
+          format: 'png',
+          result: 'tmpfile',
+          snapshotContentContainer: true
+        });
+        const capturedUri = uri;
+        release = () => viewShot.releaseCapture(capturedUri);
+      }
       if (!mounted.current) return;
       if (action === 'share') await shareTopicImageFile(uri, topic.title, () => mounted.current);
       else {
@@ -263,7 +287,8 @@ export function TopicShareSheet({
     } catch (cause) {
       if (mounted.current) setShareError(`${action === 'share' ? '分享' : '保存'}失败：${errorMessage(cause)}`);
     } finally {
-      if (uri) release?.(uri);
+      release?.();
+      captureAbort.current = null;
       busyRef.current = false;
       if (mounted.current) setOperation(null);
     }

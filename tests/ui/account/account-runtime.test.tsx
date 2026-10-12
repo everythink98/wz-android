@@ -1,5 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { QueryObserver } from '@tanstack/react-query';
+import { NativeModules } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
 import { discourseReadingQueryKey } from '@/platform/query/discourseReadingRuntime';
@@ -44,6 +46,7 @@ jest.mock('@/platform/network/managedCookies', () => ({
 }));
 
 let events: DiagnosticEvent[] = [];
+let networkProxyDescriptor: PropertyDescriptor | undefined;
 function seedAccount(username = 'alice') {
   appQueryClient.setQueryData(
     accountQueryKeys.snapshot('linuxdo'),
@@ -79,6 +82,8 @@ async function renderRuntime(fetcher: Fetcher) {
 }
 
 beforeEach(() => {
+  networkProxyDescriptor = Object.getOwnPropertyDescriptor(NativeModules, 'NetworkProxyModule');
+  jest.spyOn(SecureStore, 'deleteItemAsync').mockResolvedValue(undefined);
   mockWebViewLoads = [];
   mockWebViewInjectJavaScript.mockReset();
   events = [];
@@ -86,7 +91,12 @@ beforeEach(() => {
     events.push(JSON.parse(line) as DiagnosticEvent);
   });
 });
-afterEach(() => setDiagnosticWriter(null));
+afterEach(() => {
+  setDiagnosticWriter(null);
+  jest.mocked(SecureStore.deleteItemAsync).mockRestore();
+  if (networkProxyDescriptor) Object.defineProperty(NativeModules, 'NetworkProxyModule', networkProxyDescriptor);
+  else delete NativeModules.NetworkProxyModule;
+});
 
 async function renderManualLogin(fetcher: Fetcher) {
   let runtime!: ReturnType<typeof useAccountRuntime>;
@@ -131,7 +141,7 @@ function recordCookieBarriers() {
   return () => barrier.mockImplementation(previous);
 }
 
-async function renderSiteRuntime(source: 'nodeseek' | 'yaohuo', fetcher: Fetcher) {
+async function renderSiteRuntime(source: 'nodeseek' | 'linuxdo' | 'yaohuo', fetcher: Fetcher) {
   let runtime!: ReturnType<typeof useAccountRuntime>;
   const notify = jest.fn();
   function Harness({ active = true }: { active?: boolean }) {
@@ -163,6 +173,133 @@ function seedNodeSeekAccount() {
     })
   );
 }
+
+function accountClearFixture(site: 'nodeseek' | 'linuxdo' | 'yaohuo') {
+  const id = site === 'nodeseek' ? '42' : site === 'linuxdo' ? 'alice' : '7';
+  const username = site === 'yaohuo' ? '火友' : 'alice';
+  appQueryClient.setQueryData(
+    accountQueryKeys.snapshot(site),
+    accountSessionSnapshotFromEvent(createAccountSessionSnapshot(site), {
+      type: 'session-updated',
+      loggedIn: true,
+      currentUser: { source: site, id, username, url: `https://example.test/${id}` }
+    })
+  );
+  const response = () =>
+    new Response(
+      site === 'linuxdo'
+        ? JSON.stringify({ current_user: { id, username } })
+        : site === 'nodeseek'
+          ? `<html><a class="Username" href="/space/${id}">${username}</a></html>`
+          : `<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=${id}">${username}</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>`
+    );
+  return { id, response };
+}
+
+it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+  'preserves a newer %s account check when legacy clear cleanup finishes',
+  async (site) => {
+    const { id, response } = accountClearFixture(site);
+    const probe = Promise.withResolvers<Response>();
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(() => probe.promise);
+    const nativeClear = jest.fn(async () => true);
+    NativeModules.NetworkProxyModule = { clearManagedLoginCookies: nativeClear };
+    const { view, runtime } = await renderSiteRuntime(site, fetcher);
+    await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
+    const cleanup = Promise.withResolvers<void>();
+    jest
+      .mocked(SecureStore.deleteItemAsync)
+      .mockClear()
+      .mockImplementationOnce(() => cleanup.promise);
+    await fireEvent.press(view.getByLabelText('清除登录'));
+    await waitFor(() => expect(SecureStore.deleteItemAsync).toHaveBeenCalled());
+    let checking!: ReturnType<ReturnType<typeof useAccountRuntime>['read']['reconcileAccountStatus']>;
+    await act(async () => {
+      checking = runtime().read.reconcileAccountStatus(site);
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    await act(async () => {
+      cleanup.resolve();
+    });
+    await waitFor(() =>
+      expect(events.some((event) => event.operation === 'clear' && event.phase === 'finish')).toBe(true)
+    );
+    const duringProbe = runtime().read.accountSessionViewModels[site];
+    await act(async () => {
+      probe.resolve(response());
+      await checking;
+    });
+    expect(duringProbe).toMatchObject({ currentUser: { id }, isLoggedIn: true, isVerifying: true });
+    await waitFor(() =>
+      expect(runtime().read.accountSessionViewModels[site]).toMatchObject({
+        currentUser: { id },
+        isLoggedIn: true,
+        isVerifying: false
+      })
+    );
+    expect(events.filter((event) => event.operation === 'clear' && event.phase === 'finish')).toEqual([
+      expect.objectContaining({ source: site, outcome: 'stale' })
+    ]);
+  }
+);
+
+it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+  'ignores a late %s clear failure after a newer check confirms the same account',
+  async (site) => {
+    const { id, response } = accountClearFixture(site);
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => response());
+    const native = Promise.withResolvers<boolean>();
+    const nativeClear = jest.fn(() => native.promise);
+    NativeModules.NetworkProxyModule = { clearManagedLoginCookies: nativeClear };
+    const { view, runtime } = await renderSiteRuntime(site, fetcher);
+    await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
+    await fireEvent.press(view.getByLabelText('清除登录'));
+    await waitFor(() => expect(nativeClear).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await runtime().read.reconcileAccountStatus(site);
+    });
+    await act(async () => {
+      native.reject(new Error('late native clear failure'));
+    });
+    await waitFor(() =>
+      expect(events.some((event) => event.operation === 'clear' && event.phase === 'finish')).toBe(true)
+    );
+    expect(runtime().read.accountSessionViewModels[site]).toMatchObject({ currentUser: { id }, isLoggedIn: true });
+    expect(runtime().read.accountSessionViewModels[site].lastError).toBeUndefined();
+    expect(events.filter((event) => event.operation === 'clear' && event.phase === 'finish')).toEqual([
+      expect.objectContaining({ source: site, outcome: 'stale' })
+    ]);
+  }
+);
+
+it('supersedes a LinuxDo clear while its native cookie barrier is pending', async () => {
+  const { id, response } = accountClearFixture('linuxdo');
+  const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => response());
+  const nativeClear = jest.fn(async () => true);
+  NativeModules.NetworkProxyModule = { clearManagedLoginCookies: nativeClear };
+  const { view, runtime } = await renderSiteRuntime('linuxdo', fetcher);
+  await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }));
+  const barrier = Promise.withResolvers<void>();
+  const barrierMock = jest.mocked(setLinuxDoCookieResponseBarrier);
+  const previous = barrierMock.getMockImplementation()!;
+  barrierMock.mockImplementation((blocked, reason, ...args) =>
+    reason === 'explicit-clear' ? barrier.promise : previous(blocked, reason, ...args)
+  );
+  try {
+    await fireEvent.press(view.getByLabelText('清除登录'));
+    await waitFor(() => expect(barrierMock).toHaveBeenCalledWith(true, 'explicit-clear'));
+    await act(async () => {
+      await runtime().read.reconcileAccountStatus('linuxdo');
+    });
+    await act(async () => {
+      barrier.resolve();
+    });
+    expect(nativeClear).not.toHaveBeenCalled();
+    expect(runtime().read.accountSessionViewModels.linuxdo).toMatchObject({ currentUser: { id }, isLoggedIn: true });
+  } finally {
+    barrierMock.mockImplementation(previous);
+  }
+});
 
 it.each(['pending', 'failed', 'unknown', 'reopened'] as const)(
   'reconciles a closed Yaohuo page before issuing write access after a %s account check',
