@@ -150,8 +150,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.line,
       paddingTop: 12
-    },
-    pressed: { backgroundColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.08) }
+    }
   });
 }
 
@@ -253,7 +252,7 @@ export function LinuxDoBoosts({ post }: { post: Post }) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="添加加电"
-          style={({ pressed }) => [styles.rocket, pressed && styles.pressed]}
+          style={styles.rocket}
           hitSlop={4}
           onPress={() => context?.openBoostComposer(post.commentId!)}
         >
@@ -531,7 +530,7 @@ export function LinuxDoPostInteractionsProvider({
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel={`插入表情 ${id}`}
-                          style={({ pressed }) => [styles.choice, styles.catalogChoice, pressed && styles.pressed]}
+                          style={[styles.choice, styles.catalogChoice]}
                           onPress={() => addEmoji(id)}
                         >
                           <EmojiImage url={emojiUrls[id]} label={id} />
