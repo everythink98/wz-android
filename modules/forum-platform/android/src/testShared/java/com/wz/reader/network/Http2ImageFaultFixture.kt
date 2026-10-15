@@ -217,9 +217,9 @@ internal class Http2ImageFaultFixture(
   }
 
   fun assertFreshConnection(start: Long? = null) {
-    // OkHttp may race two TCP connects, then close the redundant candidate before acquiring it.
+    // OkHttp can acquire both replacement connections when parallel dials race pool insertion.
     assertTrue("replacement dialing is bounded", connections.get() in 2..3)
-    assertEquals("consumers share one acquired replacement", 2, acquired.toSet().size)
+    assertTrue("replacement acquisitions are bounded", acquired.toSet().size in 2..3)
     assertNotSame(acquired.first(), acquired.last())
     if (start != null) {
       val elapsed = TimeUnit.NANOSECONDS.toMillis(firstReplacementAt.get() - start)
@@ -274,10 +274,9 @@ internal class Http2ImageFaultFixture(
     val connectMs = TimeUnit.NANOSECONDS.toMillis(firstReplacementAt.get() - start)
     assertTrue("fresh connection must begin within 10s; elapsed=" + connectMs, connectMs in 0..9_999)
     assertFreshConnection()
-    val fresh = acquired.last()
-    assertNotSame(old, fresh)
+    val fresh = acquired.toSet() - old
     call("/after.png").execute().use { assertArrayEquals(png, it.body!!.bytes()) }
-    assertSame("dead connection must never be selected again", fresh, acquired.last())
+    assertTrue("the next image must reuse a recovered connection", acquired.last() in fresh)
     assertTrue(healthyDone.await(15, TimeUnit.SECONDS))
     assertTrue("another healthy media connection must finish without cancellation", healthySucceeded.get())
     assertFalse(healthy.isCanceled())
@@ -292,17 +291,20 @@ internal class Http2ImageFaultFixture(
   }
 
   override fun close() {
-    activeCalls.forEach { it.cancel() }
-    // Failure cleanup must unblock synthetic client writes too, without interrupting OkHttp workers.
-    synchronized(clientSockets) { clientSockets.forEach { it.close() } }
-    synchronized(acquired) { acquired.forEach { it.socket().close() } }
-    relay.close()
-    synchronized(sockets) { sockets.forEach { it.close() } }
-    workers.shutdownNow()
-    server.close()
     val retired = NetworkProxyRuntime.imageClientForTests()
-    field.set(NetworkProxyRuntime, original)
-    NetworkProxyRuntime.recoverForumReadChannel("linuxdo")
+    try {
+      activeCalls.forEach { it.cancel() }
+      // Failure cleanup must unblock synthetic client writes too, without interrupting OkHttp workers.
+      synchronized(clientSockets) { clientSockets.forEach { it.close() } }
+      synchronized(acquired) { acquired.forEach { it.socket().close() } }
+      relay.close()
+      synchronized(sockets) { sockets.forEach { it.close() } }
+      workers.shutdownNow()
+      server.close()
+    } finally {
+      field.set(NetworkProxyRuntime, original)
+      NetworkProxyRuntime.recoverForumReadChannel("linuxdo")
+    }
     await("all calls, bodies and runtime leases must release") { retired.dispatcher.executorService.isShutdown }
     assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS))
   }
