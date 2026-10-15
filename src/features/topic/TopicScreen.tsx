@@ -27,6 +27,7 @@ import { createTopicStyles } from './styles';
 import { ReplyComposerSheet } from './components/ReplyComposerSheet';
 import { TopicContentList } from './components/TopicContentList';
 import { TopicMenu } from './components/TopicMenu';
+import { LinuxDoPostInteractionsProvider } from './components/LinuxDoPostInteractions';
 import { readableTopicError } from './model/topicError';
 import type { TopicActionsController } from './actions/useTopicActionsController';
 import type { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
@@ -188,7 +189,7 @@ export const TopicScreen = memo(function TopicScreen({
     <LoadingState text="正在读取主题..." />
   ) : null;
 
-  return (
+  const content = (
     <View style={styles.topicScreenRoot} onLayout={onPageLayout}>
       <ScreenTopBar>
         <IconButton icon={ChevronLeft} compact ghost label="返回" onPress={chrome.back} />
@@ -310,5 +311,18 @@ export const TopicScreen = memo(function TopicScreen({
         }
       />
     </View>
+  );
+  return (
+    <LinuxDoPostInteractionsProvider
+      active={active}
+      scopeKey={`${html.mediaSessionIdentity}:${item.id}`}
+      topic={topic}
+      replies={read.topicReplies}
+      actions={actions}
+      emojiUrls={discourseEmojiUrls}
+      onOpenUser={chrome.openUser}
+    >
+      {content}
+    </LinuxDoPostInteractionsProvider>
   );
 });

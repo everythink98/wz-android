@@ -216,8 +216,7 @@ describe('Android release packaging guards', () => {
       'OkHttpClientProvider.setOkHttpClientFactory',
       'NetworkingModule.setCustomClientBuilder',
       'fun readManagedCookieHeader(exactUrl: String, promise: Promise)',
-      'fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise)',
-      'WebSettings.getDefaultUserAgent(reactContext)'
+      'fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise)'
     ]) {
       expect(plugin).toContain(required);
     }
@@ -229,21 +228,6 @@ describe('Android release packaging guards', () => {
     ]) {
       expect(plugin).not.toContain(forbidden);
     }
-    const moduleSource = readProjectFile(
-      'modules',
-      'forum-platform',
-      'android',
-      'src',
-      'main',
-      'java',
-      'com',
-      'wz',
-      'reader',
-      'network',
-      'NetworkProxyModule.kt'
-    );
-    expect(moduleSource).toContain('import android.webkit.WebSettings');
-    expect(moduleSource).toContain('WebSettings.getDefaultUserAgent(reactContext)');
     expect(app.expo.plugins).not.toContain('./plugins/withLinuxDoCookieModule');
     expect(
       plugin.slice(

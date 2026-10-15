@@ -1,5 +1,5 @@
 import { normalizeYaohuoReplyDeletePath, type YaohuoActionRequest } from './actionRequest';
-import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html';
 import { parseYaohuoFavoriteRecordId } from './topicParser';
@@ -15,8 +15,7 @@ export const YAOHUO_ACTION_HEADERS = {
   referer: YAOHUO_BBS_REFERER,
   'sec-fetch-dest': 'document',
   'sec-fetch-mode': 'navigate',
-  'sec-fetch-site': 'same-origin',
-  ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT ? { 'user-agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT } : {})
+  'sec-fetch-site': 'same-origin'
 };
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
 const YAOHUO_ACTION_SUCCESS_PATTERN =
@@ -194,6 +193,10 @@ async function fetchYaohuoActionHtml({
       method: request.method,
       headers: {
         ...YAOHUO_ACTION_HEADERS,
+        'user-agent': await resolveWebViewUserAgent(
+          new Headers(request.headers).get('User-Agent') || undefined,
+          signal
+        ),
         ...request.headers
       },
       body: request.method === 'POST' ? request.body : undefined,

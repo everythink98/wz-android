@@ -1,3 +1,4 @@
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { parse } from 'node-html-parser';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
@@ -250,7 +251,7 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
         'X-Requested-With': 'XMLHttpRequest',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         Referer: `${LINUXDO_BASE_URL}/latest`,
-        ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
+        'User-Agent': await resolveWebViewUserAgent(options.userAgent, options.signal)
       }
     },
     {
@@ -286,7 +287,7 @@ async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions, recoverSe
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       Referer: LINUXDO_BASE_URL,
-      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
+      'User-Agent': await resolveWebViewUserAgent(options.userAgent, options.signal)
     }
   };
   const response = await fetchWithTimeout(

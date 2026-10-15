@@ -1,6 +1,6 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { resolveTopicLocation, topicLocationForReply } from '@/domain/forum/topicLocation';
-import { createTopicStyles, type TopicStyles } from '../styles';
+import { createTopicStyles, createTopicTableStyles, type TopicStyles } from '../styles';
 import {
   createContext,
   memo,
@@ -85,6 +85,12 @@ import type { InteractionType } from '@/domain/forum/topicActionState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
+import {
+  LinuxDoBoostButton,
+  LinuxDoBoosts,
+  LinuxDoReactionButton,
+  useLinuxDoInteractionOverlayOpen
+} from './LinuxDoPostInteractions';
 import { replyForQuotedPost, topicOpeningPostAsReply, topicForQuotedPost } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { TopicPolls } from './TopicPolls';
@@ -308,6 +314,7 @@ function TopicListItemFrame({
   style: ViewStyle;
 }) {
   const markFirstRow = useTopicBodyMediaFirstRowMarker();
+  const marker = useTopicSelectionRowRef(selectionRowKey);
   const markedRef = useRef(false);
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -318,36 +325,10 @@ function TopicListItemFrame({
     },
     [firstRowStartedAt, markFirstRow, onLayout]
   );
-  if (selectionRowKey) {
-    return (
-      <TopicSelectionMarkedFrame rowKey={selectionRowKey} style={style} onLayout={handleLayout}>
-        {children}
-      </TopicSelectionMarkedFrame>
-    );
-  }
   return (
-    <View style={style} onLayout={handleLayout}>
-      {children}
-    </View>
-  );
-}
-
-function TopicSelectionMarkedFrame({
-  children,
-  onLayout,
-  rowKey,
-  style
-}: {
-  children: ReactNode;
-  onLayout: (event: LayoutChangeEvent) => void;
-  rowKey: string;
-  style: ViewStyle;
-}) {
-  const marker = useTopicSelectionRowRef(rowKey);
-  return (
-    <TopicSelectionRowProvider active={marker.active}>
-      {/* Removing nativeID in the background must not reparent the video surface. */}
-      <View ref={marker.ref} collapsable={false} nativeID={marker.nativeID} style={style} onLayout={onLayout}>
+    <TopicSelectionRowProvider active={Boolean(selectionRowKey && marker.active)}>
+      {/* Selection changes must keep the quote header and native media mounted. */}
+      <View ref={marker.ref} collapsable={false} nativeID={marker.nativeID} style={style} onLayout={handleLayout}>
         {children}
       </View>
     </TopicSelectionRowProvider>
@@ -395,7 +376,7 @@ export const TopicContentList = memo(function TopicContentList({
   actions,
   article,
   bodyMediaPaused = false,
-  readingPaused = false,
+  readingPaused: readingPausedByParent = false,
   bottomContentInset = 0,
   currentNodeSeekUser,
   discourseEmojiUrls,
@@ -440,6 +421,8 @@ export const TopicContentList = memo(function TopicContentList({
   locationRequestId?: number;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
+  const interactionOverlayOpen = useLinuxDoInteractionOverlayOpen();
+  const readingPaused = readingPausedByParent || interactionOverlayOpen;
   const { state, commands } = session;
   const {
     actionBusy,
@@ -950,7 +933,11 @@ export const TopicContentList = memo(function TopicContentList({
     topic &&
     !topicShowsAccessNotice &&
     ((topic.source === 'nodeseek' && (canWriteNodeSeek || topicReactionStats.length > 0)) ||
-      (isDiscourseSource(topic.source) && (canUseDiscourseInteractions || discourseTopicReactionStats.length > 0)) ||
+      (isDiscourseSource(topic.source) &&
+        (canUseDiscourseInteractions ||
+          discourseTopicReactionStats.length > 0 ||
+          topic.siteExtension?.boosts?.length ||
+          topic.siteExtension?.canBoost)) ||
       (topic.source === 'yaohuo' && canWriteYaohuo) ||
       (topic.source === 'v2ex' && !titleOnlyV2ex && typeof topic.upvoteCount === 'number'))
   );
@@ -1515,6 +1502,7 @@ export const TopicContentList = memo(function TopicContentList({
     windowStartWithinPrefetchRef.current = false;
     pendingAcceptedAnswerScrollRef.current = false;
   }, [item?.id, item?.source]);
+  const tableStyles = useMemo(() => createTopicTableStyles(theme), [theme]);
   const tableRenderers = useMemo(
     () =>
       createTopicTableRenderers({
@@ -1522,9 +1510,9 @@ export const TopicContentList = memo(function TopicContentList({
           96 *
             (typeof htmlBaseStyle.fontSize === 'number' && htmlBaseStyle.fontSize > 0 ? htmlBaseStyle.fontSize / 16 : 1)
         ),
-        styles
+        styles: tableStyles
       }),
-    [htmlBaseStyle.fontSize, styles]
+    [htmlBaseStyle.fontSize, tableStyles]
   );
   const genericHtmlRenderers = useMemo<HtmlRenderers>(() => {
     return {
@@ -1910,7 +1898,8 @@ export const TopicContentList = memo(function TopicContentList({
                 ) : null}
                 {canUseDiscourseInteractions ? (
                   <View style={styles.topicPrimaryActions}>
-                    <DetailActionButton
+                    <LinuxDoReactionButton
+                      post={topic!}
                       active={Boolean(topic?.liked)}
                       tone="success"
                       accessibilityLabel={topic?.liked ? '取消赞' : '点赞'}
@@ -1922,6 +1911,7 @@ export const TopicContentList = memo(function TopicContentList({
                       disabled={actionBusy || !likeDecision.allowed}
                       onPress={() => onInteract('like', topic?.commentId)}
                     />
+                    <LinuxDoBoostButton post={topic!} styles={styles} theme={theme} disabled={actionBusy} />
                     <DetailActionButton
                       active={Boolean(topic?.bookmarked)}
                       tone="favorite"
@@ -1937,6 +1927,7 @@ export const TopicContentList = memo(function TopicContentList({
                     />
                   </View>
                 ) : null}
+                {topic?.source === 'linuxdo' ? <LinuxDoBoosts post={topic} /> : null}
               </View>,
               'topic-actions'
             )
@@ -1990,36 +1981,45 @@ export const TopicContentList = memo(function TopicContentList({
         const sameTopic = reference.source === itemSource && reference.topicId === item?.id;
         const quotedTopic = sameTopic ? null : topicForQuotedPost(quote, item?.url);
         const canOpenReference = sameTopic || Boolean(quotedTopic);
+        const openReference = () => {
+          if (sameTopic) {
+            requestReplyLocation({ floor: reference.postNumber });
+          } else if (quotedTopic) {
+            onOpenTopic(quotedTopic, topicLocationForReply(reference.source, { floor: reference.postNumber }));
+          }
+        };
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
             <TopicBodyQuoteCard
               completeContentMountedExternally={expanded && Boolean(quotedPost)}
               expanded={expanded}
               header={
-                <Pressable
-                  accessibilityLabel={
-                    sameTopic
-                      ? `定位引用回复，第 ${reference.postNumber} 楼`
-                      : `打开引用主题，${quote.topicTitle || `第 ${reference.postNumber} 楼`}`
-                  }
-                  accessibilityRole={canOpenReference ? 'button' : undefined}
-                  disabled={!canOpenReference}
-                  onPress={() => {
-                    if (sameTopic) {
-                      requestReplyLocation({ floor: reference.postNumber });
-                    } else if (quotedTopic) {
-                      onOpenTopic(
-                        quotedTopic,
-                        topicLocationForReply(reference.source, { floor: reference.postNumber })
-                      );
-                    }
-                  }}
-                >
-                  <Text style={styles.quoteAuthorText} numberOfLines={1}>
-                    {quote.author?.label || quote.topicTitle || '引用内容'}
-                  </Text>
-                  <Text style={styles.replyMeta}>引用 #{reference.postNumber}</Text>
-                </Pressable>
+                <>
+                  <Avatar
+                    contentSource={reference.source}
+                    small
+                    name={quote.author?.label}
+                    uri={quote.author?.avatar || quotedPost?.authorAvatar}
+                  />
+                  <Pressable
+                    accessibilityLabel={`${quote.author?.label || '引用内容'}，${
+                      sameTopic
+                        ? `定位引用回复，第 ${reference.postNumber} 楼`
+                        : `打开引用楼层，第 ${reference.postNumber} 楼`
+                    }`}
+                    accessibilityRole={canOpenReference ? 'button' : undefined}
+                    disabled={!canOpenReference}
+                    style={[styles.quoteAuthorTextBlock, styles.quoteTopicLink]}
+                    onPress={openReference}
+                  >
+                    <Text style={styles.quoteAuthorText} numberOfLines={1}>
+                      {quote.author?.label || '引用内容'}
+                    </Text>
+                    <Text style={[styles.replyMeta, styles.quoteMeta]} numberOfLines={1}>
+                      引用 #{reference.postNumber}
+                    </Text>
+                  </Pressable>
+                </>
               }
               loading={Boolean(loadingQuotedFloors[instanceKey])}
               preview={quote.preview ? <Text style={styles.quotePreviewText}>{quote.preview}</Text> : undefined}
@@ -2027,6 +2027,25 @@ export const TopicContentList = memo(function TopicContentList({
               styles={styles}
               testID={`topic-quote-${reference.topicId}-${reference.postNumber}`}
               theme={theme}
+              title={
+                quote.topicTitle ? (
+                  <Pressable
+                    accessibilityLabel={
+                      sameTopic
+                        ? `定位引用主题，${quote.topicTitle}，第 ${reference.postNumber} 楼`
+                        : `打开引用主题，${quote.topicTitle}`
+                    }
+                    accessibilityRole={canOpenReference ? 'button' : undefined}
+                    disabled={!canOpenReference}
+                    style={styles.quoteTopicLink}
+                    onPress={openReference}
+                  >
+                    <Text style={styles.quoteTopicLinkText} numberOfLines={2}>
+                      {quote.topicTitle}
+                    </Text>
+                  </Pressable>
+                ) : undefined
+              }
               onToggle={() => onToggleTopicBodyQuote({ instanceKey, reference, quotedPost })}
             />
           </View>,

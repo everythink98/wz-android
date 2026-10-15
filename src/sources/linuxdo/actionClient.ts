@@ -6,7 +6,8 @@ import {
   LinuxDoCloudflareError,
   cloudflareChallengeDiagnostics
 } from '@/platform/network/cloudflareChallenge';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, diagnosticUserAgentHash } from '@/platform/android/linuxDoUserAgent';
+import { diagnosticUserAgentHash } from '@/platform/android/linuxDoUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import {
   diagnosticRequestFields,
   diagnosticTraceForRequest,
@@ -42,6 +43,7 @@ function linuxDoActionError(data: Record<string, unknown> | unknown[], response:
     return linuxDoLoginRequiredError();
   }
   const error = linuxDoRequestError(message, status, payload);
+  Object.assign(error, { serverRejected: true });
   if (status === 429) {
     const retry = response.headers.get('Retry-After');
     const seconds = Number(retry);
@@ -107,7 +109,7 @@ export async function getLinuxDoCsrfToken({
       {
         headers: {
           ...LINUXDO_ACTION_HEADERS,
-          'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
+          'User-Agent': await resolveWebViewUserAgent(userAgent, signal)
         }
       },
       browserFetchIntent
@@ -191,7 +193,7 @@ export async function runLinuxDoAction({
         headers: {
           ...LINUXDO_ACTION_HEADERS,
           ...request.headers,
-          'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
+          'User-Agent': await resolveWebViewUserAgent(userAgent, signal),
           ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
         },
         body: request.body

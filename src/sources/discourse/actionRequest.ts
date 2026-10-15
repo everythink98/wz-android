@@ -25,6 +25,9 @@ export interface DiscourseActionRequest {
 }
 
 export type DiscourseAction =
+  | { type: 'toggle-reaction'; postId: string | number; reactionId: string }
+  | { type: 'create-boost'; postId: string | number; content: string }
+  | { type: 'delete-boost'; boostId: string | number }
   | {
       type: 'reply';
       topicId: string | number;
@@ -93,6 +96,30 @@ function requiredText(value: string, message: string) {
 }
 
 export function buildDiscourseActionRequest(action: DiscourseAction): DiscourseActionRequest {
+  if (action.type === 'toggle-reaction') {
+    if (!/^[a-z0-9_+-]+$/.test(action.reactionId)) throw new Error('表情反应不正确');
+    return {
+      path: `/discourse-reactions/posts/${positiveInteger(action.postId, '帖子 id')}/custom-reactions/${encodeURIComponent(action.reactionId)}/toggle.json`,
+      method: 'PUT',
+      headers: {}
+    };
+  }
+  if (action.type === 'create-boost') {
+    const content = requiredText(action.content, '请输入加电内容');
+    if (content.length > 1000) throw new Error('加电内容过长');
+    return {
+      path: `/discourse-boosts/posts/${positiveInteger(action.postId, '帖子 id')}/boosts.json`,
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ raw: content }).toString()
+    };
+  }
+  if (action.type === 'delete-boost')
+    return {
+      path: `/discourse-boosts/boosts/${positiveInteger(action.boostId, '加电 id')}.json`,
+      method: 'DELETE',
+      headers: {}
+    };
   if (action.type === 'upload') {
     const body = new FormData();
     body.append('type', 'composer');

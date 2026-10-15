@@ -18,6 +18,7 @@ import android.view.WindowInsetsAnimationController
 import android.view.animation.LinearInterpolator
 import android.view.animation.PathInterpolator
 import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.facebook.react.bridge.Arguments
@@ -59,6 +60,7 @@ private class KeyboardHiddenEvent(
 /** Keeps IME content alive until the editor's controlled hide animation has completed. */
 open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(context) {
   private var hostEnabled = false
+  private var autoImeRequested = false
   private var hiddenLayoutHeight = 0
   private var pending: HideRequest? = null
   private var backDownTime: Long? = null
@@ -75,6 +77,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   private val hostPosition = IntArray(2)
   private val focusListener = ViewTreeObserver.OnGlobalFocusChangeListener { _, focus ->
     pending?.let { if (focus !== it.focus) cancelRequest(it) }
+    showAutoImeWhenReady()
   }
 
   private class HideRequest(
@@ -96,8 +99,30 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   fun setHostEnabled(value: Boolean) {
     if (!value) resetImeInsets()
     hostEnabled = value
-    if (!value) pending?.let(::cancelRequest)
-    else syncImeInsets()
+    if (!value) {
+      autoImeRequested = false
+      pending?.let(::cancelRequest)
+    } else {
+      syncImeInsets()
+      showAutoImeWhenReady()
+    }
+  }
+
+  fun setAutoShowIme(value: Boolean) {
+    autoImeRequested = value
+    showAutoImeWhenReady()
+  }
+
+  private fun showAutoImeWhenReady() {
+    if (!autoImeRequested || !windowAvailable()) return
+    val focus = findFocus() as? EditText ?: return
+    val token = windowToken
+    post {
+      if (!autoImeRequested || !windowAvailable() || windowToken != token || findFocus() !== focus) return@post
+      autoImeRequested = false
+      ViewCompat.getWindowInsetsController(this)?.show(WindowInsetsCompat.Type.ime())
+        ?: (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(focus, 0)
+    }
   }
 
   fun setHiddenLayoutHeight(value: Float) {
@@ -173,9 +198,11 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     focusObserver = viewTreeObserver.also { it.addOnGlobalFocusChangeListener(focusListener) }
     if (Build.VERSION.SDK_INT >= 30) observeImeAnimation()
     syncImeInsets()
+    showAutoImeWhenReady()
   }
 
   override fun onDetachedFromWindow() {
+    autoImeRequested = false
     pending?.let(::cancelRequest)
     resetImeInsets()
     focusObserver?.takeIf { it.isAlive }?.removeOnGlobalFocusChangeListener(focusListener)
@@ -194,6 +221,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     super.onWindowFocusChanged(hasWindowFocus)
     if (!hasWindowFocus) pending?.let(::cancelRequest)
     if (hasWindowFocus) syncImeInsets() else resetImeInsets()
+    if (hasWindowFocus) showAutoImeWhenReady()
   }
 
   override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
@@ -532,6 +560,9 @@ class ComposerKeyboardHostManager : ReactViewManager() {
 
   @ReactProp(name = "trackImeInsets", defaultBoolean = false)
   fun setTrackImeInsets(view: ReactViewGroup, value: Boolean) = (view as ComposerKeyboardHost).setTrackImeInsets(value)
+
+  @ReactProp(name = "autoShowIme", defaultBoolean = false)
+  fun setAutoShowIme(view: ReactViewGroup, value: Boolean) = (view as ComposerKeyboardHost).setAutoShowIme(value)
 
   @ReactProp(name = "hiddenLayoutHeight", defaultFloat = 0f)
   fun setHiddenLayoutHeight(view: ReactViewGroup, value: Float) = (view as ComposerKeyboardHost).setHiddenLayoutHeight(value)

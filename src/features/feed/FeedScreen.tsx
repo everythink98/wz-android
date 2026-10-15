@@ -621,7 +621,7 @@ export const FeedScreen = memo(function FeedScreen({
         lazyPreloadDistance={1}
         navigationState={feedNavigationState}
         commonOptions={feedTabOptions}
-        renderLazyPlaceholder={renderFeedScene}
+        renderLazyPlaceholder={() => <View style={styles.content} />}
         renderScene={renderFeedScene}
         renderTabBar={renderFeedTabBar}
         onSwipeStart={closeFeedFilterMenu}

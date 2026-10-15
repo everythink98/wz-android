@@ -1,5 +1,3 @@
-import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
-
 export const LINUXDO_USER_AGENT_STORAGE_KEY = 'linuxdo-user-agent';
 
 export function sanitizeLinuxDoUserAgent(userAgent?: string) {
@@ -10,7 +8,6 @@ export function sanitizeLinuxDoUserAgent(userAgent?: string) {
     .trim();
 }
 
-export const DEFAULT_LINUXDO_ANDROID_USER_AGENT = sanitizeLinuxDoUserAgent(DEFAULT_ANDROID_WEBVIEW_USER_AGENT);
 /** Diagnostic comparison only; never use this non-cryptographic fingerprint for credentials. */
 export function diagnosticUserAgentHash(value: string) {
   let hash = 0;

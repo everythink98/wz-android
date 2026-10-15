@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { testPostInteractionReads } from './topicInteractionFixture';
 import { Button, Text, View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
@@ -238,6 +239,7 @@ export function TopicSubmissionFixture({
     onSessionExpired: () => {},
     requestAccountRecheck: () => {},
     readGateway: {
+      ...testPostInteractionReads(),
       getReadPlan: () => ({
         state: 'ready',
         lane: 'authenticated',

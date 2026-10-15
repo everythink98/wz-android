@@ -23,7 +23,27 @@ function secureStore(entries: Record<string, string | null> = {}) {
   };
 }
 
+function migrationOptions(store: ReturnType<typeof secureStore>) {
+  return {
+    enabledSources: ['nodeseek', 'linuxdo', 'yaohuo'] as const,
+    isCurrent: () => true,
+    restoreUserAgent: async (site: 'nodeseek' | 'linuxdo', userAgent: string) => {
+      await store.setItemAsync(`${site}-user-agent`, userAgent);
+    },
+    secureStore: store
+  };
+}
+
 describe('legacy Cookie snapshot migration', () => {
+  it('skips Native Cookie reads when no legacy snapshot exists', async () => {
+    const store = secureStore();
+    const readManagedCookieHeader = vi.fn(async (_url: string) => ({ status: 'ok' as const, header: '' }));
+
+    await migrateLegacyCookieSnapshots({ ...migrationOptions(store), readManagedCookieHeader });
+
+    expect(readManagedCookieHeader).not.toHaveBeenCalled();
+    expect(store.deleteItemAsync).not.toHaveBeenCalled();
+  });
   it('deletes only App snapshots after every exact native read succeeds', async () => {
     const store = secureStore({
       'nodeseek-access': JSON.stringify({
@@ -31,7 +51,7 @@ describe('legacy Cookie snapshot migration', () => {
         source: 'webview',
         userAgent: 'Node UA'
       }),
-      'nodeseek-cookie': 'session=older',
+      'nodeseek-cookie-header': 'session=older',
       'linuxdo-clearance': JSON.stringify({
         cookieHeader: '_t=private',
         source: 'webview',
@@ -46,6 +66,7 @@ describe('legacy Cookie snapshot migration', () => {
 
     await expect(
       migrateLegacyCookieSnapshots({
+        ...migrationOptions(store),
         readManagedCookieHeader,
         secureStore: store
       })
@@ -85,6 +106,7 @@ describe('legacy Cookie snapshot migration', () => {
 
     await expect(
       migrateLegacyCookieSnapshots({
+        ...migrationOptions(store),
         readManagedCookieHeader,
         secureStore: store
       })
@@ -108,10 +130,68 @@ describe('legacy Cookie snapshot migration', () => {
     });
 
     await migrateLegacyCookieSnapshots({
+      ...migrationOptions(store),
       readManagedCookieHeader: vi.fn(async (_url: string) => ({ status: 'ok' as const, header: '' })),
       secureStore: store
     });
 
     expect(store.setItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('leaves disabled sites untouched', async () => {
+    const store = secureStore({ 'linuxdo-clearance': JSON.stringify({ userAgent: 'Legacy UA' }) });
+    const readManagedCookieHeader = vi.fn(async (_url: string) => ({ status: 'ok' as const, header: '' }));
+    const result = await migrateLegacyCookieSnapshots({
+      ...migrationOptions(store),
+      enabledSources: [],
+      readManagedCookieHeader
+    });
+    expect(result).toEqual({ linuxdo: 'skipped', nodeseek: 'skipped', yaohuo: 'skipped' });
+    expect(store.getItemAsync).not.toHaveBeenCalled();
+    expect(readManagedCookieHeader).not.toHaveBeenCalled();
+    expect(store.deleteItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('retains old keys when restored identity persistence fails', async () => {
+    const store = secureStore({ 'linuxdo-clearance': JSON.stringify({ userAgent: 'Legacy UA' }) });
+    await expect(
+      migrateLegacyCookieSnapshots({
+        ...migrationOptions(store),
+        restoreUserAgent: async () => {
+          throw new Error('storage unavailable');
+        },
+        readManagedCookieHeader: async () => ({ status: 'ok', header: '' })
+      })
+    ).rejects.toThrow('storage unavailable');
+    expect(store.deleteItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('stops a superseded migration before deleting old keys', async () => {
+    const store = secureStore({ 'linuxdo-clearance': JSON.stringify({ userAgent: 'Legacy UA' }) });
+    let current = true;
+    const result = await migrateLegacyCookieSnapshots({
+      ...migrationOptions(store),
+      isCurrent: () => current,
+      restoreUserAgent: async () => {
+        current = false;
+      },
+      readManagedCookieHeader: async () => ({ status: 'ok', header: '' })
+    });
+    expect(result.linuxdo).toBe('cancelled');
+    expect(store.deleteItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('propagates local read and deletion failures', async () => {
+    const store = secureStore({ 'yaohuo-cookie-header': 'legacy' });
+    const readManagedCookieHeader = vi.fn(async (_url: string) => ({ status: 'ok' as const, header: '' }));
+    store.getItemAsync.mockRejectedValueOnce(new Error('read failed'));
+    await expect(
+      migrateLegacyCookieSnapshots({ ...migrationOptions(store), enabledSources: ['yaohuo'], readManagedCookieHeader })
+    ).rejects.toThrow('read failed');
+    expect(readManagedCookieHeader).not.toHaveBeenCalled();
+    store.deleteItemAsync.mockRejectedValueOnce(new Error('delete failed'));
+    await expect(
+      migrateLegacyCookieSnapshots({ ...migrationOptions(store), enabledSources: ['yaohuo'], readManagedCookieHeader })
+    ).rejects.toThrow('delete failed');
   });
 });

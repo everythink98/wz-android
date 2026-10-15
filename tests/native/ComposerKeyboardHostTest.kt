@@ -102,6 +102,35 @@ class ComposerKeyboardHostTest {
   private fun finishAnimation() { shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400)) }
   private fun drawHiddenLayout() { host.viewTreeObserver.dispatchOnPreDraw(); host.viewTreeObserver.dispatchOnPreDraw() }
 
+  @Test fun autoKeyboardWaitsForItsOwnWindowAndShowsOnlyOnce() {
+    host.ime.visible = false
+    host.windowFocused = false
+    ComposerKeyboardHostManager().updateProperties(host, ReactStylesDiffMap(JavaOnlyMap.of("autoShowIme", true)))
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(0, host.ime.shows)
+    host.windowFocused = true
+    host.onWindowFocusChanged(true)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(1, host.ime.shows)
+    assertSame(input, host.findFocus())
+    host.onWindowFocusChanged(true)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(1, host.ime.shows)
+  }
+
+  @Test fun queuedAutoKeyboardDoesNotShowForDisabledOrDetachedHosts() {
+    val manager = ComposerKeyboardHostManager()
+    manager.updateProperties(host, ReactStylesDiffMap(JavaOnlyMap.of("autoShowIme", true)))
+    host.setHostEnabled(false)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(0, host.ime.shows)
+    host.setHostEnabled(true)
+    manager.updateProperties(host, ReactStylesDiffMap(JavaOnlyMap.of("autoShowIme", true)))
+    container.removeView(host)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(0, host.ime.shows)
+  }
+
   @Test fun focusedDescendantBackControlsImeBeforeTheInputMethodSeesHide() {
     up(down())
     assertEquals(1, host.ime.requests.size)
@@ -643,6 +672,7 @@ class ComposerKeyboardHostTest {
     var height = 336
     var visible = true
     var ordinaryHides = 0
+    var shows = 0
     val requests = mutableListOf<ControlRequest>()
     val window = proxy(WindowInsetsController::class.java) { name, args ->
       when (name) {
@@ -651,6 +681,10 @@ class ComposerKeyboardHostTest {
           null
         }
         "hide" -> { ordinaryHides++; visible = false; height = 0; null }
+        "show" -> {
+          if ((args[0] as Int) and WindowInsets.Type.ime() != 0) { shows++; visible = true; height = 336 }
+          null
+        }
         else -> null
       }
     }

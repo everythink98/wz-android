@@ -45,7 +45,10 @@ function accountOptions(options: AccountDataOptions): NodeSeekOptions {
 }
 
 export async function getNodeSeekAccountOverview(options: AccountDataOptions): Promise<NodeSeekAccountOverview> {
-  const { pageDocument, response } = await fetchNodeSeekTextResult('/', accountOptions(options));
+  const { pageDocument, response } = await fetchNodeSeekTextResult('/', {
+    ...accountOptions(options),
+    browserFetchIntent: { owner: 'account-overview', priority: 'foreground' }
+  });
   return proveForumReadResponse(response, () => {
     const user = pageDocument?.embedded?.user;
     const identity = nodeSeekCurrentUserFromConfig(pageDocument?.embedded);

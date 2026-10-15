@@ -129,6 +129,9 @@ const operationValues = closedValues(
   'account-restore',
   'account-migration',
   'account-refresh',
+  'read-user-agent',
+  'interaction-reconcile',
+  'export-cleanup',
   'image-load',
   'image-budget',
   'install',
@@ -145,6 +148,8 @@ const operationValues = closedValues(
   'notification-categories',
   'notification-unread',
   'notification-detail',
+  'notification-detail-retry',
+  'notification-detail-resume',
   'notification-history',
   'notification-mark-read',
   'notification-policy',
@@ -201,6 +206,7 @@ const operationValues = closedValues(
   'favorite',
   'getCategories',
   'getEmojiUrls',
+  'getLinuxDoInteractionConfig',
   'getFeed',
   'getLevelProfile',
   'getTopicCreationContext',
@@ -441,6 +447,10 @@ const stateValues = closedValues(
 );
 
 const requestTypeValues = closedValues(
+  'toggle-reaction',
+  'set-like',
+  'create-boost',
+  'delete-boost',
   'attendance',
   'bookmark',
   'collection',
@@ -609,7 +619,7 @@ const categoricalFieldValues = {
   state: stateValues,
   previousState: closedValues(...screenValues, ...sessionStateValues),
   nextState: closedValues(...screenValues, ...sessionStateValues),
-  owner: closedValues('account', 'feed', 'search', 'topic', 'user', 'write'),
+  owner: closedValues('account', 'account-overview', 'feed', 'search', 'topic', 'user', 'write'),
   priority: closedValues('background', 'foreground', 'write'),
   store: closedValues(
     'android-webview',
@@ -638,7 +648,16 @@ const categoricalFieldValues = {
     'source-error'
   ),
   mutationReason: mutationReasonValues,
-  action: closedValues('bookmark', 'collection', 'dislike', 'like', 'nodeseek-verification', 'upvote', 'yaohuo-login'),
+  action: closedValues(
+    'bookmark',
+    'boost',
+    'collection',
+    'dislike',
+    'like',
+    'nodeseek-verification',
+    'upvote',
+    'yaohuo-login'
+  ),
   mode: closedValues('add', 'after-submit', 'manual', 'open', 'refresh', 'remove', 'silent', 'rich', 'source'),
   flow: closedValues('background', 'foreground', 'write'),
   requestType: requestTypeValues,
@@ -1038,7 +1057,11 @@ export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
   if (/not supported|unsupported|不支持/.test(text)) return 'unsupported';
   if (/stale|outdated|旧请求/.test(text)) return 'stale';
   if (/superseded|replaced by newer|已被替代/.test(text)) return 'superseded';
-  if (/syntaxerror|invalid response|unexpected token|malformed|\bjson\b|\bparse\b|解析|响应格式/.test(text))
+  if (
+    /syntaxerror|invalid response|unexpected token|malformed|\bjson\b|\bparse\b|解析|响应格式|返回内容(?:格式不正确|不完整)|未返回互动配置|默认反应配置不正确/.test(
+      text
+    )
+  )
     return 'invalid_response';
   if (/network request failed|failed to fetch|\bnetwork\b|\bdns\b|\bsocket\b|网络|连接失败/.test(text))
     return 'network_error';

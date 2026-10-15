@@ -1,4 +1,4 @@
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { getDefaultAndroidWebViewUserAgent } from '@/platform/android/androidWebViewUserAgent';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import {
@@ -149,9 +149,7 @@ export function imageRequestHeadersForUrl(
     if (referrer) {
       headers.Referer = referrer;
     }
-    const userAgent =
-      (contentSource === 'nodeseek' ? String(options?.nodeSeekUserAgent || '').trim() : '') ||
-      DEFAULT_NODESEEK_ANDROID_USER_AGENT;
+    const userAgent = contentSource === 'nodeseek' ? String(options?.nodeSeekUserAgent || '').trim() : '';
     if (userAgent) {
       headers['User-Agent'] = userAgent;
     }
@@ -186,7 +184,7 @@ export function imageSourceFromUrl(url: string, options: ImageSourceOptions) {
   };
 }
 
-export function forumMediaPlayerSourceFromUrl(
+export async function forumMediaPlayerSourceFromUrl(
   url: string,
   options: ImageRequestOptions & { kind: 'audio' | 'video'; runtimeGeneration: number }
 ) {
@@ -196,6 +194,10 @@ export function forumMediaPlayerSourceFromUrl(
     [FORUM_MEDIA_KIND_HEADER]: 'video',
     [READ_NETWORK_GENERATION_HEADER]: String(options.runtimeGeneration)
   };
+  if (isHttpOrHttpsUrl(url) && !headers['User-Agent']) {
+    const userAgent = await getDefaultAndroidWebViewUserAgent();
+    if (userAgent) headers['User-Agent'] = userAgent;
+  }
   return {
     uri: url,
     useCaching: true,

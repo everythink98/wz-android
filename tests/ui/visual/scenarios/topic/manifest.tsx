@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { inactivePostInteractionActions } from '../../../topicInteractionFixture';
 import { useWindowDimensions } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { FlashListRef } from '@shopify/flash-list';
@@ -275,6 +276,7 @@ function TopicScenarioScreen({
   const actions = useMemo(
     () =>
       ({
+        ...inactivePostInteractionActions(),
         actionBusy: state === 'disabled',
         replyImageUploading: false,
         bookmarkOnDiscourseSite: async () => undefined,

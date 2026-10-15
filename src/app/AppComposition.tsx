@@ -63,6 +63,15 @@ export function AppComposition() {
             <StartupPageLayoutProvider value={startup.onLayout}>
               <AppRoutes {...runtime.routes} onReady={startup.onReady} onScreenChange={onScreenChange} />
             </StartupPageLayoutProvider>
+          ) : runtime.startupRecovery ? (
+            <View
+              testID="startup-recovery"
+              accessibilityLiveRegion="assertive"
+              style={[runtime.appStyles.bootstrap, runtime.appStyles.screen]}
+              onLayout={startup.onRecoveryLayout}
+            >
+              {runtime.startupRecovery}
+            </View>
           ) : (
             <View
               accessible

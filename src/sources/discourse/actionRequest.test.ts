@@ -7,6 +7,24 @@ import {
 } from './actionRequest';
 
 describe('Discourse action requests', () => {
+  it('targets reactions and boosts by post ID without creating a reply', () => {
+    expect(buildDiscourseActionRequest({ type: 'toggle-reaction', postId: 101, reactionId: '+1' })).toEqual({
+      path: '/discourse-reactions/posts/101/custom-reactions/%2B1/toggle.json',
+      method: 'PUT',
+      headers: {}
+    });
+    const create = buildDiscourseActionRequest({ type: 'create-boost', postId: 101, content: ' 合影 :bili_057: ' });
+    expect(create).toMatchObject({ path: '/discourse-boosts/posts/101/boosts.json', method: 'POST' });
+    expect(new URLSearchParams(String(create.body)).get('raw')).toBe('合影 :bili_057:');
+    expect(buildDiscourseActionRequest({ type: 'delete-boost', boostId: 51 })).toMatchObject({
+      path: '/discourse-boosts/boosts/51.json',
+      method: 'DELETE'
+    });
+    expect(() =>
+      buildDiscourseActionRequest({ type: 'toggle-reaction', postId: 101, reactionId: '../heart' })
+    ).toThrow();
+    expect(() => buildDiscourseActionRequest({ type: 'create-boost', postId: 101, content: ' ' })).toThrow();
+  });
   it('locates only a valid created post belonging to the submitted topic', () => {
     const post = { id: 121, post_number: 21, topic_id: 42 };
     expect(discourseCreatedReplyTarget(post, '42')).toEqual({ commentId: 121, floor: 21 });

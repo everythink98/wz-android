@@ -19,6 +19,96 @@ function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
 
+it.each(['opening', 'reply', 'quoted-reply', 'accepted-answer', 'signature'] as const)(
+  'keeps a Discourse carousel together in %s content with every original in preview order',
+  (role) => {
+    const images = Array.from(
+      { length: 10 },
+      (_, index) =>
+        `<div class="lightbox-wrapper"><a class="lightbox" href="https://img.example/original-${index}.png"><img alt="slide ${index}" src="https://img.example/thumb-${index}.png" width="230" height="500" referrerpolicy="no-referrer"></a></div>`
+    ).join('\n');
+    const prepared = prepareSanitizedForumContent(
+      `<p>before</p><div class="d-image-grid" data-mode="carousel">${images}</div><p>after</p>`,
+      { baseUrl: 'https://linux.do/', role, source: 'linuxdo' }
+    );
+    const plan = prepared.contentPlan;
+    expect(plan.rows.map((row) => row.type)).toEqual(['richText', 'imageGallery', 'richText']);
+    const gallery = plan.rows[1];
+    if (gallery.type !== 'imageGallery') throw new Error('Expected one carousel row');
+    expect(gallery.slides).toHaveLength(10);
+    expect(gallery.networkMediaCount).toBeLessThanOrEqual(3);
+    expect(gallery.slides.map((slide) => parseHtml(slide).querySelector('img')?.getAttribute('alt'))).toEqual(
+      Array.from({ length: 10 }, (_, index) => `slide ${index}`)
+    );
+    expect(plan.previewImages.map((image) => image.lightboxOriginal)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `https://img.example/original-${index}.png`)
+    );
+    expect(plan.previewImages.every((image) => image.referrerPolicy === 'no-referrer')).toBe(true);
+    expect(
+      JSON.parse(gallery.selectionToken)
+        .prefix.map((run: { text: string }) => run.text)
+        .join('')
+    ).toContain('slide 9');
+  }
+);
+
+it('preserves ordinary images and text inside disabled or mixed carousels', () => {
+  for (const attributes of [
+    '',
+    'class="d-image-grid"',
+    'class="d-image-grid" data-mode="carousel" data-disabled="true"'
+  ]) {
+    const plan = compileForumContent({
+      html: `<div ${attributes}><img src="https://img.example/a.png"><img src="https://img.example/b.png"></div>`,
+      role: 'opening',
+      source: 'linuxdo'
+    });
+    expect(plan.rows.every((row) => row.type === 'richText')).toBe(true);
+    expect(plan.previewImages).toHaveLength(2);
+  }
+  const mixed = compileForumContent({
+    html: '<div class="d-image-grid" data-mode="carousel"><img src="https://img.example/a.png"><p>keep this caption</p><img src="https://img.example/b.png"></div>',
+    role: 'opening',
+    source: 'linuxdo'
+  });
+  expect(
+    renderedContentRows(mixed)
+      .map((row) => row.html)
+      .join('')
+  ).toContain('keep this caption');
+  expect(mixed.previewImages).toHaveLength(2);
+});
+
+it('keeps every image in bounded ordinary rows when a carousel exceeds the row metadata budget', () => {
+  const plan = compileForumContent({
+    html:
+      '<div class="d-image-grid" data-mode="carousel">' +
+      Array.from(
+        { length: 100 },
+        (_, index) =>
+          `<a class="lightbox" href="https://img.example/${index}.png"><img src="https://img.example/${index}.png" alt="slide ${index}"></a>`
+      ).join('') +
+      '</div>',
+    role: 'opening',
+    source: 'linuxdo'
+  });
+  expect(plan.rows.every((row) => row.type !== 'imageGallery' && row.networkMediaCount <= 4)).toBe(true);
+  expect(plan.previewImages).toHaveLength(100);
+  expect(renderedContentRows(plan).flatMap((row) => parseHtml(row.html).querySelectorAll('img'))).toHaveLength(100);
+});
+
+it('recognizes carousel photos without lightbox wrappers as block images', () => {
+  const plan = compileForumContent({
+    html: '<div class="d-image-grid" data-mode="carousel"><img src="https://img.example/a.png" width="230" height="500"><img src="https://img.example/b.png" width="230" height="500"></div>',
+    role: 'reply',
+    source: 'linuxdo'
+  });
+  expect(plan.rows.map((row) => row.type)).toEqual(['imageGallery']);
+  const gallery = plan.rows[0];
+  if (gallery.type !== 'imageGallery') throw new Error('Expected a carousel row');
+  expect(gallery.slides.flatMap((html) => parseHtml(html).querySelectorAll('img'))).toHaveLength(2);
+});
+
 it.each(['opening', 'reply'] as const)(
   'copies %s code as once-decoded text, including entities cut by child markup',
   (role) => {
@@ -343,6 +433,37 @@ it('preserves table cells when their semantic wrappers exceed the content budget
   expect(plan.previewImages.map((image) => image.source)).toEqual(['https://example.com/cell.png']);
   const selected = plan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('\n');
   expect(selected).toMatch(/first link[\s\S]*second/);
+});
+
+it('preserves opening quote metadata without mixing media fallbacks into its text', () => {
+  const html =
+    '<aside class="quote" data-topic="2" data-post="1">' +
+    '<div class="title"><img class="avatar" alt="" width="24" height="24" ' +
+    'src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png">' +
+    '<div class="quote-title__text-content"><a href="https://linux.do/t/topic/2">Quoted topic</a></div></div>' +
+    '<blockquote><p>quoted body <img src="https://example.com/quoted.png"> tail</p></blockquote></aside>';
+  const options = { role: 'opening', source: 'linuxdo', topicId: '1' } as const;
+  const plans = [
+    compileForumContent({ html, ...options }),
+    prepareSanitizedForumContent(html, { baseUrl: 'https://linux.do/t/1', ...options }).contentPlan
+  ];
+
+  for (const plan of plans) {
+    expect(plan.rows.find((row) => row.type === 'quote')?.quote).toEqual({
+      reference: { source: 'linuxdo', topicId: '2', postNumber: 1 },
+      author: {
+        label: 'alice',
+        avatar: 'https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png'
+      },
+      preview: 'quoted body tail',
+      topicTitle: 'Quoted topic',
+      topicUrl: 'https://linux.do/t/topic/2'
+    });
+    expect(plan.previewImages.map((image) => image.source)).toEqual(['https://example.com/quoted.png']);
+    expect(plan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('')).toBe(
+      'quoted body tail'
+    );
+  }
 });
 
 it('preserves opening quote metadata when its deep semantic body is flattened', () => {

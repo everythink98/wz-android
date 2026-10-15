@@ -16,7 +16,8 @@ export function TopicBodyQuoteCard({
   previewTestID,
   styles,
   testID,
-  theme
+  theme,
+  title
 }: {
   completeContent?: ReactNode;
   completeContentMountedExternally?: boolean;
@@ -30,6 +31,7 @@ export function TopicBodyQuoteCard({
   styles: TopicStyles;
   testID?: string;
   theme: ReaderTheme;
+  title?: ReactNode;
 }) {
   return (
     <View style={[styles.quoteBox, completeContentMountedExternally && styles.quoteRowTop]} testID={testID}>
@@ -46,11 +48,12 @@ export function TopicBodyQuoteCard({
           >
             <Text style={styles.quotePanelStateText}>{loading ? '读取' : expanded ? '收起' : '展开'}</Text>
             <View style={styles.quotePanelStateIcon}>
-              <DisclosureChevron expanded={expanded} color={theme.primary} size={16} />
+              <DisclosureChevron expanded={expanded} color={theme.ink} size={16} />
             </View>
           </Pressable>
         ) : null}
       </View>
+      {title}
       {preview && !completeContent && !completeContentMountedExternally ? (
         <View style={[styles.quoteBody, styles.quotePanelBody]} testID={previewTestID}>
           {preview}

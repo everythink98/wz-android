@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
-import { createTopicStyles } from './styles';
+import { createTopicStyles, createTopicTableStyles } from './styles';
 
 vi.mock('react-native', () => ({
   StatusBar: { currentHeight: 0 },
@@ -42,7 +42,7 @@ describe('topic styles', () => {
     };
     const theme = createTheme(settings);
 
-    expect(createTopicStyles(theme, settings).htmlTableFrame).toMatchObject({
+    expect(createTopicTableStyles(theme).htmlTableFrame).toMatchObject({
       borderColor: theme.line,
       borderWidth: 1
     });

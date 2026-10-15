@@ -1,11 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { getDefaultUserAgent } = vi.hoisted(() => ({
+  getDefaultUserAgent: vi.fn(async () => 'native-provider-user-agent')
+}));
 
 vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
-  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
+  getDefaultAndroidWebViewUserAgent: getDefaultUserAgent
 }));
 
 import {
   dataImageFileFromUrl,
+  forumMediaPlayerSourceFromUrl,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
   isHttpOrHttpsUrl,
@@ -18,6 +23,82 @@ const publicMediaContext = { contentSource: null, sessionIdentity: 'public:0' } 
 const nodeSeekMediaContext = { contentSource: 'nodeseek', sessionIdentity: 'nodeseek:4' } as const;
 
 describe('image request source', () => {
+  beforeEach(() => {
+    getDefaultUserAgent.mockReset();
+    getDefaultUserAgent.mockResolvedValue('native-provider-user-agent');
+  });
+
+  it('leaves the default image browser identity to native without reading it during source construction', () => {
+    const source = imageSourceFromUrl('https://cdn.example.com/image.webp', {
+      mediaContext: nodeSeekMediaContext
+    });
+
+    expect(source).toMatchObject({ cacheKey: 'nodeseek:4:https://cdn.example.com/image.webp' });
+    expect(source.headers).not.toHaveProperty('User-Agent');
+    expect(
+      imageSourceFromUrl('https://cdn.example.com/image.webp', {
+        mediaContext: nodeSeekMediaContext,
+        baseSource: { headers: { 'User-Agent': 'explicit-base-profile' } }
+      })
+    ).toMatchObject({ headers: { 'User-Agent': 'explicit-base-profile' } });
+    expect(getDefaultUserAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(['audio', 'video'] as const)(
+    'prepares the actual default %s profile before the cacheable player source',
+    async (kind) => {
+      let resolveUserAgent: ((value: string) => void) | undefined;
+      getDefaultUserAgent.mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveUserAgent = resolve;
+          })
+      );
+      const source = forumMediaPlayerSourceFromUrl('https://cdn.example.com/media', {
+        kind,
+        mediaContext: nodeSeekMediaContext,
+        runtimeGeneration: 7
+      });
+      let prepared = false;
+      void source.then(() => {
+        prepared = true;
+      });
+      await Promise.resolve();
+      expect(prepared).toBe(false);
+      resolveUserAgent?.('resolved-browser-identity');
+      expect(await source).toMatchObject({
+        useCaching: true,
+        headers: { 'User-Agent': 'resolved-browser-identity', 'X-WZ-Read-Network-Generation': '7' }
+      });
+      expect(getDefaultUserAgent).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('keeps saved NodeSeek player identity without reading the default profile', async () => {
+    expect(
+      await forumMediaPlayerSourceFromUrl('https://cdn.example.com/video.mp4', {
+        kind: 'video',
+        mediaContext: nodeSeekMediaContext,
+        nodeSeekUserAgent: 'saved-node-agent',
+        runtimeGeneration: 7
+      })
+    ).toMatchObject({ headers: { 'User-Agent': 'saved-node-agent' } });
+    expect(getDefaultUserAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(['file:///cache/audio.mp3', 'data:video/mp4;base64,AA=='])(
+    'does not read a browser identity for local %s',
+    async (url) => {
+      const source = await forumMediaPlayerSourceFromUrl(url, {
+        kind: 'audio',
+        mediaContext: publicMediaContext,
+        runtimeGeneration: 7
+      });
+      expect(source.headers).not.toHaveProperty('User-Agent');
+      expect(getDefaultUserAgent).not.toHaveBeenCalled();
+    }
+  );
+
   it('keeps svg data images out of preview and saving', () => {
     expect(isPreviewableImageUrl('data:image/png;base64,abc')).toBe(true);
     expect(isPreviewableImageUrl('data:image/svg+xml;base64,abc')).toBe(false);
@@ -80,7 +161,6 @@ describe('image request source', () => {
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       'Accept-Language': expect.any(String),
       Referer: 'https://www.nodeseek.com/',
-      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
     });
@@ -91,7 +171,6 @@ describe('image request source', () => {
         Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
         'Accept-Language': expect.any(String),
         Referer: 'https://www.nodeseek.com/',
-        'User-Agent': 'native-provider-user-agent',
         'X-WZ-Forum-Media-Identity': 'nodeseek:4',
         'X-WZ-Forum-Media-Source': 'nodeseek'
       }
@@ -102,7 +181,6 @@ describe('image request source', () => {
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       'Accept-Language': expect.any(String),
       Referer: 'https://www.nodeseek.com/',
-      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
     });
@@ -244,7 +322,6 @@ describe('image request source', () => {
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       'Accept-Language': expect.any(String),
       Referer: 'https://linux.do/',
-      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'linuxdo:4',
       'X-WZ-Forum-Media-Source': 'linuxdo'
     });
@@ -282,21 +359,19 @@ describe('image request source', () => {
       headers: {
         Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
         'Accept-Language': expect.any(String),
-        'User-Agent': 'native-provider-user-agent',
         'X-WZ-Forum-Media-Identity': 'public:0',
         'X-WZ-Forum-Media-Source': 'anonymous'
       }
     });
   });
 
-  it('adds a browser user agent for NodeSeek avatar images', () => {
+  it('leaves a missing NodeSeek avatar user agent to the native media profile', () => {
     expect(
       imageRequestHeadersForUrl('https://www.nodeseek.com/avatar/48872.png', { mediaContext: nodeSeekMediaContext })
     ).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       'Accept-Language': expect.any(String),
       Referer: 'https://www.nodeseek.com/',
-      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
     });
@@ -311,7 +386,6 @@ describe('image request source', () => {
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       'Accept-Language': expect.any(String),
       Referer: 'https://www.nodeseek.com/',
-      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
     });

@@ -20,7 +20,7 @@ export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
       overScrollMode="never"
       onLayout={onPageLayout}
       style={styles.content}
-      contentContainerStyle={styles.moreContentInner}
+      contentContainerStyle={[styles.moreContentInner, styles.readingSettingsContent]}
       keyboardShouldPersistTaps="handled"
     >
       <AppearancePanel

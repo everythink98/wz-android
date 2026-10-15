@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createRef, useRef, useState, type ComponentProps, type Ref } from 'react';
 import { Dimensions, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput } from 'react-native';
 import * as ReactNative from 'react-native';
@@ -34,6 +34,10 @@ const mockKeyboardStreams = new Set<{ height: { value: number }; state: { value:
 const mockKeyboardFrames = new Set<() => void>();
 const mockKeyboardStyles = new Map<object, () => { paddingBottom?: number; maxHeight?: number | string }>();
 let mockQueuedJS: (() => void)[] | null = null;
+type KeyboardHiddenAck = { nativeEvent: { requestId: number; success: boolean } };
+const mockNativeKeyboardHosts = new Map<number, (event: KeyboardHiddenAck) => void>();
+let restoreNativeKeyboardFixture = () => {};
+afterEach(() => restoreNativeKeyboardFixture());
 jest.mock('@/ui/composer/StructuredReplyComposer', () => ({
   StructuredReplyComposer: require('react').forwardRef(
     (props: ComponentProps<typeof StructuredReplyComposer>, ref: Ref<StructuredReplyComposerHandle>) => {
@@ -58,7 +62,8 @@ jest.mock('react-native-reanimated', () => ({
   ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
   default: {
     ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated').default,
-    View: require('react-native').View
+    View: require('react-native').View,
+    createAnimatedComponent: (component: unknown) => component
   },
   useAnimatedKeyboard: () => {
     const ReactModule = require('react') as typeof import('react');
@@ -108,12 +113,35 @@ jest.mock('react-native-reanimated', () => ({
   }
 }));
 
-async function press(...args: Parameters<typeof fireEvent.press>) {
+function acknowledgeKeyboardHidesSince(firstCommand: number) {
+  for (const [tag, command, args] of jest
+    .mocked(ReactNative.UIManager.dispatchViewManagerCommand)
+    .mock.calls.slice(firstCommand)) {
+    if (command !== 'hideKeyboard') continue;
+    if (typeof tag !== 'number' || !args || typeof args[0] !== 'number')
+      throw new Error('Expected a native keyboard tag and request ID.');
+    const acknowledge = mockNativeKeyboardHosts.get(tag);
+    if (!acknowledge) throw new Error('Expected the current native keyboard host.');
+    acknowledge({ nativeEvent: { requestId: args[0], success: true } });
+  }
+}
+
+async function completeKeyboardAction(action: () => unknown) {
+  const firstCommand = jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand).mock.calls.length;
   await act(async () => {
-    await fireEvent.press(...args);
+    const pending = action();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    acknowledgeKeyboardHidesSince(firstCommand);
+    // Native completion resumes the handoff before it queues its UI-frame check.
+    await Promise.resolve();
     // Programmatic keyboard handoff settles on the following UI frame.
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await pending;
   });
+}
+
+async function press(...args: Parameters<typeof fireEvent.press>) {
+  await completeKeyboardAction(() => fireEvent.press(...args));
 }
 
 async function openTopicMore(view: Awaited<ReturnType<typeof render>>) {
@@ -343,6 +371,26 @@ describe('Create topic screen', () => {
   });
 
   beforeEach(() => {
+    mockNativeKeyboardHosts.clear();
+    const native = require('react-native') as typeof ReactNative;
+    const actualFindNodeHandle = native.findNodeHandle;
+    const handle = jest.spyOn(native, 'findNodeHandle').mockImplementation((component) => {
+      const tag = actualFindNodeHandle(component);
+      if (tag !== null && component !== null && typeof component === 'object' && 'props' in component) {
+        const props = component.props as { onKeyboardHidden?: (event: KeyboardHiddenAck) => void };
+        if (props.onKeyboardHidden) mockNativeKeyboardHosts.set(tag, props.onKeyboardHidden);
+      }
+      return tag;
+    });
+    const dispatch = jest
+      .spyOn(ReactNative.UIManager, 'dispatchViewManagerCommand')
+      .mockImplementation(() => undefined)
+      .mockClear();
+    restoreNativeKeyboardFixture = () => {
+      dispatch.mockRestore();
+      handle.mockRestore();
+      mockNativeKeyboardHosts.clear();
+    };
     mockUseRealEditor = false;
     mockKeyboardStyles.clear();
     mockQueuedJS = null;
@@ -418,6 +466,7 @@ describe('Create topic screen', () => {
     await keyboardFrame(336);
     expect(padding()).toBeGreaterThan(300);
     // Keep this window and its observer until the native hide has completed.
+    const firstCommand = jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand).mock.calls.length;
     await act(() => {
       void fireEvent.press(view.getByLabelText('附件与草稿'));
     });
@@ -425,6 +474,7 @@ describe('Create topic screen', () => {
     expect(view.queryByLabelText('关闭发帖选项')).toBeNull();
     expect(messages()).not.toContainEqual({ type: 'COMMAND', payload: { name: 'blur' } });
     await keyboardFrame(0);
+    await act(() => acknowledgeKeyboardHidesSince(firstCommand));
     await waitFor(() => expect(view.getByLabelText('关闭发帖选项')).toBeTruthy());
     expect(messages()).toContainEqual({ type: 'COMMAND', payload: { name: 'blur' } });
     expect(mockKeyboardStreams.size).toBe(0);
@@ -483,8 +533,10 @@ describe('Create topic screen', () => {
     });
     const view = await render(<Harness initialDraft={draftFor('yaohuo')} />);
     try {
+      const firstCommand = jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand).mock.calls.length;
       await fireEvent.press(view.getByLabelText('表情'));
       await fireEvent(view.getByLabelText('帖子标题', { includeHiddenElements: true }), 'focus');
+      await act(() => acknowledgeKeyboardHidesSince(firstCommand));
       blurredInputs.length = 0;
       for (let index = 0; index < 2; index++) await act(() => frames.splice(0).forEach((callback) => callback(index)));
       expect(blurredInputs).not.toContain('帖子标题');
@@ -515,9 +567,11 @@ describe('Create topic screen', () => {
         });
       await keyboardFrame(336, KeyboardState.CLOSING);
       const opened = jest.fn();
+      const firstCommand = jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand).mock.calls.length;
       const waiting = mockStructuredProps.awaitKeyboardSettled!().then(opened);
       await keyboardFrame(0, KeyboardState.CLOSING);
       expect(opened).not.toHaveBeenCalled();
+      await act(() => acknowledgeKeyboardHidesSince(firstCommand));
       await keyboardFrame(0, KeyboardState.CLOSED);
       expect(opened).not.toHaveBeenCalled();
       await keyboardFrame(0, KeyboardState.CLOSED);
@@ -662,9 +716,11 @@ describe('Create topic screen', () => {
       return queuedFrames.length;
     });
     try {
+      const firstCommand = jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand).mock.calls.length;
       await fireEvent.press(view.getByLabelText(label));
       expect(view.queryByLabelText(item)).toBeNull();
       await keyboardFrame(0, KeyboardState.CLOSED);
+      await act(() => acknowledgeKeyboardHidesSince(firstCommand));
       // Native IME is already gone, but the handoff still owes its two UI-frame checks.
       expect(view.queryByLabelText(item)).toBeNull();
       expect(view.queryByLabelText('帖子标题')).toBeNull();
@@ -850,10 +906,7 @@ describe('Create topic screen', () => {
         await press(view.getByLabelText('关闭发帖选项'));
       }
       if (source === 'yaohuo') await press(view.getByLabelText('图片'));
-      else
-        await act(async () => {
-          await mockStructuredProps.onUploadImage?.();
-        });
+      else await completeKeyboardAction(() => mockStructuredProps.onUploadImage?.());
       expect(pickAttachments).toHaveBeenCalledWith('image', true);
       await openTopicMore(view);
       await press(view.getByLabelText('图片上传记录'));
@@ -1661,9 +1714,11 @@ describe('Create topic screen', () => {
     });
     try {
       let opening!: Promise<void>;
+      const firstCommand = jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand).mock.calls.length;
       await act(async () => {
         opening = fireEvent.press(view.getByLabelText('附件与草稿'));
       });
+      await act(() => acknowledgeKeyboardHidesSince(firstCommand));
       expect(frames.length).toBeGreaterThan(0);
       await view.rerender(<Harness initialDraft={original} overrides={{ draft: replacement }} />);
       await act(async () => {

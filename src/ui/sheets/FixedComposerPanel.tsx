@@ -12,6 +12,7 @@ import {
 import {
   AppState,
   Keyboard,
+  Pressable,
   StyleSheet,
   View,
   type LayoutChangeEvent,
@@ -48,6 +49,7 @@ function ComposerKeyboardSource({ publish }: { publish: Dispatch<SetStateAction<
 
 export function FixedComposerPanel({
   backgroundStyle,
+  backdropAction,
   children,
   containerStyle,
   contentStyle,
@@ -65,6 +67,7 @@ export function FixedComposerPanel({
   onOpenReady
 }: {
   backgroundStyle?: StyleProp<ViewStyle>;
+  backdropAction?: { label: string; onPress: () => void };
   children: ReactNode;
   containerStyle?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
@@ -201,10 +204,19 @@ export function FixedComposerPanel({
         testID="composer-bottom-sheet-backdrop"
         pointerEvents={presented ? 'auto' : 'none'}
         accessible={false}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden={!presented || !backdropAction}
+        importantForAccessibility={presented && backdropAction ? 'auto' : 'no-hide-descendants'}
         style={[StyleSheet.absoluteFill, { backgroundColor: 'black' }, backdropStyle]}
-      />
+      >
+        {backdropAction && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={backdropAction.label}
+            onPress={backdropAction.onPress}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
+      </Animated.View>
       <ComposerKeyboardHost
         key="fixed-composer-panel"
         ref={keyboardHostRef}

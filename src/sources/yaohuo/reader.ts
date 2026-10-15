@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { normalizeMediaReferrerPolicyHeader } from '@/domain/forum/mediaReferrer';
 import { elementText, forumNodeText, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
 import type {
@@ -44,7 +44,7 @@ function yaohuoUrl(path: string, params: Record<string, string | number>) {
   return `${YAOHUO_BASE_URL}${path}?${query.toString()}`;
 }
 
-function yaohuoRequestInit(): RequestInit {
+function yaohuoRequestInit(userAgent: string): RequestInit {
   return {
     redirect: 'follow',
     headers: {
@@ -57,7 +57,7 @@ function yaohuoRequestInit(): RequestInit {
       'Sec-Fetch-Mode': 'navigate',
       'Sec-Fetch-Site': 'same-origin',
       'Upgrade-Insecure-Requests': '1',
-      ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT ? { 'User-Agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT } : {})
+      'User-Agent': userAgent
     }
   };
 }
@@ -65,7 +65,11 @@ function yaohuoRequestInit(): RequestInit {
 export async function fetchYaohuoHtml(url: string, fetcher: Fetcher = fetch, options: YaohuoHtmlRequestOptions = {}) {
   const { validateLogin = true, ...requestOptions } = options;
   const safeUrl = requireYaohuoRequestUrl(url);
-  const response = await fetchWithTimeout(safeUrl, yaohuoRequestInit(), { fetcher, ...requestOptions });
+  const response = await fetchWithTimeout(
+    safeUrl,
+    yaohuoRequestInit(await resolveWebViewUserAgent(undefined, options.signal)),
+    { fetcher, ...requestOptions }
+  );
   const html = await response.text();
   const responseUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
   if (!response.ok) {

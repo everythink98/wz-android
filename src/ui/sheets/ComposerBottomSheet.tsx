@@ -12,6 +12,7 @@ import { FixedComposerPanel } from './FixedComposerPanel';
 export function ComposerBottomSheet({
   active = true,
   backgroundStyle,
+  backdropDismissLabel,
   children,
   containerStyle,
   contentStyle,
@@ -24,6 +25,7 @@ export function ComposerBottomSheet({
 }: {
   active?: boolean;
   backgroundStyle?: StyleProp<ViewStyle>;
+  backdropDismissLabel?: string;
   children: (focusSignal: number, awaitKeyboardSettled: () => Promise<void>) => ReactNode;
   containerStyle?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
@@ -110,6 +112,9 @@ export function ComposerBottomSheet({
   return (
     <Portal>
       <FixedComposerPanel
+        backdropAction={
+          backdropDismissLabel ? { label: backdropDismissLabel, onPress: () => onOpenChange(false) } : undefined
+        }
         backgroundStyle={resolvedBackgroundStyle}
         containerStyle={containerStyle}
         contentStyle={fixedContent ? contentStyle : paddedContentStyle}

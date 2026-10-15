@@ -5,6 +5,11 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
 import type { TopicScreen } from '@/features/topic/TopicScreen';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
+import * as SecureStore from 'expo-secure-store';
+import {
+  markAccountSessionMigrationCompleted,
+  saveAccountSessionSnapshot
+} from '@/platform/storage/accountSessionStore';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
@@ -95,18 +100,25 @@ const body = {
   }
 };
 function seedAccount(username = 'alice') {
-  appQueryClient.setQueryData(
-    accountQueryKeys.snapshot('linuxdo'),
-    accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
-      type: 'session-updated',
-      loggedIn: true,
-      currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}` }
-    })
-  );
+  const snapshot = accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
+    type: 'session-updated',
+    loggedIn: true,
+    currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}` }
+  });
+  appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), snapshot);
+  return snapshot;
 }
 
+beforeEach(() => {
+  jest
+    .spyOn(SecureStore, 'getItemAsync')
+    .mockImplementation(async (key) => (key.endsWith('-user-agent') ? 'Saved fixture browser UA' : null));
+});
+afterEach(() => jest.restoreAllMocks());
+
 async function mount(readTopic?: Fetcher) {
-  seedAccount();
+  await saveAccountSessionSnapshot(seedAccount());
+  await markAccountSessionMigrationCompleted();
   let challenged = true;
   const requests: string[] = [];
   const fetcher: Fetcher = async (url, init) => {
@@ -123,6 +135,7 @@ async function mount(readTopic?: Fetcher) {
   };
   const data = createEmptyReaderState();
   const notify = jest.fn();
+  let accountReady = false;
   function Harness({ active = true, enabled = true }: { active?: boolean; enabled?: boolean }) {
     const account = useAccountRuntime({
       appActive: active,
@@ -132,10 +145,11 @@ async function mount(readTopic?: Fetcher) {
       notify,
       nodeSeekRecoveryThreshold: 1,
       openUser: async () => undefined,
-      ready: false,
+      ready: true,
       screen: 'topic',
       webViewBlockMessage: ''
     });
+    accountReady = account.read.sessionsReady;
     const runtime: TopicRouteRuntimeValue = {
       enabledSources: ['linuxdo', 'nodeseek', 'yaohuo', 'v2ex'],
       account: {
@@ -162,6 +176,7 @@ async function mount(readTopic?: Fetcher) {
       reader: { commit: jest.fn(), data, dataRef: { current: data } },
       readerStyle: { settings: data.settings, theme: createTheme(data.settings) }
     };
+    if (!accountReady) return account.hosts.element;
     return (
       <ForumSessionEpochProvider sessionEpochs={account.read.forumSessionEpochs} transportIdentity="applied">
         <TopicRouteRuntimeProvider value={runtime}>
@@ -186,6 +201,7 @@ async function mount(readTopic?: Fetcher) {
     );
   }
   const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  await waitFor(() => expect(accountReady).toBe(true));
   return {
     view,
     Harness,

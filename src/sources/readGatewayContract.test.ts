@@ -808,7 +808,12 @@ describe('source gateway read contract', () => {
 
     expect(linuxDoMocks.getLinuxDoEmojiUrls).toHaveBeenCalledWith(
       expect.objectContaining({
-        linuxDoAccess: { authenticated: true, categoryCacheScope: 'authenticated:0', userAgent: 'LinuxDo UA' },
+        linuxDoAccess: {
+          authenticated: true,
+          categoryCacheScope: 'authenticated:0',
+          userAgent: 'LinuxDo UA',
+          onAccountFailure: expect.any(Function)
+        },
         signal
       })
     );
@@ -1556,7 +1561,8 @@ describe('source gateway read contract', () => {
         discourseAuth: {
           authenticated: true,
           categoryCacheScope: 'authenticated:0',
-          userAgent: 'linux.do UA'
+          userAgent: 'linux.do UA',
+          onAccountFailure: expect.any(Function)
         }
       })
     );
@@ -1930,6 +1936,7 @@ describe('source gateway read contract', () => {
         expect(onBeforeSessionChange).toHaveBeenCalledExactlyOnceWith(response);
       } else {
         expect(onBeforeSessionChange).not.toHaveBeenCalled();
+        expect(events).toEqual([]);
       }
     }
   );

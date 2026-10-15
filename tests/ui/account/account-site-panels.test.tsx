@@ -492,13 +492,34 @@ describe('Account site panels', () => {
     await fireEvent.press(view.getByText('活跃数据'));
     expect(view.getByRole('tab', { name: '活跃数据' }).props.accessibilityState.selected).toBe(true);
     expect(view.getByText('1小时1分')).toBeTruthy();
-    expect(view.queryByLabelText('刷新等级')).toBeNull();
+    const refresh = view.getByRole('button', { name: '刷新等级' });
+    expect(refresh.parent).toHaveStyle({ width: 48, height: 48 });
+    await fireEvent.press(refresh);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    await view.rerender(
+      <LinuxDoLevelPanel
+        busy
+        error=""
+        siteSession={session('linuxdo', 'logged-in')}
+        profile={levelProfile}
+        styles={styles}
+        theme={theme}
+        onOpenLogin={onOpenLogin}
+        onRefresh={onRefresh}
+      />
+    );
+    const refreshing = view.getByRole('button', { name: '正在刷新等级' });
+    expect(refreshing.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+    await fireEvent.press(refreshing);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(view.getByText('LV 1 → LV 2')).toBeTruthy();
+    expect(view.getByRole('tab', { name: '活跃数据' }).props.accessibilityState.selected).toBe(true);
     await view.rerender(
       <LinuxDoLevelPanel
         busy={false}
         error="等级读取失败"
         siteSession={session('linuxdo', 'logged-in')}
-        profile={null}
+        profile={levelProfile}
         styles={styles}
         theme={theme}
         onOpenLogin={onOpenLogin}
@@ -506,7 +527,8 @@ describe('Account site panels', () => {
       />
     );
     await fireEvent.press(view.getByLabelText('重试等级'));
-    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(view.getByText('LV 1 → LV 2')).toBeTruthy();
   });
 
   it('shows official risk usage with veto status aligned beside its label and changes below', async () => {

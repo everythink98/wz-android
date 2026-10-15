@@ -220,6 +220,7 @@ export type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentI
       | 'systemAction'
       | 'actionCode'
       | 'reactionSummary'
+      | 'currentUserReaction'
     >
   >;
 
@@ -460,6 +461,10 @@ export function discoursePostFields(
   const postType = Number(raw.post_type);
   const isSystemAction = Number.isFinite(postType) && postType !== 1;
   const reactions = reactionSummary(raw.reactions);
+  const currentUserReaction =
+    isRecord(raw.current_user_reaction) && typeof raw.current_user_reaction.id === 'string'
+      ? { id: raw.current_user_reaction.id, canUndo: raw.current_user_reaction.can_undo === true }
+      : null;
   return {
     author,
     cookedHtml,
@@ -484,7 +489,8 @@ export function discoursePostFields(
     ...(raw.post_folding_status ? { folded: true } : {}),
     ...(isSystemAction ? { systemAction: true } : {}),
     ...(actionCode ? { actionCode } : {}),
-    ...(reactions ? { reactionSummary: reactions } : {})
+    ...(reactions ? { reactionSummary: reactions } : {}),
+    ...('current_user_reaction' in raw ? { currentUserReaction } : {})
   };
 }
 

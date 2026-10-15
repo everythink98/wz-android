@@ -49,6 +49,7 @@ export type NetworkProxyStatus = {
 };
 
 export type NativeNetworkProxyModule = {
+  getDefaultWebViewUserAgent?: () => Promise<unknown>;
   acknowledgeReadNetworkRuntimeApply?: (
     traceId: string,
     previousGeneration: number,
@@ -56,7 +57,6 @@ export type NativeNetworkProxyModule = {
   ) => Promise<boolean>;
   applyProxy?: (profile: NetworkProxyProfile | null) => Promise<NetworkProxyStatus>;
   clearManagedLoginCookies?: (source: string) => Promise<unknown>;
-  defaultWebViewUserAgent?: string;
   readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
   recoverForumReadChannel?: (
     source: Source,

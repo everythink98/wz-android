@@ -3,6 +3,7 @@ import type { TNode } from 'react-native-render-html';
 import { contentBoundaryForContinuation, type ContentContinuation } from './htmlStyles';
 
 type TopicContentPresentation = {
+  imageMaxHeight?: number;
   trimLeading: boolean;
   trimTrailing: boolean;
 };
@@ -17,21 +18,28 @@ const TopicContentPresentationContext = createContext<TopicContentPresentation>(
 export function TopicContentPresentationProvider({
   children,
   continuation,
+  imageMaxHeight,
   trimTrailing = false
 }: {
   children: ReactNode;
   continuation: ContentContinuation;
+  imageMaxHeight?: number;
   trimTrailing?: boolean;
 }) {
   const boundary = contentBoundaryForContinuation(continuation);
   const value = useMemo<TopicContentPresentation>(
     () => ({
+      imageMaxHeight,
       trimLeading: boundary.trimLeading,
       trimTrailing: boundary.trimTrailing || trimTrailing
     }),
-    [boundary.trimLeading, boundary.trimTrailing, trimTrailing]
+    [boundary.trimLeading, boundary.trimTrailing, imageMaxHeight, trimTrailing]
   );
   return <TopicContentPresentationContext.Provider value={value}>{children}</TopicContentPresentationContext.Provider>;
+}
+
+export function useContentImageMaxHeight() {
+  return useContext(TopicContentPresentationContext).imageMaxHeight;
 }
 
 function isDocumentEdgeDescendant(tnode: TNode, edge: 'leading' | 'trailing') {

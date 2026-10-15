@@ -103,7 +103,7 @@ Profile 指本次验收范围。表中的 `targeted` 和 `full` 是固定标识�
 | V2EX × Topic 筛选 / Topic → User → Topic | `LIVE-READ-03` |
 | NodeSeek × Topic 用户链接 → User → Topic | `LIVE-READ-04` |
 | 四站 × Topic 回复顺序 | `LIVE-READ-05` |
-| NodeSeek/V2EX × 表格；linux.do × 长图 | `LIVE-READ-06` |
+| NodeSeek/V2EX × 表格；linux.do × 长图／轮播 | `LIVE-READ-06` |
 | NodeSeek × 1381 图预览首次/重开延迟 | `LIVE-READ-08` |
 | linux.do × 阅读统计、已读与跨端续读 | `LIVE-READ-09` |
 | NodeSeek、linux.do、妖火 × 账号状态 | `LIVE-ACCOUNT-01` |
@@ -133,6 +133,7 @@ Profile 指本次验收范围。表中的 `targeted` 和 `full` 是固定标识�
 - 逐站切换 V2EX、linux.do、NodeSeek、妖火，等待当前请求进入明确 outcome；有数据时尝试各打开一个真实主题，同一次 Feed 证据不在其他场景重复请求。
 - 流程 oracle：来源与所选来源一致，成功、空态或错误分支正确结算且可恢复；打开 Topic 后显示来源、标题、作者、正文或明确错误态，返回后仍是原来源和列表状态。
 - 数据轴逐站报告；无结果、CF、限流或外部错误只影响该来源，不阻止其他来源，也不能冒充真实数据成功。
+- NodeSeek security 恢复另覆盖 `TOPIC-01/02`，共享 `ACCOUNT-01/02`：使用与当前源码匹配的普通 APK，依次直达 `https://www.nodeseek.com/post-832584-1` 和 `https://www.nodeseek.com/post-863650-1`。每帖核对 App 内真实标题与正文、读取明确结算及返回可用；千图帖正文可读后不得继续等待所有图片资源。若自然出现 `NodeSeek | security check`，以原请求最终正文恢复为 oracle，不能用登录 WebView 已打开或 HTTP 200 代替；没有自然出现时，该校验分支单独记 `NOT_VERIFIED`。保留原身份、Cookie 与设备数据，不为制造校验清理缓存或登录态；超时、403 和取消分别记录。此处通过只证明主题读取，不替代 `LIVE-READ-06/08` 的媒体、内存与预览验收。
 
 ### LIVE-FEED-01 来源导航连续反馈
 
@@ -183,7 +184,8 @@ Profile 指本次验收范围。表中的 `targeted` 和 `full` 是固定标识�
 
 ### LIVE-READ-06 逻辑节点连续性与长图像素稳定
 
-- 能力：`TOPIC-01/02/03`、`MORE-03`；共享 `NAV-02/03`。仅在 targeted 包含 `REG-TOPIC-084/085/086/087/088/089/090/094/097/123/134/135/136/137/138/139/140/141` 时执行；目标均使用 `exp+wz-android://open-topic?url=<encoded URL>` 直达，不经过搜索或相似帖子。
+- 能力：`TOPIC-01/02/03`、`MORE-03`；共享 `NAV-02/03`。仅在 targeted 包含 `REG-TOPIC-084/085/086/087/088/089/090/094/097/123/134/135/136/137/138/139/140/141`，或明确验收下方十图轮播目标时执行；只运行本次范围内的目标，均使用 `exp+wz-android://open-topic?url=<encoded URL>` 直达，不经过搜索或相似帖子。
+- linux.do 十图轮播直达 `https://linux.do/t/topic/2745312/1`（`TOPIC-02`，共享 `NAV-03`）：先确认主楼存在明确的十图轮播，图片自然显示且比例稳定；核对左右慢拖、快划、反向和首尾循环，箭头与横滑页码一致。纵拖只滚正文且页码不变，开始横向滚动后取消已有正文选区。点击当前图片进入对应预览，Android Back 后轮播页码、图片与正文位置保持。`REG-TOPIC-200` 的多指拖动不得误触图片预览：分别记录轮播激活前／后加入第二指，尤其核对起终点均在图片内时的抬手结果，并保留图外终点对照；随后新一轮单指点击仍须打开正确图片。再直达 `https://linux.do/t/topic/2556285/1`，核对带图片 href 外层链接的长图：图片 child 或链接宿主持有 responder 时均不得因多指抬手打开预览，后续正常单指点击及返回仍可用。图片外加入第二指与多指取消后的无障碍激活分别验收，不能用手势失败替代点击断言；多指触摸、滚离回收后的返回分别按实际执行记录，未执行记 `NOT_VERIFIED`。主楼成功不覆盖回复、展开引用、采纳答案或签名。动态图片数或轮播结构改变时记录目标身份不匹配并记 `NOT_VERIFIED`，不以普通多图帖替代。
 - NodeSeek 直达 `https://www.nodeseek.com/post-652056-1`：两张独立小表都铺满正文，表间有明确 `12dp` 间距，边框和长文字换行正确，页面纵向滚动不被横向容器截获。
 - V2EX 直达 `https://www.v2ex.com/t/1233470`：只验收正文「时间 / 发生的事」两列表；表头出现一次，18 行按原站顺序完整显示。该样本按当前硬预算应保持一个 typed table row；滚动时列宽、hairline 和横向位置稳定，无重复边框、空带或行跳动。返回再进入、修改阅读字号和切换主题后仍正确。`https://www.v2ex.com/t/1233404` 只属于 `LIVE-READ-05` 评论分页，不得替代表格目标。
 - linux.do 直达 `https://linux.do/t/topic/2556285`：通过「更多」进入原站对照第 9 层，确认 reply target 位于正文前，52 行代码完整有序且视觉上只有一个连续代码框。对代码执行慢速纯横拖、快速 fling、反向拖动及代码区域纵拖；横向位置必须稳定变化，纵拖只滚动主题且 x 不漂，静止长按仍可原生选择。停在「对比一下5.5」及各张长图进入/离开边界分别无触摸观察 60 秒，目标文字可见性转换必须为 0，普通 scroll settle 能结束；滚过主楼前三张长图和一张回复长图，已显示像素、比例和高度稳定，不出现「显示 → 空白 → 再显示」或请求波。滚离再返回、打开图片预览再返回后位置和高度保持；按要求 `adb am force-stop com.wz.reader` 后重启并重新进入，再重复第 9 层与长图边界核对。
@@ -231,6 +233,14 @@ Profile 指本次验收范围。表中的 `targeted` 和 `full` 是固定标识�
 - 真实登录及确认由用户亲自操作；Agent 不读取、输入或截图账号凭据。回到 App 后核对账号身份，重启 App 再核对授权保持；取消、拒绝或过期必须返回明确状态。
 - oracle：登录、匿名、验证中、授权中、失效和失败不混淆；返回后账号中心仍可操作。三站不得用桌面浏览器状态代替。
 - 同轮若 Topic、Feed、Search 或 User 自然触发 linux.do Cloudflare，验证面板必须保持到 WebView 挂载并按全局 checkbox 协议完成 canonical 检查，随后只恢复原 Query 一次；后台 More 重渲染不得关闭它。没有自然 challenge 时本项记 `NOT_VERIFIED`，不得清 Cookie、退出账号或人为制造。
+- 执行 `LIVE-READ-01` 的 NodeSeek security 恢复前后核对账号中心的同一身份；正文可读不应把匿名或未知身份改成已登录，临时校验失败不应覆盖此前 confirmed 身份。只报告本轮实际身份状态，未具备匿名样本时不以已登录样本代替。
+- `REG-ACCOUNT-068` 另验 `ACCOUNT-01/04`、`NOTIFY-01`：在身份已确认、认证页面已关闭且允许操作的设备上，以匹配新增修复源码的普通 APK 展开 NodeSeek 账号概要，等待主题、回复、鸡腿和星辰分别结算，核对两项余额可见且属于当前身份；收起重开和只读刷新不能回到部分资料失败。登录页或 HTTP 200 不替代余额结果。再只读进入 NodeSeek 消息列表并刷新未读总数，核对明确结算和原账号归属，不点开未读消息、不标已读、不发送。API JSON 的正常与业务错误分流由自动 owner 证明；自然校验分支未出现时单列 `NOT_VERIFIED`，前台成功不覆盖 `NOTIFY-03` 的 Android 摘要或 headless。`REG-TOPIC-201` 旧包的两帖通过不能作为本段新包通过。
+- `REG-ACCOUNT-068` 的 Native 交接和 hidden 排队失效由 `tests/ui/account/session-controller-browser-flow.test.tsx` 证明：实际出队前必须复核身份及取消，不发失效私有 GET，原错误保留且下一条合法请求继续。本段不为设备验收主动换号、清理或制造认证异常。
+- 2026-10-15 上一阶段实测：buildId `99224b7d047d4c9fb31ae8476852a263` 普通包在主 API 35 AVD 保留数据覆盖安装，源码与安装身份核对保持，PID `6147`。NodeSeek 账号主题／回复、鸡腿／星辰余额与今日已签到收益实际显示；前台全部、回复主题列表取得真实数据，未点条目或执行任何写入，`ACCOUNT-01` 与 `NOTIFY-01` 读取为 `LIVE_PASS`。同包另验 `TOPIC-01/02` 千图首三张、`1/1381→2/1381` 预览及返回、双指正文不误开、普通帖可读及返回千图位置；仅覆盖这些实际区间。`APK_SANITY`、完整 verify 与六组 fresh Native 共 292 项全部通过；本轮 40 次 NodeSeek forum、35 次 media 均为 200，Fatal／ANR／OOM／JS error／临时探针为 0。该包未包含随后追加的 JSD 早停修复，版本、数值与证据统一见 `REG-ACCOUNT-068`。
+- 追加修复的手动设备诊断已完成：临时包 `673f065bcf914b8e8dc2c56af2ef259c`、PID `7143` 仅向指定 NodeSeek 只读 Native GET 本地注入 31 次 403，真实 WebView 取得 Feed 行及作者／统计、两帖正文与千图首三张、当前账号概要与签到状态、用户主题／回复 JSON 和前台通知 JSON；`codex` 的真实搜索 HTML 有 50 个 `.post-list-item`，App 可打开结果。一次 fresh WebView 文档为 200、非 SW／磁盘缓存，正文可读时 22 张图仅 1 张完成。本地证据断言通过，见 `REG-ACCOUNT-068`。该过程没有 tracked replay，不能记 `DEVICE_REPLAY_PASS`，也不是自然 CF 403 已解决。
+- 列表／分类、主题／回复和登录态搜索读取 HTML／embedded；账号概要读取 runtime user，用户资料活动、消息、签到看板、鸡腿／星辰流水仍分别验证原 API JSON，不记为网页 HTML parser 覆盖。另一 AI 搜索重试取得上游 429／SW JSON `success:false`，不能作为成功搜索结果，首次 AI incomplete 原因仍未知。HTTP 成功／桥接 200 的明确 JSON 业务拒绝已有消息保留反例，不证明真实 429 原消息贯穿 reader；首轮 verify 的 UI 1 项失败和定向时序修复证据按原结果保留。
+- 最终普通包 buildId `bf585abbbaa9424987aec726339f0475`、普通 Release/Hermes x86_64 已保留状态覆盖安装，PID `8494`，首装／appId／签名／已装 SHA 保持，`APK_SANITY` 通过。`FEED-01` 当前 NodeSeek 行、`TOPIC-01` 两帖、`TOPIC-02` 千图首三张与预览 `1→2` 实际绘制／关闭原位置／正文双指横拖不打开、`ACCOUNT-01` 更多页刷新实际概要与签到状态、`NOTIFY-01` 前台全部／回复主题 26 条读取、`SEARCH-02` 的 `codex` 搜索完成并绘制可打开的真实 HTML 结果，均为各自范围内 `LIVE_PASS`。三站登录 UI 可见 `3/3`，没有明确远端写入；补入搜索后的最终快照 Native forum 37／media 60 次全为 200，Fatal／ANR／OOM／JS error／临时探针均为 0，证据断言再次通过。最终完整 verify 与独立 typecheck 通过，Unit 3949／UI 2791；Native 基线未变，六组 292 项使用已有同轮 fresh 报告，不宣称再次重跑。构建、截图、断言和 seed 统一见 `REG-ACCOUNT-068`；首次 AI incomplete 原因、自然 403、Android 摘要／headless、匿名 lane、全图／性能及真机仍未验。
+- 此包窗口 Native 均为 200，未自然复现 403→WebView，亦不能声称运行时 user 桥接在 Live 必经；这两条设备分支单列 `NOT_VERIFIED`，不沿用旧主题包的 fresh 403→200。原始无 Accept-Language 的 Native GET 和随后带该头的样本均已出现 200，但原始 Headers 精确不等，不能据此归因请求头；用户手机同期自行恢复，服务端精确判据仍未知。真机已交还，最终修复为 `NOT_VERIFIED`，不再连接或操作。主 AVD 的 linux.do 原站过期 Set-Cookie 删除事实继续待查；用户已明确允许保留当前状态覆盖安装和只读对照，仍禁止清理、登录和恢复快照，各站按当前真实身份判断验收前置。
 
 ### LIVE-ACCOUNT-02 凭据与用户身份认证
 

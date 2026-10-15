@@ -10,11 +10,14 @@ import {
   prepareNodeSeekForumContent
 } from '@/sources/nodeseek/topicParser';
 import { parseNodeSeekPageDocument } from '@/sources/nodeseek/protocol';
+import { getNodeSeekAccountOverview } from '@/sources/nodeseek/accountData';
+import { normalizeCategories, parseHtmlTopics } from '@/sources/nodeseek/feedParser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
-import { linuxDoBrowserResponse } from '@/features/account/browserFetchQueue';
+import { linuxDoBrowserResponse, nodeSeekBrowserResponse } from '@/features/account/browserFetchQueue';
+import type { BrowserFetchOwner } from '@/platform/network/browserFetchIntent';
 
-function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'account', title = '') {
+function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: BrowserFetchOwner, title = '') {
   window.history.pushState(null, '', url);
   document.title = title;
   document.body.innerHTML = html;
@@ -204,6 +207,151 @@ describe('hidden browser fetch scripts', () => {
     }
   });
 
+  it.each([
+    { name: 'runtime-only zero balances', coin: 0, stardust: 0, staleEmbedded: false },
+    { name: 'runtime-only negative balances', coin: -2, stardust: -4, staleEmbedded: false },
+    { name: 'runtime identity over stale embedded data', coin: 17, stardust: 8, staleEmbedded: true }
+  ])('returns a usable NodeSeek account overview with $name while preserving the homepage', async (scenario) => {
+    Object.defineProperty(window, '__config__', {
+      configurable: true,
+      value: {
+        user: {
+          member_id: 7,
+          member_name: '当前用户',
+          coin: scenario.coin,
+          stardust: scenario.stardust,
+          nPost: 5,
+          nComment: 64
+        }
+      }
+    });
+    const staleEmbedded = Buffer.from(
+      JSON.stringify({
+        user: { member_id: 8, member_name: '旧用户', coin: 999, stardust: 999 },
+        allCategory: [{ key: 'tech', cn_text: '技术' }]
+      })
+    ).toString('base64');
+    const { postMessage } = runNodeSeekBrowserFetchScript(
+      '/',
+      `${scenario.staleEmbedded ? `<script id="temp-script" type="application/json">${staleEmbedded}</script>` : ''}
+       <ul class="post-list"><li class="post-list-item">
+         <div class="post-title"><a href="/post-832584-1">保留首页主题</a></div>
+       </li></ul>`,
+      'account-overview'
+    );
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]![0]);
+    const fetcher = async () => nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url);
+    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
+      userId: '7',
+      coin: scenario.coin,
+      stardust: scenario.stardust,
+      profile: { id: '7', username: '当前用户', topicCount: 5, replyCount: 64 }
+    });
+    await expect(getNodeSeekAccountOverview({ userId: '8', fetcher })).rejects.toThrow('身份不匹配');
+
+    const page = parseNodeSeekPageDocument(payload.html);
+    expect(parseHtmlTopics(page)).toEqual([expect.objectContaining({ id: '832584', title: '保留首页主题' })]);
+    if (scenario.staleEmbedded) {
+      expect(normalizeCategories(page.embedded ?? {})).toEqual([{ source: 'nodeseek', id: 'tech', name: '技术' }]);
+    }
+  });
+
+  it('waits for delayed NodeSeek runtime user while ordinary browser detection runs', async () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+        '/',
+        '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script><ul class="post-list"><li class="post-list-item"><div class="post-title"><a href="/post-42-1">Already rendered homepage</a></div></li></ul>',
+        'account-overview'
+      );
+      const prematureMessages = postMessage.mock.calls.length;
+      const prematureStops = stop.mock.calls.length;
+      setTimeout(() => {
+        Object.defineProperty(window, '__config__', {
+          configurable: true,
+          value: { user: { member_id: 7, member_name: '当前用户', coin: 4, stardust: 2 } }
+        });
+      }, 500);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]![0]);
+      await expect(
+        getNodeSeekAccountOverview({
+          userId: '7',
+          fetcher: async () => nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
+        })
+      ).resolves.toMatchObject({ userId: '7', coin: 4, stardust: 2 });
+      expect(prematureMessages).toBe(0);
+      expect(prematureStops).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([null, undefined])('rejects a stale NodeSeek overview when the runtime user is %s', async (user) => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(window, '__config__', { configurable: true, value: { user } });
+      const embedded = Buffer.from(
+        JSON.stringify({ user: { member_id: 7, member_name: '旧用户', coin: 999, stardust: 999 } })
+      ).toString('base64');
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/',
+        `<script id="temp-script">${embedded}</script><li class="post-list-item">Already rendered homepage</li>`,
+        'account-overview'
+      );
+      await vi.advanceTimersByTimeAsync(15000);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]![0]);
+      await expect(
+        getNodeSeekAccountOverview({
+          userId: '7',
+          fetcher: async () => {
+            if (payload.error) throw new Error(payload.error);
+            return nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url);
+          }
+        })
+      ).rejects.toThrow(user === null ? '身份不匹配' : '账号资料没有加载完成');
+      if (user === undefined) expect(payload.error).toContain('账号资料没有加载完成');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns a NodeSeek feed homepage immediately without waiting for runtime account data', () => {
+    const { postMessage } = runNodeSeekBrowserFetchScript(
+      '/',
+      '<li class="post-list-item"><a href="/post-832584-1">Public homepage</a></li>',
+      'feed'
+    );
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]![0]);
+    expect(parseHtmlTopics(parseNodeSeekPageDocument(payload.html))).toEqual([
+      expect.objectContaining({ id: '832584', title: 'Public homepage' })
+    ]);
+  });
+
+  it('does not accept stale overview data when a challenge overlays the public homepage', () => {
+    const embedded = Buffer.from(JSON.stringify({ user: { member_id: 7, member_name: '旧用户', coin: 999 } })).toString(
+      'base64'
+    );
+    const { postMessage } = runNodeSeekBrowserFetchScript(
+      '/',
+      `<script>${embedded}</script><li class="post-list-item">Already rendered homepage</li>`,
+      'account-overview',
+      'Just a moment...'
+    );
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[0]![0])).toMatchObject({ challenge: true, html: '' });
+  });
+
   it('waits for NodeSeek search results instead of returning the bare search form', () => {
     vi.useFakeTimers();
     try {
@@ -271,6 +419,33 @@ describe('hidden browser fetch scripts', () => {
     }
   });
 
+  it('waits for the NodeSeek security check to yield readable content without stopping the page', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+        '/post-42-1',
+        '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script><p>Checking your connection</p>',
+        undefined,
+        'NodeSeek | security check'
+      );
+      vi.advanceTimersByTime(4000);
+      expect(postMessage).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+
+      document.title = 'Recovered topic';
+      document.body.innerHTML = '<article class="post-content"><p>Recovered body</p></article>';
+      vi.advanceTimersByTime(500);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(postMessage.mock.calls[0]![0])).toMatchObject({ challenge: false });
+      expect(JSON.parse(postMessage.mock.calls[0]![0]).html).toContain('Recovered body');
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('returns interactive Cloudflare challenge pages immediately', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript(
       '/search?q=plasma%E6%95%99%E7%A8%8B',
@@ -293,23 +468,54 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('returns raw NodeSeek JSON bodies for browser-fetched API pages', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
-      '/session/csrf',
-      `
-      <pre>{"csrf":"dynamic-token"}</pre>
-    `
-    );
+  it('rejects a NodeSeek detection page that never yields readable content', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+        '/post-42-1',
+        '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script><p>Checking your connection</p>',
+        'topic'
+      );
+      vi.advanceTimersByTime(14500);
+      expect(postMessage).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(500);
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]![0]);
+      expect(nodeSeekBrowserResponse(payload.html, payload.challenge).status).toBe(403);
+      expect(payload).toMatchObject({ challenge: true, html: '' });
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 
-    expect(postMessage).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
-    expect(payload).toMatchObject({
-      type: 'nodeseek-browser-fetch',
-      id: 7,
-      challenge: false,
-      html: '{"csrf":"dynamic-token"}'
-    });
-    expect(stop).toHaveBeenCalled();
+  it.each([undefined, 'account'] as const)('returns raw NodeSeek JSON bodies immediately for owner %s', (owner) => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+        '/session/csrf',
+        `
+      <pre>{"csrf":"dynamic-token"}</pre>
+    `,
+        owner
+      );
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+      expect(payload).toMatchObject({
+        type: 'nodeseek-browser-fetch',
+        id: 7,
+        challenge: false,
+        html: '{"csrf":"dynamic-token"}'
+      });
+      expect(stop).toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it('keeps Cloudflare marker text inside NodeSeek browser-fetched JSON as data', () => {
@@ -349,17 +555,20 @@ describe('hidden browser fetch scripts', () => {
     expect(payload.html).toBeUndefined();
   });
 
-  it('prefers readable NodeSeek content over injected challenge-platform markup', () => {
+  it('returns readable NodeSeek content before its subresources finish loading', () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('interactive');
     const { postMessage, stop } = runNodeSeekBrowserFetchScript(
       '/post-777280-1',
       `
       <main>
         <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
-        <article class="post-content"><p>正常正文讨论 cf-turnstile</p></article>
+        <article class="post-content"><p>正常正文讨论 cf-turnstile</p><img src="https://images.example/pending.jpg"></article>
       </main>
     `
     );
 
+    expect(document.readyState).toBe('interactive');
+    expect(document.images[0]?.complete).toBe(false);
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
     expect(payload).toMatchObject({
@@ -368,6 +577,7 @@ describe('hidden browser fetch scripts', () => {
       challenge: false
     });
     expect(payload.html).toContain('正常正文');
+    expect(payload.html).toContain('https://images.example/pending.jpg');
     expect(stop).toHaveBeenCalled();
   });
 

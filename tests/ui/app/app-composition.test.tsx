@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import * as SplashScreen from 'expo-splash-screen';
-import { act, fireEvent, renderHook } from '@testing-library/react-native';
+import { act, cleanup, fireEvent, renderHook } from '@testing-library/react-native';
 import { useAppStartupRuntime } from '@/app/useAppStartupRuntime';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppComposition } from '@/app/AppComposition';
@@ -14,9 +16,12 @@ import { render } from '../render';
 import { NavigationContext, NavigationRouteContext } from '@react-navigation/native';
 import { StartupPageLayoutProvider, useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import type { ComponentProps, ReactNode } from 'react';
+import { pruneDiagnosticExports } from '@/platform/diagnostics/diagnosticExportFiles';
+import { RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 
 jest.mock('@/app/AppRoutes', () => ({ AppRoutes: jest.fn(() => null) }));
 jest.mock('@/app/useAppRuntime', () => ({ useAppRuntime: jest.fn() }));
+jest.mock('@/platform/diagnostics/diagnosticExportFiles', () => ({ pruneDiagnosticExports: jest.fn() }));
 jest.mock('expo-splash-screen', () => ({
   preventAutoHideAsync: jest.fn(async () => true),
   setOptions: jest.fn(),
@@ -30,6 +35,20 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 describe('App composition bootstrap', () => {
+  const originalRequestIdleCallback = globalThis.requestIdleCallback;
+  const originalCancelIdleCallback = globalThis.cancelIdleCallback;
+  let idleCallback: Parameters<typeof globalThis.requestIdleCallback>[0] | undefined;
+
+  beforeEach(() => {
+    idleCallback = undefined;
+    globalThis.requestIdleCallback = jest.fn<typeof globalThis.requestIdleCallback>((callback) => {
+      idleCallback = callback;
+      return 1;
+    });
+    globalThis.cancelIdleCallback = jest.fn();
+    jest.mocked(pruneDiagnosticExports).mockReset();
+  });
+
   it('keeps navigation delivery stable across root updates and uses a replaced handler', async () => {
     const settings = createEmptyReaderData().settings;
     const theme = createTheme(settings);
@@ -85,10 +104,104 @@ describe('App composition bootstrap', () => {
     expect(report).toHaveBeenCalledWith('topic-visible');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cleanup();
+    globalThis.requestIdleCallback = originalRequestIdleCallback;
+    globalThis.cancelIdleCallback = originalCancelIdleCallback;
     setStartupTimingRecorder(undefined);
+    setDiagnosticWriter(null);
     jest.mocked(SplashScreen.hide).mockClear();
     jest.restoreAllMocks();
+  });
+
+  it('maintains expired diagnostic exports only during idle time after the visible route is ready', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    const hook = await renderHook(() => useAppStartupRuntime(undefined, () => 'feed'));
+    await act(async () => hook.result.current.onReady());
+    expect(globalThis.requestIdleCallback).not.toHaveBeenCalled();
+    await act(async () => hook.result.current.onLayout('background-route'));
+    expect(globalThis.requestIdleCallback).not.toHaveBeenCalled();
+    await act(async () => hook.result.current.onLayout('feed'));
+    expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
+    expect(globalThis.requestIdleCallback).toHaveBeenCalledTimes(1);
+    expect(pruneDiagnosticExports).not.toHaveBeenCalled();
+    expect(idleCallback).toBeDefined();
+    jest.mocked(pruneDiagnosticExports).mockImplementationOnce(() => {
+      throw new Error('cleanup denied');
+    });
+    await act(async () => expect(() => idleCallback?.({ didTimeout: false, timeRemaining: () => 5 })).not.toThrow());
+    expect(pruneDiagnosticExports).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({ area: 'diagnostic', operation: 'export-cleanup', phase: 'finish', outcome: 'failure' })
+    );
+    await act(async () => hook.result.current.onLayout('feed'));
+    expect(globalThis.requestIdleCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels pending export maintenance when the startup owner is unmounted', async () => {
+    const hook = await renderHook(() => useAppStartupRuntime(undefined, () => 'feed'));
+    await act(async () => {
+      hook.result.current.onReady();
+      hook.result.current.onLayout('feed');
+    });
+    await hook.unmount();
+    expect(globalThis.cancelIdleCallback).toHaveBeenCalledWith(1);
+    expect(pruneDiagnosticExports).not.toHaveBeenCalled();
+  });
+
+  it('shows an actionable local recovery without mounting navigation or reporting page readiness', async () => {
+    const settings = createEmptyReaderData().settings;
+    const theme = createTheme(settings);
+    const phases: StartupPhase[] = [];
+    setStartupTimingRecorder((phase) => phases.push(phase));
+    const retry = jest.fn();
+    const runtime = {
+      onUserInteraction: jest.fn(),
+      accountHost: (<Text>账号</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
+      appStyles: createAppStyles(theme),
+      mediaTransportIdentity: 'loading',
+      readerStyleContext: { settings, theme },
+      routes: null,
+      sessionEpochs: { linuxdo: 0, nodeseek: 0, yaohuo: 0 },
+      startupRecovery: (
+        <RecoverableEmptyState message="本地登录身份读取失败，请重试" actionLabel="重试启动" onAction={retry} />
+      ),
+      theme
+    } satisfies ReturnType<typeof useAppRuntime>;
+    jest.mocked(useAppRuntime).mockReturnValue(runtime);
+    const view = await render(<AppComposition />);
+    expect(view.getByText('本地登录身份读取失败，请重试')).toBeTruthy();
+    const retryButton = view.getByRole('button', { name: '重试启动' });
+    expect(SplashScreen.hide).not.toHaveBeenCalled();
+    await fireEvent(view.getByTestId('startup-recovery'), 'layout');
+    expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
+    expect(phases).not.toContain('page-ready');
+    expect(globalThis.requestIdleCallback).not.toHaveBeenCalled();
+    await fireEvent.press(retryButton);
+    expect(retry).toHaveBeenCalledTimes(1);
+    jest.mocked(useAppRuntime).mockReturnValue({ ...runtime, startupRecovery: undefined });
+    await view.rerender(<AppComposition />);
+    expect(view.queryByRole('button', { name: '重试启动' })).toBeNull();
+    expect(view.getByRole('status').props.accessibilityState).toEqual({ busy: true });
+  });
+
+  it('finishes navigation after local recovery without hiding the splash twice', async () => {
+    const phases: StartupPhase[] = [];
+    setStartupTimingRecorder((phase) => phases.push(phase));
+    const hook = await renderHook(() => useAppStartupRuntime(undefined, () => 'feed'));
+    await act(async () => hook.result.current.onRecoveryLayout());
+    expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
+    expect(phases).not.toContain('page-ready');
+    await act(async () => {
+      hook.result.current.onLayout('feed');
+      hook.result.current.onReady();
+    });
+    expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
+    expect(phases.filter((phase) => phase === 'page-ready')).toHaveLength(1);
+    expect(globalThis.requestIdleCallback).toHaveBeenCalledTimes(1);
   });
 
   it('exposes a static accessible status while the startup gate is pending', async () => {

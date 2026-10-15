@@ -7,7 +7,9 @@ import {
   StyleSheet,
   Text,
   View,
+  type GestureResponderEvent,
   type ImageURISource,
+  type PressableProps,
   type StyleProp,
   type TextStyle,
   type ViewStyle
@@ -40,7 +42,7 @@ import type { ReaderTheme } from '@/ui/theme/tokens';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
-import { useContentBoundarySpacing } from './TopicContentPresentation';
+import { useContentBoundarySpacing, useContentImageMaxHeight } from './TopicContentPresentation';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -64,6 +66,34 @@ import {
 } from '@/platform/media/imageDisplayDimensions';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+
+export function useImagePreviewPress(onPress: PressableProps['onPress']) {
+  const multipleTouches = useRef(false);
+  return {
+    onTouchStart: ({ nativeEvent }: GestureResponderEvent) => {
+      multipleTouches.current = nativeEvent.touches.length > 1;
+    },
+    onTouchMove: ({ nativeEvent }: GestureResponderEvent) => {
+      if (nativeEvent.touches.length > 1) multipleTouches.current = true;
+    },
+    onPress: (event: GestureResponderEvent) => {
+      // Pressability can still emit a press after a multi-pointer pan fails; accessibility clicks have no touches.
+      if (multipleTouches.current && event.nativeEvent?.changedTouches?.length) {
+        event.stopPropagation?.();
+        return;
+      }
+      onPress?.(event);
+    }
+  };
+}
+
+function ImagePreviewPressable({
+  onPress,
+  ...props
+}: Pick<PressableProps, 'accessibilityLabel' | 'accessibilityRole' | 'children' | 'onPress' | 'style' | 'testID'>) {
+  const press = useImagePreviewPress(onPress);
+  return <Pressable {...props} {...press} />;
+}
 
 function imageDisplayCacheIdentity(source: ImageURISource) {
   return typeof (source as ImageURISource & { cacheKey?: unknown }).cacheKey === 'string'
@@ -203,6 +233,7 @@ type PreviewImageBlockProps = {
   imageProps: IMGElementProps;
   imageSource: ImageURISource;
   loadingColor: string;
+  maxHeight?: number;
   mediaContext: ForumMediaRequestContext;
   nodeSeekMediaUserAgent?: string;
   onOpenImagePreview: (
@@ -360,6 +391,7 @@ function AdmittedPreviewImageBlock({
   imageProps,
   imageSource,
   loadingColor,
+  maxHeight,
   mediaContext,
   nodeSeekMediaUserAgent,
   onOpenImagePreview,
@@ -475,7 +507,7 @@ function AdmittedPreviewImageBlock({
     contentWidth,
     height: undefined,
     source: imageSource,
-    style: [naturalImageStyle, { resizeMode: 'contain' }],
+    style: [naturalImageStyle, { resizeMode: 'contain', ...(maxHeight === undefined ? {} : { maxHeight }) }],
     width: undefined
   });
   const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
@@ -507,7 +539,7 @@ function AdmittedPreviewImageBlock({
     if (loadFailed) bodyMediaLease.settle('error');
   }, [bodyMediaLease, loadFailed]);
   return (
-    <Pressable
+    <ImagePreviewPressable
       accessibilityLabel={imageState.alt || '查看图片'}
       accessibilityRole="button"
       style={sharedContainerStyle}
@@ -558,7 +590,7 @@ function AdmittedPreviewImageBlock({
           </View>
         ) : null}
       </View>
-    </Pressable>
+    </ImagePreviewPressable>
   );
 }
 
@@ -569,13 +601,18 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
   const cacheKey = imageDisplayCacheIdentity(props.imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
   const sourceDimensions = cachedDimensions || props.displaySize;
-  const displayWidth = sourceDimensions ? Math.min(sourceDimensions.width, contentWidth) : contentWidth;
+  const naturalDimensions = sourceDimensions || { height: contentWidth * 0.75, width: contentWidth };
+  const scale = Math.min(
+    1,
+    contentWidth / naturalDimensions.width,
+    (props.maxHeight ?? Infinity) / naturalDimensions.height
+  );
   const dimensions = sourceDimensions
     ? {
-        height: Math.max(1, Math.round((sourceDimensions.height * displayWidth) / sourceDimensions.width)),
-        width: displayWidth
+        height: Math.max(1, Math.round(naturalDimensions.height * scale)),
+        width: naturalDimensions.width * scale
       }
-    : { height: Math.round(contentWidth * 0.75), width: contentWidth };
+    : { height: Math.round(naturalDimensions.height * scale), width: naturalDimensions.width * scale };
   if (bodyMediaLease.admitted) {
     return <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} />;
   }
@@ -831,7 +868,7 @@ function ManagedMixedForumImage({
     );
   }
   return (
-    <Pressable
+    <ImagePreviewPressable
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       style={frameStyle}
@@ -900,7 +937,7 @@ function ManagedMixedForumImage({
           <ActivityIndicator color={loadingColor} size="small" />
         </View>
       ) : null}
-    </Pressable>
+    </ImagePreviewPressable>
   );
 }
 
@@ -940,11 +977,16 @@ export function createPreviewRenderers({
 }): HtmlRenderers {
   const PreviewImageRenderer: CustomBlockRenderer = (props) => {
     const continuationSpacing = useContentBoundarySpacing(props.tnode);
+    const maxHeight = useContentImageMaxHeight();
     const contentWidth = useForumContentWidth();
     const imageProps = useIMGElementProps(props);
     const attributes = props.tnode.attributes;
     const boundarySpacing =
-      attributes[FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE] === 'standalone' ? STANDALONE_IMAGE_SPACING : continuationSpacing;
+      maxHeight !== undefined
+        ? { marginBottom: 0, marginTop: 0 }
+        : attributes[FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE] === 'standalone'
+          ? STANDALONE_IMAGE_SPACING
+          : continuationSpacing;
     const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const inlineSrc = attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
     if (isInlineForumImage(attributes)) {
@@ -987,7 +1029,7 @@ export function createPreviewRenderers({
     return (
       <PreviewImageBlock
         key={compatibleImageRequestIdentity(imageSource as ImageURISource)}
-        alignment={forumImageRowAlignment(props.tnode)}
+        alignment={maxHeight === undefined ? forumImageRowAlignment(props.tnode) : 'center'}
         attributes={attributes}
         boundarySpacing={boundarySpacing}
         contentWidth={contentWidth}
@@ -998,6 +1040,7 @@ export function createPreviewRenderers({
         imageProps={imageProps}
         imageSource={imageSource as ImageURISource}
         loadingColor={theme.primary}
+        maxHeight={maxHeight}
         mediaContext={mediaContext}
         nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
         onOpenImagePreview={onOpenImagePreview}

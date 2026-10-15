@@ -1,10 +1,11 @@
 import type { MoreScreenStyles } from '../styles';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { RefreshCw } from 'lucide-react-native';
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton } from '@/ui/controls/ButtonControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 
 const LINUXDO_LEVEL_TABS = [
   { value: 'progress', label: '等级要求' },
@@ -77,6 +78,17 @@ export function LinuxDoLevelPanel({
                   LV {profile.currentLevel}
                   {profile.targetLevel !== null ? ` → LV ${profile.targetLevel}` : ''}
                 </Text>
+              </View>
+              <View style={styles.levelRefreshSlot}>
+                <IconButton
+                  ghost
+                  iconOnly
+                  icon={RefreshCw}
+                  iconSize={18}
+                  label={busy ? '正在刷新等级' : '刷新等级'}
+                  loading={busy}
+                  onPress={onRefresh}
+                />
               </View>
             </View>
             <View style={styles.levelMetaRow}>

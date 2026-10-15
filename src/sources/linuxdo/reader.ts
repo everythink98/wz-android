@@ -25,7 +25,7 @@ import { isRecord, parsePositiveInteger, textContentFromHtml } from '@/domain/fo
 import { discoursePostPolicy } from '@/sources/discourse/policy';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
@@ -53,8 +53,10 @@ import {
   discourseVisiblePostIds
 } from '@/sources/discourse/model';
 import { prepareLinuxDoContent } from './parser';
+import { linuxDoBoostFields } from './boosts';
 import { orientReplyWindow } from '@/sources/replyWindows';
 import { discourseReadingFromJson } from '@/domain/forum/discourseReading';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 
 export const LIST_PAGE_SIZE = 30;
 
@@ -69,6 +71,7 @@ export type LinuxDoReadAuth = {
   authenticated?: boolean;
   categoryCacheScope?: string;
   userAgent?: string;
+  onAccountFailure?: (reason: 'http-401' | 'account-recheck-required') => void;
 };
 
 export interface LinuxDoOptions {
@@ -188,6 +191,11 @@ export async function categoryMapForTopics(
   } catch (error) {
     if (error instanceof LinuxDoCloudflareError) {
       throw error;
+    }
+    // A category request can outlive its first reader and serve another reader.
+    const reason = sourceErrorFromUnknown('linuxdo', error).reason;
+    if (reason === 'http-401' || reason === 'account-recheck-required') {
+      options.linuxDoAccess?.onAccountFailure?.(reason);
     }
   }
   return nextCategoryMap;
@@ -311,6 +319,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
   const { cookedHtml, ...replyFields } = fields;
   const prepared = preparedDeletedReply || prepareLinuxDoContent(cookedHtml, polls, { role: 'reply', topicId });
   const rawBoostCount = boostCountFromPost(raw);
+  const boostFields = linuxDoBoostFields(raw);
   const needsApproval = raw.needs_category_expert_approval === true;
   const authorLevelLabel = linuxDoLevelLabel(raw);
   return {
@@ -323,9 +332,10 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     contentHtml: prepared.preparedContent.contentHtml,
     preparedContent: prepared.preparedContent,
     ...(prepared.quotedPosts.length ? { quotedPosts: prepared.quotedPosts } : {}),
-    ...(rawBoostCount || needsApproval
+    ...(rawBoostCount || needsApproval || Object.keys(boostFields).length
       ? {
           siteExtension: {
+            ...boostFields,
             ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
             ...(needsApproval ? { needsApproval: true } : {})
           }
@@ -373,13 +383,18 @@ async function hydrateEditableReplyContent(replies: Reply[], options: LinuxDoOpt
   );
 }
 
-function linuxDoHeaders(access: LinuxDoOptions['linuxDoAccess'], referer = `${BASE_URL}/latest`, csrfToken?: string) {
+async function linuxDoHeaders(
+  access: LinuxDoOptions['linuxDoAccess'],
+  referer = `${BASE_URL}/latest`,
+  csrfToken?: string,
+  signal?: AbortSignal
+) {
   const loggedIn = access?.authenticated === true;
   return {
     Accept: 'application/json, text/javascript, */*; q=0.01',
     Referer: referer,
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
+    'User-Agent': await resolveWebViewUserAgent(access?.userAgent, signal),
     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     'X-Requested-With': 'XMLHttpRequest',
     ...(loggedIn ? { 'Discourse-Logged-In': 'true' } : {})
@@ -405,7 +420,12 @@ export async function fetchLinuxDoJson<T>(
     withBrowserFetchIntent(
       {
         headers: {
-          ...linuxDoHeaders(options.linuxDoAccess, requestOptions.referer, requestOptions.csrfToken),
+          ...(await linuxDoHeaders(
+            options.linuxDoAccess,
+            requestOptions.referer,
+            requestOptions.csrfToken,
+            options.signal
+          )),
           ...(options.trackView && /^\/t\/\d+(?:\/\d+)?\.json$/.test(url.pathname)
             ? { 'Discourse-Track-View': '1', 'Discourse-Track-View-Topic-Id': url.pathname.match(/^\/t\/(\d+)/)![1] }
             : {})
@@ -651,7 +671,15 @@ export async function getLinuxDoTopic(
     ...(firstPostFields?.canLike === undefined ? {} : { canLike: firstPostFields.canLike }),
     ...(polls ? { polls } : {}),
     ...(firstPostFields?.reactionSummary ? { reactionSummary: firstPostFields.reactionSummary } : {}),
-    ...(firstPostBoostCount ? { siteExtension: { boostCount: firstPostBoostCount } } : {}),
+    ...('currentUserReaction' in firstPostFields ? { currentUserReaction: firstPostFields.currentUserReaction } : {}),
+    ...(firstPostRecord && (firstPostBoostCount || 'boosts' in firstPostRecord || 'can_boost' in firstPostRecord)
+      ? {
+          siteExtension: {
+            ...linuxDoBoostFields(firstPostRecord),
+            ...(firstPostBoostCount ? { boostCount: firstPostBoostCount } : {})
+          }
+        }
+      : {}),
     ...(positiveNumber(data.bookmark_id)
       ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true }
       : typeof data.bookmarked === 'boolean'

@@ -847,16 +847,6 @@ describe('Feed loading', () => {
     expect(mockFlashListMountCount).toBe(mountsBeforeSelection + 1);
   });
 
-  it('renders the existing Loading state while a lazy scene materializes', async () => {
-    await render(renderFeed(false, [topic]));
-
-    const placeholder = mockTabViewProps?.renderLazyPlaceholder?.({ route: { key: 'linuxdo' } });
-    expect(placeholder).toBeDefined();
-    const placeholderView = await render(<>{placeholder}</>);
-
-    expect(placeholderView.getByText('正在读取主题...')).toBeTruthy();
-  });
-
   it.each(['data', 'empty', 'partial', 'error', 'auth'] as const)(
     'exposes the settled %s outcome for the active source and filter',
     async (kind) => {

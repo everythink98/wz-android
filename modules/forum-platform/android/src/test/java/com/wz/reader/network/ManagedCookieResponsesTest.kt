@@ -142,6 +142,44 @@ class ManagedCookieResponsesTest {
     assertEquals("_t=B", current)
   }
 
+  @Test fun startupBarrierAvoidsDiagnosticCookieReadsAndStillRejectsBlockedOrStaleResponses() {
+    var reads = 0
+    var writes = 0
+    var flushes = 0
+    val events = mutableListOf<Map<String, Any>>()
+    val store = ManagedCookieResponses({ reads++; "_t=fixture; cf_clearance=fixture" }, { _, values ->
+      writes++
+      CookieResponseBatch(values.size).also { batch -> values.forEach { batch.complete(true) } }
+    }, report = { events.add(it) }, flusher = { flushes++ })
+    store.within {
+      store.observed(url, "linuxdo", null)
+      store.setBarrier(true, "startup")
+      store.receive(response("_t=blocked"))
+      store.setBarrier(false, "startup")
+      store.receive(response("_t=stale"))
+    }
+    assertEquals("startup must not initialize the platform reader for diagnostics", 0, reads)
+    assertEquals(0, writes)
+    assertEquals(0, flushes)
+    assertTrue(events.any { it["cookieResult"] == "barrier_blocked" })
+    assertTrue(events.any { it["cookieResult"] == "epoch_changed" })
+    val barriers = events.filter { it["cookieBarrierReason"] == "startup" }
+    assertEquals(4, barriers.size)
+    barriers.forEach { event ->
+      assertFalse(event.containsKey("hasLoginCookie"))
+      assertFalse(event.containsKey("hasCfClearance"))
+    }
+    store.within {
+      store.observed(url, "linuxdo", null)
+      store.receive(response("_t=fresh"))
+    }
+    assertEquals(1, writes)
+    assertEquals(1, flushes)
+    assertEquals(2, reads)
+    store.setBarrier(true, "identity-change")
+    assertEquals("other reasons must retain their diagnostic observations", 4, reads)
+  }
+
   private val url = "https://linux.do/session/current.json"
   @Test fun observesClearanceHandoffAndActualRequestWithoutExportingCookieValues() {
     val events = mutableListOf<Map<String, Any>>()
@@ -573,7 +611,7 @@ class ManagedCookieResponsesTest {
       "_t=A"
     }
     val client = OkHttpClient.Builder().cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor { "linuxdo" })
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = { "linuxdo" }, defaultUserAgent = { "provider-user-agent" }))
       .addInterceptor(CookieResponseContextInterceptor(store))
       .addNetworkInterceptor(CookieResponseInterceptor(store)).build()
     try {

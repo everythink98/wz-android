@@ -1,6 +1,24 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue, LINK_COLOR } from '@/ui/theme/tokens';
 
+export function createTopicTableStyles(theme: ReaderTheme) {
+  return StyleSheet.create({
+    htmlTableScroll: {
+      width: '100%'
+    },
+    htmlTableScrollContent: {
+      alignItems: 'flex-start'
+    },
+    htmlTableFrame: {
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: 1,
+      overflow: 'hidden'
+    }
+  });
+}
+
 export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontScale = settings.fontScale;
   const titleFontScale = Math.min(fontScale, 1.12);
@@ -803,19 +821,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontWeight: '600',
       lineHeight: 18
     },
-    htmlTableScroll: {
-      width: '100%'
-    },
-    htmlTableScrollContent: {
-      alignItems: 'flex-start'
-    },
-    htmlTableFrame: {
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: 10,
-      borderWidth: 1,
-      overflow: 'hidden'
-    },
     replyComposerBottomSheetBackground: {
       backgroundColor: theme.surface,
       borderTopLeftRadius: radiusLg,
@@ -1199,10 +1204,10 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       minHeight: 48
     },
     quotePanelStateText: {
-      color: theme.primary,
+      color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 13,
-      fontWeight: '600',
+      fontWeight: '500',
       lineHeight: 18
     },
     quotePanelStateIcon: {
@@ -1228,11 +1233,14 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       minHeight: 48
     },
     quoteTopicLinkText: {
-      color: theme.primary,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
       fontSize: Math.round(14 * fontScale),
       fontWeight: '600',
       lineHeight: Math.round(21 * fontScale)
+    },
+    quoteMeta: {
+      color: alphaColor(theme.ink, 0.7)
     },
     quotePreviewText: {
       color: theme.ink,

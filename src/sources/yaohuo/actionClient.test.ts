@@ -5,7 +5,7 @@ import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 afterEach(() => setDiagnosticWriter(null));
 
 vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
-  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
+  getDefaultAndroidWebViewUserAgent: vi.fn(async () => 'native-provider-user-agent')
 }));
 
 import { runYaohuoAction } from './actionClient';

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
@@ -21,6 +22,7 @@ afterEach(async () => {
 // Account observer, reconciliation, identity changes and epochs are real; HTTP/cookies are local mocks.
 describe('account identity reconciliation pressure', () => {
   it('coalesces 2000 rechecks across 20 identity changes and ignores 2000 obsolete requests', async () => {
+    await AsyncStorage.setItem('account-session.migration.v1', '1');
     setDiagnosticWriter(() => {});
     appQueryClient.setQueryData(
       accountQueryKeys.snapshot('linuxdo'),
@@ -55,12 +57,13 @@ describe('account identity reconciliation pressure', () => {
           notify,
           nodeSeekRecoveryThreshold: 1,
           openUser: async () => undefined,
-          ready: false,
+          ready: true,
           screen: 'search',
           webViewBlockMessage: ''
         }),
       { wrapper: QueryTestWrapper }
     );
+    await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
     const initialEpoch = hook.result.current.read.forumSessionEpochs.linuxdo;
     try {
       for (let round = 0; round < 20; round++) {

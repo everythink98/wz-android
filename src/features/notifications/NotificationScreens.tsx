@@ -457,7 +457,6 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         </View>
       ) : null}
       <FlashList
-        key={`${source}:${categoryId}:${unreadOnly}`}
         ref={listRef}
         onLayout={onPageLayout}
         nestedScrollEnabled={false}
@@ -862,6 +861,7 @@ export function NotificationDetailScreen({
   actorInHeader = false,
   canOpenTopic = false,
   canRetry = true,
+  retryLabel = '重试',
   contentWidth,
   detail,
   discourseEmojiUrls,
@@ -907,6 +907,7 @@ export function NotificationDetailScreen({
   actorInHeader?: boolean;
   canOpenTopic?: boolean;
   canRetry?: boolean;
+  retryLabel?: string;
   contentWidth: number;
   detail?: NotificationDetail;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
@@ -1020,10 +1021,10 @@ export function NotificationDetailScreen({
             canOpenTopic
               ? { label: replyToTopic ? '前往主题回复' : '查看完整主题', run: () => onOpenTopic() }
               : canRetry
-                ? { label: '重试', run: onRetry }
+                ? { label: retryLabel, run: onRetry }
                 : undefined
           }
-          secondaryAction={canOpenTopic && canRetry ? { label: '重试', run: onRetry } : undefined}
+          secondaryAction={canOpenTopic && canRetry ? { label: retryLabel, run: onRetry } : undefined}
         />
       </View>
     );
@@ -1269,7 +1270,9 @@ export function NotificationDetailScreen({
       {error ? (
         <View style={styles.detailRecovery} accessibilityLiveRegion="polite">
           <Text style={[styles.errorText, styles.sourceErrorText]}>{error}</Text>
-          {canRetry ? <AppButton compact label="重试读取消息" onPress={onRetry} /> : null}
+          {canRetry ? (
+            <AppButton compact label={retryLabel === '重试' ? '重试读取消息' : retryLabel} onPress={onRetry} />
+          ) : null}
         </View>
       ) : null}
       {!conversation && canOpenTopic ? (

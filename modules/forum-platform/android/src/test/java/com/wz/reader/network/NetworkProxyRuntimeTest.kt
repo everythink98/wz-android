@@ -59,6 +59,71 @@ import org.junit.Test
 
 class NetworkProxyRuntimeTest {
   @Test
+  fun defaultWebViewIdentityRetriesFailuresAndCachesOnlySuccess() {
+    val reader = DefaultWebViewUserAgentReader()
+    val reads = AtomicInteger()
+    val failure = AssertionError("provider unavailable")
+    assertSame(failure, assertThrows(IllegalStateException::class.java) {
+      reader.read(true, { throw AssertionError("must not dispatch") }) { reads.incrementAndGet(); throw failure }
+    }.cause)
+    assertThrows(IllegalStateException::class.java) {
+      reader.read(true, { throw AssertionError("must not dispatch") }) { reads.incrementAndGet(); "   " }
+    }
+    assertEquals("provider identity", reader.read(true, { throw AssertionError("must not dispatch") }) {
+      reads.incrementAndGet(); "  provider   identity  "
+    })
+    assertEquals("provider identity", reader.read(false, { throw AssertionError("cached identity must not dispatch") }) {
+      throw AssertionError("cached identity must not read")
+    })
+    assertEquals(3, reads.get())
+  }
+
+  @Test
+  fun concurrentDefaultWebViewIdentityRequestsShareOneMainThreadRead() {
+    val reader = DefaultWebViewUserAgentReader()
+    val mainThread = Thread.currentThread()
+    val queued = java.util.concurrent.LinkedBlockingQueue<Runnable>()
+    val reads = AtomicInteger()
+    val executor = Executors.newFixedThreadPool(2)
+    try {
+      val results = (1..2).map {
+        executor.submit<String> {
+          reader.read(false, { action -> queued.add(action); true }) {
+            assertSame(mainThread, Thread.currentThread())
+            reads.incrementAndGet()
+            "provider identity"
+          }
+        }
+      }
+      val first = queued.poll(2, TimeUnit.SECONDS)!!
+      val second = queued.poll(2, TimeUnit.SECONDS)!!
+      first.run()
+      second.run()
+      results.forEach { assertEquals("provider identity", it.get(2, TimeUnit.SECONDS)) }
+      assertEquals(1, reads.get())
+    } finally {
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun defaultMediaIdentityFailureStopsBeforeCookiesOrTransport() {
+    val providerFailure = IllegalStateException("provider unavailable")
+    val cookieReads = AtomicInteger()
+    val handler = ReadOnlyWebViewCookieHandler { cookieReads.incrementAndGet(); "session=live" }
+    val client = OkHttpClient.Builder()
+      .cookieJar(JavaNetCookieJar(handler))
+      .addInterceptor(ForumMediaRequestInterceptor(defaultUserAgent = { throw providerFailure }))
+      .addInterceptor(Interceptor { throw AssertionError("failed provider must not reach transport") })
+      .build()
+    assertSame(providerFailure, assertThrows(IOException::class.java) {
+      client.newCall(Request.Builder().url("https://www.nodeseek.com/media.png")
+        .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").build()).execute().close()
+    }.cause)
+    assertEquals(0, cookieReads.get())
+  }
+
+  @Test
   fun defaultWebViewUserAgentWaitsForMainThreadRead() {
     val mainThread = Thread.currentThread()
     val entered = CountDownLatch(1)
@@ -795,14 +860,14 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
-  fun regTopic041MediaIdentityMarkerIsInternalOnlyWhileSourcePolicyStillApplies() {
+  fun mediaIdentityIsPreparedBeforeCookiesAndInternalHeadersNeverReachTheServer() {
     val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     val receivedHeaders = mutableListOf<Map<String, String>>()
     val served = CountDownLatch(1)
     val executor = Executors.newSingleThreadExecutor()
     executor.execute {
       try {
-        repeat(2) {
+        repeat(3) {
           server.accept().use { socket ->
             val reader = socket.getInputStream().bufferedReader()
             reader.readLine()
@@ -829,13 +894,20 @@ class NetworkProxyRuntimeTest {
     val sourceForUri: (java.net.URI) -> String? = { uri ->
       if (uri.host == "media.test") "nodeseek" else null
     }
-    val handler = ReadOnlyWebViewCookieHandler(sourceForUri = sourceForUri) { "session=live" }
+    val defaultReads = AtomicInteger()
+    val handler = ReadOnlyWebViewCookieHandler(sourceForUri = sourceForUri) {
+      assertEquals(1, defaultReads.get())
+      "session=live"
+    }
     val client = OkHttpClient.Builder()
       .dns(object : okhttp3.Dns {
         override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
       })
       .cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = sourceForUri, defaultUserAgent = {
+        defaultReads.incrementAndGet()
+        "provider-user-agent"
+      }))
       .build()
 
     try {
@@ -843,7 +915,14 @@ class NetworkProxyRuntimeTest {
         .url("http://media.test:${server.localPort}/private.png")
         .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
         .header("X-WZ-Forum-Media-Identity", "nodeseek:41")
+        .header(FORUM_MEDIA_KIND_HEADER, "video")
+        .header(FORUM_MEDIA_GENERATION_HEADER, "7")
         .header("Cookie", "must-not-be-forwarded")
+        .build()).execute().close()
+      client.newCall(Request.Builder()
+        .url("http://media.test:${server.localPort}/saved.png")
+        .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+        .header("User-Agent", "saved-nodeseek-identity")
         .build()).execute().close()
       client.newCall(Request.Builder()
         .url("http://media.test:${server.localPort}/ordinary.png")
@@ -854,9 +933,14 @@ class NetworkProxyRuntimeTest {
       val markedHeaders = receivedHeaders[0]
       assertNull(markedHeaders[FORUM_MEDIA_SOURCE_HEADER.lowercase()])
       assertNull(markedHeaders["x-wz-forum-media-identity"])
+      assertNull(markedHeaders[FORUM_MEDIA_KIND_HEADER.lowercase()])
+      assertNull(markedHeaders[FORUM_MEDIA_GENERATION_HEADER.lowercase()])
+      assertEquals("provider-user-agent", markedHeaders["user-agent"])
       assertEquals("session=live", markedHeaders["cookie"])
       assertEquals("no-store", markedHeaders["cache-control"])
-      val ordinaryHeaders = receivedHeaders[1]
+      assertEquals("saved-nodeseek-identity", receivedHeaders[1]["user-agent"])
+      assertEquals(1, defaultReads.get())
+      val ordinaryHeaders = receivedHeaders[2]
       assertNull(ordinaryHeaders["x-wz-forum-media-identity"])
       assertEquals("session=live", ordinaryHeaders["cookie"])
       assertNull(ordinaryHeaders["cache-control"])
@@ -936,7 +1020,7 @@ class NetworkProxyRuntimeTest {
         override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
       })
       .cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = sourceForUri, defaultUserAgent = { "provider-user-agent" }))
       .build()
 
     try {
@@ -969,7 +1053,7 @@ class NetworkProxyRuntimeTest {
         "session=must-not-leak"
       }
       val client = OkHttpClient.Builder()
-        .addInterceptor(ForumMediaRequestInterceptor())
+        .addInterceptor(ForumMediaRequestInterceptor(defaultUserAgent = { "provider-user-agent" }))
         .addInterceptor(Interceptor { chain ->
           proceeded = true
           assertTrue(handler.get(java.net.URI("https://www.nodeseek.com/media.png"), emptyMap()).isEmpty())
@@ -993,7 +1077,7 @@ class NetworkProxyRuntimeTest {
       throw IllegalStateException("cookie reader unavailable")
     }
     val client = OkHttpClient.Builder()
-      .addInterceptor(ForumMediaRequestInterceptor())
+      .addInterceptor(ForumMediaRequestInterceptor(defaultUserAgent = { "provider-user-agent" }))
       .addInterceptor(Interceptor { chain ->
         assertTrue(handler.get(java.net.URI("https://www.nodeseek.com/media.png"), emptyMap()).isEmpty())
         responseFor(chain.request())
@@ -1015,7 +1099,7 @@ class NetworkProxyRuntimeTest {
       "session=ordinary"
     }
     val client = OkHttpClient.Builder()
-      .addInterceptor(ForumMediaRequestInterceptor())
+      .addInterceptor(ForumMediaRequestInterceptor(defaultUserAgent = { "provider-user-agent" }))
       .addInterceptor(Interceptor { chain ->
         proceeded = true
         assertEquals(
@@ -1085,7 +1169,7 @@ class NetworkProxyRuntimeTest {
       })
       .cache(cache)
       .cookieJar(JavaNetCookieJar(handler))
-      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri = sourceForUri, defaultUserAgent = { "provider-user-agent" }))
       .build()
     fun read(path: String, marker: String?): String {
       val request = Request.Builder().url("http://media.test:${server.localPort}$path")
@@ -1571,9 +1655,9 @@ class NetworkProxyRuntimeTest {
   fun imageOwnershipCancellationIncludesStreamsButKeepsOtherSourcesAlive() = withImageServer { url ->
     val before = NetworkProxyRuntime.imageClientForTests()
     val same = NetworkProxyRuntime.imageCallFactory.newCall(Request.Builder().url(url)
-      .header(FORUM_MEDIA_SOURCE_HEADER, "linuxdo").build())
+      .header(FORUM_MEDIA_SOURCE_HEADER, "linuxdo").header("User-Agent", "fixture-provider-identity").build())
     val other = NetworkProxyRuntime.frescoCallFactory.newCall(Request.Builder().url(url)
-      .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").build())
+      .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").header("User-Agent", "fixture-provider-identity").build())
     val sameResponse = same.execute()
     val otherResponse = other.execute()
     try {
@@ -1602,7 +1686,7 @@ class NetworkProxyRuntimeTest {
     NetworkProxyRuntime.recoverForumReadChannel("linuxdo")
     val before = NetworkProxyRuntime.imageClientForTests()
     val call = NetworkProxyRuntime.imageCallFactory.newCall(Request.Builder().url(url)
-      .header(FORUM_MEDIA_SOURCE_HEADER, "linuxdo").build())
+      .header(FORUM_MEDIA_SOURCE_HEADER, "linuxdo").header("User-Agent", "fixture-provider-identity").build())
     try {
       val enqueued = executor.submit {
         call.enqueue(object : Callback {
@@ -1705,7 +1789,7 @@ class NetworkProxyRuntimeTest {
       activeMediaClient.newCall(
         Request.Builder()
           .url("https://cdn.example.com/running-image.png")
-          .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").header("User-Agent", "fixture-provider-identity")
           .header("Accept", "image/avif,image/webp,image/*,*/*;q=0.8")
           .build()
       ),
@@ -1801,7 +1885,7 @@ class NetworkProxyRuntimeTest {
     val videoCall = mediaClient.newCall(
       Request.Builder()
         .url("https://cdn.example.com/healthy-video.mp4")
-        .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+        .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").header("User-Agent", "fixture-provider-identity")
         .header(FORUM_MEDIA_KIND_HEADER, "video")
         .header("Accept", "video/mp4,video/*,*/*;q=0.8")
         .build()

@@ -1,4 +1,5 @@
 import { createTopicEditTransport } from '../../helpers/topicEditingTransport';
+import { createTopicProofTransport } from '../../helpers/topicCreationTransport';
 import { loadLinuxDoTopicEditContext } from '@/sources/linuxdo/topicEditing';
 import { loadNodeSeekTopicEditContext } from '@/sources/nodeseek/topicEditing';
 import { loadYaohuoTopicEditContext } from '@/sources/yaohuo/topicEditing';
@@ -10,13 +11,50 @@ import type { DatabaseSync } from 'node:sqlite';
 import { useTopicComposerController } from '@/features/topic-composer/useTopicComposerController';
 import type { TopicComposerRouteRuntimeValue } from '@/features/topic-composer/TopicComposerRouteRuntime';
 import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
-import { createSiteSessionStates, siteSessionIdentityKey } from '@/domain/session/siteSessionState';
+import {
+  accountSessionSnapshotFromEvent,
+  createAccountSessionSnapshot,
+  createSiteSessionStates,
+  siteSessionIdentityKey
+} from '@/domain/session/siteSessionState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { prepareRequestToSend } from '@/platform/network/request';
 import { loadTopicDraft, readTopicSubmissionAttempt } from '@/platform/persistence/topicDrafts';
 import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
+import { nodeSeekPendingPollToken, normalizePendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import type { TopicCreationSource } from '@/domain/forum/topicComposer';
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
+import { useAccountRuntime } from '@/features/account/useAccountRuntime';
+import * as SecureStore from 'expo-secure-store';
+import {
+  markAccountSessionMigrationCompleted,
+  saveAccountSessionSnapshot
+} from '@/platform/storage/accountSessionStore';
+import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
+import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import type { Fetcher } from '@/platform/network/request';
+import { QueryTestWrapper } from '../QueryTestWrapper';
+import { render, fireEvent } from '../render';
+
+jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 })
+}));
+jest.mock('react-native-webview', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    WebView: React.forwardRef(function MockWebView(props: Record<string, unknown>, ref: unknown) {
+      React.useImperativeHandle(ref, () => ({ stopLoading: jest.fn(), injectJavaScript: jest.fn() }), []);
+      return React.createElement(View, { ...props, testID: 'login-webview' });
+    })
+  };
+});
+jest.mock('@/platform/network/managedCookies', () => ({
+  ...jest.requireActual<typeof import('@/platform/network/managedCookies')>('@/platform/network/managedCookies'),
+  setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
+  readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: 'fixture=synthetic' }))
+}));
 
 const mockDatabases = new Map<string, DatabaseSync>();
 let mockSqlFailure = '';
@@ -64,6 +102,7 @@ let sequence = 0;
 async function setup(source: TopicCreationSource = 'nodeseek', editing = false) {
   const id = editing ? String(40000 + ++sequence) : `submit-${++sequence}`;
   const editTransport = createTopicEditTransport(source, id);
+  const proofTransport = createTopicProofTransport('success');
   const sessions = projectTestAccountSessions(
     createSiteSessionStates(
       Object.fromEntries(
@@ -92,6 +131,7 @@ async function setup(source: TopicCreationSource = 'nodeseek', editing = false) 
     if (init?.method === 'POST' && !url.endsWith('/session/csrf')) beforeDispatch?.();
     const request = prepareRequestToSend(init);
     if (request?.method === 'POST' && !url.endsWith('/session/csrf')) return postedResponse();
+    if (source === 'yaohuo') return proofTransport.fetcher(url, init);
     if (url.endsWith('/new-discussion')) {
       const config = Buffer.from(
         JSON.stringify({ user: { rank: 2 }, allCategory: [{ key: 'tech', cn_text: '技术' }] })
@@ -146,6 +186,8 @@ async function setup(source: TopicCreationSource = 'nodeseek', editing = false) 
       sessionEpoch: 0
     }),
     isWritableSessionTicketCurrent: () => ticketCurrent,
+    onSessionExpired: jest.fn(),
+    requestAccountRecheck: jest.fn(),
     ensureNodeImageApiKey: async () => null,
     getUserAgent: () => 'fixture',
     getTopic: async () => {
@@ -211,7 +253,7 @@ async function ready(test: Awaited<ReturnType<typeof setup>>) {
       ...draft,
       title: '这是一个完整主题标题',
       body: '这是长度足够的正文，用来验证发布之前的保存、检查和结果处理。',
-      categoryId: test.source === 'linuxdo' ? '4' : 'tech'
+      categoryId: test.source === 'linuxdo' ? '4' : test.source === 'yaohuo' ? '213' : 'tech'
     }))
   );
 }
@@ -221,12 +263,343 @@ function snapshot(markdown: string, validationIssues: ComposerSnapshot['validati
 beforeEach(() => {
   mockSqlFailure = '';
   mockDraftSaveGate = undefined;
+  appQueryClient.clear();
 });
 afterEach(() => {
+  appQueryClient.clear();
   jest.restoreAllMocks();
 });
 
+async function setupAccountChain(source: TopicCreationSource, failureStatus: number, probeOutcome = 'same') {
+  const id = String(50000 + ++sequence);
+  appQueryClient.setQueryData(
+    accountQueryKeys.snapshot(source),
+    accountSessionSnapshotFromEvent(createAccountSessionSnapshot(source), {
+      type: 'session-updated',
+      loggedIn: true,
+      currentUser: { ...testAccountUser(source), id }
+    })
+  );
+  await saveAccountSessionSnapshot(
+    appQueryClient.getQueryData<ReturnType<typeof createAccountSessionSnapshot>>(accountQueryKeys.snapshot(source))!
+  );
+  await markAccountSessionMigrationCompleted();
+  jest
+    .spyOn(SecureStore, 'getItemAsync')
+    .mockImplementation(async (key) => (key.endsWith('-user-agent') ? 'Saved fixture browser UA' : null));
+  const transport = createTopicProofTransport('success');
+  let writeStatus = failureStatus;
+  let writes = 0;
+  let probes = 0;
+  const fetcher: Fetcher = async (input, init) => {
+    if (
+      browserFetchIntentFromInit(init)?.owner === 'account' ||
+      (source === 'yaohuo' && input.endsWith('/wapindex.aspx?sid=-2'))
+    ) {
+      probes++;
+      if (probeOutcome === 'unknown') return new Response('{"errors":["请先登录"]}', { status: 403 });
+      if (source === 'linuxdo')
+        return new Response(
+          JSON.stringify({ current_user: probeOutcome === 'anonymous' ? null : { id, username: id } })
+        );
+      if (source === 'nodeseek') return new Response(`<a class="Username" href="/space/${id}">proof</a>`);
+      return new Response(
+        `<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=${id}">proof</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>`
+      );
+    }
+    if (init?.method === 'POST' && !input.endsWith('/session/csrf')) {
+      prepareRequestToSend(init);
+      writes++;
+      if (writeStatus)
+        return new Response(source === 'yaohuo' ? '<div class="tip">请先登录网站</div>' : '{"errors":["请先登录"]}', {
+          status: writeStatus
+        });
+    }
+    return transport.fetcher(input, init);
+  };
+  let chain!: {
+    account: ReturnType<typeof useAccountRuntime>;
+    controller: ReturnType<typeof useTopicComposerController>;
+    runtime: TopicComposerRouteRuntimeValue;
+  };
+  const notify = () => {};
+  const openUser = async () => {};
+  const loginNavigation = { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true };
+  function ComposerHarness({
+    runtime,
+    account
+  }: {
+    runtime: TopicComposerRouteRuntimeValue;
+    account: ReturnType<typeof useAccountRuntime>;
+  }) {
+    const controller = useTopicComposerController({
+      runtime,
+      intent: { kind: 'create', initialSource: source },
+      active: true,
+      onPosted: () => {},
+      onAccepted: () => {}
+    });
+    chain = { account, controller, runtime };
+    return null;
+  }
+  function Harness() {
+    const account = useAccountRuntime({
+      appActive: true,
+      enabledSources: [source],
+      fetcher,
+      loginNavigation,
+      notify,
+      nodeSeekRecoveryThreshold: 1,
+      openUser,
+      ready: true,
+      screen: 'topic',
+      webViewBlockMessage: ''
+    });
+    const runtime: TopicComposerRouteRuntimeValue = {
+      enabledSources: [source],
+      sessions: account.read.accountSessionViewModels,
+      sessionEpochs: account.read.forumSessionEpochs,
+      appActive: true,
+      fetcher,
+      ensureNetworkProxyReady: async () => {},
+      ...account.write,
+      getUserAgent: () => 'synthetic',
+      getEmojiUrls: account.read.readGateway.getEmojiUrls,
+      getLinuxDoTopicCreationContext: account.read.readGateway.getLinuxDoTopicCreationContext,
+      getTopicEditContext: account.read.readGateway.getTopicEditContext,
+      getTopic: account.read.readGateway.getTopic,
+      openAccount: (site, message, recovery) =>
+        site === 'linuxdo'
+          ? account.hosts.showLinuxDoVerification(message, recovery)
+          : site === 'nodeseek'
+            ? account.hosts.requestNodeSeekVerification(message || '请登录 NodeSeek')
+            : account.hosts.showYaohuoLogin(message),
+      notify: () => {}
+    };
+    return (
+      <>
+        {account.read.sessionsReady ? <ComposerHarness runtime={runtime} account={account} /> : null}
+        {account.hosts.element}
+      </>
+    );
+  }
+  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  await waitFor(() => expect(chain?.account.read.sessionsReady).toBe(true));
+  await waitFor(() => expect(chain.controller.context?.source).toBe(source));
+  await act(() =>
+    chain.controller.change((draft) => ({
+      ...draft,
+      title: '写入恢复完整标题',
+      body: '需要完整保留的草稿正文，这条synthetic请求绝不会到达真实原站。',
+      categoryId: source === 'linuxdo' ? '4' : source === 'yaohuo' ? '213' : 'tech'
+    }))
+  );
+  return {
+    view,
+    chain: () => chain,
+    id,
+    writes: () => writes,
+    probes: () => probes,
+    succeed: () => {
+      writeStatus = 0;
+    }
+  };
+}
+
+describe('写入账号恢复接线', () => {
+  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+    'preserves a %s failed draft through expiry, real login host detection and an explicit second submit',
+    async (source) => {
+      const test = await setupAccountChain(source, 401);
+      const originalEpoch = test.chain().runtime.sessionEpochs[source];
+      await act(async () => {
+        await test.chain().controller.submit();
+      });
+      await waitFor(() => expect(test.chain().account.read.accountSessionViewModels[source].isLoggedIn).toBe(false));
+      expect(test.chain().runtime.sessionEpochs[source]).toBe(originalEpoch + 1);
+      expect((await loadTopicDraft(source, `${source}:${test.id}`))?.body).toContain('需要完整保留');
+      expect(await readTopicSubmissionAttempt(source, `${source}:${test.id}`)).toMatchObject({
+        status: 'rejected',
+        result: { status: 'rejected', message: expect.stringContaining('登录') }
+      });
+      expect(test.writes()).toBe(1);
+      await act(async () => {
+        await test.chain().runtime.openAccount(source);
+      });
+      await waitFor(() => expect(test.view.getByTestId('login-webview')).toBeTruthy());
+      expect(test.chain().account.hosts.surfaces[source]).toBe(true);
+      await fireEvent.press(test.view.getByText('检测登录'));
+      await waitFor(() => expect(test.chain().account.read.accountSessionViewModels[source].isLoggedIn).toBe(true));
+      await waitFor(() => expect(test.chain().account.hosts.surfaces[source]).toBe(false));
+      await waitFor(() => expect(test.chain().controller.context?.source).toBe(source));
+      expect(test.writes()).toBe(1);
+      expect(test.chain().controller.draft?.body).toContain('需要完整保留');
+      test.succeed();
+      await act(async () => {
+        await test.chain().controller.submit();
+      });
+      expect(test.writes()).toBe(2);
+      expect(test.chain().controller.attempt?.status).toBe('posted');
+      await test.view.unmount();
+    }
+  );
+  it.each([
+    ['anonymous', 403],
+    ['same', 404],
+    ['unknown', 404]
+  ] satisfies [string, number][])(
+    'settles publishing Account as %s after login HTTP %s without replaying the write',
+    async (outcome, status) => {
+      const test = await setupAccountChain('linuxdo', status, outcome);
+      await act(async () => {
+        await test.chain().controller.submit();
+      });
+      await waitFor(() => expect(test.probes()).toBe(1));
+      await waitFor(() => expect(test.chain().account.read.accountSessionViewModels.linuxdo.isVerifying).toBe(false));
+      expect(test.chain().account.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(outcome !== 'anonymous');
+      expect(test.writes()).toBe(1);
+      expect((await loadTopicDraft('linuxdo', `linuxdo:${test.id}`))?.body).toContain('需要完整保留');
+      expect(await readTopicSubmissionAttempt('linuxdo', `linuxdo:${test.id}`)).toMatchObject({
+        status: 'rejected',
+        result: { status: 'rejected', message: expect.stringContaining('登录') }
+      });
+      await act(async () => {
+        await test.chain().runtime.openAccount('linuxdo');
+      });
+      await waitFor(() => expect(test.view.getByTestId('login-webview')).toBeTruthy());
+      await fireEvent.press(test.view.getByLabelText('关闭'));
+      await waitFor(() => expect(test.chain().account.hosts.surfaces.linuxdo).toBe(false));
+      expect(test.writes()).toBe(1);
+      await test.view.unmount();
+    }
+  );
+});
+
 describe('创建主题发布控制器', () => {
+  it('keeps a child poll dispatch separate from the unsent topic and never repeats an unknown poll creation', async () => {
+    const test = await setup('nodeseek');
+    await ready(test);
+    const poll = normalizePendingNodeSeekPoll({
+      localId: 'child-poll-dispatch',
+      title: '未确认投票',
+      multiple: false,
+      isPublic: true,
+      options: ['A', 'B']
+    });
+    await act(() =>
+      test.result.current.change((draft) => ({
+        ...draft,
+        body: nodeSeekPendingPollToken(poll.localId),
+        pendingNodeSeekPolls: [poll]
+      }))
+    );
+    test.response(async () => {
+      throw new Error('connection lost after poll dispatch');
+    });
+    await act(async () => {
+      await test.result.current.submit();
+    });
+    expect(test.posts()).toHaveLength(1);
+    expect(test.posts()[0]?.[0]).toBe('https://www.nodeseek.com/api/vote/info');
+    expect(test.result.current.attempt?.status).toBe('rejected');
+    await act(async () => {
+      await test.result.current.submit();
+    });
+    expect(test.posts()).toHaveLength(1);
+    expect(test.result.current.error).toContain('上次创建结果未知');
+    test.unmount();
+  });
+  it.each([
+    ['linuxdo', 401],
+    ['linuxdo', 404],
+    ['nodeseek', 401],
+    ['yaohuo', 401]
+  ] satisfies [TopicCreationSource, number][])(
+    'reports a %s main-post edit HTTP %s failure and retains the edit without replaying',
+    async (source, status) => {
+      const test = await setup(source, true);
+      await waitFor(() => expect(test.result.current.editContext?.source).toBe(source));
+      await act(() => test.result.current.change((draft) => ({ ...draft, title: '需要保留的编辑标题' })));
+      test.editTransport.respond(
+        () =>
+          new Response(
+            source === 'yaohuo' ? '<div class="tip">请先登录网站</div>' : '{"errors":["您需要登录才能执行此操作。"]}',
+            { status }
+          )
+      );
+      await act(async () => {
+        await test.result.current.submit();
+      });
+      expect(test.editTransport.writes()).toHaveLength(1);
+      expect(test.result.current.attempt?.status).toBe('rejected');
+      expect(
+        await loadTopicDraft(source, siteSessionIdentityKey(test.runtime.sessions[source]), 'edit:123')
+      ).toMatchObject({ title: '需要保留的编辑标题' });
+      if (status === 401) expect(test.runtime.onSessionExpired).toHaveBeenCalledWith(source, 0);
+      else expect(test.runtime.requestAccountRecheck).toHaveBeenCalledWith(source, 0);
+      test.unmount();
+    }
+  );
+  it.each([401, 404])(
+    'ignores a stale linux.do publishing HTTP %s response while retaining its rejected receipt',
+    async (status) => {
+      const test = await setup('linuxdo');
+      await ready(test);
+      test.response(async () => {
+        test.expireAtDispatch();
+        test.runtime.isWritableSessionTicketCurrent = () => false;
+        return new Response('{"errors":["您需要登录才能执行此操作。"]}', { status });
+      });
+      await act(async () => {
+        await test.result.current.submit();
+      });
+      expect(test.posts()).toHaveLength(1);
+      expect(test.result.current.attempt?.status).toBe('rejected');
+      expect(test.runtime.onSessionExpired).not.toHaveBeenCalled();
+      expect(test.runtime.requestAccountRecheck).not.toHaveBeenCalled();
+      test.unmount();
+    }
+  );
+
+  it.each([
+    ['linuxdo', 401],
+    ['linuxdo', 403],
+    ['linuxdo', 404],
+    ['nodeseek', 401],
+    ['yaohuo', 401]
+  ] satisfies [TopicCreationSource, number][])(
+    'reports a %s publishing login failure HTTP %s and preserves the draft without replaying',
+    async (source, status) => {
+      const test = await setup(source);
+      await ready(test);
+      test.response(
+        async () =>
+          new Response(
+            source === 'yaohuo'
+              ? '<div class="tip">请先登录网站</div>'
+              : JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }),
+            { status }
+          )
+      );
+      await act(async () => {
+        await test.result.current.submit();
+      });
+      expect(test.posts()).toHaveLength(1);
+      expect(test.result.current.attempt?.status).toBe('rejected');
+      expect(test.result.current.error).toContain('登录');
+      expect(await loadTopicDraft(source, siteSessionIdentityKey(test.runtime.sessions[source]))).toMatchObject({
+        body: '这是长度足够的正文，用来验证发布之前的保存、检查和结果处理。'
+      });
+      if (status === 401) {
+        expect(test.runtime.onSessionExpired).toHaveBeenCalledWith(source, 0);
+        expect(test.runtime.requestAccountRecheck).not.toHaveBeenCalled();
+      } else {
+        expect(test.runtime.requestAccountRecheck).toHaveBeenCalledWith(source, 0);
+        expect(test.runtime.onSessionExpired).not.toHaveBeenCalled();
+      }
+      test.unmount();
+    }
+  );
   it.each([false, true])(
     'clears corrected editor errors without dropping other field errors (edit=%s)',
     async (editing) => {

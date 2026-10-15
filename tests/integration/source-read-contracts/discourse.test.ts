@@ -692,8 +692,8 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'linuxdo', id: '408', fetcher });
 
-    expect(topic.siteExtension).toEqual({ boostCount: 4 });
-    expect(topic.replies[0].siteExtension).toEqual({ boostCount: 5 });
+    expect(topic.siteExtension).toEqual({ boostCount: 4, boosts: [] });
+    expect(topic.replies[0].siteExtension).toEqual({ boostCount: 5, boosts: [] });
   });
 
   it('requests linux.do latest feed by creation time', async () => {
@@ -1560,7 +1560,9 @@ describe('Android local sources', () => {
     });
   });
 
-  it('keeps linux.do reply quote author names from quote avatar URLs', async () => {
+  it('keeps linux.do opening and reply quote metadata consistent before media rendering', async () => {
+    const quoteHtml =
+      '<aside data-post="1" class="quote" data-topic="911"><div class="title"><img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/911/1">Quoted topic</a></div></div><blockquote><p>Original text</p></blockquote></aside>';
     const fetcher = vi.fn(async () =>
       json({
         id: 911,
@@ -1570,13 +1572,18 @@ describe('Android local sources', () => {
         post_stream: {
           stream: [1, 2],
           posts: [
-            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+            {
+              id: 1,
+              post_number: 1,
+              username: 'alice',
+              cooked: `${quoteHtml}<p>body</p>`,
+              created_at: '2026-05-20T00:00:00.000Z'
+            },
             {
               id: 2,
               post_number: 2,
               username: 'bob',
-              cooked:
-                '<aside data-post="1" class="quote" data-topic="911"><div class="title"><img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/911/1">Quoted topic</a></div></div><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
+              cooked: `${quoteHtml}<p>Reply</p>`,
               created_at: '2026-05-20T00:02:00.000Z'
             }
           ]
@@ -1589,12 +1596,21 @@ describe('Android local sources', () => {
     expect(topic.replies[0].quotedPosts).toEqual([
       {
         reference: { source: 'linuxdo', topicId: '911', postNumber: 1 },
-        author: { label: 'alice' },
+        author: {
+          label: 'alice',
+          avatar: 'https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png'
+        },
         preview: 'Original text',
         topicTitle: 'Quoted topic',
         topicUrl: 'https://linux.do/t/topic/911/1'
       }
     ]);
+    const openingQuote = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+      role: 'opening',
+      source: 'linuxdo',
+      topicId: topic.id
+    }).rows.find((row) => row.type === 'quote');
+    expect(openingQuote?.type === 'quote' ? openingQuote.quote : undefined).toEqual(topic.replies[0].quotedPosts?.[0]);
   });
 
   it('refreshes linux.do reply stream when reloading the first reply page', async () => {

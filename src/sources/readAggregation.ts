@@ -5,13 +5,18 @@ import { sourceErrorFromUnknown } from './sourceErrors';
 
 export const AGGREGATE_SOURCE_BUDGET_MS = 5_000;
 
-export function readWithinAggregateSourceBudget<T>(
+export async function readWithinAggregateSourceBudget<T>(
   source: Source,
   parentSignal: AbortSignal | undefined,
-  read: (signal: AbortSignal) => Promise<T>
+  read: (signal: AbortSignal) => Promise<T>,
+  prepare?: () => Promise<unknown>
 ) {
   if (parentSignal?.aborted) {
     return Promise.reject(new Error(REQUEST_CANCELED_MESSAGE));
+  }
+  if (prepare) {
+    await withAbortableTimeout(prepare, { signal: parentSignal });
+    if (parentSignal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
   }
   return withAbortableTimeout(read, {
     signal: parentSignal,

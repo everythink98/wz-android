@@ -25,6 +25,8 @@ import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { errorMessage } from '@/platform/network/errors';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { RequestDispatchState } from '@/platform/network/request';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { forumQueryKeys } from '@/platform/query/serverState';
@@ -78,7 +80,7 @@ export function NotificationsRoute({
     const requested = route.params?.source;
     return requested && runtime.enabledNotificationSources.includes(requested) ? requested : 'all';
   });
-  const [categoryId, setCategoryId] = useState('');
+  const [selectedCategoryId, setCategoryId] = useState('');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [markAllBusy, setMarkAllBusy] = useState(false);
   const markAllControllerRef = useRef<AbortController | undefined>(undefined);
@@ -148,15 +150,10 @@ export function NotificationsRoute({
     () => (source === 'all' ? [] : categoriesQuery.data || []),
     [categoriesQuery.data, source]
   );
-  useEffect(() => {
-    if (source === 'all') {
-      if (categoryId) setCategoryId('');
-      return;
-    }
-    if (categories.length && !categories.some((category) => category.id === categoryId)) {
-      setCategoryId(categories[0]!.id);
-    }
-  }, [categories, categoryId, source]);
+  const categoryId =
+    source === 'all'
+      ? ''
+      : categories.find((category) => category.id === selectedCategoryId)?.id || categories[0]?.id || '';
   useEffect(
     () => () => {
       cancelMarkAll();
@@ -868,6 +865,7 @@ function EnabledNotificationDetailRoute({
     notificationId: item.id
   });
   const detailReadEpochRef = useRef<number | undefined>(undefined);
+  const detailReadTraceRef = useRef<DiagnosticTrace | undefined>(undefined);
   const detailQuery = useQuery({
     queryKey: detailQueryKey,
     enabled: canAccessSource && routeFocused,
@@ -878,9 +876,177 @@ function EnabledNotificationDetailRoute({
       nodeSeekConversation && routeFocused && canAccessSource && !runtime.getReadBlock(item.source) ? 60_000 : false,
     refetchIntervalInBackground: false,
     queryFn: async ({ signal }) => {
-      const detail = await runtime.gateway.loadDetail(item, identityKey, signal);
+      const detail = detailReadTraceRef.current
+        ? await runtime.gateway.loadDetail(item, identityKey, signal, detailReadTraceRef.current)
+        : await runtime.gateway.loadDetail(item, identityKey, signal);
       if (!signal.aborted) detailReadEpochRef.current = replySessionEpoch;
       return detail;
+    }
+  });
+  const detailRecoveryRef = useRef<{ controller: AbortController; pending: boolean } | undefined>(undefined);
+  const detailRecoveryScopeRef = useCommittedRef({ runtime, routeFocused });
+  useEffect(
+    () => () => {
+      detailRecoveryRef.current?.controller.abort();
+      detailRecoveryRef.current = undefined;
+    },
+    [routeFocused]
+  );
+  useEffect(
+    () =>
+      focusManager.subscribe((focused) => {
+        if (focused) return;
+        detailRecoveryRef.current?.controller.abort();
+        detailRecoveryRef.current = undefined;
+      }),
+    []
+  );
+  useEffect(() => {
+    if (!currentIdentityKey || currentIdentityKey === identityKey) return;
+    detailRecoveryRef.current?.controller.abort();
+    detailRecoveryRef.current = undefined;
+  }, [currentIdentityKey, identityKey]);
+  const needsLogin = !currentIdentityKey && !runtime.sessions[item.source].isLoggedIn;
+  const detailReadError = detailQuery.error ? sourceErrorFromUnknown(item.source, detailQuery.error) : undefined;
+  const retryDetail = useLatestCallback(async () => {
+    const trace = beginDiagnosticTrace('source', 'notification-detail-retry', {
+      source: item.source,
+      state: 'retry',
+      generation: replySessionEpoch,
+      hasReadError: Boolean(detailReadError)
+    });
+    if (!routeFocused || !focusManager.isFocused() || detailRecoveryRef.current?.pending) {
+      finishDiagnosticTrace(trace, 'blocked', {
+        source: item.source,
+        reason: detailRecoveryRef.current?.pending ? 'busy' : 'not_ready'
+      });
+      return;
+    }
+    const intent = { controller: new AbortController(), pending: true };
+    detailRecoveryRef.current?.controller.abort();
+    detailRecoveryRef.current = intent;
+    const surfaceCurrent = () => {
+      const latest = detailRecoveryScopeRef.current;
+      return (
+        !intent.controller.signal.aborted &&
+        latest.routeFocused &&
+        focusManager.isFocused() &&
+        latest.runtime.enabledNotificationSources.includes(item.source) &&
+        (!latest.runtime.identityKeys[item.source] || latest.runtime.identityKeys[item.source] === identityKey)
+      );
+    };
+    const current = () =>
+      surfaceCurrent() && detailRecoveryScopeRef.current.runtime.sessionEpochs[item.source] === replySessionEpoch;
+    const recovery: LinuxDoReadRecovery = {
+      queryKey: detailQueryKey,
+      resume: async () => {
+        const resumeTrace = beginDiagnosticTrace('source', 'notification-detail-resume', {
+          source: item.source,
+          parentTraceId: trace.traceId,
+          state: 'resuming',
+          generation: replySessionEpoch
+        });
+        try {
+          if (!current() || detailRecoveryScopeRef.current.runtime.identityKeys[item.source] !== identityKey) {
+            finishDiagnosticTrace(resumeTrace, 'stale', { source: item.source, reason: 'stale' });
+            return 'stale';
+          }
+          runtime.clearReadBlock(item.source, replySessionEpoch);
+          detailReadTraceRef.current ??= resumeTrace;
+          const result = await detailQuery.refetch({ cancelRefetch: false });
+          if (!current()) {
+            finishDiagnosticTrace(resumeTrace, intent.controller.signal.aborted ? 'canceled' : 'stale', {
+              source: item.source,
+              reason: intent.controller.signal.aborted ? 'canceled' : 'stale'
+            });
+            return 'stale';
+          }
+          if (result.error) {
+            const info = sourceErrorFromUnknown(item.source, result.error);
+            runtime.reportReadError(item.source, info, replySessionEpoch);
+            finishDiagnosticTrace(resumeTrace, info.kind === 'verification-required' ? 'blocked' : 'failure', {
+              source: item.source,
+              kind: info.kind,
+              reason: normalizeDiagnosticReason(result.error)
+            });
+            return info.kind === 'verification-required' ? 'verification-required' : 'failed';
+          }
+          finishDiagnosticTrace(resumeTrace, 'success', { source: item.source, state: 'loaded' });
+          return 'completed';
+        } catch (error) {
+          const reason = normalizeDiagnosticReason(error);
+          finishDiagnosticTrace(resumeTrace, reason === 'canceled' ? 'canceled' : 'failure', {
+            source: item.source,
+            reason
+          });
+          throw error;
+        } finally {
+          if (detailReadTraceRef.current === resumeTrace) detailReadTraceRef.current = undefined;
+        }
+      }
+    };
+    try {
+      if (needsLogin) {
+        markDiagnosticStage(trace, 'guard', { source: item.source, state: 'open', reason: 'login_required' });
+        await runtime.openAccountSurface(item.source, '登录已失效，请重新登录。');
+        finishDiagnosticTrace(trace, 'blocked', { source: item.source, state: 'open', reason: 'login_required' });
+        return;
+      }
+      if (!canAccessSource) return;
+      let info = detailReadError;
+      if (notificationErrorAction(info) === '重试') {
+        markDiagnosticStage(trace, 'credential', { source: item.source, state: 'session-check' });
+        const result = await runtime.reconcileAccountStatus(item.source);
+        markDiagnosticStage(trace, 'credential', {
+          source: item.source,
+          isAccountConfirmed: result.status === 'same',
+          isAnonymous: result.status === 'anonymous'
+        });
+        if (result.status === 'anonymous' && surfaceCurrent()) {
+          await runtime.openAccountSurface(item.source, '登录已失效，请重新登录。');
+          finishDiagnosticTrace(trace, 'blocked', { source: item.source, state: 'open', reason: 'login_required' });
+          return;
+        }
+        if (!current()) return;
+        if (result.status === 'unknown') {
+          if (result.errorInfo.kind !== 'verification-required') {
+            runtime.notify(`账号状态暂不可确认：${result.error}`);
+            finishDiagnosticTrace(trace, 'blocked', { source: item.source, reason: 'identity_unavailable' });
+            return;
+          }
+          info = result.errorInfo;
+        } else if (result.status !== 'same') return;
+      }
+      if (!current()) return;
+      if (info && notificationErrorAction(info) !== '重试') {
+        const reason = info.kind === 'verification-required' ? 'verification_required' : 'login_required';
+        markDiagnosticStage(trace, 'guard', { source: item.source, state: 'open', reason });
+        await runtime.openAccountSurface(
+          item.source,
+          info.message,
+          info.kind === 'verification-required' ? recovery : undefined
+        );
+        finishDiagnosticTrace(trace, 'blocked', { source: item.source, state: 'open', reason });
+      } else {
+        const outcome = await recovery.resume();
+        finishDiagnosticTrace(trace, outcome === 'completed' ? 'success' : outcome === 'stale' ? 'stale' : 'failure', {
+          source: item.source,
+          ...(outcome === 'completed' ? {} : { reason: outcome === 'stale' ? 'stale' : 'refresh_failed' })
+        });
+      }
+    } catch (error) {
+      const reason = normalizeDiagnosticReason(error);
+      finishDiagnosticTrace(trace, intent.controller.signal.aborted || reason === 'canceled' ? 'canceled' : 'failure', {
+        source: item.source,
+        reason: intent.controller.signal.aborted ? 'canceled' : reason
+      });
+      if (current()) runtime.notify(errorMessage(error));
+    } finally {
+      finishDiagnosticTrace(trace, intent.controller.signal.aborted ? 'canceled' : current() ? 'blocked' : 'stale', {
+        source: item.source,
+        reason: intent.controller.signal.aborted ? 'canceled' : current() ? 'not_ready' : 'stale'
+      });
+      if (detailRecoveryRef.current === intent) intent.pending = false;
     }
   });
   const policy = detailQuery.data?.policy;
@@ -1617,7 +1783,8 @@ function EnabledNotificationDetailRoute({
   return (
     <NotificationDetailScreen
       canOpenTopic={Boolean(targetTopic)}
-      canRetry={canAccessSource}
+      canRetry={canAccessSource || needsLogin}
+      retryLabel={needsLogin ? '去登录' : notificationErrorAction(detailReadError)}
       contentWidth={runtime.contentWidth}
       detail={canAccessSource ? displayDetail : undefined}
       error={canAccessSource ? (detailQuery.error ? errorMessage(detailQuery.error) : undefined) : accessError}
@@ -1666,9 +1833,7 @@ function EnabledNotificationDetailRoute({
       routeActive={routeFocused}
       topicReplyAction={item.kind === 'mention' || item.kind === 'reply'}
       onOpenExternalUrl={openExternalUrl}
-      onRetry={() => {
-        if (canAccessSource) void detailQuery.refetch();
-      }}
+      onRetry={() => void retryDetail()}
       onOpenTopic={(linkedTopic, linkedLocation) => {
         const topic = linkedTopic || targetTopic;
         if (topic) navigation.navigate('Topic', { topic, location: linkedTopic ? linkedLocation : location });

@@ -242,6 +242,11 @@ function collectForumContentMediaIndex(
       : '';
     const lightbox = tagName === 'a' && /(^|\s)lightbox(\s|$)/i.test(className);
     const lightboxWrapper = /(^|\s)lightbox-wrapper(\s|$)/i.test(className);
+    const imageCarousel =
+      tagName === 'div' &&
+      /(^|\s)d-image-grid(\s|$)/.test(className) &&
+      forumImageAttributeValue(resolveNodeAttributes(element), 'data-mode') === 'carousel' &&
+      !('data-disabled' in resolveNodeAttributes(element));
     const nextAside = tagName === 'aside' ? element : context.aside;
     const nextFlowContainer =
       FORUM_CONTENT_BLOCK_TAGS.has(tagName) || ['body', 'td', 'th'].includes(tagName) ? element : context.flowContainer;
@@ -280,7 +285,7 @@ function collectForumContentMediaIndex(
     }
     const nextContext = {
       aside: nextAside,
-      explicit: context.explicit || tagName === 'figure' || lightbox || lightboxWrapper,
+      explicit: context.explicit || tagName === 'figure' || lightbox || lightboxWrapper || imageCarousel,
       flowContainer: nextFlowContainer,
       lightboxHref: nextLightboxHref,
       paragraph: nextParagraph

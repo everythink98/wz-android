@@ -3,6 +3,7 @@ import { useQueries } from '@tanstack/react-query';
 import * as Notifications from 'expo-notifications';
 import { isNotificationSource, notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { Fetcher } from '@/platform/network/request';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
@@ -88,6 +89,7 @@ export function useNotificationsRuntime({
   onSessionExpired,
   openSource,
   privateAccessAllowed,
+  requestAccountRecheck,
   remoteReady,
   sessionEpochs,
   sessions
@@ -101,6 +103,7 @@ export function useNotificationsRuntime({
   onSessionExpired: (source: NotificationSource, requestSessionEpoch: number) => void;
   openSource: (source?: NotificationSource) => boolean;
   privateAccessAllowed: (source: NotificationSource, identityKey: string) => boolean;
+  requestAccountRecheck: RequestAccountRecheck;
   remoteReady: boolean;
   sessionEpochs: ForumSessionEpochs;
   sessions: SiteSessionViewModels;
@@ -206,10 +209,11 @@ export function useNotificationsRuntime({
         onSessionExpired,
         privateAccessAllowed: (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
         readAccess,
+        requestAccountRecheck,
         requestSessionEpoch: (source) => sessionEpochsRef.current[source],
         sourceAllowed: sourceIsOperational
       }),
-    [onSessionExpired, readAccess, sourceIsOperational]
+    [onSessionExpired, readAccess, requestAccountRecheck, sourceIsOperational]
   );
   const readAccessRef = useRef(readAccess);
   useCommitRefValue(readAccessRef, readAccess);

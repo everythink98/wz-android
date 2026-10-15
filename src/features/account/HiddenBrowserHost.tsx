@@ -41,7 +41,7 @@ export function HiddenBrowserHost({
   linuxDoBrowserWebViewRef: RefObject<WebView | null>;
   nodeSeekBrowserWebViewRef: RefObject<WebView | null>;
   onLinuxDoHttpErrorStatus: (requestId: number, statusCode?: number) => void;
-  onNodeSeekHttpErrorStatus: (requestId: number, statusCode: number) => void;
+  onNodeSeekHttpErrorStatus: (requestId: number, statusCode?: number) => void;
   state: HiddenBrowserState;
   styles: AccountHostStyles;
 }) {
@@ -134,11 +134,12 @@ export function HiddenBrowserHost({
             thirdPartyCookiesEnabled
             userAgent={nodeSeekBrowserFetchRequest.userAgent || state.nodeSeek.userAgent}
             onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}
-            injectedJavaScriptBeforeContentLoaded={
-              nodeSeekBrowserFetchRequest.owner === 'account' ? nodeSeekBrowserFetchScript : undefined
-            }
+            injectedJavaScriptBeforeContentLoaded={nodeSeekBrowserFetchScript}
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}
+            onLoadStart={() => {
+              onNodeSeekHttpErrorStatus(nodeSeekBrowserFetchRequest.id, undefined);
+            }}
             onLoadEnd={() => {
               nodeSeekBrowserWebViewRef.current?.injectJavaScript(nodeSeekBrowserFetchScript);
             }}

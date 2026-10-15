@@ -870,6 +870,15 @@ describe('diagnostic traces', () => {
   });
 
   it('normalizes recognizable business failure classes', () => {
+    for (const message of [
+      '表情反应返回内容不完整',
+      '加电返回内容不完整',
+      'linux.do 未返回互动配置，请刷新后重试',
+      'linux.do 返回内容格式不正确',
+      'linux.do 默认反应配置不正确'
+    ]) {
+      expect(normalizeDiagnosticReason(new Error(message))).toBe('invalid_response');
+    }
     expect(normalizeDiagnosticReason(new Error('storage write failed'))).toBe('storage_error');
     expect(normalizeDiagnosticReason(new Error('missing credential'))).toBe('missing_credential');
     expect(normalizeDiagnosticReason(new Error('parsed result is empty'))).toBe('parse_empty');

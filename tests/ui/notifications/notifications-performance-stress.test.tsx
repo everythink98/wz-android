@@ -109,6 +109,7 @@ function optionsFor(
     getLinuxDoUserAgent: () => 'linux.do',
     getNodeSeekUserAgent: () => 'NodeSeek',
     onSessionExpired: jest.fn(),
+    requestAccountRecheck: jest.fn(),
     openSource: () => true,
     privateAccessAllowed: (candidate, identityKey) => candidate === source && identityKey === `${source}:${userId}`,
     remoteReady: true,

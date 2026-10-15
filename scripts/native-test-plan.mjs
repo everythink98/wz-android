@@ -28,6 +28,7 @@ export const nativeTestTasks = {
   ':forum-platform:testDebugUnitTest': {
     related: (file) =>
       file.startsWith('modules/forum-platform/') ||
+      file.startsWith('patches/expo-image+') ||
       file.startsWith('plugins/') ||
       file.startsWith('src/platform/network/') ||
       file.startsWith('src/platform/diagnostics/') ||
@@ -45,6 +46,7 @@ export const nativeTestTasks = {
       'DiagnosticLogStoreTest',
       'ManagedCookieResponsesTest',
       'NetworkProxyRuntimeTest',
+      'NetworkUserAgentTest',
       'SvgRendererPolicyTest',
       'BackupExportTest',
       'ImageDownloadTest',

@@ -196,6 +196,105 @@ afterEach(() => {
 });
 
 describe('linux.do visible verification coordinator', () => {
+  it('preserves one explicit login open while the previous panel is closing', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    vi.useFakeTimers();
+    const { controller, showLinuxDoPanelRef, onLinuxDoSurfaceOpened, updateLinuxDoSession } = createController();
+    expect(controller.changeLinuxDoPanel(true)).toBe(true);
+    controller.closeLinuxDoPanel();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(controller.changeLinuxDoPanel(true)).toBe(true);
+    expect(controller.changeLinuxDoPanel(true)).toBe(true);
+    expect(showLinuxDoPanelRef.current).toBe(false);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(showLinuxDoPanelRef.current).toBe(true);
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(2);
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    const queued = events.filter(
+      (event) => event.area === 'webview' && event.state === 'queued' && event.phase === 'intent'
+    );
+    expect(queued).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        traceId: queued[0].traceId,
+        phase: 'finish',
+        outcome: 'success',
+        state: 'open',
+        isRecovery: false
+      })
+    );
+  });
+
+  it.each(['close', 'navigation', 'disabled', 'background', 'unmount'] as const)(
+    'discards an explicit login open queued during closing on %s',
+    async (exit) => {
+      const events: DiagnosticEvent[] = [];
+      setDiagnosticWriter((line) => {
+        events.push(JSON.parse(line));
+      });
+      vi.useFakeTimers();
+      let enabled = true;
+      const { controller, showLinuxDoPanelRef, onLinuxDoSurfaceOpened } = createController({
+        canOpenLinuxDoPanel: () => enabled
+      });
+      controller.changeLinuxDoPanel(true);
+      controller.closeLinuxDoPanel();
+      expect(controller.changeLinuxDoPanel(true)).toBe(true);
+      if (exit === 'close') controller.closeLinuxDoPanel();
+      if (exit === 'navigation') controller.closeLinuxDoPanel(true, 'navigation-away');
+      if (exit === 'disabled') enabled = false;
+      if (exit === 'background') controller.cancelLinuxDoCheckForInactiveApp();
+      if (exit === 'unmount') effectCleanups.splice(0).forEach((cleanup) => cleanup());
+      await vi.advanceTimersByTimeAsync(400);
+      expect(showLinuxDoPanelRef.current).toBe(false);
+      expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
+      const queued = events.find(
+        (event) => event.area === 'webview' && event.state === 'queued' && event.phase === 'intent'
+      );
+      expect(queued).toBeDefined();
+      expect(events.filter((event) => event.traceId === queued?.traceId && event.phase === 'finish')).toEqual([
+        expect.objectContaining({
+          outcome: exit === 'disabled' ? 'blocked' : 'canceled',
+          reason: exit === 'disabled' ? 'source_disabled' : 'canceled'
+        })
+      ]);
+    }
+  );
+
+  it('cancels queued reading recovery when an explicit login open replaces it', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    vi.useFakeTimers();
+    const { controller, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+    controller.changeLinuxDoPanel(true);
+    controller.closeLinuxDoPanel();
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 1,
+      isCurrent: () => true,
+      resume: vi.fn(async () => 'completed' as const),
+      cancel: vi.fn()
+    };
+    const recovery = controller.showLinuxDoVerification('阅读验证', reading);
+    controller.changeLinuxDoPanel(true);
+    await expect(recovery).resolves.toBe(false);
+    await vi.advanceTimersByTimeAsync(450);
+    expect(showLinuxDoPanelRef.current).toBe(true);
+    expect(reading.cancel).toHaveBeenCalledTimes(1);
+    expect(reading.resume).not.toHaveBeenCalled();
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    const queued = events.find((event) => event.area === 'webview' && event.state === 'queued' && event.isRecovery);
+    expect(queued).toBeDefined();
+    expect(events).toContainEqual(
+      expect.objectContaining({ traceId: queued?.traceId, phase: 'finish', outcome: 'canceled', reason: 'superseded' })
+    );
+  });
+
   it.each(['return-first', 'document-first'] as const)(
     'checks once after an authorized challenge return and settled main document in %s order',
     async (order) => {

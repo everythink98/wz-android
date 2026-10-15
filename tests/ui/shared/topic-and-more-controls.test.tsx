@@ -1,8 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
 import React from 'react';
+import { StatusBar, StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
+import { ReadingSettingsScreen } from '@/features/more/ReadingSettingsScreen';
 import { TopicMenu } from '@/features/topic/components/TopicMenu';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
@@ -30,6 +32,21 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
 describe('Topic and More controls', () => {
+  it('keeps reading controls close to the native header even with a tall status bar', async () => {
+    const statusBarHeight = jest.replaceProperty(StatusBar, 'currentHeight', 64);
+    try {
+      const view = await render(<ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={jest.fn()} />);
+      let content = view.getByText('显示').parent;
+      while (content && !content.props.contentContainerStyle) content = content.parent;
+      const contentStyle = StyleSheet.flatten(content?.props.contentContainerStyle);
+      expect(contentStyle.paddingTop).toBeLessThanOrEqual(16);
+      expect(view.getByText('显示')).toBeVisible();
+      expect(view.getByLabelText('增大字号')).toBeVisible();
+    } finally {
+      statusBarHeight.restore();
+    }
+  });
+
   it('routes every topic menu action through the shared close/action seam', async () => {
     const onOpenOriginal = jest.fn();
     const onOpenReadingSettings = jest.fn();

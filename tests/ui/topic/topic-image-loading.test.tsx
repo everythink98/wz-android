@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Image, NativeModules, StyleSheet, Text } from 'react-native';
+import { Image, NativeModules, StyleSheet, Text, type MeasureOnSuccessCallback } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentAudio } from '@/ui/content/ForumContentAudio';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
@@ -154,6 +154,12 @@ const mockCreateVideoPlayer = jest.fn((source: unknown) => {
 });
 const mockRetainReadNetworkGeneration = jest.fn(async (generation: number) => ({ generation, retained: true }));
 const mockReleaseReadNetworkGeneration = jest.fn(async (_generation: number) => true);
+const mockGetDefaultUserAgent = jest.fn(async () => 'native-provider-user-agent');
+
+jest.mock('@/platform/android/androidWebViewUserAgent', () => ({
+  getDefaultAndroidWebViewUserAgent: () => mockGetDefaultUserAgent()
+}));
+
 const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
   documentHeight: 1025,
   documentWidth: 920,
@@ -527,12 +533,16 @@ function NodeSeekImageStickerHarness({
 
 function NodeSeekCustomMediaHarness({
   attributes,
+  mediaSessionIdentity = 'nodeseek:4',
   mediaReferrer,
+  nodeSeekMediaUserAgent,
   rendererKey,
   webViewBlockMessage = ''
 }: {
   attributes: Record<string, string>;
+  mediaSessionIdentity?: string;
   mediaReferrer?: MediaReferrerContext;
+  nodeSeekMediaUserAgent?: string;
   rendererKey: string;
   webViewBlockMessage?: string;
 }) {
@@ -544,7 +554,8 @@ function NodeSeekCustomMediaHarness({
     ...(mediaReferrer ? { mediaReferrer } : {})
   };
   const { htmlRenderers } = useHtmlRenderingController({
-    mediaSessionIdentity: 'nodeseek:4',
+    mediaSessionIdentity,
+    nodeSeekMediaUserAgent,
     onOpenExternalUrl: noop,
     onOpenImagePreview: noop,
     onOpenTopic: noop,
@@ -694,6 +705,8 @@ describe('topic block image loading', () => {
     mockReleasedVideoPlayerAccesses = 0;
     mockRetainReadNetworkGeneration.mockClear();
     mockReleaseReadNetworkGeneration.mockClear();
+    mockGetDefaultUserAgent.mockReset();
+    mockGetDefaultUserAgent.mockResolvedValue('native-provider-user-agent');
     mockRenderSvgPoster.mockClear();
     mockWebView.mockClear();
     mockVideoView.mockClear();
@@ -706,6 +719,69 @@ describe('topic block image loading', () => {
       releaseReadNetworkGeneration: mockReleaseReadNetworkGeneration
     };
   });
+
+  it.each([
+    ['block', 'img'],
+    ['mixed', INLINE_FORUM_IMAGE_TAG]
+  ])(
+    'rejects a multi-touch %s image press without blocking later touch or accessibility activation',
+    async (kind, rendererKey) => {
+      const onOpenImagePreview = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>();
+      const view = await render(
+        <TopicImageHarness
+          attributes={{ alt: 'touch preview image', src: imageUrl, width: '320', height: '240' }}
+          rendererKey={rendererKey}
+          onOpenImagePreview={onOpenImagePreview}
+        />
+      );
+      try {
+        const image = view.getByRole('button');
+        const target = { measure: (callback: MeasureOnSuccessCallback) => callback(0, 0, 320, 240, 0, 0) };
+        const touch = (x: number, count: number) => {
+          const point = (identifier: number) => ({ identifier, pageX: x, pageY: 60 + identifier * 40 });
+          return {
+            currentTarget: target,
+            target,
+            persist: () => undefined,
+            stopPropagation: () => undefined,
+            nativeEvent: {
+              ...point(0),
+              touches: Array.from({ length: count }, (_, index) => point(index)),
+              changedTouches: [point(count === 2 ? 1 : 0)]
+            }
+          };
+        };
+        expect(image.props.onResponderGrant).toEqual(expect.any(Function));
+        await fireEvent(image, 'responderGrant', touch(240, 1));
+        await fireEvent(image, 'touchStart', touch(240, 1));
+        // A second finger outside the image reaches its bubbling move without a local touchStart.
+        if (kind === 'mixed') await fireEvent(image, 'touchStart', touch(240, 2));
+        else await fireEvent(image, 'touchMove', touch(80, 2));
+        await fireEvent(image, 'touchEnd', touch(80, 1));
+        await fireEvent(image, 'responderMove', touch(70, 1));
+        await fireEvent(image, 'touchEnd', touch(70, 0));
+        await fireEvent(image, 'responderRelease', touch(70, 0));
+        expect(onOpenImagePreview).not.toHaveBeenCalled();
+
+        await fireEvent(image, 'responderGrant', touch(160, 1));
+        await fireEvent(image, 'touchStart', touch(160, 1));
+        await fireEvent(image, 'responderRelease', touch(160, 0));
+        await fireEvent(image, 'touchEnd', touch(160, 0));
+        expect(onOpenImagePreview).toHaveBeenCalledTimes(1);
+
+        await fireEvent(image, 'responderGrant', touch(160, 1));
+        await fireEvent(image, 'touchStart', touch(160, 1));
+        await fireEvent(image, 'touchStart', touch(160, 2));
+        await fireEvent(image, 'touchCancel', touch(160, 0));
+        await fireEvent(image, 'responderTerminate', touch(160, 0));
+        await fireEvent(image, 'click', { currentTarget: target, target, nativeEvent: {} });
+        expect(onOpenImagePreview).toHaveBeenCalledTimes(2);
+        expect(onOpenImagePreview.mock.calls.map(([url]) => url)).toEqual([imageUrl, imageUrl]);
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
 
   it('does not create an Expo Image source before the route coordinator grants a permit', async () => {
     await render(
@@ -1774,6 +1850,163 @@ describe('topic block image loading', () => {
     }
   });
 
+  it.each([
+    { kind: 'audio', rendererKey: FORUM_AUDIO_TAG },
+    { kind: 'video', rendererKey: FORUM_VIDEO_TAG }
+  ])('waits for the actual browser identity before creating the first $kind player', async ({ kind, rendererKey }) => {
+    let resolveUserAgent: ((value: string) => void) | undefined;
+    const userAgent = new Promise<string>((resolve) => {
+      resolveUserAgent = resolve;
+    });
+    mockGetDefaultUserAgent.mockImplementationOnce(() => userAgent);
+    const mediaUrl = `https://cdn.example.com/identity-gated.${kind === 'audio' ? 'mp3' : 'mp4'}`;
+    const screen = await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="media-row">
+          <NodeSeekCustomMediaHarness rendererKey={rendererKey} attributes={{ src: mediaUrl }} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    try {
+      await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(1));
+      expect(mockCreateVideoPlayer).not.toHaveBeenCalled();
+      expect(mockReplaceMediaSource).not.toHaveBeenCalled();
+      await act(() => resolveUserAgent?.('resolved-browser-identity'));
+      await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+      expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          uri: mediaUrl,
+          useCaching: true,
+          headers: expect.objectContaining({
+            'User-Agent': 'resolved-browser-identity',
+            'X-WZ-Forum-Media-Identity': 'nodeseek:4'
+          })
+        })
+      );
+      expect(mockGetDefaultUserAgent).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+      await act(() => resolveUserAgent?.('resolved-browser-identity'));
+    }
+  });
+
+  it.each([
+    { kind: 'audio', rendererKey: FORUM_AUDIO_TAG, action: 'unmount' },
+    { kind: 'video', rendererKey: FORUM_VIDEO_TAG, action: 'unmount' },
+    { kind: 'audio', rendererKey: FORUM_AUDIO_TAG, action: 'epoch' },
+    { kind: 'video', rendererKey: FORUM_VIDEO_TAG, action: 'epoch' }
+  ])('isolates a pending $kind identity after $action', async ({ kind, rendererKey, action }) => {
+    let resolveUserAgent: ((value: string) => void) | undefined;
+    const userAgent = new Promise<string>((resolve) => {
+      resolveUserAgent = resolve;
+    });
+    mockGetDefaultUserAgent.mockImplementation(() => userAgent);
+    const mediaUrl = `https://cdn.example.com/cancel-identity.${kind === 'audio' ? 'mp3' : 'mp4'}`;
+    const tree = (epoch: number) => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="media-row">
+          <NodeSeekCustomMediaHarness
+            rendererKey={rendererKey}
+            attributes={{ src: mediaUrl }}
+            mediaSessionIdentity={`nodeseek:${epoch}`}
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree(4));
+    try {
+      await waitFor(() => expect(mockGetDefaultUserAgent).toHaveBeenCalledTimes(1));
+      expect(mockCreateVideoPlayer).not.toHaveBeenCalled();
+      if (action === 'unmount') await screen.unmount();
+      else await screen.rerender(tree(5));
+      await act(() => resolveUserAgent?.('resolved-browser-identity'));
+      if (action === 'unmount') {
+        expect(mockCreateVideoPlayer).not.toHaveBeenCalled();
+        expect(mockReplaceMediaSource).not.toHaveBeenCalled();
+        await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledTimes(1));
+      } else {
+        await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+        expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            uri: mediaUrl,
+            headers: expect.objectContaining({
+              'User-Agent': 'resolved-browser-identity',
+              'X-WZ-Forum-Media-Identity': 'nodeseek:5'
+            })
+          })
+        );
+      }
+    } finally {
+      if (action !== 'unmount') await screen.unmount();
+      await act(() => resolveUserAgent?.('resolved-browser-identity'));
+    }
+  });
+
+  it.each([
+    { kind: 'audio', rendererKey: FORUM_AUDIO_TAG, retryLabel: '音频加载失败，点按重试' },
+    { kind: 'video', rendererKey: FORUM_VIDEO_TAG, retryLabel: '视频加载失败，点按重试' }
+  ])(
+    'settles a rejected $kind browser identity and prepares it again on explicit retry',
+    async ({ kind, rendererKey, retryLabel }) => {
+      mockGetDefaultUserAgent.mockRejectedValueOnce(new Error('native provider unavailable'));
+      const mediaUrl = `https://cdn.example.com/retry-identity.${kind === 'audio' ? 'mp3' : 'mp4'}`;
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['media-row']}>
+          <TopicBodyMediaRowBoundary rowKey="media-row">
+            <NodeSeekCustomMediaHarness rendererKey={rendererKey} attributes={{ src: mediaUrl }} />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      await waitFor(() => expect(screen.getByLabelText(retryLabel)).toBeTruthy());
+      expect(mockCreateVideoPlayer).not.toHaveBeenCalled();
+      expect(mockReplaceMediaSource).not.toHaveBeenCalled();
+      expect(mockGetDefaultUserAgent).toHaveBeenCalledTimes(1);
+      await fireEvent.press(screen.getByLabelText(retryLabel));
+      await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+      expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          uri: mediaUrl,
+          headers: expect.objectContaining({ 'User-Agent': 'native-provider-user-agent' })
+        })
+      );
+      expect(mockGetDefaultUserAgent).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('rejects an audio browser identity arriving after the preparation deadline and allows explicit retry', async () => {
+    let resolveUserAgent: ((value: string) => void) | undefined;
+    const userAgent = new Promise<string>((resolve) => {
+      resolveUserAgent = resolve;
+    });
+    mockGetDefaultUserAgent.mockImplementationOnce(() => userAgent);
+    jest.useFakeTimers();
+    try {
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['audio-row']}>
+          <TopicBodyMediaRowBoundary rowKey="audio-row">
+            <NodeSeekCustomMediaHarness
+              rendererKey={FORUM_AUDIO_TAG}
+              attributes={{ src: 'https://cdn.example.com/late-identity.mp3' }}
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      await waitFor(() => expect(mockGetDefaultUserAgent).toHaveBeenCalledTimes(1));
+      await act(() => jest.advanceTimersByTime(30_001));
+      expect(screen.getByLabelText('音频加载失败，点按重试')).toBeTruthy();
+      await act(() => resolveUserAgent?.('late-browser-identity'));
+      expect(mockCreateVideoPlayer).not.toHaveBeenCalled();
+      expect(mockReplaceMediaSource).not.toHaveBeenCalled();
+      await fireEvent.press(screen.getByLabelText('音频加载失败，点按重试'));
+      await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+      await screen.unmount();
+    } finally {
+      await act(() => resolveUserAgent?.('late-browser-identity'));
+      jest.useRealTimers();
+    }
+  });
+
   it('creates no video player until its native generation lease is acquired', async () => {
     const leasedGeneration = getReadNetworkRuntimeSnapshot().generation;
     let resolveRetain: ((lease: { generation: number; retained: boolean }) => void) | undefined;
@@ -2530,6 +2763,7 @@ describe('topic block image loading', () => {
     await render(
       <ForumContentVideo
         mediaContext={{ contentSource: 'nodeseek', sessionIdentity: 'nodeseek:4' }}
+        nodeSeekMediaUserAgent="saved-node-agent"
         src={videoUrl}
         theme={theme}
       />
@@ -2540,6 +2774,7 @@ describe('topic block image loading', () => {
         expect.objectContaining({
           headers: expect.objectContaining({
             Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8',
+            'User-Agent': 'saved-node-agent',
             'X-WZ-Forum-Media-Kind': 'video'
           }),
           uri: videoUrl
@@ -2547,6 +2782,7 @@ describe('topic block image loading', () => {
       )
     );
     expect(mockExpoImageProps).not.toHaveBeenCalled();
+    expect(mockGetDefaultUserAgent).not.toHaveBeenCalled();
   });
 
   it('keeps player ticks out of a controlled audio drag and seeks once when it completes', async () => {
@@ -2775,7 +3011,11 @@ describe('topic block image loading', () => {
     const screen = await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['audio-row']}>
         <TopicBodyMediaRowBoundary rowKey="audio-row">
-          <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: audioUrl }} />
+          <NodeSeekCustomMediaHarness
+            rendererKey={FORUM_AUDIO_TAG}
+            attributes={{ src: audioUrl }}
+            nodeSeekMediaUserAgent="saved-node-agent"
+          />
         </TopicBodyMediaRowBoundary>
       </TopicBodyMediaCoordinatorProvider>
     );
@@ -2786,6 +3026,7 @@ describe('topic block image loading', () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           Accept: 'audio/mpeg,audio/*,*/*;q=0.8',
+          'User-Agent': 'saved-node-agent',
           Referer: 'https://www.nodeseek.com/',
           'X-WZ-Forum-Media-Identity': 'nodeseek:4',
           'X-WZ-Forum-Media-Kind': 'video',
@@ -2795,6 +3036,7 @@ describe('topic block image loading', () => {
       })
     );
     expect(screen.getByTestId('forum-content-audio-frame')).toBeTruthy();
+    expect(mockGetDefaultUserAgent).not.toHaveBeenCalled();
   });
 
   it('keeps settled audio alive outside visible rows and pauses it without releasing on an inactive route', async () => {

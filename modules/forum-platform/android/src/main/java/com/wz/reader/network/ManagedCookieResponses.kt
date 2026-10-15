@@ -215,19 +215,19 @@ internal class ManagedCookieResponses(
     require(reason in setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"))
     if (reason != "startup" || blocked != value) epoch++
     blocked = true
-    val clearance = runCatching { cfClearanceValues(reader("https://linux.do/")) }
+    val clearance = if (reason == "startup") null else runCatching { cfClearanceValues(reader("https://linux.do/")) }
     if (reason == "surface-open") {
-      surfaceClearance = clearance.getOrNull()
-      hasSurfaceClearanceBaseline = clearance.isSuccess
+      surfaceClearance = clearance?.getOrNull()
+      hasSurfaceClearanceBaseline = clearance?.isSuccess == true
     }
     val fields = diagnostics.filterKeys { it in setOf("appSessionId", "traceId", "surfaceGeneration") } +
       mapOf("operation" to "cookie-barrier", "cookieEpoch" to epoch, "cookieBarrierReason" to reason) +
-      (try { mapOf("hasLoginCookie" to (loginCookieValue(reader("https://linux.do/")) != null)) }
+      (if (reason == "startup") emptyMap() else try { mapOf("hasLoginCookie" to (loginCookieValue(reader("https://linux.do/")) != null)) }
         catch (_: Exception) { emptyMap() }) +
       (if (reason == "surface-open" || reason == "surface-close") mapOf("cookieTransport" to "webview") else emptyMap()) +
-      (if (clearance.isSuccess) mapOf("hasCfClearance" to clearance.getOrThrow().any { it.isNotEmpty() }) else emptyMap()) +
+      (if (clearance?.isSuccess == true) mapOf("hasCfClearance" to clearance.getOrThrow().any { it.isNotEmpty() }) else emptyMap()) +
       (if (reason == "surface-open" || reason == "surface-close") cookieInfoFields() else emptyMap()) +
-      (if (reason == "surface-close" && hasSurfaceClearanceBaseline && clearance.isSuccess)
+      (if (reason == "surface-close" && hasSurfaceClearanceBaseline && clearance?.isSuccess == true)
         mapOf("didCfClearanceChange" to (surfaceClearance != clearance.getOrNull())) else emptyMap())
     if (reason == "surface-close" || reason == "identity-change" || reason == "explicit-clear") {
       surfaceClearance = null

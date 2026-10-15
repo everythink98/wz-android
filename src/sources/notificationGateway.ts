@@ -3,6 +3,7 @@ import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { setLinuxDoPolicyAcceptance } from '@/sources/linuxdo/policy';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import type {
   ForumNotification,
   NotificationDetail,
@@ -26,7 +27,7 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
-import { sourceErrorFromUnknown } from './sourceErrors';
+import { errorRequiresAccountRecheck, sourceErrorFromUnknown } from './sourceErrors';
 import { notificationAdapters } from './notificationAdapters';
 import type { NormalizedReplyImageAsset } from './imageUpload';
 import { replyImageMarkupForSource } from './imageUpload';
@@ -98,9 +99,10 @@ async function runWithNotificationDiagnostics<T>(
     | 'notification-templates'
     | 'notification-template-use',
   run: (trace: DiagnosticTrace) => Promise<T>,
-  summarize: (result: T) => DiagnosticFields = () => ({})
+  summarize: (result: T) => DiagnosticFields = () => ({}),
+  parentTrace?: DiagnosticTrace
 ) {
-  const trace = beginDiagnosticTrace('source', operation, { source });
+  const trace = beginDiagnosticTrace('source', operation, { source, parentTraceId: parentTrace?.traceId });
   try {
     const result = await run(trace);
     const summary = sourceDiagnosticSummary(result);
@@ -157,6 +159,7 @@ export function createNotificationGateway({
   onSessionExpired,
   privateAccessAllowed,
   readAccess,
+  requestAccountRecheck,
   requestSessionEpoch,
   sourceAllowed
 }: {
@@ -164,6 +167,7 @@ export function createNotificationGateway({
   onSessionExpired?: (source: NotificationSource, requestSessionEpoch: number) => void;
   privateAccessAllowed: NotificationPrivateAccessAllowed;
   readAccess: NotificationAccessReader;
+  requestAccountRecheck?: RequestAccountRecheck;
   requestSessionEpoch?: (source: NotificationSource) => number;
   sourceAllowed: NotificationSourceAllowed;
 }) {
@@ -231,8 +235,13 @@ export function createNotificationGateway({
     try {
       result = await run(access);
     } catch (error) {
-      if (error && typeof error === 'object' && (error as { reason?: unknown }).reason === 'http-401') {
-        onSessionExpired?.(source, requestEpoch);
+      assertPrivateAccessCurrent(source, access.identityKey, signal);
+      if ((requestSessionEpoch?.(source) ?? 0) === requestEpoch) {
+        if (source === 'linuxdo' && errorRequiresAccountRecheck(error)) {
+          requestAccountRecheck?.(source, requestEpoch, trace.traceId);
+        } else if (sourceErrorFromUnknown(source, error).reason === 'http-401') {
+          onSessionExpired?.(source, requestEpoch);
+        }
       }
       throw error;
     }
@@ -362,7 +371,8 @@ export function createNotificationGateway({
     async loadDetail(
       item: ForumNotification,
       expectedIdentityKey: string,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      parentTrace?: DiagnosticTrace
     ): Promise<NotificationDetail> {
       return runWithNotificationDiagnostics(
         item.source,
@@ -376,7 +386,8 @@ export function createNotificationGateway({
           itemCount: detail.messages?.length || 0,
           hasTopic: Boolean(detail.topic),
           canReply: Boolean(detail.reply && !detail.reply.disabledReason)
-        })
+        }),
+        parentTrace
       );
     },
 

@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
+import React, { createRef } from 'react';
 import { NativeModules } from 'react-native';
+import type { WebView } from 'react-native-webview';
 import * as SecureStore from 'expo-secure-store';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useSessionController } from '@/features/account/useSessionController';
+import { HiddenBrowserHost } from '@/features/account/HiddenBrowserHost';
+import { useHiddenBrowserFetchController } from '@/features/account/useHiddenBrowserFetchController';
+import { createAccountHostStyles } from '@/features/account/accountHostStyles';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createTheme } from '@/ui/theme/tokens';
 import type { ScopedSiteSessionEvent } from '@/domain/session/siteSessionState';
 import {
   getReadNetworkRuntimeSnapshot,
@@ -12,6 +19,21 @@ import {
 import { proveForumReadResponse, runForumSourceReadAttempt } from '@/sources/forumSourceReadAttempt';
 import { withLinuxDoConnectSessionRecoveryIntent } from '@/sources/linuxdo/browserFallback';
 import { withBrowserFetchIntent, type BrowserFetchPriority } from '@/platform/network/browserFetchIntent';
+import { prepareRequestToSend, withRequestBeforeSend } from '@/platform/network/request';
+
+jest.mock('react-native-webview', () => {
+  const ReactModule = require('react') as typeof React;
+  const Native = require('react-native') as typeof import('react-native');
+  return {
+    WebView: ReactModule.forwardRef(function MockWebView(props: Record<string, unknown>, ref) {
+      ReactModule.useImperativeHandle(ref, () => ({
+        injectJavaScript: jest.fn(),
+        stopLoading: jest.fn()
+      }));
+      return ReactModule.createElement(Native.View, { ...props, testID: 'hidden-browser' });
+    })
+  };
+});
 
 jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(async () => undefined),
@@ -71,6 +93,199 @@ describe('session controller browser flow', () => {
     if (originalNetworkProxy) Object.defineProperty(NativeModules, 'NetworkProxyModule', originalNetworkProxy);
     else delete NativeModules.NetworkProxyModule;
   });
+
+  it('rejects a stale private read before handing a native challenge to the NodeSeek browser', async () => {
+    const direct = Promise.withResolvers<Response>();
+    const defaultFetcher = jest.fn<typeof fetch>(async (_url, init) => {
+      prepareRequestToSend(init);
+      return direct.promise;
+    });
+    const hook = await renderSessionController(defaultFetcher);
+    const controller = new AbortController();
+    const stale = Object.assign(new Error('账号状态已变化'), { reason: 'private-access-stale' });
+    let current = true;
+    let settled: Response | Error | undefined;
+    const fetcher = withRequestBeforeSend(hook.result.current.nodeSeekFetchWithWebViewFallback, () => {
+      if (!current) throw stale;
+    });
+    let request!: Promise<Response | Error>;
+    try {
+      await act(async () => {
+        request = fetcher(
+          'https://www.nodeseek.com/api/notification/unread-count',
+          withBrowserFetchIntent({ signal: controller.signal }, { owner: 'account', priority: 'background' })
+        ).then(
+          (response) => (settled = response),
+          (error: Error) => (settled = error)
+        );
+      });
+      expect(defaultFetcher).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        current = false;
+        direct.resolve(new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }));
+      });
+      await waitFor(() => expect(settled || hook.result.current.hiddenBrowserFetchRequests.nodeSeek).toBeTruthy());
+
+      expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek).toBeNull();
+      await expect(request).resolves.toBe(stale);
+    } finally {
+      await act(async () => controller.abort());
+      await request;
+      await hook.unmount();
+    }
+  });
+
+  it.each(['identity', 'abort'] as const)(
+    'skips a queued NodeSeek private read after %s and continues with the next allowed read',
+    async (change) => {
+      const defaultFetcher = jest.fn<typeof fetch>(async (_url, init) => {
+        prepareRequestToSend(init);
+        return new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } });
+      });
+      const hook = await renderSessionController(defaultFetcher);
+      const controllers = Array.from({ length: 3 }, () => new AbortController());
+      const urls = ['held', 'private', 'allowed'].map((part) => `https://www.nodeseek.com/api/notification/${part}`);
+      const stale = Object.assign(new Error('账号状态已变化'), { reason: 'private-access-stale' });
+      let current = true;
+      const protectedFetcher = withRequestBeforeSend(hook.result.current.nodeSeekFetchWithWebViewFallback, () => {
+        if (!current) throw stale;
+      });
+      const requests: Promise<Response | Error>[] = [];
+      const start = (index: number) =>
+        (index === 1 ? protectedFetcher : hook.result.current.nodeSeekFetchWithWebViewFallback)(
+          urls[index]!,
+          withBrowserFetchIntent({ signal: controllers[index]!.signal }, { owner: 'account', priority: 'background' })
+        ).catch((error: Error) => error);
+      try {
+        await act(async () => {
+          requests.push(start(0));
+        });
+        await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[0]));
+        await act(async () => {
+          requests.push(start(1), start(2));
+        });
+        expect(defaultFetcher).toHaveBeenCalledTimes(3);
+        expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[0]);
+        await act(async () => {
+          if (change === 'identity') current = false;
+          else controllers[1]!.abort();
+          const active = hook.result.current.hiddenBrowserFetchRequests.nodeSeek!;
+          await hook.result.current.completeNodeSeekBrowserFetch({ ...active, html: '{"held":true}' });
+        });
+
+        expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[2]);
+        await expect(requests[1]).resolves.toEqual(change === 'identity' ? stale : new Error('请求已取消'));
+        if (change === 'identity') await expect(requests[1]).resolves.toBe(stale);
+        await act(async () => {
+          const active = hook.result.current.hiddenBrowserFetchRequests.nodeSeek!;
+          await hook.result.current.completeNodeSeekBrowserFetch({ ...active, html: '{"allowed":true}' });
+        });
+        await expect(
+          requests[0]!.then((response) => (response instanceof Response ? response.json() : response))
+        ).resolves.toEqual({ held: true });
+        await expect(
+          requests[2]!.then((response) => (response instanceof Response ? response.json() : response))
+        ).resolves.toEqual({ allowed: true });
+        expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek).toBeNull();
+      } finally {
+        await act(async () => controllers.forEach((controller) => controller.abort()));
+        await Promise.all(requests);
+        await hook.unmount();
+      }
+    }
+  );
+
+  it.each([403, 404])(
+    'uses the current NodeSeek document status after an earlier %i and ignores late events from an old request',
+    async (initialStatus) => {
+      const hook = await renderSessionController(
+        jest.fn(async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }))
+      );
+      const bridge = await renderHook(() =>
+        useHiddenBrowserFetchController({
+          completeLinuxDoBrowserFetch: hook.result.current.completeLinuxDoBrowserFetch,
+          completeNodeSeekBrowserFetch: hook.result.current.completeNodeSeekBrowserFetch
+        })
+      );
+      const host = () => (
+        <HiddenBrowserHost
+          blockedMessage=""
+          failLinuxDoBrowserFetchById={hook.result.current.failLinuxDoBrowserFetchById}
+          failNodeSeekBrowserFetchById={hook.result.current.failNodeSeekBrowserFetchById}
+          handleLinuxDoBrowserFetchMessage={bridge.result.current.handleLinuxDoBrowserFetchMessage}
+          handleNodeSeekBrowserFetchMessage={bridge.result.current.handleNodeSeekBrowserFetchMessage}
+          linuxDoBrowserWebViewRef={createRef<WebView>()}
+          nodeSeekBrowserWebViewRef={createRef<WebView>()}
+          onLinuxDoHttpErrorStatus={hook.result.current.markLinuxDoBrowserFetchHttpError}
+          onNodeSeekHttpErrorStatus={hook.result.current.markNodeSeekBrowserFetchHttpError}
+          state={{
+            linuxDo: { request: null, userAgent: '' },
+            nodeSeek: { request: hook.result.current.hiddenBrowserFetchRequests.nodeSeek, userAgent: '' }
+          }}
+          styles={createAccountHostStyles(createTheme({ theme: 'light' }), createEmptyReaderData().settings)}
+        />
+      );
+      const urls = ['https://www.nodeseek.com/post-11-1', 'https://www.nodeseek.com/post-12-1'];
+      const controllers = urls.map(() => new AbortController());
+      let responses!: Promise<Response>[];
+      await act(async () => {
+        responses = urls.map((url, index) => {
+          const response = hook.result.current.forumFetchWithWebViewFallback(url, {
+            signal: controllers[index]!.signal
+          });
+          void response.catch(() => undefined);
+          return response;
+        });
+      });
+      await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[0]));
+      const view = await render(host());
+      const firstDocument = view.getByTestId('hidden-browser');
+      const oldLoadStart = firstDocument.props.onLoadStart;
+      const oldHttpError = firstDocument.props.onHttpError;
+      const postDocument = async (html: string) => {
+        const request = hook.result.current.hiddenBrowserFetchRequests.nodeSeek!;
+        await fireEvent(view.getByTestId('hidden-browser'), 'message', {
+          nativeEvent: {
+            url: request.url,
+            data: JSON.stringify({ type: 'nodeseek-browser-fetch', id: request.id, url: request.url, html })
+          }
+        });
+      };
+      try {
+        await fireEvent(firstDocument, 'httpError', { nativeEvent: { url: urls[0], statusCode: initialStatus } });
+        // A new main document succeeds after the site's security page redirects.
+        await fireEvent(firstDocument, 'loadStart', { nativeEvent: { url: urls[0] } });
+        await postDocument('<article class="post-content">recovered document</article>');
+        const recovered = await responses[0]!;
+        expect(recovered.status).toBe(200);
+        await expect(recovered.text()).resolves.toContain('recovered document');
+
+        await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[1]));
+        await view.rerender(host());
+        const currentDocument = view.getByTestId('hidden-browser');
+        await fireEvent(currentDocument, 'loadStart', { nativeEvent: { url: urls[1] } });
+        await fireEvent(currentDocument, 'httpError', {
+          nativeEvent: { url: urls[1], statusCode: initialStatus }
+        });
+        await act(async () => {
+          oldLoadStart?.({ nativeEvent: { url: urls[0] } });
+          oldHttpError({ nativeEvent: { url: urls[0], statusCode: initialStatus === 403 ? 404 : 403 } });
+        });
+        await postDocument('<main>still unavailable</main>');
+        const unavailable = await responses[1]!;
+        expect(unavailable.status).toBe(initialStatus);
+        await expect(unavailable.text()).resolves.toContain('still unavailable');
+      } finally {
+        await act(async () => {
+          controllers.forEach((controller) => controller.abort());
+          await Promise.allSettled(responses);
+        });
+        await view.unmount();
+        await bridge.unmount();
+        await hook.unmount();
+      }
+    }
+  );
 
   it('drains repeated two-site browser bursts by priority without timing out queued or canceled work', async () => {
     jest.useFakeTimers();
@@ -280,7 +495,7 @@ describe('session controller browser flow', () => {
     'publishes an authoritative %s clear without owning the account transition',
     async (source) => {
       const clearManagedLoginCookies = jest.fn(async () => true);
-      NativeModules.NetworkProxyModule = { clearManagedLoginCookies };
+      NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies };
       const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
       const hook = await renderSessionController(
         jest.fn(async () => new Response('{}')),
@@ -308,6 +523,7 @@ describe('session controller browser flow', () => {
 
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)('keeps a failed %s clear non-terminal', async (source) => {
     NativeModules.NetworkProxyModule = {
+      ...NativeModules.NetworkProxyModule,
       clearManagedLoginCookies: jest.fn(async () => {
         throw new Error('native clear failed');
       })
@@ -342,7 +558,7 @@ describe('session controller browser flow', () => {
       .fn<() => Promise<boolean>>()
       .mockImplementationOnce(async () => firstNativeClear.promise)
       .mockResolvedValueOnce(true);
-    NativeModules.NetworkProxyModule = { clearManagedLoginCookies };
+    NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies };
     const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
     const hook = await renderSessionController(
       jest.fn(async () => new Response('{}')),
@@ -371,7 +587,10 @@ describe('session controller browser flow', () => {
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     'does not publish a %s clear after identity changes during legacy cleanup',
     async (source) => {
-      NativeModules.NetworkProxyModule = { clearManagedLoginCookies: jest.fn(async () => true) };
+      NativeModules.NetworkProxyModule = {
+        ...NativeModules.NetworkProxyModule,
+        clearManagedLoginCookies: jest.fn(async () => true)
+      };
       const cleanup = Promise.withResolvers<void>();
       jest.mocked(SecureStore.deleteItemAsync).mockImplementationOnce(() => cleanup.promise);
       const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
@@ -404,7 +623,7 @@ describe('session controller browser flow', () => {
     async (source) => {
       const native = Promise.withResolvers<boolean>();
       const nativeClear = jest.fn(() => native.promise);
-      NativeModules.NetworkProxyModule = { clearManagedLoginCookies: nativeClear };
+      NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies: nativeClear };
       const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
       const hook = await renderSessionController(
         jest.fn(async () => new Response('{}')),
@@ -433,7 +652,10 @@ describe('session controller browser flow', () => {
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     'lets only the latest %s clear publish while the earlier legacy cleanup finishes',
     async (source) => {
-      NativeModules.NetworkProxyModule = { clearManagedLoginCookies: jest.fn(async () => true) };
+      NativeModules.NetworkProxyModule = {
+        ...NativeModules.NetworkProxyModule,
+        clearManagedLoginCookies: jest.fn(async () => true)
+      };
       const cleanup = Promise.withResolvers<void>();
       jest.mocked(SecureStore.deleteItemAsync).mockImplementationOnce(() => cleanup.promise);
       const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();

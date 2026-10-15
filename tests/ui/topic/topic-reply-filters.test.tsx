@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { inactivePostInteractionActions } from '../topicInteractionFixture';
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
@@ -59,6 +60,7 @@ const mockScrollToOffset = jest.fn();
 const mockGetLayout = jest.fn<(index: number) => { x: number; y: number; width: number; height: number } | undefined>();
 const mockGetFirstItemOffset = jest.fn<() => number>();
 const mockCompileForumContent = jest.fn();
+const mockAvatarLifecycle = jest.fn<(event: 'mount' | 'unmount', uri: string | undefined) => void>();
 const mockNodeSeekTopicReactionStats = jest.fn<(item: TopicDetail) => { label: string; value: number }[]>(() => []);
 let lastFlashListItemTypes: string[] = [];
 let lastFlashListItemKeys: string[] = [];
@@ -304,7 +306,26 @@ jest.mock('lucide-react-native', () => {
   };
 });
 
-jest.mock('@/ui/avatar/Avatar', () => ({ Avatar: () => null }));
+jest.mock('@/ui/avatar/Avatar', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View: NativeView } = require('react-native') as typeof import('react-native');
+  const { useTopicSelectionRowActive } =
+    require('@/features/topic/selection/TopicSelectionSurface') as typeof import('@/features/topic/selection/TopicSelectionSurface');
+  return {
+    Avatar: ({ contentSource, uri }: { contentSource?: string; uri?: string }) => {
+      const selectionActive = useTopicSelectionRowActive();
+      ReactModule.useEffect(() => {
+        mockAvatarLifecycle('mount', uri);
+        return () => mockAvatarLifecycle('unmount', uri);
+      }, [uri]);
+      return ReactModule.createElement(NativeView, {
+        accessibilityHint: uri,
+        accessibilityLabel: `avatar source ${contentSource || 'missing'}`,
+        accessibilityState: { selected: selectionActive }
+      });
+    }
+  };
+});
 jest.mock('@/ui/content/ForumContentVideo', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable } = require('react-native') as typeof import('react-native');
@@ -817,6 +838,7 @@ function TopicFilterHarness({
   const decisionFor = ((request) =>
     decideTopicAction({ ...request, account, topic: topicDetail })) satisfies TopicActionDecisionFor;
   const actions = {
+    ...inactivePostInteractionActions(),
     actionBusy: false,
     replyImageUploading: false,
     bookmarkOnDiscourseSite: async () => onDiscourseBookmark(),
@@ -1101,7 +1123,7 @@ describe('Topic reply filters', () => {
       source: 'linuxdo',
       id: '2885866',
       url: 'https://linux.do/t/2885866',
-      contentHtml: `<aside class="quote" data-post="${postNumber}" data-topic="2686247"><div class="title"><a href="https://linux.do/t/2686247/${postNumber}">引用主题</a></div><blockquote>preview</blockquote></aside>`
+      contentHtml: `<aside class="quote" data-post="${postNumber}" data-topic="2686247" data-username="alice"><div class="title"><img width="24" height="24" src="https://example.com/alice.png"><a href="https://linux.do/t/2686247/${postNumber}">引用主题</a></div><blockquote>preview</blockquote></aside>`
     };
     const view = await render(
       <TopicFilterHarness
@@ -1111,7 +1133,15 @@ describe('Topic reply filters', () => {
         onLocateReply={onLocateReply}
       />
     );
-    await fireEvent.press(view.getByLabelText('打开引用主题，引用主题'));
+    const quoteCard = within(view.getByTestId(`topic-quote-2686247-${postNumber}`));
+    expect(quoteCard.getByText('引用主题').props.numberOfLines).toBe(2);
+    expect(quoteCard.getByText('alice').props.numberOfLines).toBe(1);
+    expect(quoteCard.getByLabelText(`alice，打开引用楼层，第 ${postNumber} 楼`)).toBeTruthy();
+    expect(quoteCard.getByText(`引用 #${postNumber}`)).toBeTruthy();
+    expect(quoteCard.getByLabelText('avatar source linuxdo').props.accessibilityHint).toBe(
+      'https://example.com/alice.png'
+    );
+    await fireEvent.press(quoteCard.getByText('引用主题'));
     expect(onOpenTopic).toHaveBeenCalledWith(
       expect.objectContaining({ id: '2686247', source: 'linuxdo' }),
       postNumber === 1 ? { kind: 'opening' } : { kind: 'reply', target: { floor: 6 } }
@@ -3422,6 +3452,71 @@ describe('Topic reply filters', () => {
     } finally {
       setDiagnosticWriter(null);
     }
+  });
+
+  it('keeps an opening quote header mounted while its preview selection follows expansion', async () => {
+    const avatar = 'https://img.example.com/stable-opening-quote-author.png';
+    const replyAvatar = 'https://img.example.com/unselected-comment-author.png';
+    const quoteInstanceKey = 'topic:stable-quote-owner:linuxdo:42:1';
+    const quotedReply: Reply = {
+      author: 'alice',
+      authorAvatar: avatar,
+      contentHtml: '<p>complete quoted body</p>',
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: 1
+    };
+    const comment: Reply = {
+      author: 'bob',
+      authorAvatar: replyAvatar,
+      contentHtml: '<pre><code>unselected comment</code></pre>',
+      createdAt: '2026-08-09T00:01:00.000Z',
+      floor: 2
+    };
+    const quoteTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      id: 'stable-quote-owner',
+      url: 'https://linux.do/t/topic/stable-quote-owner',
+      contentHtml:
+        '<aside class="quote" data-post="1" data-topic="42" data-username="alice">' +
+        `<div class="title"><img src="${avatar}" width="24" height="24">` +
+        '<a href="https://linux.do/t/42">Quoted topic</a></div>' +
+        '<blockquote>quoted preview</blockquote></aside>',
+      replies: [comment],
+      replyCount: 1
+    };
+    const props = {
+      loadedQuotedReplies: { 'linuxdo:42:1': quotedReply },
+      selectedTopic: quoteTopic,
+      topicDetail: quoteTopic,
+      topicReplies: [comment]
+    };
+    const view = await render(<TopicFilterHarness {...props} />);
+    const quoteAvatar = () => within(view.getByTestId('topic-quote-42-1')).getByLabelText('avatar source linuxdo');
+    const authorLifecycle = () => mockAvatarLifecycle.mock.calls.filter(([, uri]) => uri === avatar);
+    const commentAvatar = () =>
+      view.getAllByLabelText('avatar source linuxdo').find((node) => node.props.accessibilityHint === replyAvatar);
+    const summaryKey = lastFlashListItemKeys[lastFlashListItemTypes.indexOf('topicQuoteSummary')];
+
+    expect(quoteAvatar().props.accessibilityState.selected).toBe(true);
+    expect(commentAvatar()?.props.accessibilityState.selected).toBe(false);
+    expect(authorLifecycle()).toEqual([['mount', avatar]]);
+    expect(view.getByText('quoted preview')).toBeTruthy();
+
+    await view.rerender(<TopicFilterHarness expandedQuotes={{ [quoteInstanceKey]: true }} {...props} />);
+    expect(lastFlashListItemKeys[lastFlashListItemTypes.indexOf('topicQuoteSummary')]).toBe(summaryKey);
+    expect(quoteAvatar().props.accessibilityState.selected).toBe(false);
+    expect(commentAvatar()?.props.accessibilityState.selected).toBe(false);
+    expect(view.queryByText('quoted preview')).toBeNull();
+    expect(lastFlashListItemTypes).toContain('topicQuoteContent');
+    expect(authorLifecycle()).toEqual([['mount', avatar]]);
+
+    await view.rerender(<TopicFilterHarness {...props} />);
+    expect(quoteAvatar().props.accessibilityState.selected).toBe(true);
+    expect(commentAvatar()?.props.accessibilityState.selected).toBe(false);
+    expect(view.getByText('quoted preview')).toBeTruthy();
+    expect(lastFlashListItemTypes).not.toContain('topicQuoteContent');
+    expect(authorLifecycle()).toEqual([['mount', avatar]]);
   });
 
   it('inserts expanded opening-post quote content as direct FlashList rows', async () => {

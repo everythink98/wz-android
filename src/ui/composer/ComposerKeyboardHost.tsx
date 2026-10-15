@@ -29,6 +29,7 @@ type NativeHostProps = ViewProps & {
   enabled: boolean;
   hiddenLayoutHeight?: number;
   trackImeInsets?: boolean;
+  autoShowIme?: boolean;
   onImeInsets?: (event: ComposerImeInsetsEvent) => void;
 };
 const NativeHost = requireNativeComponent<NativeHostProps & { onKeyboardHidden: (event: HiddenEvent) => void }>(

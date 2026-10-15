@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
-  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
-}));
-
+import { getDefaultAndroidWebViewUserAgent } from '@/platform/android/androidWebViewUserAgent';
 import { loadRemoteAvatarSvgText, setDefaultAvatarFetcher } from './avatarImages';
 
 const nodeSeekMediaContext = {
@@ -34,7 +31,6 @@ describe('Android remote avatar images', () => {
       expect.objectContaining({
         method: 'HEAD',
         headers: expect.objectContaining({
-          'User-Agent': 'native-provider-user-agent',
           'X-WZ-Forum-Media-Source': 'nodeseek'
         })
       })
@@ -44,11 +40,11 @@ describe('Android remote avatar images', () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           Accept: 'image/svg+xml,image/*,*/*;q=0.8',
-          'User-Agent': 'native-provider-user-agent',
           'X-WZ-Forum-Media-Source': 'nodeseek'
         })
       })
     );
+    expect(getDefaultAndroidWebViewUserAgent).not.toHaveBeenCalled();
   });
 
   it('uses the configured default fetcher for NodeSeek SVG avatar probes', async () => {

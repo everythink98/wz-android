@@ -9,6 +9,7 @@ export type ForumReadOperation =
   | 'replies'
   | 'reply'
   | 'emoji'
+  | 'interaction-config'
   | 'topic-creation-context'
   | 'topic-edit-context'
   | 'user-profile'
@@ -35,7 +36,17 @@ export type ForumReadPlan =
 
 const publicOperations: Record<Source, ReadonlySet<ForumReadOperation>> = {
   v2ex: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'user-profile']),
-  linuxdo: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'emoji', 'user-profile']),
+  linuxdo: new Set([
+    'categories',
+    'feed',
+    'search',
+    'topic',
+    'replies',
+    'reply',
+    'emoji',
+    'interaction-config',
+    'user-profile'
+  ]),
   nodeseek: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'user-profile']),
   yaohuo: new Set()
 };

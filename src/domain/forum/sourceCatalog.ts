@@ -1,5 +1,5 @@
 export type TopicActionCapability =
-  'reply' | 'like' | 'bookmark' | 'edit' | 'delete' | 'vote' | 'manage-poll' | 'upload' | 'pay';
+  'reply' | 'like' | 'boost' | 'bookmark' | 'edit' | 'delete' | 'vote' | 'manage-poll' | 'upload' | 'pay';
 
 export const sourceCatalog = {
   v2ex: {
@@ -22,7 +22,7 @@ export const sourceCatalog = {
     managedSession: true,
     notifications: true,
     searchFilter: 'discourse',
-    topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
+    topicActions: ['reply', 'like', 'boost', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
     searchOrder: 2,
     sortOrder: 2
   },

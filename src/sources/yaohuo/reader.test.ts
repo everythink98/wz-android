@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
-  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
+  getDefaultAndroidWebViewUserAgent: vi.fn(async () => 'native-provider-user-agent')
 }));
 
 import {

@@ -28,6 +28,7 @@ import { TopicHorizontalScroll, TopicTableSemanticBoundary } from '../rendering/
 import { useTopicSelectionRowActive } from '../selection/TopicSelectionSurface';
 import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
+import { TopicImageGallery } from './TopicImageGallery';
 
 export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
@@ -435,6 +436,8 @@ function ContentLeaf({ html, query = '', row, selectable, trimTrailingBlockSpaci
   let content: ReactNode;
   if (row.type === 'codeBlock') {
     content = <CodeBlock contentWidth={contentWidth} query={query} row={row} selectable={textSelectable} />;
+  } else if (row.type === 'imageGallery') {
+    content = <TopicImageGallery contentWidth={contentWidth} row={row} />;
   } else if (row.type === 'disclosureHeader') {
     content = <DisclosureHeader row={row} selectable={textSelectable} />;
   } else if (row.type === 'terminalReportHeader') {

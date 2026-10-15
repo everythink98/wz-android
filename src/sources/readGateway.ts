@@ -26,6 +26,7 @@ import {
   type LinuxDoLevelProfile
 } from '@/sources/linuxdo/level';
 import { getLinuxDoEmojiUrls, type LinuxDoOptions, type LinuxDoReadAuth } from '@/sources/linuxdo/reader';
+import { loadLinuxDoInteractionConfig } from '@/sources/linuxdo/interactionConfig';
 import {
   RequestCanceledError,
   REQUEST_CANCELED_MESSAGE,
@@ -43,6 +44,7 @@ import {
 import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
 import { getReadNetworkRuntimeSnapshot } from '@/platform/network/readNetworkRuntime';
 import { errorRequiresAccountRecheck, sourceErrorFromUnknown } from './sourceErrors';
+import { forumResponseAccountFailure } from './sessionFailure';
 import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import {
   beginDiagnosticTrace,
@@ -226,6 +228,7 @@ const browserFetchOwnerByReadOperation: Record<ForumReadOperation, BrowserFetchI
   'account-data': 'user',
   categories: 'feed',
   emoji: 'topic',
+  'interaction-config': 'topic',
   feed: 'feed',
   level: 'user',
   replies: 'topic',
@@ -333,7 +336,6 @@ function blockedReadError(source: Source, plan: Extract<ForumReadPlan, { state: 
 }
 
 export function createReadGateway<Dependencies extends ReadGatewayDependencies>(dependencies: Dependencies) {
-  const authenticatedFetcher = rejectUnauthorizedResponse(dependencies.fetcher);
   const currentEnabledSources = () => normalizeEnabledSources(dependencies.getEnabledSources?.());
   const readSessionSnapshot = (source: SessionSource) => dependencies.readSessionRuntimeSnapshot(source);
   const getReadPlan = (source: Source, operation: ForumReadOperation) =>
@@ -435,6 +437,35 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             readSessionSnapshot(planSource).identityKey === sessionSnapshots.get(planSource)?.identityKey
         ));
     const recoveryCommitIsEligible = () => readIsCurrent() && signal?.aborted !== true;
+    const accountFailures = new Map<Source, 'http-401' | 'account-recheck-required'>();
+    const reportedAccountFailures = new Set<SessionSource>();
+    const reportAccountFailure = (planSource: Source, reason: unknown, preserveResult?: () => void) => {
+      if (
+        !isSessionSource(planSource) ||
+        reportedAccountFailures.has(planSource) ||
+        signal?.aborted ||
+        !enabledSourcesAreCurrent() ||
+        getReadPlan(planSource, readOperation).cacheScope !== planSnapshot.get(planSource)?.cacheScope ||
+        (reason !== 'http-401' && !(planSource === 'linuxdo' && reason === 'account-recheck-required'))
+      )
+        return;
+      const session = sessionSnapshots.get(planSource);
+      const plan = planSnapshot.get(planSource);
+      if (
+        !session?.authenticated ||
+        session.identityTrust !== 'confirmed' ||
+        plan?.state !== 'ready' ||
+        plan.lane !== 'authenticated'
+      )
+        return;
+      preserveResult?.();
+      reportedAccountFailures.add(planSource);
+      if (reason === 'account-recheck-required') {
+        dependencies.requestAccountRecheck?.(planSource, session.sessionEpoch, trace.traceId);
+      } else {
+        dependencies.onSessionExpired?.(planSource, session.sessionEpoch);
+      }
+    };
     try {
       const planFor = (planSource: Source) => planSnapshot.get(planSource);
       const unavailablePlanSources = planSources.filter((planSource) => planFor(planSource)?.state === 'blocked');
@@ -448,6 +479,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           ? {
               authenticated: linuxDoAuthenticated,
               categoryCacheScope: linuxDoPlan.cacheScope,
+              onAccountFailure: (reason) => {
+                if (accountFailures.get('linuxdo') !== 'http-401') accountFailures.set('linuxdo', reason);
+              },
               userAgent: dependencies.linuxDoUserAgent?.()
             }
           : undefined;
@@ -471,7 +505,13 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             return anonymousFetcher(input, { ...init, headers });
           };
         }
-        return plan.transport === 'native-no-cookie' ? anonymousFetcher : authenticatedFetcher;
+        if (plan.transport === 'native-no-cookie') return anonymousFetcher;
+        return rejectUnauthorizedResponse(async (input, init) => {
+          const response = await dependencies.fetcher(input, init);
+          const failure = await forumResponseAccountFailure(planSource, input, response, signal);
+          if (failure && accountFailures.get(planSource) !== 'http-401') accountFailures.set(planSource, failure);
+          return response;
+        });
       };
       const operationFetcher = source === 'all' ? localFetcher : sourcePlanFetcher(source);
       markDiagnosticStage(trace, 'credential', {
@@ -628,29 +668,17 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           ? (resultRecord.errors as Record<string, unknown>)
           : {};
       for (const planSource of planSources) {
-        if (!isSessionSource(planSource)) continue;
         const error = resultErrors[planSource];
-        const session = sessionSnapshots.get(planSource);
-        const plan = planSnapshot.get(planSource);
-        if (
-          error &&
-          typeof error === 'object' &&
-          ((error as { reason?: unknown }).reason === 'http-401' ||
-            (planSource === 'linuxdo' && errorRequiresAccountRecheck(error))) &&
-          session?.authenticated &&
-          session.identityTrust === 'confirmed' &&
-          plan?.state === 'ready' &&
-          plan.lane === 'authenticated'
-        ) {
+        const reason =
+          accountFailures.get(planSource) ||
+          (error && typeof error === 'object' && 'reason' in error ? error.reason : undefined);
+        if (signal?.aborted && (reason === 'http-401' || reason === 'account-recheck-required'))
+          throw new RequestCanceledError();
+        reportAccountFailure(planSource, reason, () => {
           // Preserve readable siblings before the account event cancels the aggregate Query.
-          if (!signal?.aborted) onBeforeSessionChange?.(result);
+          onBeforeSessionChange?.(result);
           onBeforeSessionChange = undefined;
-          if (errorRequiresAccountRecheck(error)) {
-            dependencies.requestAccountRecheck?.(planSource, session.sessionEpoch, trace.traceId);
-          } else {
-            dependencies.onSessionExpired?.(planSource, session.sessionEpoch);
-          }
-        }
+        });
       }
       if (!readIsCurrent()) throw new Error(REQUEST_CANCELED_MESSAGE);
       if (readingRequest && dependencies.reading && linuxDoAuthenticated) {
@@ -734,21 +762,12 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             error instanceof Error &&
             'status' in error &&
             error.status === 400));
-      if (source !== 'all' && isSessionSource(source) && (sourceError.reason === 'http-401' || recheckAccount)) {
-        const session = sessionSnapshots.get(source);
-        const plan = planSnapshot.get(source);
-        if (
-          session?.authenticated &&
-          session.identityTrust === 'confirmed' &&
-          plan?.state === 'ready' &&
-          plan.lane === 'authenticated'
-        ) {
-          if (recheckAccount) {
-            dependencies.requestAccountRecheck?.(source, session.sessionEpoch, trace.traceId);
-          } else {
-            dependencies.onSessionExpired?.(source, session.sessionEpoch);
-          }
-        }
+      for (const planSource of planSources) {
+        reportAccountFailure(
+          planSource,
+          accountFailures.get(planSource) ||
+            (planSource === source ? (recheckAccount ? 'account-recheck-required' : sourceError.reason) : undefined)
+        );
       }
       if (!readIsCurrent()) {
         if (ownsTrace) {
@@ -930,6 +949,34 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             linuxDoAccess: discourseAuth,
             fetcher
           }),
+        context,
+        options.signal
+      );
+    },
+    getLinuxDoInteractionConfig(
+      options: Pick<LinuxDoOptions, 'signal' | 'timeoutMs'> = {},
+      context?: ReadGatewayReadContext
+    ) {
+      return read(
+        'linuxdo',
+        'getLinuxDoInteractionConfig',
+        'interaction-config',
+        async ({ discourseAuth, fetcher, trace }) => {
+          const config = await loadLinuxDoInteractionConfig({
+            ...options,
+            fetcher,
+            userAgent: discourseAuth?.userAgent
+          });
+          markDiagnosticStage(trace, 'parse', {
+            source: 'linuxdo',
+            state: 'confirmed',
+            isReactionsEnabled: config.reactionsEnabled,
+            isBoostsEnabled: config.boostsEnabled,
+            itemCount: config.enabledReactions.length,
+            count: config.maxBoostsPerPost
+          });
+          return config;
+        },
         context,
         options.signal
       );

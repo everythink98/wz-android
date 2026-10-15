@@ -247,6 +247,33 @@ test('rejects Account capability group aliases, spreads, and nested raw state', 
   assert.ok(codes.includes('raw-account-host-capability'));
 });
 
+test('keeps startup recovery presentation in the Account host capability', () => {
+  const allowed = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { return { read: {}, write: {}, center: {}, hosts: { startupRecovery: null } }; }'
+  });
+  assert.deepEqual(analyzeArchitecture(allowed).issues, []);
+  const rejected = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { return { read: { sessionRestoreError: "failed", retrySessionRestore() {} }, write: {}, center: {}, hosts: {} }; }'
+  });
+  assert.ok(analyzeArchitecture(rejected).issues.some((issue) => issue.code === 'raw-account-read-capability'));
+});
+
+test('allows the notification fetcher without exposing shared Account transports', () => {
+  const allowed = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { return { read: { notificationFetcher() {} }, write: {}, center: {}, hosts: {} }; }'
+  });
+  assert.deepEqual(analyzeArchitecture(allowed).issues, []);
+  for (const capability of ['fetcher', 'forumFetchWithWebViewFallback', 'nodeSeekFetchWithWebViewFallback']) {
+    const rejected = architectureFixture({
+      'features/account/useAccountRuntime.ts': `export function useAccountRuntime() { return { read: { ${capability}() {} }, write: {}, center: {}, hosts: {} }; }`
+    });
+    assert.ok(analyzeArchitecture(rejected).issues.some((issue) => issue.code === 'raw-account-read-capability'));
+  }
+});
+
 test('keeps NodeImage credential ensure in the Account write capability', () => {
   const srcDir = architectureFixture({
     'features/account/useAccountRuntime.ts':

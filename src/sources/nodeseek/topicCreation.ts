@@ -3,7 +3,7 @@ import { parseForumTopicLink } from '@/domain/forum/links';
 import type { CreateTopicInput, CreateTopicResult, TopicCreationContext } from '@/domain/forum/topicComposer';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { NODESEEK_ACTION_HEADERS, runNodeSeekAction } from './actionClient';
 import { randomNodeSeekContentToken } from './actionRequest';
 import { extractNodeSeekEmbeddedData, NODESEEK_BASE_URL } from './protocol';
@@ -23,7 +23,7 @@ export async function loadNodeSeekTopicCreationContext({
         headers: {
           ...NODESEEK_ACTION_HEADERS,
           accept: 'text/html',
-          'user-agent': userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
+          'user-agent': await resolveWebViewUserAgent(userAgent, signal)
         }
       },
       { owner: 'write', priority: 'write' }

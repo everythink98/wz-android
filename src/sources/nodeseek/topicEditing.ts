@@ -1,3 +1,4 @@
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { isRecord } from '@/domain/forum/html';
 import {
   type TopicDraft,
@@ -26,7 +27,7 @@ export async function loadNodeSeekTopicEditContext(
         headers: {
           ...NODESEEK_ACTION_HEADERS,
           accept: 'text/html',
-          'user-agent': userAgent,
+          'user-agent': await resolveWebViewUserAgent(userAgent, signal),
           'cache-control': 'no-cache'
         }
       },

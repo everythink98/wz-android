@@ -107,6 +107,7 @@ export function useAppRuntime() {
     forumSessionEpochs,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
+    notificationFetcher,
     notificationPrivateAccessAllowed,
     readGateway,
     reconcileAccountStatus,
@@ -133,10 +134,11 @@ export function useAppRuntime() {
     appActive,
     contentSourcesReady: settingsTrusted,
     enabledNotificationSources,
-    fetcher: networkProxyFetcher,
+    fetcher: notificationFetcher,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
     onSessionExpired,
+    requestAccountRecheck,
     openSource: openNotificationsRoute,
     privateAccessAllowed: notificationPrivateAccessAllowed,
     remoteReady: initialForegroundReady && sessionsReady,
@@ -290,6 +292,8 @@ export function useAppRuntime() {
       getLinuxDoTopicCreationContext: readGateway.getLinuxDoTopicCreationContext,
       getTopicEditContext: readGateway.getTopicEditContext,
       getTopic: readGateway.getTopic,
+      onSessionExpired,
+      requestAccountRecheck,
       openAccount: (source, message, recovery) => {
         if (source === 'linuxdo') return showLinuxDoVerification(message, recovery);
         else if (source === 'nodeseek') requestNodeSeekVerification(message || '请登录 NodeSeek');
@@ -313,6 +317,8 @@ export function useAppRuntime() {
       readGateway.getLinuxDoTopicCreationContext,
       readGateway.getTopicEditContext,
       readGateway.getTopic,
+      onSessionExpired,
+      requestAccountRecheck,
       showLinuxDoVerification,
       requestNodeSeekVerification,
       showYaohuoLogin,
@@ -579,6 +585,11 @@ export function useAppRuntime() {
   );
   return {
     accountHost: accountRuntime.hosts.element,
+    ...(accountRuntime.hosts.startupRecovery
+      ? {
+          startupRecovery: accountRuntime.hosts.startupRecovery
+        }
+      : {}),
     onUserInteraction: lifecycle.onUserInteraction,
     appStyles,
     mediaTransportIdentity: networkRuntime.applyStatus,

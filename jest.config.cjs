@@ -1,5 +1,5 @@
 module.exports = {
-  preset: 'jest-expo',
+  preset: 'jest-expo/android',
   transformIgnorePatterns: require('jest-expo/jest-preset').transformIgnorePatterns.map((pattern) =>
     pattern.replace('/node_modules/(?!', '/node_modules/(?!@shopify/flash-list|')
   ),
@@ -10,5 +10,5 @@ module.exports = {
   },
   modulePathIgnorePatterns: ['<rootDir>/.codex-tmp/'],
   testMatch: ['<rootDir>/tests/ui/**/*.test.tsx'],
-  setupFilesAfterEnv: ['<rootDir>/tests/ui/setup.ts']
+  setupFilesAfterEnv: ['<rootDir>/tests/ui/nativeEnvironment.ts', '<rootDir>/tests/ui/setup.ts']
 };

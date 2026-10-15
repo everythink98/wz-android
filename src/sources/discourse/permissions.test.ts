@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { canToggleDiscourseLike } from './permissions';
 
+it('respects a custom reaction undo restriction even when likes are synchronized', () => {
+  expect(
+    canToggleDiscourseLike({ liked: true, canLike: true, currentUserReaction: { id: 'bili_057', canUndo: false } })
+  ).toBe(false);
+  expect(canToggleDiscourseLike({ liked: false, currentUserReaction: { id: 'bili_057', canUndo: true } })).toBe(true);
+});
+
 describe('portable Discourse permissions', () => {
   it('fails closed when like permission is missing', () => {
     expect(canToggleDiscourseLike(undefined)).toBe(false);

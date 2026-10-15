@@ -270,9 +270,13 @@ index 0071b4f..67b1fa4 100644
    }
  
    override fun createGlideOptions(context: Context): RequestOptions {
-@@ -167,7 +169,7 @@ data class SourceMap(
+@@ -167,7 +169,11 @@ data class SourceMap(
        .Builder()
        .apply {
++        if (headers.keys.any { it.equals("X-WZ-Forum-Media-Source", ignoreCase = true) }) {
++          // Forum media obtains its default browser identity from the native provider.
++          setHeader("User-Agent", null as String?)
++        }
          headers.forEach { (key, value) ->
 -          addHeader(key, value)
 +          if (!isImageDiagnosticHeader(key)) addHeader(key, value)

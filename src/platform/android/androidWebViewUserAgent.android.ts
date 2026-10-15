@@ -1,6 +1,9 @@
 import { NativeModules } from 'react-native';
-import { androidWebViewUserAgentFromReactNativeImport } from './androidWebViewUserAgentValue';
+import type { NativeNetworkProxyModule } from '@/platform/network/networkProxy';
+import { createDefaultWebViewUserAgentReader } from './androidWebViewUserAgentValue';
 
-export const DEFAULT_ANDROID_WEBVIEW_USER_AGENT: string = androidWebViewUserAgentFromReactNativeImport({
-  NativeModules
+export const getDefaultAndroidWebViewUserAgent = createDefaultWebViewUserAgentReader(() => {
+  const owner: NativeNetworkProxyModule | undefined = NativeModules.NetworkProxyModule;
+  if (typeof owner?.getDefaultWebViewUserAgent !== 'function') throw new Error('默认浏览器身份读取不可用');
+  return owner.getDefaultWebViewUserAgent();
 });

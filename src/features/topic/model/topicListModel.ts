@@ -38,7 +38,8 @@ export function topicListReadingNeedsDisplayedMedia(item: TopicListItem) {
   if (!row) return false;
   let mediaOnly = mediaOnlyRows.get(row);
   if (mediaOnly === undefined) {
-    mediaOnly = row.type === 'video' || (row.type === 'richText' && !stripHtml(row.html).trim());
+    mediaOnly =
+      row.type === 'video' || row.type === 'imageGallery' || (row.type === 'richText' && !stripHtml(row.html).trim());
     mediaOnlyRows.set(row, mediaOnly);
   }
   return mediaOnly;

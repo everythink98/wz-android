@@ -1418,8 +1418,9 @@ describe('Topic real child components', () => {
     expect(view.queryByText('当前主题同楼层错误内容')).toBeNull();
   });
 
-  it('keeps a cached quote header stable before and after expansion', async () => {
+  it('keeps a quote header and its original avatar stable through loading and expansion', async () => {
     const author = '一位名字非常非常长的引用帖子作者 Long Display Name';
+    const avatar = 'https://cdn.ldstatic.com/user_avatar/linux.do/long-author/48/1.png';
     const title = '一个很长的引用主题标题，用来确认窄屏下不会挤压头像、作者名和展开按钮';
     const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 1 };
     const reply: Reply = {
@@ -1427,7 +1428,7 @@ describe('Topic real child components', () => {
       quotedPosts: [
         {
           reference,
-          author: { label: author, username: 'long-author' },
+          author: { label: author, username: 'long-author', avatar },
           preview: '引用简介保持可见',
           topicTitle: title,
           topicUrl: 'https://linux.do/t/topic/342888/1'
@@ -1437,7 +1438,7 @@ describe('Topic real child components', () => {
     const longHtml = '<p>已缓存的引用正文</p>';
     const quotedReply: Reply = {
       author,
-      authorAvatar: 'https://cdn.ldstatic.com/long-author.png',
+      authorAvatar: 'https://cdn.ldstatic.com/user_avatar/linux.do/long-author/96/1.png',
       contentHtml: longHtml,
       createdAt: '2026-02-17T00:00:00.000Z',
       floor: 1
@@ -1453,10 +1454,17 @@ describe('Topic real child components', () => {
       topicBaseUrl: 'https://linux.do/t/topic/2685882',
       topicId: '2685882'
     });
-    const view = await render(<VirtualizedReplyRows props={props} />);
+    const view = await render(<VirtualizedReplyRows props={{ ...props, loadedQuotedReplies: {} }} />);
     let quote = within(view.getByTestId('reply-quote-2-342888-1'));
 
     expect(quote.getAllByLabelText('avatar source linuxdo')).toHaveLength(1);
+    expect(quote.getByLabelText('avatar source linuxdo').props.accessibilityHint).toBe(avatar);
+    expect(quote.getByText(author).props.numberOfLines).toBe(1);
+    expect(quote.getByText(title).props.numberOfLines).toBe(2);
+    await view.rerender(<VirtualizedReplyRows props={props} />);
+    quote = within(view.getByTestId('reply-quote-2-342888-1'));
+    expect(quote.getAllByLabelText('avatar source linuxdo')).toHaveLength(1);
+    expect(quote.getByLabelText('avatar source linuxdo').props.accessibilityHint).toBe(avatar);
     expect(quote.getByText(author).props.numberOfLines).toBe(1);
     expect(quote.getByText(title).props.numberOfLines).toBe(2);
     await fireEvent.press(quote.getByText('展开'));
@@ -1477,9 +1485,16 @@ describe('Topic real child components', () => {
     );
     quote = within(view.getByTestId('reply-quote-2-342888-1'));
     expect(quote.getAllByLabelText('avatar source linuxdo')).toHaveLength(1);
+    expect(quote.getByLabelText('avatar source linuxdo').props.accessibilityHint).toBe(avatar);
     expect(quote.getByText(author).props.numberOfLines).toBe(1);
     expect(quote.getByText(title).props.numberOfLines).toBe(2);
     expect(view.getByText('已缓存的引用正文')).toBeTruthy();
+
+    await view.rerender(<VirtualizedReplyRows props={props} />);
+    quote = within(view.getByTestId('reply-quote-2-342888-1'));
+    expect(quote.getByLabelText('avatar source linuxdo').props.accessibilityHint).toBe(avatar);
+    expect(quote.getByText('引用简介保持可见')).toBeTruthy();
+    expect(view.queryByText('已缓存的引用正文')).toBeNull();
   });
 
   it('rejects quote metadata whose source does not match the current Topic', async () => {
@@ -1718,11 +1733,13 @@ describe('Topic real child components', () => {
         styles={styles}
         testID="topic-quote-20-1"
         theme={theme}
+        title={<Text>正文引用主题标题</Text>}
         onToggle={onToggle}
       />
     );
 
     expect(view.getByTestId('topic-quote-preview-20-1')).toBeTruthy();
+    expect(view.getByText('正文引用主题标题')).toBeTruthy();
     expect(view.getByText('正文引用简介')).toBeTruthy();
     expect(view.queryByText('正文引用完整帖子')).toBeNull();
     await fireEvent.press(view.getByLabelText('正文引用标题'));
@@ -1741,10 +1758,12 @@ describe('Topic real child components', () => {
         styles={styles}
         testID="topic-quote-20-1"
         theme={theme}
+        title={<Text>正文引用主题标题</Text>}
         onToggle={onToggle}
       />
     );
     expect(view.getByTestId('topic-quote-preview-20-1')).toBeTruthy();
+    expect(view.getByText('正文引用主题标题')).toBeTruthy();
 
     await view.rerender(
       <TopicBodyQuoteCard
@@ -1758,10 +1777,12 @@ describe('Topic real child components', () => {
         styles={styles}
         testID="topic-quote-20-1"
         theme={theme}
+        title={<Text>正文引用主题标题</Text>}
         onToggle={onToggle}
       />
     );
     expect(view.getByTestId('topic-quote-complete-20-1')).toBeTruthy();
+    expect(view.getByText('正文引用主题标题')).toBeTruthy();
     expect(view.queryByText('正文引用简介')).toBeNull();
     expect(view.getByText('正文引用完整帖子')).toBeTruthy();
   });
@@ -1776,9 +1797,11 @@ describe('Topic real child components', () => {
         styles={styles}
         testID="topic-quote-continuous"
         theme={theme}
+        title={<Text>正文引用主题标题</Text>}
       />
     );
 
+    expect(view.getByText('正文引用主题标题')).toBeTruthy();
     expect(StyleSheet.flatten(view.getByTestId('topic-quote-continuous').props.style)).toMatchObject({
       borderBottomLeftRadius: 0,
       borderBottomRightRadius: 0,

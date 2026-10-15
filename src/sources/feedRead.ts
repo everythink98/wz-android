@@ -17,6 +17,7 @@ import type {
   V2exFeedFilter
 } from '@/domain/forum/models';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { sortTopicsByTime } from '@/domain/forum/html';
@@ -178,33 +179,43 @@ export async function getFeed({
         const results = await Promise.allSettled(
           sources.map((item, index) => {
             const startedAt = Date.now();
-            return readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
-              if (!fetchedSources[index]) {
-                return Promise.resolve({
-                  items: [],
-                  errors: {},
-                  hasMore: false,
-                  nextPage: cursorState.nextPages?.[item] ?? null,
-                  nextCursor: cursorState.sourceCursors?.[item] ?? null
-                });
-              }
-              const readSource = (sourceFetcher: Fetcher) =>
-                getFeed({
-                  ...options,
-                  source: item,
-                  nodeSeekAuthenticated,
-                  discourseAuth,
-                  cursor: item === 'v2ex' ? cursorState.sourceCursors?.[item] || undefined : cursor,
-                  fetcher: sourceFetcher,
-                  limit: item === 'v2ex' ? limit : adapterLimit,
-                  page: requestedPages[item],
-                  signal: sourceSignal
-                });
-              const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
-              return item === 'linuxdo' || item === 'nodeseek'
-                ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
-                : readSource(sourceFetcher);
-            }).then(
+            const userAgent = item === 'nodeseek' ? nodeSeekUserAgent : discourseAuth?.userAgent;
+            const prepare =
+              fetchedSources[index] && item !== 'v2ex' && (item === 'yaohuo' || !userAgent?.trim())
+                ? () => resolveWebViewUserAgent(undefined, signal)
+                : undefined;
+            return readWithinAggregateSourceBudget(
+              item,
+              signal,
+              (sourceSignal) => {
+                if (!fetchedSources[index]) {
+                  return Promise.resolve({
+                    items: [],
+                    errors: {},
+                    hasMore: false,
+                    nextPage: cursorState.nextPages?.[item] ?? null,
+                    nextCursor: cursorState.sourceCursors?.[item] ?? null
+                  });
+                }
+                const readSource = (sourceFetcher: Fetcher) =>
+                  getFeed({
+                    ...options,
+                    source: item,
+                    nodeSeekAuthenticated,
+                    discourseAuth,
+                    cursor: item === 'v2ex' ? cursorState.sourceCursors?.[item] || undefined : cursor,
+                    fetcher: sourceFetcher,
+                    limit: item === 'v2ex' ? limit : adapterLimit,
+                    page: requestedPages[item],
+                    signal: sourceSignal
+                  });
+                const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
+                return item === 'linuxdo' || item === 'nodeseek'
+                  ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
+                  : readSource(sourceFetcher);
+              },
+              prepare
+            ).then(
               (value) => {
                 if (diagnosticTrace) {
                   markDiagnosticStage(diagnosticTrace, 'transport', {
@@ -351,26 +362,36 @@ export async function getCategories({
       async (aggregateFetcher, scopeFetcher) => {
         const sources = includedAggregateSources(includedSources, sourceValues);
         const results = await Promise.allSettled(
-          sources.map((item) =>
-            readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
-              if (unavailableSources?.includes(item)) {
-                return unavailableSourceRead(item);
-              }
-              const readSource = (sourceFetcher: Fetcher) =>
-                getCategories({
-                  ...options,
-                  source: item,
-                  nodeSeekAuthenticated,
-                  discourseAuth,
-                  fetcher: sourceFetcher,
-                  signal: sourceSignal
-                });
-              const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
-              return item === 'linuxdo' || item === 'nodeseek'
-                ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
-                : readSource(sourceFetcher);
-            })
-          )
+          sources.map((item) => {
+            const userAgent = item === 'nodeseek' ? nodeSeekUserAgent : discourseAuth?.userAgent;
+            const prepare =
+              !unavailableSources?.includes(item) && (item === 'nodeseek' || item === 'linuxdo') && !userAgent?.trim()
+                ? () => resolveWebViewUserAgent(undefined, signal)
+                : undefined;
+            return readWithinAggregateSourceBudget(
+              item,
+              signal,
+              (sourceSignal) => {
+                if (unavailableSources?.includes(item)) {
+                  return unavailableSourceRead(item);
+                }
+                const readSource = (sourceFetcher: Fetcher) =>
+                  getCategories({
+                    ...options,
+                    source: item,
+                    nodeSeekAuthenticated,
+                    discourseAuth,
+                    fetcher: sourceFetcher,
+                    signal: sourceSignal
+                  });
+                const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
+                return item === 'linuxdo' || item === 'nodeseek'
+                  ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
+                  : readSource(sourceFetcher);
+              },
+              prepare
+            );
+          })
         );
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
         const response = {

@@ -49,6 +49,7 @@ import {
   INLINE_FORUM_IMAGE_TAG,
   FORUM_STICKER_TAG,
   forumImagePreviewDescriptorsFromHtmlFallback,
+  isInlineForumImage,
   normalizeForumContentMediaNodes,
   type ForumImagePreviewDescriptor
 } from './forumContentMedia';
@@ -213,6 +214,7 @@ type ForumHtmlSemanticRowBase = ForumSemanticRowBase & {
 };
 
 export type CompiledForumContentRow =
+  | (ForumSemanticRowBase & { readonly slides: readonly [string, ...string[]]; readonly type: 'imageGallery' })
   | (ForumHtmlSemanticRowBase & { readonly type: 'richText' })
   | (ForumHtmlSemanticRowBase & {
       readonly columns: number;
@@ -499,6 +501,15 @@ function isDiscourseCalloutTitle(node: PlanningNode) {
   );
 }
 
+function isDiscourseImageCarousel(node: PlanningNode) {
+  return (
+    nodeTagName(node) === 'div' &&
+    nodeHasClass(node, 'd-image-grid') &&
+    nodeAttribute(node, 'data-mode') === 'carousel' &&
+    !nodeHasAttribute(node, 'data-disabled')
+  );
+}
+
 function ownMediaSlots(node: PlanningNode) {
   const tagName = nodeTagName(node);
   if (tagName === 'video') {
@@ -744,6 +755,7 @@ function analyzeNodes(
       tagName === 'ul' ||
       tagName === FORUM_TERMINAL_REPORT_TAG ||
       tagName === FORUM_TERMINAL_TAB_TAG ||
+      isDiscourseImageCarousel(current.node) ||
       isTerminalCodeNode(current.node) ||
       PLANNED_ISLAND_TAGS.has(tagName) ||
       children.some((child) => containsSemantic.has(child))
@@ -2221,6 +2233,13 @@ function compileSemanticEntries(
       continue;
     }
     const tagName = nodeTagName(node);
+    if (context.recognizesDiscourseCallouts && isDiscourseImageCarousel(node)) {
+      const gallery = imageGalleryRowForNode(node, path, context);
+      if (gallery) {
+        rows.push(gallery);
+        continue;
+      }
+    }
     if (tagName === 'summary' && context.containsTypedDirective.has(node)) {
       rows.push(compilerNoticeRow(path), ...typedRowsInSubtree(node, path, context.typedDirectives));
       continue;
@@ -2409,6 +2428,33 @@ function compileSemanticEntries(
   return rows;
 }
 
+function imageGalleryRowForNode(
+  node: PlanningNode,
+  nodePath: string,
+  context: SemanticCompileContext
+): Extract<CompiledForumContentRow, { type: 'imageGallery' }> | null {
+  if (!(node instanceof HTMLElement) || planningNodeText(node).trim() || context.containsTypedDirective.has(node))
+    return null;
+  const metrics = context.metrics.get(node);
+  if (!metrics || !metricsFitRow({ ...metrics, mediaSlots: Math.min(3, metrics.mediaSlots) })) return null;
+  const images = node.querySelectorAll('img');
+  if (metrics.mediaSlots !== images.length || images.some((image) => isInlineForumImage(image.attributes))) return null;
+  const slides = images.map((image) => stripCompilerOwnedAttributes(image.toString(), true));
+  const [first, ...rest] = slides;
+  if (first === undefined || slides.some((html) => !renderedHtmlFitsBudget(html))) return null;
+  return {
+    ...semanticRowBase({
+      index: 0,
+      length: 1,
+      networkMediaCount: Math.min(3, slides.length),
+      semanticId: `node-${nodePath}`
+    }),
+    selectionToken: forumSelectionTokenFromUnits(context.selectionUnits.get(node) || []),
+    slides: [first, ...rest],
+    type: 'imageGallery'
+  };
+}
+
 function semanticRowsFromParsedContent({
   analysis,
   nodes,
@@ -2551,17 +2597,17 @@ function compileParsedForumContent({
   const extractsOpeningQuotes = role === 'opening' && Boolean(topicId) && isDiscourseSource(source);
   let previewImages: readonly ForumImagePreviewDescriptor[] = [];
   try {
-    if (body) {
-      if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, `${sourceCatalog.nodeseek.baseUrl}/`);
-      if (source === 'v2ex') markV2exReplyReferenceNodes(body, topicId);
-      previewImages = normalizeForumContentMediaNodes(body).previewImages;
-    }
     const openingQuotes = new WeakMap<object, QuotedPostMetadata>();
     if (extractsOpeningQuotes && body && topicId && isDiscourseSource(source)) {
       for (const node of body.querySelectorAll('aside')) {
         const quote = discourseQuotedPostMetadataFromNode(node, source, topicId);
         if (quote) openingQuotes.set(node, quote);
       }
+    }
+    if (body) {
+      if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, `${sourceCatalog.nodeseek.baseUrl}/`);
+      if (source === 'v2ex') markV2exReplyReferenceNodes(body, topicId);
+      previewImages = normalizeForumContentMediaNodes(body).previewImages;
     }
     const bounded = boundedSemanticContentNodes(
       (body?.childNodes || []).filter(planningNodeHasContent) as PlanningNode[]

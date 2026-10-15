@@ -1,5 +1,5 @@
 import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
-import { isNodeSeekChallengeResponse } from './protocol';
+import { extractNodeSeekEmbeddedData, isNodeSeekChallengeResponse } from './protocol';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -14,8 +14,9 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { canContainCloudflareChallengePage } from '@/platform/network/cloudflareChallenge';
 import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
-import { hasNodeSeekAccountEvidenceHtml } from './userParser';
+import { hasNodeSeekAccountEvidenceHtml, nodeSeekCurrentUserFromConfig } from './userParser';
 import {
   forumRecoveryDiagnosticFields,
   recordForumRecoveryDecision,
@@ -183,7 +184,8 @@ export function createNodeSeekWebViewFallbackFetcher({
     const method = String(init?.method || 'GET').toUpperCase();
     const isIdempotentRead = method === 'GET' || method === 'HEAD';
     const ordinal = ++requestOrdinal;
-    const accountProbe = browserFetchIntentFromInit(init)?.owner === 'account';
+    const owner = browserFetchIntentFromInit(init)?.owner;
+    const accountProbe = owner === 'account' || owner === 'account-overview';
     if (!isNodeSeekRequestUrl(url)) {
       return defaultFetcher(input, init);
     }
@@ -219,7 +221,15 @@ export function createNodeSeekWebViewFallbackFetcher({
         ? fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'verification_required', response.status)
         : response;
     }
-    if (accountProbe && !hasNodeSeekAccountEvidenceHtml(text, url) && allowWebViewFallback(url)) {
+    if (
+      accountProbe &&
+      response.ok &&
+      canContainCloudflareChallengePage(response.headers) &&
+      !(owner === 'account-overview'
+        ? nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(text))
+        : hasNodeSeekAccountEvidenceHtml(text, url)) &&
+      allowWebViewFallback(url)
+    ) {
       return fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'invalid_response', response.status);
     }
     if (response.ok) {

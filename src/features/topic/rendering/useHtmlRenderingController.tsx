@@ -1,6 +1,11 @@
 import { useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { getNativePropsForTNode, type CustomBlockRenderer, type CustomMixedRenderer } from 'react-native-render-html';
+import {
+  getNativePropsForTNode,
+  useInternalRenderer,
+  type CustomBlockRenderer,
+  type CustomMixedRenderer
+} from 'react-native-render-html';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { isPreviewableImageUrl, type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
 import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
@@ -22,7 +27,7 @@ import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { createContentMediaRenderers, createIframeRenderer } from './contentMediaRenderers';
-import { createPreviewRenderers } from './previewRenderers';
+import { createPreviewRenderers, useImagePreviewPress } from './previewRenderers';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { FORUM_MATH_BLOCK_TAG, FORUM_MATH_INLINE_TAG } from '@/domain/forum/html';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
@@ -160,10 +165,30 @@ export function useHtmlRenderingController({
       );
     };
     const ReplyReferenceLinkRenderer: CustomMixedRenderer = (props) => {
+      const { Renderer, rendererProps } = useInternalRenderer('a', props);
+      const { onPress, ...touchHandlers } = useImagePreviewPress(rendererProps.onPress);
       const className = String(props.tnode.attributes?.class || '');
       const isMentionLink = className.split(/\s+/).includes('forum-mention-link');
       const isFloorLink = className.split(/\s+/).includes('forum-floor-link');
       if (!isMentionLink && !isFloorLink) {
+        if (isPreviewableImageUrl(props.tnode.attributes?.href)) {
+          if (props.tnode.type === 'block') {
+            return (
+              <Pressable
+                {...getNativePropsForTNode({ ...props, onPress: rendererProps.onPress })}
+                {...touchHandlers}
+                onPress={onPress}
+              />
+            );
+          }
+          return (
+            <Renderer
+              {...rendererProps}
+              onPress={onPress}
+              textProps={{ ...rendererProps.textProps, ...touchHandlers }}
+            />
+          );
+        }
         const { InternalRenderer, ...internalRendererProps } = props;
         return <InternalRenderer {...internalRendererProps} />;
       }

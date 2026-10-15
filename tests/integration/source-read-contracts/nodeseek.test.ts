@@ -3,6 +3,7 @@ import { getCategories, getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getTopic } from '@/sources/sourceRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { nodeSeekBrowserResponse } from '@/features/account/browserFetchQueue';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
@@ -3681,13 +3682,31 @@ describe('Android local sources', () => {
     });
   });
 
+  it('preserves a NodeSeek search business rejection returned through the browser with status 200', async () => {
+    // The captured search response body is reused even when the bridge has no HTTP error status.
+    const response = nodeSeekBrowserResponse('{"success":false,"message":"每隔2秒可以操作一次"}', false);
+    const fetcher = vi.fn(async (_input: string) => response);
+    expect(response.status).toBe(200);
+
+    const request = searchTopics({ source: 'nodeseek', query: 'AI', fetcher, nodeSeekAuthenticated: true });
+    await expect(request).rejects.toThrow(new Error('每隔2秒可以操作一次'));
+    await expect(request).rejects.not.toMatchObject({ reason: 'cloudflare' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe('https://www.nodeseek.com/search?q=AI');
+  });
+
   it.each([
     '',
     '<main>Temporary server error, please retry</main>',
     '<div class="alert">Temporary server error, please retry</div>',
     '<div class="notice">Temporary server error, please retry</div>',
     `<div class="alert">Temporary server error, please retry</div><script>${nodeSeekPayload}</script>`,
-    '<main><form action="/search"><input name="q" value="retry" /></form></main>'
+    '<main><form action="/search"><input name="q" value="retry" /></form></main>',
+    '{"success":"false","message":"Not an explicit rejection"}',
+    '{"success":false,"message":',
+    '{"success":false,"message":{"text":"Not a string"}}',
+    '{"success":false,"message":"  "}',
+    '[{"success":false,"message":"Not an object response"}]'
   ])('keeps an unconfirmed NodeSeek search page retryable: %j', async (body) => {
     const fetcher = vi
       .fn()

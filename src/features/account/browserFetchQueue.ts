@@ -15,6 +15,7 @@ export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
   url: string;
   userAgent?: string;
   browserFetchIntent?: BrowserFetchIntent;
+  beforeSend?: () => void;
   reject: (error: Error) => void;
 };
 
@@ -50,7 +51,7 @@ export function nodeSeekBrowserResponse(
   const status = challenge ? 403 : httpErrorStatus || 200;
   const body = challenge ? '' : html;
   const headerValues: Record<string, string> = {
-    'content-type': 'text/html'
+    'content-type': !challenge && /^\s*[{[]/.test(body) ? 'application/json' : 'text/html'
   };
   if (challenge) {
     headerValues['cf-mitigated'] = 'challenge';
@@ -192,6 +193,14 @@ export function startNextBrowserFetchRequest<T extends BrowserFetchQueueRequest>
     }
     if (canStart && !canStart(candidate)) {
       settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
+      continue;
+    }
+    try {
+      candidate.beforeSend?.();
+    } catch (error) {
+      settleBrowserFetchRequestOnce(candidate, () =>
+        candidate.reject(error instanceof Error ? error : new Error(String(error)))
+      );
       continue;
     }
     next = candidate;

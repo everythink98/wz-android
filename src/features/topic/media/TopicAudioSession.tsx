@@ -315,21 +315,18 @@ class TopicAudioSession {
       previousGeneration = null;
     }
     try {
+      const source = await forumMediaPlayerSourceFromUrl(descriptor.src, {
+        kind: 'audio',
+        mediaContext: descriptor.mediaContext,
+        nodeSeekUserAgent: descriptor.nodeSeekMediaUserAgent,
+        referrerPolicy: descriptor.referrerPolicy,
+        runtimeGeneration: targetGeneration
+      });
+      if (this.disposed || revision !== this.loadRevision || this.activeId !== id) return;
       this.loadDiagnostic?.stage('player-replace');
       const player = this.ensurePlayer();
       this.acceptPlayerEvents = false;
-      await player.replaceAsync(
-        forumMediaPlayerSourceFromUrl(descriptor.src, {
-          kind: 'audio',
-          mediaContext: descriptor.mediaContext,
-          nodeSeekUserAgent: descriptor.nodeSeekMediaUserAgent,
-          referrerPolicy: descriptor.referrerPolicy,
-          runtimeGeneration: targetGeneration
-        })
-      );
-      if (previousGeneration !== null) {
-        void releaseReadNetworkRuntimeGeneration(previousGeneration).catch(() => undefined);
-      }
+      await player.replaceAsync(source);
       if (this.disposed || revision !== this.loadRevision || this.activeId !== id) return;
       player.currentTime = restorePosition;
       this.cancelPreparation?.();
@@ -347,10 +344,11 @@ class TopicAudioSession {
       });
       this.applyStatus({ status: player.status });
     } catch (error) {
+      if (!this.disposed && revision === this.loadRevision && this.activeId === id) this.fail(id, error);
+    } finally {
       if (previousGeneration !== null) {
         void releaseReadNetworkRuntimeGeneration(previousGeneration).catch(() => undefined);
       }
-      if (!this.disposed && revision === this.loadRevision && this.activeId === id) this.fail(id, error);
     }
   }
 

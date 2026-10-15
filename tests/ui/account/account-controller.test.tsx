@@ -104,10 +104,18 @@ describe('account workflows with canonical identity reconciliation', () => {
     jest.useRealTimers();
   });
 
-  it('reads linux.do level through ReadGateway with only the Query signal', async () => {
+  it('refreshes cached linux.do levels through ReadGateway and preserves them during failure and retry', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
-    const getLevelProfile = jest.fn(async () => profile);
+    const updatedProfile = { ...profile, currentLevel: 2, fetchedAt: '2026-10-13T00:00:00.000Z' };
+    const failedRefresh = Promise.withResolvers<LinuxDoLevelProfile>();
+    const notify = jest.fn();
+    const getLevelProfile = jest
+      .fn<ReadGateway['getLinuxDoLevelProfile']>()
+      .mockResolvedValueOnce(profile)
+      .mockImplementationOnce(() => failedRefresh.promise)
+      .mockResolvedValueOnce(updatedProfile);
     const { hook } = await renderAccountController({
+      notify,
       readGateway: { getLinuxDoLevelProfile: getLevelProfile }
     });
 
@@ -125,6 +133,27 @@ describe('account workflows with canonical identity reconciliation', () => {
     await waitFor(() => {
       expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
     });
+    notify.mockClear();
+    await act(async () => {
+      refresh = hook.result.current.refreshLinuxDoLevel();
+      await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(false);
+    });
+    expect(getLevelProfile).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.linuxDoLevelBusy).toBe(true);
+    expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
+    await act(async () => failedRefresh.reject(new Error('等级读取失败')));
+    await expect(refresh).resolves.toBe(false);
+    expect(hook.result.current.linuxDoLevelError).toBe('等级读取失败');
+    expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
+    expect(notify).not.toHaveBeenCalled();
+    await act(async () => {
+      refresh = hook.result.current.refreshLinuxDoLevel();
+    });
+    await expect(refresh).resolves.toBe(true);
+    expect(getLevelProfile).toHaveBeenCalledTimes(3);
+    expect(hook.result.current.linuxDoLevelError).toBe('');
+    expect(hook.result.current.linuxDoLevelProfile).toEqual(updatedProfile);
+    expect(notify).toHaveBeenCalledWith('linux.do 等级已更新。');
   });
 
   it('does not start a linux.do Level read while identity is pending', async () => {

@@ -323,6 +323,14 @@ export function isNodeSeekChallengeResponse(
   if (hasReadableNodeSeekHtml(html, url, document)) {
     return false;
   }
+  if (
+    response.status === 403 &&
+    /^\s*NodeSeek\s*\|\s*security check\s*$/i.test(
+      elementText((document?.root ?? parseHtml(html)).querySelector('title'))
+    )
+  ) {
+    return true;
+  }
   return isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: html });
 }
 

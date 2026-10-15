@@ -13,6 +13,9 @@ import {
 import { getLinuxDoCurrentUserIdentity } from '@/sources/linuxdo/account';
 import { createNodeSeekWebViewFallbackFetcher } from '@/sources/nodeseek/browserFallback';
 import { getNodeSeekCurrentUserIdentity, getNodeSeekReplies } from '@/sources/nodeseek/reader';
+import { nodeSeekNotificationAdapter } from '@/sources/nodeseek/notifications';
+import { getNodeSeekAccountOverview } from '@/sources/nodeseek/accountData';
+import { nodeSeekBrowserResponse } from '@/features/account/browserFetchQueue';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   beginDiagnosticTrace,
@@ -213,9 +216,10 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('uses normal fetch for readable NodeSeek details that include challenge scripts', async () => {
+  it('uses normal fetch for readable NodeSeek details despite security titles and challenge scripts', async () => {
     const normalFetcher = vi.fn(async () =>
       html(`
+      <title>NodeSeek | security check</title>
       <div class="cf-turnstile"></div>
       <a class="post-title" href="/post-743015-1">NodeSeek direct detail</a>
       <div class="content-item">
@@ -239,6 +243,46 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'nodeseek', id: '743015', fetcher });
 
     expect(topic.title).toBe('NodeSeek direct detail');
+    expect(topic.contentHtml).toContain('直接正文讨论');
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('preserves a NodeSeek permission 403 without entering verification fallback', async () => {
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response(
+          '<html><title>NodeSeek</title><body><div class="notice">权限不足，需要等级 2 才能查看该主题。</div></body></html>',
+          { status: 403, headers: { 'content-type': 'text/html' } }
+        )
+    );
+    const webViewFetcher = vi.fn(async () => html('<html>unexpected fallback</html>'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher: normalFetcher, webViewFetcher });
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743015', fetcher });
+
+    expect(topic.accessRequirement).toMatchObject({ type: 'level', label: '需等级' });
+    expect(topic.contentHtml).toContain('权限不足，需要等级 2');
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('preserves a readable NodeSeek 403 with the security-check title without entering verification fallback', async () => {
+    const body = `
+      <title>NodeSeek | security check</title>
+      <a class="post-title" href="/post-743015-1">NodeSeek readable detail</a>
+      <article class="post-content"><p>可读正文仍保留原始 HTTP 状态</p></article>
+    `;
+    const direct = new Response(body, { status: 403, headers: { 'content-type': 'text/html' } });
+    const normalFetcher = vi.fn(async () => direct);
+    const webViewFetcher = vi.fn(async () => html('<html>unexpected fallback</html>'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher: normalFetcher, webViewFetcher });
+
+    const response = await fetcher('https://www.nodeseek.com/post-743015-1');
+
+    expect(response).toBe(direct);
+    expect(response.status).toBe(403);
+    await expect(response.text()).resolves.toBe(body);
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
@@ -284,23 +328,132 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('does not send NodeSeek JSON business responses to the verification WebView', async () => {
-    const normalFetcher = vi.fn(async () =>
-      json({
-        ok: true,
-        message: 'ordinary API data mentioning cf-turnstile and challenge-platform'
-      })
-    );
-    const webViewFetcher = vi.fn(async () => json({ ok: false, message: 'unexpected fallback' }));
+  it.each([200, 403])(
+    'does not send NodeSeek JSON business responses with status %i to the verification WebView',
+    async (status) => {
+      const normalFetcher = vi.fn(async () =>
+        Response.json(
+          {
+            ok: true,
+            message:
+              'ordinary API data mentioning cf-turnstile, challenge-platform and <title>NodeSeek | security check</title>'
+          },
+          { status }
+        )
+      );
+      const webViewFetcher = vi.fn(async () => json({ ok: false, message: 'unexpected fallback' }));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const response = await fetcher('https://www.nodeseek.com/api/account/status');
+
+      expect(response.status).toBe(status);
+      await expect(response.json()).resolves.toMatchObject({ ok: true });
+      expect(webViewFetcher).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([200, 403])('preserves a background account JSON response with status %i', async (status) => {
+    const body = { message: 'business response', atMe: 2, reply: 1, messageCount: 3 };
+    const direct = Response.json(body, { status });
+    const webViewFetcher = vi.fn(async () => json({ message: 'unexpected fallback' }));
     const fetcher = createNodeSeekWebViewFallbackFetcher({
-      defaultFetcher: normalFetcher,
+      defaultFetcher: vi.fn(async () => direct),
       webViewFetcher
     });
 
-    const response = await fetcher('https://www.nodeseek.com/api/account/status');
+    const response = await fetcher(
+      'https://www.nodeseek.com/api/notification/unread-count',
+      withBrowserFetchIntent({}, { owner: 'account', priority: 'background' })
+    );
 
-    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    expect(response).toBe(direct);
+    await expect(response.json()).resolves.toEqual(body);
     expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('preserves a non-challenge account HTML denial instead of treating it as missing identity', async () => {
+    const direct = new Response('<title>Forbidden</title><div class="notice">权限不足</div>', {
+      status: 403,
+      headers: { 'content-type': 'text/html' }
+    });
+    const webViewFetcher = vi.fn(async () => html('<a href="/api/account/signOut">退出</a>'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher: async () => direct, webViewFetcher });
+
+    const response = await fetcher(
+      'https://www.nodeseek.com/',
+      withBrowserFetchIntent({}, { owner: 'account', priority: 'background' })
+    );
+
+    expect(response).toBe(direct);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'reads NodeSeek unread counters through the managed transport after challenge=%s',
+    async (challenge) => {
+      const counters = { atMe: 2, reply: 1, message: 3 };
+      const defaultFetcher = vi.fn<typeof fetch>(async () =>
+        challenge
+          ? new Response('<title>NodeSeek | security check</title><body>Checking</body>', {
+              status: 403,
+              headers: { 'content-type': 'text/html' }
+            })
+          : json(counters)
+      );
+      const webViewFetcher = vi.fn(async () => json(counters));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher, webViewFetcher });
+
+      await expect(
+        nodeSeekNotificationAdapter.readUnreadSnapshot({
+          fetcher,
+          identityKey: 'nodeseek:7',
+          userId: '7',
+          userAgent: 'WebView UA'
+        })
+      ).resolves.toMatchObject({ total: 6 });
+      expect(browserFetchIntentFromInit(defaultFetcher.mock.calls[0]?.[1])).toEqual({
+        owner: 'account',
+        priority: 'background'
+      });
+      expect(webViewFetcher).toHaveBeenCalledTimes(challenge ? 1 : 0);
+    }
+  );
+
+  it('recovers NodeSeek account data when direct HTML has identity controls but no embedded user', async () => {
+    const defaultFetcher = vi.fn<typeof fetch>(async () =>
+      html('<a class="Username" href="/space/7">alice</a><ul><li class="post-list-item">Feed</li></ul>')
+    );
+    const payload = Buffer.from(
+      JSON.stringify({ user: { member_id: 7, member_name: 'alice', coin: 0, stardust: -2 } })
+    ).toString('base64');
+    const webViewFetcher = vi.fn<typeof fetch>(async () => html(`<script>${payload}</script>`));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher, webViewFetcher });
+
+    await expect(getNodeSeekAccountOverview({ userId: '7', fetcher })).resolves.toMatchObject({
+      coin: 0,
+      stardust: -2
+    });
+    expect(browserFetchIntentFromInit(defaultFetcher.mock.calls[0]?.[1])).toEqual({
+      owner: 'account-overview',
+      priority: 'foreground'
+    });
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a bridged NodeSeek JSON business denial that mentions a security title', async () => {
+    const body = JSON.stringify({ message: '<title>NodeSeek | security check</title>' });
+    await expect(
+      nodeSeekNotificationAdapter.readUnreadSnapshot({
+        identityKey: 'nodeseek:7',
+        userId: '7',
+        userAgent: 'WebView UA',
+        fetcher: async () =>
+          nodeSeekBrowserResponse(body, false, 403, 'https://www.nodeseek.com/api/notification/unread-count')
+      })
+    ).rejects.toMatchObject({ loginRequired: true });
   });
 
   it.each([
@@ -336,47 +489,66 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('retries NodeSeek through the WebView fallback only after Cloudflare', async () => {
-    const lines: string[] = [];
-    setDiagnosticWriter((line) => {
-      lines.push(line);
-    });
-    const normalFetcher = vi.fn(
-      async () =>
-        new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
-          status: 403,
-          headers: { 'cf-mitigated': 'challenge' }
-        })
-    );
-    const webViewFetcher = vi.fn(async () =>
-      html(`
+  it.each(['Cloudflare', 'NodeSeek security check'])(
+    'reads the browser topic response after a %s 403',
+    async (challenge) => {
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      const normalFetcher = vi.fn(
+        async () =>
+          new Response(
+            challenge === 'Cloudflare'
+              ? '<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>'
+              : '<html><head><title>NodeSeek | security check</title></head><body>Checking your connection</body></html>',
+            {
+              status: 403,
+              headers:
+                challenge === 'Cloudflare'
+                  ? { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+                  : { 'content-type': 'text/html' }
+            }
+          )
+      );
+      const webViewFetcher = vi.fn(async () =>
+        html(`
       <a class="post-title" href="/post-743011-1">NodeSeek fallback detail</a>
       <div class="content-item">
         <article class="post-content"><p>兜底正文</p></article>
       </div>
     `)
-    );
-    const fetcher = createNodeSeekWebViewFallbackFetcher({
-      defaultFetcher: normalFetcher,
-      webViewFetcher
-    });
+      );
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
 
-    const topic = await getTopic({ source: 'nodeseek', id: '743011', fetcher });
+      const topic = await getTopic({ source: 'nodeseek', id: '743011', fetcher });
 
-    expect(topic.title).toBe('NodeSeek fallback detail');
-    expect(normalFetcher).toHaveBeenCalledTimes(1);
-    expect(webViewFetcher).toHaveBeenCalledTimes(1);
-    const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
-    expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
-    const events = lines.map((line) => JSON.parse(line)).filter(({ operation }) => operation === 'transport-fallback');
-    expect(events).toEqual([
-      expect.objectContaining({ phase: 'intent', source: 'nodeseek', reason: 'verification_required' }),
-      expect.objectContaining({ phase: 'transport', channel: 'direct', status: 403, reason: 'verification_required' }),
-      expect.objectContaining({ phase: 'transport', channel: 'webview', status: 200 }),
-      expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
-    ]);
-    expect(JSON.stringify(events)).not.toMatch(/743011|post-|https?:|cf-turnstile/);
-  });
+      expect(topic.title).toBe('NodeSeek fallback detail');
+      expect(topic.contentHtml).toContain('兜底正文');
+      expect(normalFetcher).toHaveBeenCalledTimes(1);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
+      expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
+      const events = lines
+        .map((line) => JSON.parse(line))
+        .filter(({ operation }) => operation === 'transport-fallback');
+      expect(events).toEqual([
+        expect.objectContaining({ phase: 'intent', source: 'nodeseek', reason: 'verification_required' }),
+        expect.objectContaining({
+          phase: 'transport',
+          channel: 'direct',
+          status: 403,
+          reason: 'verification_required'
+        }),
+        expect.objectContaining({ phase: 'transport', channel: 'webview', status: 200 }),
+        expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
+      ]);
+      expect(JSON.stringify(events)).not.toMatch(/743011|post-|https?:|cf-turnstile/);
+    }
+  );
 
   it('starts the caller timeout handoff when NodeSeek enters the WebView fallback', async () => {
     vi.useFakeTimers();

@@ -36,6 +36,7 @@ describe('Native behavior test selection', () => {
       'NotificationDigestExecutor',
       'PreviewRegionImageMath',
       'TopicShareCapture',
+      'NetworkUserAgent',
       'ForumPlatformPackage'
     ].map((name) => `com.wz.reader.${name}Test`);
     expect(nativeTestTasks[':forum-platform:testDebugUnitTest'].classes).toEqual(expect.arrayContaining(owners));
@@ -79,6 +80,7 @@ describe('Native behavior test selection', () => {
     ['patches/expo-file-system+57.0.6.patch', ':expo-file-system:testDebugUnitTest'],
     ['src/platform/update/download.ts', ':expo-file-system:testDebugUnitTest'],
     ['patches/expo-image+57.0.4.patch', ':expo-image:testDebugUnitTest'],
+    ['patches/expo-image+57.0.4.patch', ':forum-platform:testDebugUnitTest'],
     ['tests/native/ComposerKeyboardTest.kt', ':app:testReleaseUnitTest'],
     ['tests/native/ComposerWebViewPrewarmTest.kt', ':app:testReleaseUnitTest'],
     ['tests/native/composer-keyboard.gradle', ':app:testReleaseUnitTest']

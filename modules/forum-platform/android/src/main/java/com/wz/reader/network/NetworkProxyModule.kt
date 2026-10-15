@@ -2,6 +2,7 @@ package com.wz.reader
 
 import android.os.Handler
 import android.os.Looper
+import android.content.Context
 import android.webkit.WebSettings
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
@@ -50,6 +51,40 @@ internal fun readDefaultWebViewUserAgentOnMainThread(
     task.cancel(false)
   }
 }
+
+internal class DefaultWebViewUserAgentReader {
+  @Volatile private var cached: String? = null
+
+  fun read(
+    isMainThread: Boolean,
+    postToMainThread: (Runnable) -> Boolean,
+    readUserAgent: () -> String
+  ): String {
+    cached?.let { return it }
+    return readDefaultWebViewUserAgentOnMainThread(isMainThread, postToMainThread, readUserAgent = {
+      cached ?: run {
+        val userAgent = try {
+          readUserAgent()
+        } catch (error: AssertionError) {
+          throw IllegalStateException("默认浏览器身份读取失败", error)
+        }
+        userAgent.trim().replace(Regex("\\s+"), " ").also {
+          check(it.isNotEmpty()) { "默认浏览器身份读取失败" }
+          cached = it
+        }
+      }
+    })
+  }
+}
+
+private val processDefaultUserAgentReader = DefaultWebViewUserAgentReader()
+
+internal fun readProcessDefaultWebViewUserAgent(context: Context): String =
+  processDefaultUserAgentReader.read(
+    isMainThread = Looper.myLooper() == Looper.getMainLooper(),
+    postToMainThread = { action -> Handler(Looper.getMainLooper()).post(action) },
+    readUserAgent = { WebSettings.getDefaultUserAgent(context) }
+  )
 
 internal fun awaitWebViewProxyOperation(
   timeoutMessage: String,
@@ -208,6 +243,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   private val worker = Executors.newSingleThreadExecutor()
   private val owner = ownerIds.incrementAndGet()
   private val probes = InvalidatableResourceSlot<LocalNetworkProxyServer> { probe -> probe.stop() }
+  @Volatile private var invalidated = false
 
   init {
     proxyServers.register(owner)
@@ -215,15 +251,23 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   override fun getName(): String = "NetworkProxyModule"
 
-  override fun getConstants(): MutableMap<String, Any> = mutableMapOf(
-    "defaultWebViewUserAgent" to runCatching {
-      readDefaultWebViewUserAgentOnMainThread(
-        isMainThread = Looper.myLooper() == Looper.getMainLooper(),
-        postToMainThread = { action -> Handler(Looper.getMainLooper()).post(action) },
-        readUserAgent = { WebSettings.getDefaultUserAgent(reactContext) }
-      )
-    }.getOrDefault("")
-  )
+  @ReactMethod
+  fun getDefaultWebViewUserAgent(promise: Promise) {
+    try {
+      worker.execute {
+        try {
+          check(!invalidated) { "默认浏览器身份 bridge 已失效" }
+          val userAgent = readProcessDefaultWebViewUserAgent(reactContext)
+          check(!invalidated) { "默认浏览器身份 bridge 已失效" }
+          promise.resolve(userAgent)
+        } catch (error: Exception) {
+          promise.reject("E_DEFAULT_USER_AGENT", "默认浏览器身份读取失败", error)
+        }
+      }
+    } catch (error: Exception) {
+      promise.reject("E_DEFAULT_USER_AGENT", "默认浏览器身份读取失败", error)
+    }
+  }
 
   @ReactMethod
   fun applyProxy(profile: ReadableMap?, promise: Promise) {
@@ -586,6 +630,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   override fun invalidate() {
+    invalidated = true
     val activeProbe = probes.invalidate()
     worker.shutdownNow()
     activeProbe?.stop()

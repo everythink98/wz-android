@@ -1,12 +1,25 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import * as Notifications from 'expo-notifications';
 import { ToastAndroid } from 'react-native';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
-import { createSiteSessionStates } from '@/domain/session/siteSessionState';
+import {
+  accountSessionSnapshotFromEvent,
+  createAccountSessionSnapshot,
+  createSiteSessionStates
+} from '@/domain/session/siteSessionState';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
+import { useAccountRuntime } from '@/features/account/useAccountRuntime';
+import {
+  NotificationDetailRoute,
+  NotificationRouteRuntimeProvider,
+  type NotificationRouteRuntimeValue
+} from '@/features/notifications/NotificationRoute';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   clearNotificationSourceForContentDisable,
@@ -18,7 +31,10 @@ import {
   setGlobalNotificationIntent,
   setSourceNotificationIntent
 } from '@/platform/notifications/notificationStore';
-import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import type { ForumNotification } from '@/domain/notifications/models';
+import type { Fetcher } from '@/platform/network/request';
+import { render, fireEvent } from '../render';
 import {
   dismissSourceNotification,
   dismissSourceNotificationExact,
@@ -34,6 +50,26 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { useReaderRuntime } from '@/app/useReaderRuntime';
 import { createEmptyReaderState, type ReaderState } from '@/domain/reader/readerRecordState';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
+
+jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 })
+}));
+jest.mock('react-native-webview', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View } = require('react-native') as typeof import('react-native');
+  return {
+    WebView: ReactModule.forwardRef(function MockWebView(props: Record<string, unknown>, ref) {
+      ReactModule.useImperativeHandle(ref, () => ({ stopLoading: jest.fn(), injectJavaScript: jest.fn() }), []);
+      return ReactModule.createElement(View, { ...props, testID: 'notification-login-webview' });
+    })
+  };
+});
+jest.mock('@/platform/network/managedCookies', () => ({
+  ...jest.requireActual('@/platform/network/managedCookies'),
+  setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
+  readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: 'test-session=fixture' }))
+}));
 
 const mockLoadReader = jest.fn<Promise<ReaderState>, []>();
 const mockImportReader = jest.fn<Promise<ReaderState>, []>();
@@ -203,6 +239,7 @@ function runtimeOptions(
     getLinuxDoUserAgent: jest.fn(() => 'linux.do'),
     getNodeSeekUserAgent: jest.fn(() => 'NodeSeek'),
     onSessionExpired: jest.fn(),
+    requestAccountRecheck: jest.fn(),
     openSource,
     privateAccessAllowed,
     remoteReady: true,
@@ -238,6 +275,178 @@ async function settleStartedRuntimeTasks(unmount = true) {
 }
 
 describe('notification runtime', () => {
+  it.each([
+    [401, 'expired'],
+    [403, 'anonymous'],
+    [404, 'anonymous'],
+    [403, 'same'],
+    [404, 'same'],
+    [403, 'unknown'],
+    [404, 'unknown']
+  ] as const)('recovers detail HTTP %s through the production Account runtime after %s', async (status, outcome) => {
+    appQueryClient.clear();
+    appQueryClient.setQueryData(
+      accountQueryKeys.snapshot('linuxdo'),
+      accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
+        type: 'session-updated',
+        loggedIn: true,
+        currentUser: { source: 'linuxdo', id: 'alice', username: 'alice', url: 'https://linux.do/u/alice' }
+      })
+    );
+    const readStorage = jest.mocked(AsyncStorage.getItem);
+    const previousStorageRead = readStorage.getMockImplementation()!;
+    readStorage.mockImplementation(async (key) =>
+      key === 'account-session.migration.v1'
+        ? '1'
+        : key === 'account-session.v1.linuxdo'
+          ? JSON.stringify({
+              version: 1,
+              state: 'authenticated',
+              identity: { source: 'linuxdo', id: 'alice', username: 'alice', url: 'https://linux.do/u/alice' }
+            })
+          : previousStorageRead(key)
+    );
+    const userAgentRead = jest
+      .spyOn(SecureStore, 'getItemAsync')
+      .mockImplementation(async (key) => (key.endsWith('-user-agent') ? 'Saved fixture browser UA' : null));
+    const accountResponse = Promise.withResolvers<Response>();
+    let restored = false;
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url) => {
+      if (url.endsWith('/session/current.json'))
+        return restored ? new Response('{"current_user":{"username":"alice"}}') : accountResponse.promise;
+      if (url.endsWith('/latest')) return new Response('<html></html>');
+      if (url.includes('/t/201'))
+        return restored
+          ? new Response(
+              JSON.stringify({
+                id: 201,
+                title: '恢复后的私信',
+                slug: 'private-topic',
+                archetype: 'private_message',
+                posts_count: 1,
+                created_at: '2026-10-01T00:00:00Z',
+                post_stream: {
+                  stream: [1],
+                  posts: [{ id: 1, post_number: 1, username: 'bob', cooked: '<p>恢复后的正文</p>' }]
+                }
+              })
+            )
+          : new Response('{"errors":["您需要登录才能执行此操作。"]}', { status });
+      throw new Error(`Unexpected notification request ${url}`);
+    });
+    const notify = jest.fn();
+    const item: ForumNotification = {
+      source: 'linuxdo',
+      id: 'pm:201',
+      kind: 'private-message',
+      actor: { name: 'Bob' },
+      title: '私信',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '201' }
+    };
+    let account!: ReturnType<typeof useAccountRuntime>;
+    function Harness() {
+      account = useAccountRuntime({
+        appActive: true,
+        enabledSources: ['linuxdo'],
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: true,
+        screen: 'notifications',
+        webViewBlockMessage: ''
+      });
+      const notifications = useNotificationsRuntime({
+        ...runtimeOptions(),
+        enabledNotificationSources: ['linuxdo'],
+        fetcher,
+        sessions: account.read.accountSessionViewModels,
+        sessionEpochs: account.read.forumSessionEpochs,
+        privateAccessAllowed: account.read.notificationPrivateAccessAllowed,
+        getLinuxDoUserAgent: account.read.getLinuxDoUserAgent,
+        getNodeSeekUserAgent: account.read.getNodeSeekUserAgent,
+        onSessionExpired: account.write.onSessionExpired,
+        requestAccountRecheck: account.write.requestAccountRecheck
+      });
+      const runtime: NotificationRouteRuntimeValue = {
+        ...notifications,
+        contentWidth: 360,
+        notify,
+        reconcileAccountStatus: account.read.reconcileAccountStatus,
+        openAccountSurface: async (_source, message, recovery) => {
+          await account.hosts.showLinuxDoVerification(message, recovery);
+        },
+        composer: {
+          ensureNodeImageApiKey: account.write.ensureNodeImageApiKey,
+          ensureWritableSession: account.write.ensureWritableSession,
+          isWritableSessionTicketCurrent: account.write.isWritableSessionTicketCurrent,
+          getDiscourseEmojiUrls: account.read.readGateway.getEmojiUrls
+        }
+      };
+      if (!account.read.sessionsReady) return account.hosts.element;
+      return (
+        <NavigationContainer>
+          <NotificationRouteRuntimeProvider value={runtime}>
+            <NotificationDetailRoute
+              navigation={{ navigate: jest.fn(), setOptions: jest.fn() } as never}
+              route={{
+                key: 'detail',
+                name: 'NotificationDetail',
+                params: { notification: item, identityKey: 'linuxdo:alice' }
+              }}
+            />
+          </NotificationRouteRuntimeProvider>
+          {account.hosts.element}
+        </NavigationContainer>
+      );
+    }
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    const probes = () => fetcher.mock.calls.filter(([url]) => url.endsWith('/session/current.json'));
+    try {
+      await waitFor(() => expect(account.read.sessionsReady).toBe(true));
+      await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.includes('/t/201'))).toHaveLength(1));
+      if (outcome === 'expired') {
+        await waitFor(() => expect(account.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(false));
+        expect(probes()).toHaveLength(0);
+      } else {
+        await waitFor(() => expect(probes()).toHaveLength(1));
+        await act(async () => {
+          // Concurrent reads share the real Account controller's in-flight probe.
+          account.write.requestAccountRecheck('linuxdo', account.read.forumSessionEpochs.linuxdo);
+          accountResponse.resolve(
+            outcome === 'unknown'
+              ? new Response('{"errors":["您需要登录才能执行此操作。"]}', { status: 403 })
+              : new Response(JSON.stringify({ current_user: outcome === 'anonymous' ? null : { username: 'alice' } }))
+          );
+          await accountResponse.promise;
+        });
+        await waitFor(() => expect(account.read.accountSessionViewModels.linuxdo.isVerifying).toBe(false));
+        expect(probes()).toHaveLength(1);
+        expect(account.read.accountSessionViewModels.linuxdo.isLoggedIn).toBe(outcome !== 'anonymous');
+        if (outcome === 'unknown') expect(account.read.accountSessionViewModels.linuxdo.lastError).toBeTruthy();
+      }
+      await waitFor(() => expect(view.getByText('去登录')).toBeTruthy());
+      await fireEvent.press(view.getByText('去登录'));
+      await waitFor(() => expect(view.getByTestId('notification-login-webview')).toBeTruthy());
+      expect(account.hosts.linuxDoVerificationVisible).toBe(true);
+      expect(fetcher.mock.calls.filter(([url]) => url.includes('/t/201'))).toHaveLength(1);
+      restored = true;
+      await fireEvent.press(view.getByLabelText('关闭'));
+      await waitFor(() => expect(account.hosts.linuxDoVerificationVisible).toBe(false));
+      await waitFor(() => expect(view.getByText('恢复后的正文')).toBeTruthy());
+      expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+    } finally {
+      accountResponse.resolve(new Response('{"current_user":{"username":"alice"}}'));
+      await view.unmount();
+      await settleStartedRuntimeTasks(false);
+      userAgentRead.mockRestore();
+      readStorage.mockImplementation(previousStorageRead);
+    }
+  });
+
   it('retries failed storage restoration once and preserves the persisted watermark and settings', async () => {
     const stored = defaultNotificationState();
     stored.hasOptedIn = true;

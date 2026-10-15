@@ -1,7 +1,7 @@
 import type { NodeSeekStardustReceive } from '@/domain/forum/structuredComposer';
 import { optionalNonNegativeInteger, NODESEEK_BASE_URL } from './protocol';
 import { NODESEEK_ACTION_HEADERS } from './actionClient';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 
@@ -89,7 +89,7 @@ async function fetchStardustList({
         method: 'GET',
         headers: {
           ...NODESEEK_ACTION_HEADERS,
-          'user-agent': (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim()
+          'user-agent': (await resolveWebViewUserAgent(userAgent, signal)).trim()
         }
       },
       { owner: 'write', priority: 'write' }

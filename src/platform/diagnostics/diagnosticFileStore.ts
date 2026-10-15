@@ -1,5 +1,5 @@
 import { File, Paths } from 'expo-file-system';
-import { createDiagnosticExport, pruneDiagnosticExports } from './diagnosticExportFiles';
+import { createDiagnosticExport } from './diagnosticExportFiles';
 import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from './diagnostics';
 import {
   normalizeNativeReadNetworkDiagnosticEvents,
@@ -519,11 +519,6 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
 
 export function initializeDiagnosticFileLogging() {
   if (!writerInstalled) {
-    try {
-      pruneDiagnosticExports();
-    } catch {
-      // Retained export cleanup cannot disable the process diagnostic writer.
-    }
     try {
       setDiagnosticWriter(appendDiagnosticLogLine);
       writerInstalled = true;

@@ -2,7 +2,7 @@ import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './action
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './polls';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { NODESEEK_BASE_URL } from './protocol';
 
 export const NODESEEK_ACTION_HEADERS = {
@@ -73,7 +73,7 @@ export async function fetchNodeSeekVoteInfo({
   if (!/^\d+$/.test(cleanPollId)) {
     throw new Error('投票 id 不正确');
   }
-  const cleanUserAgent = (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim();
+  const cleanUserAgent = (await resolveWebViewUserAgent(userAgent, signal)).trim();
   const response = await fetchWithTimeout(
     `${NODESEEK_BASE_URL}/api/vote/info/${encodeURIComponent(cleanPollId)}`,
     withBrowserFetchIntent(
@@ -122,7 +122,7 @@ export async function runNodeSeekAction({
   timeoutMs?: number;
   userAgent?: string;
 }) {
-  const cleanUserAgent = (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim();
+  const cleanUserAgent = (await resolveWebViewUserAgent(userAgent, signal)).trim();
 
   const response = await fetchWithTimeout(
     `${NODESEEK_BASE_URL}${request.path}`,

@@ -1,9 +1,37 @@
 import 'react-native-gesture-handler/jestSetup';
 import { notifyManager } from '@tanstack/react-query';
 import { act } from 'react';
+import { NativeModules } from 'react-native';
 import { appQueryClient } from '@/platform/query/serverState';
 
 jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
+
+jest.mock('react-native/Libraries/Components/Switch/AndroidSwitchNativeComponent', () => {
+  const React = require('react') as typeof import('react');
+  const actual = jest.requireActual<Record<string, unknown>>(
+    'react-native/Libraries/Components/Switch/AndroidSwitchNativeComponent'
+  );
+  const { default: mockNativeComponent } = jest.requireActual<{
+    default: (name: string) => React.ComponentType<Record<string, unknown>>;
+  }>('@react-native/jest-preset/jest/mockNativeComponent');
+  const NativeSwitch = mockNativeComponent('RCTSwitch');
+  return {
+    ...actual,
+    __esModule: true,
+    default: React.forwardRef(function MockAndroidSwitch(
+      props: Record<string, unknown>,
+      ref: React.ForwardedRef<unknown>
+    ) {
+      // RNTL's shared switch host exposes Android's intrinsic checked/disabled state.
+      return React.createElement(NativeSwitch, { ...props, value: props.on, disabled: props.enabled === false, ref });
+    })
+  };
+});
+
+NativeModules.NetworkProxyModule = {
+  ...NativeModules.NetworkProxyModule,
+  getDefaultWebViewUserAgent: jest.fn(async () => 'native-provider-user-agent')
+};
 
 jest.mock('react-native-webview', () => {
   const React = require('react');

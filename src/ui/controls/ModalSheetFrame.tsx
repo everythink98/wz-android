@@ -47,6 +47,7 @@ export function ModalSheetFrame({
   keyboardAvoiding = true,
   keyboardAvoidingEnabled = true,
   keyboardHostRef,
+  autoShowIme = false,
   visible,
   onRequestClose
 }: {
@@ -56,6 +57,7 @@ export function ModalSheetFrame({
   keyboardAvoiding?: boolean;
   keyboardAvoidingEnabled?: boolean;
   keyboardHostRef?: RefObject<ComposerKeyboardHostHandle | null>;
+  autoShowIme?: boolean;
   visible: boolean;
   onRequestClose: () => void;
 }) {
@@ -135,6 +137,7 @@ export function ModalSheetFrame({
         <ComposerKeyboardHost
           ref={keyboardHostRef}
           enabled={visible}
+          autoShowIme={autoShowIme && visible}
           trackImeInsets={trackImeInsets}
           onImeInsets={trackImeInsets ? onImeInsets : undefined}
           testID="composer-modal-keyboard-host"

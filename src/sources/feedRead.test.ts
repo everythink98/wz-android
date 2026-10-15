@@ -15,6 +15,7 @@ import { browserFetchIntentFromInit } from '@/platform/network/browserFetchInten
 import type { Fetcher } from '@/platform/network/request';
 import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { getDefaultAndroidWebViewUserAgent } from '@/platform/android/androidWebViewUserAgent';
 
 it('fills aggregate pages with unique candidates and merges access before buffering the remainder', async () => {
   const buffered = Array.from({ length: 20 }, (_, index) => ({
@@ -78,6 +79,53 @@ const nodeSeekPayload = Buffer.from(
 ).toString('base64');
 
 describe('feed read', () => {
+  it('keeps a ready source when another provider identity fails before transport', async () => {
+    vi.mocked(getDefaultAndroidWebViewUserAgent).mockRejectedValueOnce(new Error('provider unavailable'));
+    const fetcher = vi.fn(
+      async (_input: string) => new Response(JSON.stringify([{ node: { name: 'tech', title: 'Tech' } }]))
+    );
+    const response = await getCategories({ source: 'all', includedSources: ['nodeseek', 'v2ex'], fetcher });
+    expect(response.errors?.nodeseek).toBeTruthy();
+    expect(response.items.some((item) => item.source === 'v2ex')).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toContain('v2ex.com');
+  });
+
+  it('prepares missing identities independently before starting their aggregate request budgets', async () => {
+    vi.useFakeTimers();
+    let ready!: (value: string) => void;
+    const provider = new Promise<string>((resolve) => {
+      ready = resolve;
+    });
+    vi.mocked(getDefaultAndroidWebViewUserAgent).mockReturnValue(provider);
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
+      if (input.includes('nodeseek.com')) return new Response(`<script>${nodeSeekPayload}</script>`);
+      if (input.includes('v2ex.com')) return new Response(JSON.stringify([{ node: { name: 'tech', title: 'Tech' } }]));
+      return new Response(JSON.stringify({ category_list: { categories: [{ id: 1, name: 'Linux', slug: 'linux' }] } }));
+    });
+    try {
+      const result = getCategories({
+        source: 'all',
+        includedSources: ['nodeseek', 'v2ex', 'linuxdo'],
+        discourseAuth: { userAgent: 'saved-linuxdo-identity' },
+        fetcher
+      });
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(fetcher.mock.calls.some(([input]) => input.includes('v2ex.com'))).toBe(true);
+      const linuxDoCall = fetcher.mock.calls.find(([input]) => input.includes('linux.do'));
+      expect(new Headers(linuxDoCall?.[1]?.headers).get('User-Agent')).toBe('saved-linuxdo-identity');
+      expect(fetcher.mock.calls.some(([input]) => input.includes('nodeseek.com'))).toBe(false);
+      ready('native-provider-user-agent');
+      const response = await result;
+      expect(response.errors).toEqual({});
+      const nodeSeekCall = fetcher.mock.calls.find(([input]) => input.includes('nodeseek.com'));
+      expect(new Headers(nodeSeekCall?.[1]?.headers).get('User-Agent')).toBe('native-provider-user-agent');
+    } finally {
+      vi.mocked(getDefaultAndroidWebViewUserAgent).mockResolvedValue('native-provider-user-agent');
+      vi.useRealTimers();
+    }
+  });
+
   it('routes feed and categories to public source sites, not the project server', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {

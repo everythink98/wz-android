@@ -1,5 +1,5 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { createNavigationContainerRef, NavigationContainer, StackActions } from '@react-navigation/native';
 import { defaultScheduler, focusManager, notifyManager } from '@tanstack/react-query';
@@ -20,6 +20,8 @@ import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import type { TopicDetail, UserReference } from '@/domain/forum/models';
 import { notificationPageError } from '@/domain/notifications/notificationQuality';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
@@ -41,6 +43,8 @@ import { MessageSubmissionFixture } from '../composerMessageFixture';
 import { COMPOSER_DRAFT, createComposerTransport } from '../composerSubmissionFixture';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { act, fireEvent, render, waitFor } from '../render';
+
+afterEach(() => setDiagnosticWriter(null));
 
 jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn()
@@ -65,6 +69,7 @@ jest.mock('react-native-gesture-handler', () => ({
 }));
 
 const mockGetDocumentAsync = jest.mocked(DocumentPicker.getDocumentAsync);
+let mockNotificationListCommit: ((data: unknown[]) => void) | undefined;
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -84,8 +89,11 @@ jest.mock('@shopify/flash-list', () => {
       onEndReached?: () => void;
       refreshControl?: React.ReactNode;
       renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
-    }) =>
-      ReactModule.createElement(
+    }) => {
+      ReactModule.useLayoutEffect(() => {
+        mockNotificationListCommit?.(data);
+      });
+      return ReactModule.createElement(
         View,
         null,
         ReactModule.createElement(Text, { testID: 'notification-list-end', onPress: onEndReached }, '列表末尾'),
@@ -100,7 +108,8 @@ jest.mock('@shopify/flash-list', () => {
         ListHeaderComponent,
         data.length === 0 ? ListEmptyComponent : null,
         ...data.map((item, index) => ReactModule.createElement(View, { key: index }, renderItem?.({ item, index })))
-      )
+      );
+    }
   };
 });
 
@@ -286,6 +295,237 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
 }
 
 describe('notification routes', () => {
+  it.each(['current', 'blur', 'background'] as const)(
+    'handles a pending detail account check after %s without opening an obsolete login intent',
+    async (change) => {
+      appQueryClient.clear();
+      const item: ForumNotification = {
+        ...notification,
+        source: 'linuxdo',
+        id: 'pm:201',
+        unread: false,
+        target: { type: 'private-conversation', conversationId: '201' }
+      };
+      const fetcher = jest.fn(async () => new Response('{"errors":["页面不存在"]}', { status: 404 }));
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      const accountCheck = Promise.withResolvers<AccountReconcileResult>();
+      let runtime: NotificationRouteRuntimeValue = {
+        ...routeRuntime(gateway),
+        activeSources: ['linuxdo'],
+        identityKeys: { linuxdo: 'linuxdo:7' },
+        identitySignature: 'linuxdo:7',
+        reconcileAccountStatus: jest.fn(() => accountCheck.promise)
+      };
+      const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+      const tree = () => (
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator initialRouteName="NotificationDetail">
+              <FocusTestStack.Screen
+                name="NotificationDetail"
+                initialParams={{ notification: item, identityKey: 'linuxdo:7' }}
+              >
+                {(props) => <NotificationDetailRoute navigation={props.navigation as never} route={props.route} />}
+              </FocusTestStack.Screen>
+              <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+      const view = await render(tree(), { wrapper: QueryTestWrapper });
+      try {
+        await waitFor(() => expect(view.getByText('重试')).toBeTruthy());
+        await fireEvent.press(view.getByText('重试'));
+        await fireEvent.press(view.getByText('重试'));
+        expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+        if (change === 'blur') await act(async () => navigation.navigate('Other'));
+        if (change === 'background') await act(async () => focusManager.setFocused(false));
+        runtime = {
+          ...runtime,
+          activeSources: [],
+          identityKeys: {},
+          sessionEpochs: { ...runtime.sessionEpochs, linuxdo: 1 }
+        };
+        // Commit the anonymous epoch before the pending controller returns its result.
+        await view.rerender(tree());
+        await act(async () => {
+          accountCheck.resolve({ status: 'anonymous', session: createSiteSessionStates().linuxdo });
+          await accountCheck.promise;
+        });
+        if (change === 'current') {
+          await waitFor(() => expect(runtime.openAccountSurface).toHaveBeenCalledTimes(1));
+        } else {
+          expect(runtime.openAccountSurface).not.toHaveBeenCalled();
+          if (change === 'blur') await act(async () => navigation.goBack());
+          else await act(async () => focusManager.setFocused(true));
+          await waitFor(() => expect(view.getByText('去登录')).toBeTruthy());
+          await fireEvent.press(view.getByText('去登录'));
+          await waitFor(() => expect(runtime.openAccountSurface).toHaveBeenCalledTimes(1));
+        }
+        expect(fetcher).toHaveBeenCalledTimes(1);
+      } finally {
+        accountCheck.resolve({ status: 'stale' });
+        await act(async () => focusManager.setFocused(true));
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['epoch', 'identity', 'disabled'] as const)(
+    'resumes the exact detail after verification and isolates a stale %s recovery',
+    async (change) => {
+      const events: DiagnosticEvent[] = [];
+      setDiagnosticWriter((line) => {
+        events.push(JSON.parse(line));
+      });
+      appQueryClient.clear();
+      const item: ForumNotification = {
+        ...notification,
+        source: 'linuxdo',
+        id: 'pm:201',
+        unread: false,
+        target: { type: 'private-conversation', conversationId: '201' }
+      };
+      let challenged = true;
+      const response = Promise.withResolvers<Response>();
+      const fetcher = jest.fn(async () =>
+        challenged
+          ? new Response('<title>Just a moment...</title>', { status: 403, headers: { 'content-type': 'text/html' } })
+          : response.promise
+      );
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', fetcher }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      let recovery: LinuxDoReadRecovery | undefined;
+      let runtime = {
+        ...routeRuntime(gateway),
+        activeSources: ['linuxdo'],
+        identityKeys: { linuxdo: 'linuxdo:7' },
+        identitySignature: 'linuxdo:7',
+        openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
+          async (_source, _message, next) => {
+            recovery = next;
+          }
+        )
+      } satisfies NotificationRouteRuntimeValue;
+      const tree = () => (
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationDetailRoute
+              navigation={{ navigate: jest.fn(), setOptions: jest.fn() } as never}
+              route={{
+                key: 'detail',
+                name: 'NotificationDetail',
+                params: { notification: item, identityKey: 'linuxdo:7' }
+              }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+      const view = await render(tree(), { wrapper: QueryTestWrapper });
+      try {
+        await waitFor(() => expect(view.getByText('去验证')).toBeTruthy());
+        const initialReads = fetcher.mock.calls.length;
+        await fireEvent.press(view.getByText('去验证'));
+        expect(fetcher).toHaveBeenCalledTimes(initialReads);
+        expect(recovery?.queryKey).toEqual(
+          forumQueryKeys.notificationDetail({
+            source: 'linuxdo',
+            identityKey: 'linuxdo:7',
+            notificationId: item.id
+          })
+        );
+        challenged = false;
+        const retries = [recovery!.resume(), recovery!.resume()];
+        await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(initialReads + 1));
+        await act(async () => {
+          response.resolve(
+            new Response(
+              JSON.stringify({
+                id: 201,
+                title: '私信',
+                slug: 'private-topic',
+                archetype: 'private_message',
+                posts_count: 1,
+                created_at: '2026-10-01T00:00:00Z',
+                post_stream: {
+                  stream: [1],
+                  posts: [{ id: 1, post_number: 1, username: 'bob', cooked: '<p>验证后正文</p>' }]
+                }
+              })
+            )
+          );
+          expect(await Promise.all(retries)).toEqual(['completed', 'completed']);
+        });
+        await waitFor(() => expect(view.getByText('验证后正文')).toBeTruthy());
+        const completedReads = fetcher.mock.calls.length;
+        runtime =
+          change === 'identity'
+            ? { ...runtime, identityKeys: { linuxdo: 'linuxdo:8' } }
+            : change === 'disabled'
+              ? { ...runtime, enabledNotificationSources: [] }
+              : { ...runtime, sessionEpochs: { ...runtime.sessionEpochs, linuxdo: 1 } };
+        await view.rerender(tree());
+        expect(await recovery!.resume()).toBe('stale');
+        expect(fetcher).toHaveBeenCalledTimes(completedReads);
+        const retry = events.find(
+          (event) => event.operation === 'notification-detail-retry' && event.phase === 'intent'
+        );
+        expect(retry).toBeDefined();
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              traceId: retry?.traceId,
+              phase: 'finish',
+              outcome: 'blocked',
+              reason: 'verification_required',
+              state: 'open'
+            }),
+            expect.objectContaining({
+              operation: 'notification-detail-resume',
+              phase: 'finish',
+              outcome: 'success'
+            }),
+            expect.objectContaining({
+              operation: 'notification-detail-resume',
+              phase: 'finish',
+              outcome: 'stale',
+              reason: 'stale'
+            })
+          ])
+        );
+        const resume = events.find(
+          (event) => event.operation === 'notification-detail-resume' && event.phase === 'intent'
+        );
+        expect(resume).toMatchObject({ parentTraceId: retry?.traceId });
+        expect(events).toContainEqual(
+          expect.objectContaining({ operation: 'notification-detail', phase: 'intent', parentTraceId: resume?.traceId })
+        );
+        expect(JSON.stringify(events)).not.toMatch(/pm:201|linuxdo:7|private-topic|验证后正文/);
+        if (change !== 'epoch') {
+          runtime = {
+            ...runtime,
+            enabledNotificationSources: notificationSources,
+            identityKeys: { linuxdo: 'linuxdo:7' }
+          };
+          await view.rerender(tree());
+          const readsAfterReturn = fetcher.mock.calls.length;
+          expect(await recovery!.resume()).toBe('stale');
+          expect(fetcher).toHaveBeenCalledTimes(readsAfterReturn);
+        }
+      } finally {
+        response.resolve(new Response('{}'));
+        await view.unmount();
+      }
+    }
+  );
+
   async function renderLinuxDoHistory() {
     appQueryClient.clear();
     let size = 65;
@@ -1689,6 +1929,7 @@ describe('notification routes', () => {
           getLinuxDoUserAgent: () => 'test',
           getNodeSeekUserAgent: () => 'test',
           onSessionExpired: jest.fn(),
+          requestAccountRecheck: jest.fn(),
           openSource: () => true,
           privateAccessAllowed: () => true,
           remoteReady: true,
@@ -1800,6 +2041,7 @@ describe('notification routes', () => {
       getLinuxDoUserAgent: () => 'test',
       getNodeSeekUserAgent: () => 'test',
       onSessionExpired: jest.fn(),
+      requestAccountRecheck: jest.fn(),
       openSource: () => true,
       privateAccessAllowed: () => true,
       remoteReady: true,
@@ -2430,6 +2672,91 @@ describe('notification routes', () => {
     await waitFor(() => expect(view.getByTestId('notification-category-all')).toBeTruthy());
     await waitFor(() => expect(listPage).toHaveBeenCalledTimes(1));
     expect(getCategories).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps cached messages in every commit when switching to a source default category', async () => {
+    appQueryClient.clear();
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(async () => ({
+        qualities: {},
+        items: [notification],
+        pages: {},
+        errors: {},
+        nextCursors: {},
+        hasMore: false
+      })),
+      listPage: jest.fn(async (source: NotificationSource) => ({
+        quality: 'complete',
+        items: [{ ...notification, source }],
+        cursor: null,
+        hasMore: false
+      })),
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['nodeseek', 'linuxdo'],
+      identityKeys: { nodeseek: 'nodeseek:new-account', linuxdo: 'linuxdo:user' },
+      identitySignature: 'linuxdo:user|nodeseek:new-account'
+    } satisfies NotificationRouteRuntimeValue;
+    for (const source of ['all', 'nodeseek', 'linuxdo'] as const) {
+      const identityKey = source === 'all' ? runtime.identitySignature : runtime.identityKeys[source];
+      const categoryId = source === 'nodeseek' ? 'inbox' : 'recent';
+      if (source !== 'all') {
+        appQueryClient.setQueryData(forumQueryKeys.notificationCategories({ source, identityKey }), [
+          { id: categoryId, label: '全部' }
+        ]);
+      }
+      appQueryClient.setQueryData(
+        forumQueryKeys.notificationList({
+          source,
+          identityKey,
+          categoryId: source === 'all' ? null : categoryId,
+          unreadOnly: false
+        }),
+        {
+          pages: [
+            {
+              items: [{ ...notification, source: source === 'all' ? 'nodeseek' : source }],
+              errors: {},
+              hasMore: false,
+              nextPage: {}
+            }
+          ],
+          pageParams: [{}]
+        }
+      );
+    }
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn(), setParams: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    const commits: unknown[][] = [];
+    mockNotificationListCommit = (data) => commits.push(data);
+    try {
+      for (const source of ['nodeseek', 'linuxdo', 'all', 'nodeseek'] as const) {
+        commits.length = 0;
+        await fireEvent.press(view.getByTestId(`notification-source-${source}`));
+        expect(commits.length).toBeGreaterThan(0);
+        expect(commits.every((items) => items.length === 1)).toBe(true);
+        expect(view.queryByText('暂无消息')).toBeNull();
+      }
+      expect(gateway.listPage).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ categoryId: '' }));
+    } finally {
+      mockNotificationListCommit = undefined;
+      await view.unmount();
+    }
   });
 
   it('scopes list queries by category and consumes repeated site intents without losing manual site changes', async () => {

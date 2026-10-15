@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
 import { VideoView, createVideoPlayer, type VideoPlayer } from 'expo-video';
@@ -22,6 +22,7 @@ import {
   type ReadNetworkRuntimeSnapshot
 } from '@/platform/network/readNetworkRuntime';
 import type { ReaderTheme } from '@/ui/theme/tokens';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 1;
 const DEFAULT_VIDEO_ASPECT_RATIO = 16 / 9;
@@ -63,6 +64,8 @@ type ForumContentVideoProps = {
   theme: ReaderTheme;
 };
 
+type ForumMediaPlayerSource = Awaited<ReturnType<typeof forumMediaPlayerSourceFromUrl>>;
+
 export function ForumContentVideo({ admission = UNMANAGED_MEDIA_ADMISSION, ...props }: ForumContentVideoProps) {
   return admission.attemptId === 'unmanaged' ? (
     <UnmanagedForumContentVideo admission={admission} {...props} />
@@ -96,17 +99,20 @@ function ForumContentVideoRuntime({
     runtimeSnapshot?.triggerSource === mediaContext.contentSource ? runtimeSnapshot.generation : 0;
   const [playerGeneration, setPlayerGeneration] = useState(() => getReadNetworkRuntimeSnapshot().generation);
   const [playerStatus, setPlayerStatus] = useState('idle');
-  const [runtimeLease, setRuntimeLease] = useState<{
-    admissionAttemptId: string;
-    generation: number;
-    status: 'acquiring' | 'failed' | 'retained';
-  } | null>(null);
+  const [runtimeLease, setRuntimeLease] = useState<
+    | ({ admissionAttemptId: string; generation: number; requestKey: string } & (
+        { status: 'acquiring' | 'failed' } | { status: 'retained'; source: ForumMediaPlayerSource }
+      ))
+    | null
+  >(null);
+  const requestKey = JSON.stringify([mediaContext, nodeSeekMediaUserAgent, referrerPolicy, src]);
+  const request = useCommittedRef({ mediaContext, nodeSeekMediaUserAgent, referrerPolicy, src });
   const pendingRetryGeneration = useRef(0);
   const acquiredAttempt = useRef(admission.attemptId);
   const hasBeenReady = useRef(false);
   const loadDiagnosticRef = useRef<ReturnType<typeof playerLoadDiagnosticAttempt> | null>(null);
   const playerHandles = useRef(new Map<string, MediaPlaybackHandle>());
-  const leaseKey = `${admission.attemptId}:${playerGeneration}`;
+  const leaseKey = JSON.stringify([admission.attemptId, playerGeneration, requestKey]);
   const handlePlayer = useCallback(
     (handle: MediaPlaybackHandle) => {
       playerHandles.current.set(leaseKey, handle);
@@ -145,13 +151,19 @@ function ForumContentVideoRuntime({
     }
     let disposed = false;
     let retained = false;
+    const profile = request.current;
     const diagnostic = playerLoadDiagnosticAttempt(src, 'video', playerGeneration);
     loadDiagnosticRef.current = diagnostic;
     diagnostic.stage('runtime-lease');
     setPlayerStatus('idle');
-    setRuntimeLease({ admissionAttemptId: admission.attemptId, generation: playerGeneration, status: 'acquiring' });
+    setRuntimeLease({
+      admissionAttemptId: admission.attemptId,
+      generation: playerGeneration,
+      requestKey,
+      status: 'acquiring'
+    });
     void retainReadNetworkRuntimeGeneration(playerGeneration)
-      .then((lease) => {
+      .then(async (lease) => {
         if (!lease?.retained) {
           if (!disposed) {
             const currentGeneration = lease?.generation ?? getReadNetworkRuntimeSnapshot().generation;
@@ -165,6 +177,7 @@ function ForumContentVideoRuntime({
               setRuntimeLease({
                 admissionAttemptId: admission.attemptId,
                 generation: playerGeneration,
+                requestKey,
                 status: 'failed'
               });
               admission.settle('error');
@@ -178,17 +191,32 @@ function ForumContentVideoRuntime({
           return;
         }
         retained = true;
+        const source = await forumMediaPlayerSourceFromUrl(profile.src, {
+          kind: 'video',
+          mediaContext: profile.mediaContext,
+          nodeSeekUserAgent: profile.nodeSeekMediaUserAgent,
+          referrerPolicy: profile.referrerPolicy,
+          runtimeGeneration: playerGeneration
+        });
+        if (disposed) return;
         diagnostic.stage('player-replace');
         setRuntimeLease({
           admissionAttemptId: admission.attemptId,
           generation: playerGeneration,
-          status: 'retained'
+          requestKey,
+          status: 'retained',
+          source
         });
       })
       .catch((error) => {
         if (!disposed) {
           diagnostic.failed(error);
-          setRuntimeLease({ admissionAttemptId: admission.attemptId, generation: playerGeneration, status: 'failed' });
+          setRuntimeLease({
+            admissionAttemptId: admission.attemptId,
+            generation: playerGeneration,
+            requestKey,
+            status: 'failed'
+          });
           admission.settle('error');
         }
       });
@@ -205,7 +233,7 @@ function ForumContentVideoRuntime({
         else release();
       }
     };
-  }, [admission.admitted, admission.attemptId, admission.settle, leaseKey, playerGeneration, src]);
+  }, [admission.admitted, admission.attemptId, admission.settle, leaseKey, playerGeneration, request, requestKey, src]);
 
   useEffect(() => {
     if (
@@ -256,6 +284,7 @@ function ForumContentVideoRuntime({
 
   if (
     runtimeLease?.admissionAttemptId !== admission.attemptId ||
+    runtimeLease.requestKey !== requestKey ||
     runtimeLease.generation !== playerGeneration ||
     runtimeLease.status !== 'retained'
   ) {
@@ -281,9 +310,7 @@ function ForumContentVideoRuntime({
       key={`${mediaContext.sessionIdentity}:${src}:admission:${admission.attemptId}:runtime:${playerGeneration}`}
       boundarySpacing={boundarySpacing}
       mediaContext={mediaContext}
-      nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-      referrerPolicy={referrerPolicy}
-      runtimeGeneration={playerGeneration}
+      source={runtimeLease.source}
       src={src}
       theme={theme}
       onProgress={admission.progress}
@@ -296,31 +323,18 @@ function ForumContentVideoRuntime({
 function ForumContentVideoPlayer({
   boundarySpacing,
   mediaContext,
-  nodeSeekMediaUserAgent,
   onProgress,
   onHandle,
   onStatusChange,
-  referrerPolicy,
-  runtimeGeneration,
+  source,
   src,
   theme
-}: Omit<ForumContentVideoProps, 'admission'> & {
+}: Omit<ForumContentVideoProps, 'admission' | 'nodeSeekMediaUserAgent' | 'referrerPolicy'> & {
   onProgress: (value: number) => void;
   onHandle: (handle: MediaPlaybackHandle) => void;
   onStatusChange: (status: string, error?: unknown) => void;
-  runtimeGeneration: number;
+  source: ForumMediaPlayerSource;
 }) {
-  const source = useMemo(
-    () =>
-      forumMediaPlayerSourceFromUrl(src, {
-        kind: 'video',
-        mediaContext,
-        nodeSeekUserAgent: nodeSeekMediaUserAgent,
-        referrerPolicy,
-        runtimeGeneration
-      }),
-    [mediaContext, nodeSeekMediaUserAgent, referrerPolicy, runtimeGeneration, src]
-  );
   const sourceKey = JSON.stringify(source);
   const releaseHandles = useRef(new WeakMap<VideoPlayer, MediaPlaybackHandle>());
   const player = useReleasingSharedObjectWithLifecycle(

@@ -254,6 +254,7 @@ export const forumQueryKeys = {
     ] as const,
   userLane: (userKey: readonly unknown[], lane: 'topics' | 'replies') => [...userKey, lane] as const,
   emojiUrls: (source: DiscourseSource | null) => ['forum', source || 'none', 'emoji-urls'] as const,
+  interactionConfig: (sessionEpoch: number) => ['forum', 'linuxdo', 'interaction-config', { sessionEpoch }] as const,
   notifications: (source: NotificationSource | 'all') => ['forum', source, 'notifications'] as const,
   notificationList: ({
     categoryId,

@@ -91,10 +91,6 @@ jest.mock('react-native-reanimated', () => ({
     }, [prepare, react]);
   }
 }));
-jest.mock('react-native/Libraries/ReactNative/requireNativeComponent', () => ({
-  __esModule: true,
-  default: (name: string) => name
-}));
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 24, left: 0, right: 0 })
@@ -117,6 +113,20 @@ function fixedBottom(nativeHeight = fixedGeometry().height) {
   return geometry.transform[0]!.translateY + layoutBottom;
 }
 
+async function acknowledgeKeyboardHidden(view: Awaited<ReturnType<typeof render>>) {
+  const command = jest
+    .mocked(ReactNative.UIManager.dispatchViewManagerCommand)
+    .mock.calls.findLast(([, name]) => name === 'hideKeyboard');
+  if (!command) throw new Error('Expected an Android keyboard hide command.');
+  const [tag, , args] = command;
+  if (!args) throw new Error('Expected an Android keyboard request ID.');
+  expect(tag).toEqual(expect.any(Number));
+  expect(args).toEqual([expect.any(Number)]);
+  await fireEvent(view.getByTestId('composer-bottom-sheet'), 'keyboardHidden', {
+    nativeEvent: { requestId: args[0], success: true }
+  });
+}
+
 describe('Composer native keyboard viewport', () => {
   beforeEach(() => {
     mockKeyboard.height.value = 0;
@@ -125,6 +135,7 @@ describe('Composer native keyboard viewport', () => {
     mockHoldAnimations = false;
     mockAnimations.length = 0;
     mockAnimatedStyles.clear();
+    jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand).mockClear();
   });
   it.each([
     { fixedContent: true, presentation: 'sheet', measuredHeight: 0 },
@@ -414,7 +425,6 @@ describe('Composer native keyboard viewport', () => {
       return { remove: jest.fn() };
     });
     const keyboardVisible = jest.spyOn(Keyboard, 'isVisible').mockReturnValue(true);
-    const dismiss = jest.spyOn(Keyboard, 'dismiss');
     const onPresentationChange = jest.fn();
     const onOpenChange = jest.fn();
     const host = (presentation: 'sheet' | 'fullscreen') => (
@@ -432,9 +442,9 @@ describe('Composer native keyboard viewport', () => {
     try {
       const view = await render(host('fullscreen'));
       onPresentationChange.mockClear();
-      dismiss.mockClear();
       expect(back()).toBe(true);
-      expect(dismiss).toHaveBeenCalledTimes(1);
+      expect(ReactNative.UIManager.dispatchViewManagerCommand).toHaveBeenCalledTimes(1);
+      await acknowledgeKeyboardHidden(view);
       expect(onPresentationChange).not.toHaveBeenCalled();
       keyboardVisible.mockReturnValue(false);
       expect(back()).toBe(true);
@@ -449,7 +459,6 @@ describe('Composer native keyboard viewport', () => {
     } finally {
       subscription.mockRestore();
       keyboardVisible.mockRestore();
-      dismiss.mockRestore();
     }
   });
   it.each(['fixed', 'dynamic'] as const)(
@@ -485,6 +494,8 @@ describe('Composer native keyboard viewport', () => {
           });
         const waiting = awaitKeyboardSettled().then(opened);
         await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+        expect(opened).not.toHaveBeenCalled();
+        await acknowledgeKeyboardHidden(view);
         await advance();
         expect(opened).not.toHaveBeenCalled();
         mockKeyboard.height.value = 12;
@@ -514,7 +525,7 @@ describe('Composer native keyboard viewport', () => {
     });
     let settled!: () => Promise<void>;
     try {
-      await render(
+      const view = await render(
         <ComposerBottomSheet dark={false} fixedContent visible onOpenChange={() => {}}>
           {(_focus, wait) => {
             settled = wait;
@@ -524,6 +535,7 @@ describe('Composer native keyboard viewport', () => {
       );
       const opened = jest.fn();
       const waiting = settled().then(opened);
+      await acknowledgeKeyboardHidden(view);
       const advance = () =>
         act(() => {
           mockFrames.forEach((update) => update());
@@ -552,7 +564,7 @@ describe('Composer native keyboard viewport', () => {
     let awaitKeyboardSettled!: () => Promise<void>;
     try {
       mockKeyboard.state.value = mockKeyboardState.UNKNOWN;
-      await render(
+      const view = await render(
         <ComposerBottomSheet dark={false} fixedContent visible onOpenChange={() => {}}>
           {(_focus, settled) => {
             awaitKeyboardSettled = settled;
@@ -563,7 +575,7 @@ describe('Composer native keyboard viewport', () => {
       const opened = jest.fn();
       const waiting = awaitKeyboardSettled().then(opened);
       expect(opened).not.toHaveBeenCalled();
-      await act(async () => undefined);
+      await acknowledgeKeyboardHidden(view);
       await act(() => frames.splice(0).forEach((callback) => callback(0)));
       await waiting;
       expect(opened).toHaveBeenCalledTimes(1);
@@ -586,6 +598,8 @@ describe('Composer native keyboard viewport', () => {
       );
       const waiting = awaitKeyboardSettled();
       const rejected = expect(waiting).rejects.toThrow('编辑器已关闭');
+      await acknowledgeKeyboardHidden(view);
+      expect(mockQueuedUI).toHaveLength(1);
       await view.unmount();
       await rejected;
       frame.mockClear();
@@ -616,6 +630,11 @@ describe('Composer native keyboard viewport', () => {
           </ComposerBottomSheet>
         );
         const waiting = awaitKeyboardSettled();
+        const dispatch = jest.mocked(ReactNative.UIManager.dispatchViewManagerCommand);
+        const [tag, command, args] = dispatch.mock.calls[0]!;
+        expect(tag).toEqual(expect.any(Number));
+        expect(command).toBe('hideKeyboard');
+        expect(args).toEqual([1]);
         const rejected = expect(waiting).rejects.toThrow(
           end === 'timeout' ? '键盘尚未收起' : end === 'background' ? '页面已离开前台' : '编辑器已关闭'
         );
@@ -637,6 +656,7 @@ describe('Composer native keyboard viewport', () => {
           });
         else await act(() => jest.advanceTimersByTime(2500));
         await rejected;
+        expect(dispatch).toHaveBeenCalledWith(tag, 'cancelHide', args);
       } finally {
         jest.useRealTimers();
       }

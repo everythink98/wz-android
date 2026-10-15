@@ -18,6 +18,7 @@ const boundary = vi.hoisted(() => ({
         persistCrashSync: (lines: string) => boolean;
       },
   openCount: 0,
+  directoryListCount: 0,
   writeCount: 0,
   shared: [] as { content: string; uri: string }[],
   sharingAvailable: true,
@@ -145,6 +146,7 @@ vi.mock('expo-file-system', () => {
     }
     create() {}
     list() {
+      boundary.directoryListCount += 1;
       return [...boundary.files.keys()].filter((uri) => uri.startsWith(this.uri)).map((uri) => new File(uri));
     }
   }
@@ -209,6 +211,7 @@ beforeEach(() => {
   boundary.nativeEvents.length = 0;
   boundary.nativeJournal = undefined;
   boundary.openCount = 0;
+  boundary.directoryListCount = 0;
   boundary.writeCount = 0;
   boundary.shared.length = 0;
   boundary.sharingAvailable = true;
@@ -564,6 +567,19 @@ describe('diagnostic file store', () => {
       payload: { secret }
     } as unknown as DiagnosticFields);
     finishDiagnosticTrace(trace, 'failure', { reason: 'invalid_response' });
+    const userAgent = beginDiagnosticTrace('webview', 'read-user-agent', {
+      userAgentSource: 'default',
+      userAgentHash: '0123abcd',
+      userAgent: secret
+    } as unknown as DiagnosticFields);
+    finishDiagnosticTrace(userAgent, 'success', { state: 'ready' });
+    const interaction = beginDiagnosticTrace('topic', 'interaction', {
+      source: 'linuxdo',
+      requestType: 'create-boost',
+      topicRef: diagnosticRef('topic', topicId),
+      contentLength: 12
+    });
+    finishDiagnosticTrace(interaction, 'failure', { reason: 'unconfirmed' });
     const verification = beginDiagnosticTrace('credential', 'check', {
       source: 'linuxdo',
       verificationPage: 'alternate',
@@ -588,6 +604,9 @@ describe('diagnostic file store', () => {
       expect(exported).not.toContain(privateValue);
     }
     expect(exported).toContain('"topicRef":"topic-');
+    expect(exported).toContain('"operation":"read-user-agent"');
+    expect(exported).toContain('"requestType":"create-boost"');
+    expect(exported).toContain('"userAgentHash":"0123abcd"');
     const verificationEvents = exported
       .trim()
       .split('\n')
@@ -876,15 +895,15 @@ describe('diagnostic export leases', () => {
     expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
   });
 
-  it('still installs the startup diagnostic writer when expired export cleanup fails', async () => {
+  it('installs startup diagnostics without scanning or deleting retained exports', async () => {
     vi.resetModules();
-    boundary.files.set(
-      `file:///documents/diagnostic-exports/diagnostic-${Date.now() - 86400000}-old.txt`,
-      new Uint8Array([1])
-    );
+    const expired = `file:///documents/diagnostic-exports/diagnostic-${Date.now() - 86400000}-old.txt`;
+    boundary.files.set(expired, new Uint8Array([1]));
     boundary.failDeletes = true;
     const freshStore = await import('./diagnosticFileStore');
     freshStore.initializeDiagnosticFileLogging();
+    expect(boundary.directoryListCount).toBe(0);
+    expect(boundary.files.has(expired)).toBe(true);
     await Promise.resolve();
     const current = new File(Paths.cache, 'forum-reader-diagnostic-current.jsonl');
     expect(current.exists).toBe(true);

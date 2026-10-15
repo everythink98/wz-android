@@ -1,17 +1,23 @@
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { QueryObserver } from '@tanstack/react-query';
+import { createRoot } from 'test-renderer';
+import { useLayoutEffect } from 'react';
 import { NativeModules } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as legacyCookieMigration from '@/platform/storage/legacyCookieSnapshotMigration';
+import { saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
 import { discourseReadingQueryKey } from '@/platform/query/discourseReadingRuntime';
 import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
-import { setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
+import { readManagedCookieHeader, setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
-import type { Fetcher } from '@/platform/network/request';
+import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { Source } from '@/domain/forum/models';
+import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { fireEvent, render } from '../render';
 
@@ -47,23 +53,23 @@ jest.mock('@/platform/network/managedCookies', () => ({
 
 let events: DiagnosticEvent[] = [];
 let networkProxyDescriptor: PropertyDescriptor | undefined;
+let defaultStorageRead: jest.SpyInstance;
 function seedAccount(username = 'alice') {
-  appQueryClient.setQueryData(
-    accountQueryKeys.snapshot('linuxdo'),
-    accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
-      type: 'session-updated',
-      loggedIn: true,
-      currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}` }
-    })
-  );
+  const snapshot = accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
+    type: 'session-updated',
+    loggedIn: true,
+    currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}` }
+  });
+  appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), snapshot);
+  return snapshot;
 }
 
-async function renderRuntime(fetcher: Fetcher) {
-  seedAccount();
+async function renderRuntime(fetcher: Fetcher, ready = true) {
+  await saveAccountSessionSnapshot(seedAccount());
   const notify = jest.fn();
   const openUser = async () => undefined;
   const loginNavigation = { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true };
-  return renderHook(
+  const hook = await renderHook(
     ({ enabledSources }: { enabledSources: readonly Source[] }) =>
       useAccountRuntime({
         appActive: true,
@@ -73,15 +79,20 @@ async function renderRuntime(fetcher: Fetcher) {
         notify,
         nodeSeekRecoveryThreshold: 1,
         openUser,
-        ready: false,
+        ready,
         screen: 'search',
         webViewBlockMessage: ''
       }),
     { initialProps: { enabledSources: ['linuxdo'] }, wrapper: QueryTestWrapper }
   );
+  if (ready) await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+  return hook;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await AsyncStorage.clear();
+  await AsyncStorage.setItem('account-session.migration.v1', '1');
+  defaultStorageRead = jest.spyOn(SecureStore, 'getItemAsync').mockResolvedValue(null);
   networkProxyDescriptor = Object.getOwnPropertyDescriptor(NativeModules, 'NetworkProxyModule');
   jest.spyOn(SecureStore, 'deleteItemAsync').mockResolvedValue(undefined);
   mockWebViewLoads = [];
@@ -92,13 +103,592 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  defaultStorageRead.mockRestore();
   setDiagnosticWriter(null);
   jest.mocked(SecureStore.deleteItemAsync).mockRestore();
   if (networkProxyDescriptor) Object.defineProperty(NativeModules, 'NetworkProxyModule', networkProxyDescriptor);
   else delete NativeModules.NetworkProxyModule;
 });
 
-async function renderManualLogin(fetcher: Fetcher) {
+describe('local login identity restoration', () => {
+  let storageRead: jest.SpyInstance;
+  beforeEach(async () => {
+    storageRead = jest.spyOn(SecureStore, 'getItemAsync').mockResolvedValue(null);
+    jest.mocked(readManagedCookieHeader).mockClear();
+    await AsyncStorage.setItem('account-session.migration.v1', '1');
+  });
+  afterEach(async () => {
+    storageRead.mockRestore();
+    await AsyncStorage.removeItem('account-session.migration.v1');
+  });
+
+  async function startIdentityRuntime(ready = true, enabledSources: readonly Source[] = ['nodeseek', 'linuxdo']) {
+    const notify = jest.fn();
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => new Response('{}'));
+    const hook = await renderHook(
+      ({ settingsReady, sources = enabledSources }: { settingsReady: boolean; sources?: readonly Source[] }) =>
+        useAccountRuntime({
+          appActive: true,
+          enabledSources: sources,
+          fetcher,
+          loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+          notify,
+          nodeSeekRecoveryThreshold: 1,
+          openUser: async () => undefined,
+          ready: settingsReady,
+          screen: 'search',
+          webViewBlockMessage: ''
+        }),
+      { initialProps: { settingsReady: ready }, wrapper: QueryTestWrapper }
+    );
+    return { ...hook, notify, fetcher };
+  }
+
+  async function retryIdentityRecovery(runtime: ReturnType<typeof useAccountRuntime>) {
+    const recovery = await render(runtime.hosts.startupRecovery!, { wrapper: QueryTestWrapper });
+    expect(recovery.getByText('本地登录身份读取失败，请重试')).toBeTruthy();
+    await fireEvent.press(recovery.getByText('重试启动'));
+    await recovery.unmount();
+  }
+
+  async function startIdentityHosts(settingsReady = true) {
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    const fetcher = async () => new Response('{}');
+    const notify = jest.fn();
+    function Harness({ trusted = settingsReady }: { trusted?: boolean }) {
+      runtime = useAccountRuntime({
+        appActive: true,
+        enabledSources: ['linuxdo'],
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: trusted,
+        screen: 'search',
+        webViewBlockMessage: ''
+      });
+      return runtime.hosts.element;
+    }
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    return { view, runtime: () => runtime, trust: () => view.rerender(<Harness trusted />) };
+  }
+
+  it('starts both local identity reads before trusted settings and skips legacy Native reads', async () => {
+    const node = Promise.withResolvers<string | null>();
+    const linux = Promise.withResolvers<string | null>();
+    storageRead.mockImplementation((key: string) =>
+      key === 'nodeseek-user-agent'
+        ? node.promise
+        : key === 'linuxdo-user-agent'
+          ? linux.promise
+          : Promise.resolve(null)
+    );
+    const { result, unmount } = await startIdentityRuntime(false);
+    expect(storageRead).toHaveBeenCalledWith('nodeseek-user-agent');
+    expect(storageRead).toHaveBeenCalledWith('linuxdo-user-agent');
+    expect(readManagedCookieHeader).not.toHaveBeenCalled();
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+    expect(result.current.read.sessionsReady).toBe(false);
+    await unmount();
+    await act(async () => {
+      node.resolve(null);
+      linux.resolve(null);
+    });
+  });
+
+  it('waits for both saved identity reads before publishing ready sessions', async () => {
+    const linux = Promise.withResolvers<string | null>();
+    storageRead.mockImplementation((key: string) =>
+      key === 'linuxdo-user-agent'
+        ? linux.promise
+        : Promise.resolve(key === 'nodeseek-user-agent' ? 'Saved Node UA' : null)
+    );
+    const { result } = await startIdentityRuntime();
+    await act(async () => undefined);
+    expect(result.current.read.sessionsReady).toBe(false);
+    await act(async () => linux.resolve('Saved Linux UA'));
+    await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+    expect(result.current.read.getNodeSeekUserAgent()).toBe('Saved Node UA');
+    expect(result.current.read.getLinuxDoUserAgent()).toBe('Saved Linux UA');
+  });
+
+  it.each([null, 'Saved browser UA'])(
+    'restores saved identity %p without preparing a default WebView identity',
+    async (savedUserAgent) => {
+      storageRead.mockImplementation((key: string) =>
+        Promise.resolve(key.endsWith('-user-agent') ? savedUserAgent : null)
+      );
+      const provider = jest.mocked(NativeModules.NetworkProxyModule.getDefaultWebViewUserAgent);
+      provider.mockClear();
+      const { result } = await startIdentityRuntime();
+      await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+      expect(result.current.read.getLinuxDoUserAgent()).toBe(savedUserAgent ?? '');
+      expect(provider).not.toHaveBeenCalled();
+      expect(readManagedCookieHeader).not.toHaveBeenCalled();
+    }
+  );
+
+  it('ignores the cancelled restoration from a StrictMode effect restart', async () => {
+    const old = Promise.withResolvers<string | null>();
+    let localReads = 0;
+    storageRead.mockImplementation((key: string) => {
+      if (!key.endsWith('-user-agent')) return Promise.resolve(null);
+      localReads += 1;
+      return localReads <= 2 ? old.promise : Promise.resolve('Current saved UA');
+    });
+    const fetcher = async () => new Response('{}');
+    const notify = jest.fn();
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    function Harness() {
+      runtime = useAccountRuntime({
+        appActive: true,
+        enabledSources: ['linuxdo'],
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: true,
+        screen: 'search',
+        webViewBlockMessage: ''
+      });
+      return null;
+    }
+    const renderer = createRoot({ isStrictMode: true });
+    try {
+      await act(() =>
+        renderer.render(
+          <QueryTestWrapper>
+            <Harness />
+          </QueryTestWrapper>
+        )
+      );
+      await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
+      await act(async () => old.resolve('Cancelled saved UA'));
+      expect(localReads).toBe(4);
+      expect(runtime.read.getLinuxDoUserAgent()).toBe('Current saved UA');
+      expect(runtime.read.getNodeSeekUserAgent()).toBe('Current saved UA');
+    } finally {
+      await act(() => renderer.unmount());
+    }
+  });
+
+  it('blocks failed local identity restoration and retries without a remote refresh', async () => {
+    let failing = true;
+    storageRead.mockImplementation((key: string) =>
+      failing && key === 'linuxdo-user-agent'
+        ? Promise.reject(new Error('private storage failure'))
+        : Promise.resolve(null)
+    );
+    const { result, notify, fetcher } = await startIdentityRuntime();
+    await waitFor(() => expect(result.current.hosts.startupRecovery).not.toBeNull());
+    expect(result.current.read.sessionsReady).toBe(false);
+    expect(result.current.read.getLinuxDoUserAgent()).toBe('');
+    expect(notify).toHaveBeenCalledWith('本地登录身份读取失败，请重试');
+    failing = false;
+    await retryIdentityRecovery(result.current);
+    await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+    expect(result.current.hosts.startupRecovery).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(readManagedCookieHeader).not.toHaveBeenCalled();
+  });
+
+  it('keeps remote account refresh behind failed local restoration', async () => {
+    storageRead.mockRejectedValue(new Error('storage unavailable'));
+    const { result, fetcher } = await startIdentityRuntime();
+    await waitFor(() => expect(result.current.hosts.startupRecovery).not.toBeNull());
+    storageRead.mockClear();
+    await act(async () => result.current.center.handleAccountCenterCommand({ type: 'refresh' }));
+    await waitFor(() => expect(storageRead).toHaveBeenCalledWith('linuxdo-user-agent'));
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result.current.read.sessionsReady).toBe(false);
+  });
+
+  it('discards unmounted reads and restores only the new mount', async () => {
+    const old = Promise.withResolvers<string | null>();
+    storageRead.mockImplementation((key: string) =>
+      key.endsWith('-user-agent') ? old.promise : Promise.resolve(null)
+    );
+    const first = await startIdentityRuntime(false);
+    await first.unmount();
+    storageRead.mockResolvedValue('New saved UA');
+    const next = await startIdentityRuntime(false);
+    await act(async () => old.resolve('Old saved UA'));
+    expect(next.result.current.read.getLinuxDoUserAgent()).toBe('New saved UA');
+    expect(next.result.current.read.getNodeSeekUserAgent()).toBe('New saved UA');
+    expect(first.notify).not.toHaveBeenCalled();
+    expect(readManagedCookieHeader).not.toHaveBeenCalled();
+  });
+
+  it('preserves a Native submitted identity when local storage resolves late', async () => {
+    const old = Promise.withResolvers<string | null>();
+    storageRead.mockImplementation((key: string) =>
+      key === 'linuxdo-user-agent' ? old.promise : Promise.resolve(null)
+    );
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+    try {
+      const { view, runtime } = await renderManualLogin(async () => new Response('{}'), false);
+      await fireEvent(view.getByTestId('login-webview'), 'message', {
+        nativeEvent: {
+          url: 'https://linux.do/login',
+          data: JSON.stringify({ type: 'linuxdo-webview', userAgent: 'New Native UA' })
+        }
+      });
+      expect(runtime().read.getLinuxDoUserAgent()).toBe('New Native UA');
+      await act(async () => old.resolve('Old saved UA'));
+      expect(runtime().read.getLinuxDoUserAgent()).toBe('New Native UA');
+      expect(write).toHaveBeenCalledWith('linuxdo-user-agent', 'New Native UA');
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('preserves saved identity while migrating only enabled legacy snapshots after trusted settings', async () => {
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(
+        key === 'linuxdo-user-agent'
+          ? 'Saved Linux UA'
+          : key === 'linuxdo-clearance'
+            ? JSON.stringify({ userAgent: 'Legacy Linux UA' })
+            : null
+      )
+    );
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+    try {
+      const { result, rerender } = await startIdentityRuntime(false, ['linuxdo']);
+      expect(readManagedCookieHeader).not.toHaveBeenCalled();
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      await rerender({ settingsReady: true });
+      await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+      expect(result.current.read.getLinuxDoUserAgent()).toBe('Saved Linux UA');
+      expect(write).not.toHaveBeenCalled();
+      expect(readManagedCookieHeader).toHaveBeenCalledTimes(1);
+      expect(readManagedCookieHeader).toHaveBeenCalledWith('https://linux.do/session/current.json');
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+      expect(storageRead).not.toHaveBeenCalledWith('nodeseek-access');
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('retains an unconfirmed legacy identity and retries exact Native confirmation', async () => {
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'linuxdo-clearance' ? JSON.stringify({ userAgent: 'Legacy Linux UA' }) : null)
+    );
+    const native = jest.mocked(readManagedCookieHeader);
+    const previous = native.getMockImplementation()!;
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+    native.mockResolvedValue({ status: 'unsupported' });
+    try {
+      const { result } = await startIdentityRuntime(true, ['linuxdo']);
+      await waitFor(() => expect(result.current.hosts.startupRecovery).not.toBeNull());
+      expect(result.current.read.sessionsReady).toBe(false);
+      expect(result.current.read.getLinuxDoUserAgent()).toBe('');
+      expect(write).not.toHaveBeenCalled();
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      native.mockResolvedValue({ status: 'ok', header: '' });
+      await retryIdentityRecovery(result.current);
+      await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+      expect(result.current.read.getLinuxDoUserAgent()).toBe('Legacy Linux UA');
+      expect(write).toHaveBeenCalledWith('linuxdo-user-agent', 'Legacy Linux UA');
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+    } finally {
+      write.mockRestore();
+      native.mockImplementation(previous);
+    }
+  });
+
+  it('does not delete legacy keys after a failed identity write and allows an explicit retry', async () => {
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'linuxdo-clearance' ? JSON.stringify({ userAgent: 'Legacy Linux UA' }) : null)
+    );
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockRejectedValue(new Error('private storage failure'));
+    try {
+      const { result } = await startIdentityRuntime(true, ['linuxdo']);
+      await waitFor(() => expect(result.current.hosts.startupRecovery).not.toBeNull());
+      expect(result.current.read.sessionsReady).toBe(false);
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      write.mockResolvedValue(undefined);
+      await retryIdentityRecovery(result.current);
+      await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+      expect(result.current.read.getLinuxDoUserAgent()).toBe('Legacy Linux UA');
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('persists the latest Native identity after a pending legacy write before deleting old keys', async () => {
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'linuxdo-clearance' ? JSON.stringify({ userAgent: 'Legacy Linux UA' }) : null)
+    );
+    const legacyWrite = Promise.withResolvers<void>();
+    const nativeWrite = Promise.withResolvers<void>();
+    const write = jest
+      .spyOn(SecureStore, 'setItemAsync')
+      .mockImplementation((_key, value) => (value === 'Legacy Linux UA' ? legacyWrite.promise : nativeWrite.promise));
+    try {
+      const { view, runtime } = await startIdentityHosts();
+      await waitFor(() => expect(write).toHaveBeenCalledWith('linuxdo-user-agent', 'Legacy Linux UA'));
+      await act(async () => runtime().hosts.showLinuxDoVerification('登录'));
+      await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+      await fireEvent(view.getByTestId('login-webview'), 'message', {
+        nativeEvent: {
+          url: 'https://linux.do/login',
+          data: JSON.stringify({ type: 'linuxdo-webview', userAgent: 'New Native UA' })
+        }
+      });
+      expect(runtime().read.getLinuxDoUserAgent()).toBe('New Native UA');
+      await act(async () => legacyWrite.resolve());
+      await waitFor(() => expect(write).toHaveBeenCalledWith('linuxdo-user-agent', 'New Native UA'));
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      await act(async () => nativeWrite.resolve());
+      await waitFor(() => expect(runtime().read.sessionsReady).toBe(true));
+      expect(runtime().read.getLinuxDoUserAgent()).toBe('New Native UA');
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('retries persistence of the latest Native identity before completing a failed legacy restoration', async () => {
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'linuxdo-clearance' ? JSON.stringify({ userAgent: 'Legacy Linux UA' }) : null)
+    );
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockRejectedValue(new Error('storage unavailable'));
+    try {
+      const { view, runtime, trust } = await startIdentityHosts(false);
+      await act(async () => runtime().hosts.showLinuxDoVerification('登录'));
+      await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+      await fireEvent(view.getByTestId('login-webview'), 'message', {
+        nativeEvent: {
+          url: 'https://linux.do/login',
+          data: JSON.stringify({ type: 'linuxdo-webview', userAgent: 'New Native UA' })
+        }
+      });
+      await waitFor(() => expect(write).toHaveBeenCalledWith('linuxdo-user-agent', 'New Native UA'));
+      await trust();
+      await waitFor(() => expect(runtime().hosts.startupRecovery).not.toBeNull());
+      expect(runtime().read.sessionsReady).toBe(false);
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      write.mockClear().mockResolvedValue(undefined);
+      await retryIdentityRecovery(runtime());
+      await waitFor(() => expect(runtime().read.sessionsReady).toBe(true));
+      expect(runtime().read.getLinuxDoUserAgent()).toBe('New Native UA');
+      expect(write.mock.calls).toEqual([['linuxdo-user-agent', 'New Native UA']]);
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('keeps warm navigation and restored sources ready while a newly enabled identity restores', async () => {
+    seedAccount();
+    seedNodeSeekAccount();
+    const legacyRead = Promise.withResolvers<string | null>();
+    storageRead.mockImplementation((key: string) =>
+      key === 'nodeseek-access' ? legacyRead.promise : Promise.resolve(null)
+    );
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => new Response('{}'));
+    const notify = jest.fn();
+    const hook = await renderHook(
+      ({ sources }: { sources: readonly Source[] }) =>
+        useAccountRuntime({
+          appActive: true,
+          enabledSources: sources,
+          fetcher,
+          loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+          notify,
+          nodeSeekRecoveryThreshold: 1,
+          openUser: async () => undefined,
+          ready: true,
+          screen: 'search',
+          webViewBlockMessage: ''
+        }),
+      { initialProps: { sources: ['linuxdo'] }, wrapper: QueryTestWrapper }
+    );
+    try {
+      await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+      const linuxPlan = hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level');
+      expect(linuxPlan).toMatchObject({ state: 'ready', lane: 'authenticated' });
+      await hook.rerender({ sources: ['linuxdo', 'nodeseek'] });
+      expect(hook.result.current.read.sessionsReady).toBe(true);
+      expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level')).toEqual(linuxPlan);
+      expect(hook.result.current.read.readGateway.getReadPlan('nodeseek', 'account-data')).toMatchObject({
+        state: 'blocked',
+        reason: 'identity-unavailable'
+      });
+      await expect(hook.result.current.read.reconcileAccountStatus('nodeseek')).resolves.toMatchObject({
+        status: 'unknown'
+      });
+      await expect(hook.result.current.write.ensureWritableSession('nodeseek')).rejects.toMatchObject({
+        reason: 'identity_unavailable'
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      await act(async () => legacyRead.resolve(JSON.stringify({ userAgent: 'Legacy Node UA' })));
+      await waitFor(() =>
+        expect(hook.result.current.read.readGateway.getReadPlan('nodeseek', 'account-data')).toMatchObject({
+          state: 'ready',
+          lane: 'authenticated'
+        })
+      );
+      expect(hook.result.current.read.sessionsReady).toBe(true);
+      expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level')).toEqual(linuxPlan);
+      await expect(hook.result.current.write.ensureWritableSession('nodeseek')).resolves.toMatchObject({
+        source: 'nodeseek',
+        identityKey: 'nodeseek:42'
+      });
+      expect(hook.result.current.read.getNodeSeekUserAgent()).toBe('Legacy Node UA');
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      legacyRead.resolve(null);
+      write.mockRestore();
+      await hook.unmount();
+    }
+  });
+
+  it('retries only a failed warm source without dropping already restored source access', async () => {
+    seedAccount();
+    seedNodeSeekAccount();
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'nodeseek-access' ? JSON.stringify({ userAgent: 'Legacy Node UA' }) : null)
+    );
+    const native = jest.mocked(readManagedCookieHeader);
+    const previous = native.getMockImplementation()!;
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+    native.mockResolvedValue({ status: 'unsupported' });
+    try {
+      const hook = await startIdentityRuntime(true, ['linuxdo']);
+      await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+      const linuxPlan = hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level');
+      await hook.rerender({ settingsReady: true, sources: ['linuxdo', 'nodeseek'] });
+      await waitFor(() => expect(hook.result.current.hosts.startupRecovery).not.toBeNull());
+      expect(hook.result.current.read.sessionsReady).toBe(true);
+      expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level')).toEqual(linuxPlan);
+      expect(hook.result.current.read.readGateway.getReadPlan('nodeseek', 'account-data')).toMatchObject({
+        state: 'blocked',
+        reason: 'identity-unavailable'
+      });
+      await expect(hook.result.current.write.ensureWritableSession('linuxdo')).resolves.toMatchObject({
+        source: 'linuxdo'
+      });
+      storageRead.mockClear();
+      native.mockResolvedValue({ status: 'ok', header: '' });
+      await act(async () => hook.result.current.center.handleAccountCenterCommand({ type: 'refresh' }));
+      expect(hook.result.current.read.sessionsReady).toBe(true);
+      expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level')).toEqual(linuxPlan);
+      await waitFor(() =>
+        expect(hook.result.current.read.readGateway.getReadPlan('nodeseek', 'account-data')).toMatchObject({
+          state: 'ready',
+          lane: 'authenticated'
+        })
+      );
+      expect(storageRead).not.toHaveBeenCalledWith('linuxdo-user-agent');
+      expect(storageRead).not.toHaveBeenCalledWith('nodeseek-user-agent');
+      expect(storageRead).not.toHaveBeenCalledWith('linuxdo-clearance');
+      expect(hook.fetcher).not.toHaveBeenCalled();
+      await hook.unmount();
+    } finally {
+      write.mockRestore();
+      native.mockImplementation(previous);
+    }
+  });
+
+  it('cancels a disabled warm source before writing its identity or deleting legacy keys', async () => {
+    seedAccount();
+    seedNodeSeekAccount();
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'nodeseek-access' ? JSON.stringify({ userAgent: 'Legacy Node UA' }) : null)
+    );
+    const cookieRead = Promise.withResolvers<Awaited<ReturnType<typeof readManagedCookieHeader>>>();
+    const native = jest.mocked(readManagedCookieHeader);
+    const previous = native.getMockImplementation()!;
+    const write = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+    native.mockImplementation(() => cookieRead.promise);
+    try {
+      const hook = await startIdentityRuntime(true, ['linuxdo']);
+      await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+      const linuxPlan = hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level');
+      await hook.rerender({ settingsReady: true, sources: ['linuxdo', 'nodeseek'] });
+      await waitFor(() => expect(native).toHaveBeenCalledTimes(1));
+      await hook.rerender({ settingsReady: true, sources: ['linuxdo'] });
+      await act(async () => cookieRead.resolve({ status: 'ok', header: '' }));
+      expect(hook.result.current.read.sessionsReady).toBe(true);
+      expect(hook.result.current.read.readGateway.getReadPlan('linuxdo', 'level')).toEqual(linuxPlan);
+      expect(hook.result.current.read.readGateway.getReadPlan('nodeseek', 'account-data')).toMatchObject({
+        state: 'blocked',
+        reason: 'source-disabled'
+      });
+      expect(hook.result.current.read.getNodeSeekUserAgent()).toBe('');
+      expect(write).not.toHaveBeenCalled();
+      expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+      expect(hook.fetcher).not.toHaveBeenCalled();
+      await hook.unmount();
+    } finally {
+      cookieRead.resolve({ status: 'unsupported' });
+      write.mockRestore();
+      native.mockImplementation(previous);
+    }
+  });
+  it('cancels a disabled source at committed layout before passive migration cleanup', async () => {
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'nodeseek-access' ? JSON.stringify({ userAgent: 'Legacy Node UA' }) : null)
+    );
+    const cookieRead = Promise.withResolvers<Awaited<ReturnType<typeof readManagedCookieHeader>>>();
+    const native = jest.mocked(readManagedCookieHeader);
+    const previous = native.getMockImplementation()!;
+    native.mockImplementation(() => cookieRead.promise);
+    const originalMigration = legacyCookieMigration.migrateLegacyCookieSnapshots;
+    let legacyRequest: Parameters<typeof originalMigration>[0] | undefined;
+    const migrate = jest.spyOn(legacyCookieMigration, 'migrateLegacyCookieSnapshots').mockImplementation((options) => {
+      legacyRequest = options;
+      return originalMigration(options);
+    });
+    let currentInDisabledLayout: boolean | undefined;
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    const notify = jest.fn();
+    const fetcher = async () => new Response('{}');
+    function Harness({ sources }: { sources: readonly Source[] }) {
+      runtime = useAccountRuntime({
+        appActive: true,
+        enabledSources: sources,
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: true,
+        screen: 'search',
+        webViewBlockMessage: ''
+      });
+      useLayoutEffect(() => {
+        if (!sources.includes('nodeseek') && legacyRequest?.enabledSources.includes('nodeseek')) {
+          currentInDisabledLayout = legacyRequest.isCurrent();
+        }
+      }, [sources]);
+      return null;
+    }
+    try {
+      const view = await render(<Harness sources={['linuxdo']} />, { wrapper: QueryTestWrapper });
+      await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
+      await view.rerender(<Harness sources={['linuxdo', 'nodeseek']} />);
+      await waitFor(() => expect(native).toHaveBeenCalledTimes(1));
+      await view.rerender(<Harness sources={['linuxdo']} />);
+      expect(legacyRequest!.isCurrent()).toBe(false);
+      expect(currentInDisabledLayout).toBe(false);
+      await view.unmount();
+    } finally {
+      cookieRead.resolve({ status: 'unsupported' });
+      native.mockImplementation(previous);
+      migrate.mockRestore();
+    }
+  });
+});
+
+async function renderManualLogin(fetcher: Fetcher, awaitIdentity = true) {
   let runtime!: ReturnType<typeof useAccountRuntime>;
   const notify = jest.fn();
   function Harness({ active = true, enabled = true }: { active?: boolean; enabled?: boolean }) {
@@ -110,7 +700,7 @@ async function renderManualLogin(fetcher: Fetcher) {
       notify,
       nodeSeekRecoveryThreshold: 1,
       openUser: async () => undefined,
-      ready: false,
+      ready: true,
       screen: 'search',
       webViewBlockMessage: ''
     });
@@ -118,6 +708,7 @@ async function renderManualLogin(fetcher: Fetcher) {
   }
   seedAccount();
   const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  if (awaitIdentity) await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
   await act(async () => {
     await runtime.hosts.showLinuxDoVerification('登录');
   });
@@ -153,13 +744,14 @@ async function renderSiteRuntime(source: 'nodeseek' | 'linuxdo' | 'yaohuo', fetc
       notify,
       nodeSeekRecoveryThreshold: 1,
       openUser: async () => undefined,
-      ready: false,
+      ready: true,
       screen: 'topic',
       webViewBlockMessage: ''
     });
     return runtime.hosts.element;
   }
   const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
   return { view, runtime: () => runtime, active: (active: boolean) => view.rerender(<Harness active={active} />) };
 }
 
@@ -203,7 +795,7 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     const probe = Promise.withResolvers<Response>();
     const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(() => probe.promise);
     const nativeClear = jest.fn(async () => true);
-    NativeModules.NetworkProxyModule = { clearManagedLoginCookies: nativeClear };
+    NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies: nativeClear };
     const { view, runtime } = await renderSiteRuntime(site, fetcher);
     await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
     const cleanup = Promise.withResolvers<void>();
@@ -250,7 +842,7 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => response());
     const native = Promise.withResolvers<boolean>();
     const nativeClear = jest.fn(() => native.promise);
-    NativeModules.NetworkProxyModule = { clearManagedLoginCookies: nativeClear };
+    NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies: nativeClear };
     const { view, runtime } = await renderSiteRuntime(site, fetcher);
     await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site }));
     await fireEvent.press(view.getByLabelText('清除登录'));
@@ -276,7 +868,7 @@ it('supersedes a LinuxDo clear while its native cookie barrier is pending', asyn
   const { id, response } = accountClearFixture('linuxdo');
   const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => response());
   const nativeClear = jest.fn(async () => true);
-  NativeModules.NetworkProxyModule = { clearManagedLoginCookies: nativeClear };
+  NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies: nativeClear };
   const { view, runtime } = await renderSiteRuntime('linuxdo', fetcher);
   await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }));
   const barrier = Promise.withResolvers<void>();
@@ -695,13 +1287,14 @@ it.each(['current', 'stale', 'identity-changed'] as const)(
         notify,
         nodeSeekRecoveryThreshold: 1,
         openUser: async () => undefined,
-        ready: false,
+        ready: true,
         screen: 'topic',
         webViewBlockMessage: ''
       });
       return runtime.hosts.element;
     }
     const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
     await act(async () => {
       if (state === 'identity-changed') {
         appQueryClient.setQueryData(
@@ -772,13 +1365,14 @@ it.each(['automatic', 'manual'] as const)(
         notify,
         nodeSeekRecoveryThreshold: 1,
         openUser: async () => undefined,
-        ready: false,
+        ready: true,
         screen: 'search',
         webViewBlockMessage: ''
       });
       return runtime.hosts.element;
     }
     const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
     const advance = async (milliseconds: number) =>
       act(async () => {
         for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
@@ -957,6 +1551,8 @@ it.each([
   ['handoff', 'identity']
 ] as const)('ends reading recovery during %s on %s without late sends or reopened panels', async (stage, exit) => {
   jest.useFakeTimers({ doNotFake: ['performance'] });
+  // Keep restoration pending at mount so reading must wait for its account scope.
+  defaultStorageRead.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve(null), 50)));
   let clock = 0;
   const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
   let release!: () => void;
@@ -990,7 +1586,7 @@ it.each([
       notify,
       nodeSeekRecoveryThreshold: 1,
       openUser: async () => undefined,
-      ready: false,
+      ready: true,
       screen: 'search',
       webViewBlockMessage: ''
     });
@@ -998,6 +1594,8 @@ it.each([
   }
   const view = await render(<Harness />, { wrapper: QueryTestWrapper });
   try {
+    expect(runtime.read.sessionsReady).toBe(false);
+    await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
     const session = runtime.read.readGateway.reading!.begin('12');
     session.visible([1]);
     session.active(true);
@@ -1119,6 +1717,8 @@ it('accepts an explicitly current read recovery without an active Query observer
 
 it('accepts fresh server reading after changing the NodeSeek recovery setting', async () => {
   seedAccount();
+  const localIdentity = Promise.withResolvers<null>();
+  defaultStorageRead.mockReturnValue(localIdentity.promise);
   let lastRead = 20;
   const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(
     async () => new Response(JSON.stringify({ id: 12, last_read_post_number: lastRead, highest_post_number: 250 }))
@@ -1130,7 +1730,7 @@ it('accepts fresh server reading after changing the NodeSeek recovery setting', 
     loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
     notify: jest.fn(),
     openUser: async () => undefined,
-    ready: false,
+    ready: true,
     screen: 'search' as const,
     webViewBlockMessage: ''
   };
@@ -1140,6 +1740,12 @@ it('accepts fresh server reading after changing the NodeSeek recovery setting', 
   );
   try {
     const reading = hook.result.current.read.readGateway.reading!;
+    expect(reading.scope()).toBeNull();
+    await act(async () => localIdentity.resolve(null));
+    await waitFor(() => {
+      expect(hook.result.current.read.sessionsReady).toBe(true);
+      expect(reading.scope()).toBe('linuxdo:alice:0');
+    });
     await act(async () => {
       await hook.result.current.read.readGateway.getTopicReading('12', { trackVisit: true });
       await hook.result.current.read.readGateway.getTopicReading('12', { trackVisit: true });
@@ -1154,7 +1760,11 @@ it('accepts fresh server reading after changing the NodeSeek recovery setting', 
     expect(hook.result.current.read.readGateway.reading).toBe(reading);
     expect(fetcher).toHaveBeenCalledTimes(3);
   } finally {
-    await hook.unmount();
+    await act(async () => {
+      localIdentity.resolve(null);
+      await localIdentity.promise;
+      await hook.unmount();
+    });
   }
 });
 
@@ -1168,10 +1778,9 @@ it.each(['csrf', 'timings'] as const)(
     const pending = new Promise<Response>((resolve) => {
       complete = resolve;
     });
+    const heldRequestPath = stage === 'csrf' ? '/session/csrf' : '/topics/timings';
     const oldFetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (url) =>
-      url.endsWith(stage === 'csrf' ? '/session/csrf' : '/topics/timings')
-        ? pending
-        : new Response(JSON.stringify({ csrf: 'same-transport-identity' }))
+      url.endsWith(heldRequestPath) ? pending : new Response(JSON.stringify({ csrf: 'same-transport-identity' }))
     );
     const nextFetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async () => new Response(''));
     const options = {
@@ -1180,7 +1789,7 @@ it.each(['csrf', 'timings'] as const)(
       notify: jest.fn(),
       nodeSeekRecoveryThreshold: 1,
       openUser: async () => undefined,
-      ready: false,
+      ready: true,
       screen: 'search' as const,
       webViewBlockMessage: ''
     };
@@ -1202,12 +1811,16 @@ it.each(['csrf', 'timings'] as const)(
         .filter(([url]) => url.endsWith('/topics/timings'))
         .map(([, init]) => Object.fromEntries(new URLSearchParams(init?.body as string)));
     try {
+      await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
       const reading = hook.result.current.read.readGateway.reading!;
       const session = reading.begin('12');
       session.visible([1]);
       session.active(true);
       await advance(1000);
-      const heldSignal = oldFetcher.mock.calls.at(-1)?.[1]?.signal;
+      await waitFor(() =>
+        expect(oldFetcher.mock.calls.find(([url]) => url.endsWith(heldRequestPath))?.[1]?.signal?.aborted).toBe(false)
+      );
+      const heldSignal = oldFetcher.mock.calls.find(([url]) => url.endsWith(heldRequestPath))?.[1]?.signal;
       session.visible([2]);
       await advance(5000);
       await hook.rerender({ fetcher: nextFetcher, appActive: false });
@@ -1235,8 +1848,11 @@ it.each(['csrf', 'timings'] as const)(
       expect(nextFetcher.mock.calls.every(([url]) => url.endsWith('/topics/timings'))).toBe(true);
       expect(reading.state()['12'].anchor).toEqual({ floor: 3 });
     } finally {
-      complete(new Response(''));
-      await hook.unmount();
+      await act(async () => {
+        complete(new Response(stage === 'csrf' ? JSON.stringify({ csrf: 'same-transport-identity' }) : ''));
+        await pending;
+        await hook.unmount();
+      });
       monotonic.mockRestore();
       jest.useRealTimers();
     }
@@ -1430,7 +2046,7 @@ it.each(['loading', 'ready'] as const)(
       notify: jest.fn(),
       nodeSeekRecoveryThreshold: 1,
       openUser: async () => undefined,
-      ready: false,
+      ready: true,
       screen: 'search' as const,
       webViewBlockMessage: ''
     };
@@ -1549,6 +2165,227 @@ it.each(['anonymous', 'same', 'changed', 'unknown'] as const)(
   }
 );
 
+it.each([
+  { source: 'linuxdo', entry: 'topic', status: 403, outcome: 'anonymous' },
+  { source: 'linuxdo', entry: 'topic', status: 404, outcome: 'same' },
+  { source: 'linuxdo', entry: 'topic', status: 403, outcome: 'changed' },
+  { source: 'linuxdo', entry: 'topic', status: 404, outcome: 'unknown' },
+  { source: 'linuxdo', entry: 'category', status: 401, outcome: 'expired' },
+  { source: 'linuxdo', entry: 'category', status: 403, outcome: 'anonymous' },
+  { source: 'linuxdo', entry: 'csrf', status: 403, outcome: 'anonymous' },
+  { source: 'linuxdo', entry: 'editable-reply', status: 401, outcome: 'expired' },
+  { source: 'linuxdo', entry: 'editable-reply', status: 403, outcome: 'anonymous' },
+  { source: 'nodeseek', entry: 'vote', status: 401, outcome: 'expired' },
+  { source: 'yaohuo', entry: 'favorite', status: 401, outcome: 'expired' }
+] as const)(
+  'settles $source $entry HTTP $status through real Account $outcome and restores only a read after login',
+  async ({ source, entry, status, outcome }) => {
+    const username = source === 'linuxdo' ? `chain-${entry}-${status}-${outcome}` : 'alice';
+    const userId = source === 'nodeseek' ? '42' : source === 'yaohuo' ? '7' : username;
+    const topicId = source === 'nodeseek' ? '128' : source === 'yaohuo' ? '123' : '900';
+    if (source === 'linuxdo') seedAccount(username);
+    else accountClearFixture(source);
+    const probe = Promise.withResolvers<Response>();
+    let restored = false;
+    const json = (data: unknown, responseStatus = 200) =>
+      new Response(JSON.stringify(data), { status: responseStatus, headers: { 'Content-Type': 'application/json' } });
+    const loginFailure = () => json({ errors: ['您需要登录才能执行此操作。'], error_type: 'not_logged_in' }, status);
+    const linuxDoTopic = {
+      id: 900,
+      title: 'Readable topic',
+      slug: 'readable',
+      created_at: '2026-10-12T00:00:00Z',
+      posts_count: 2,
+      post_stream: {
+        stream: [1001, 1002],
+        posts: [
+          { id: 1001, post_number: 1, username, cooked: '<p>opening</p>', created_at: '2026-10-12T00:00:00Z' },
+          {
+            id: 1002,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<p>reply</p>',
+            created_at: '2026-10-12T00:01:00Z',
+            can_edit: entry === 'editable-reply'
+          }
+        ]
+      }
+    };
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (input) => {
+      const path = new URL(input).pathname;
+      if (source === 'linuxdo') {
+        if (path === '/session/current.json')
+          return restored ? json({ current_user: { id: userId, username } }) : probe.promise;
+        if (path === '/site.json')
+          return entry === 'category' && !restored
+            ? loginFailure()
+            : json({ categories: [{ id: 5, name: 'Recovered category' }] });
+        if (path === '/session/csrf.json') return restored ? json({ csrf: 'synthetic' }) : loginFailure();
+        if (path === '/posts/1002.json')
+          return restored ? json({ can_edit: true, raw: 'restored raw reply' }) : loginFailure();
+        if (path === '/search') return json({ topics: [], posts: [], grouped_search_result: {} });
+        if (path === '/latest.json')
+          return json({
+            topic_list: {
+              topics: [
+                {
+                  id: 900,
+                  title: 'Readable feed',
+                  category_id: 5,
+                  created_at: '2026-10-12T00:00:00Z',
+                  posts_count: 1
+                }
+              ]
+            }
+          });
+        if (path === '/t/900.json') return entry === 'topic' && !restored ? loginFailure() : json(linuxDoTopic);
+      } else if (source === 'nodeseek') {
+        if (path === '/') return new Response('<html><a class="Username" href="/space/42">alice</a></html>');
+        if (path === '/api/vote/info/100')
+          return restored
+            ? json({ id: 100, title: 'Recovered vote', options: [{ id: 1, text: 'yes' }] })
+            : new Response('expired', { status: 401 });
+        if (path === '/post-128-1')
+          return new Response(
+            '<html><head><title>Readable topic</title></head><body><a class="post-title" href="/post-128-1">Readable topic</a><div class="content-item" data-comment-id="1"><a href="/space/42">alice</a><article class="post-content"><p>opening <a href="nsapp://vote?id=100">nsapp://vote?id=100</a></p></article></div></body></html>'
+          );
+      } else {
+        if (path === '/wapindex.aspx')
+          return new Response(
+            '<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=7">alice</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>'
+          );
+        if (path === '/bbs/favlist.aspx')
+          return restored ? new Response('<div class="listdata"></div>') : new Response('expired', { status: 401 });
+        if (path === '/bbs-123.html')
+          return new Response(
+            '<div class="content">[标题] Readable topic (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>opening</p><!--listE--></div>更多回帖(0)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>'
+          );
+      }
+      throw new Error(`Unexpected account-chain request: ${input}`);
+    });
+    const probes = () =>
+      fetcher.mock.calls.filter(([url]) => {
+        const path = new URL(url).pathname;
+        return source === 'linuxdo'
+          ? path === '/session/current.json'
+          : source === 'nodeseek'
+            ? path === '/'
+            : path === '/wapindex.aspx';
+      });
+    const { view, runtime } = await renderSiteRuntime(source, fetcher);
+    const epoch = runtime().read.forumSessionEpochs[source];
+    const read = () => {
+      const gateway = runtime().read.readGateway;
+      if (entry === 'category') return gateway.getFeed({ source, limit: 1 });
+      if (entry === 'csrf') return gateway.searchTopics({ source, query: 'AI' });
+      return gateway.getTopic({
+        source,
+        id: topicId,
+        ...(source === 'yaohuo'
+          ? {
+              topic: {
+                source,
+                id: topicId,
+                title: 'Readable topic',
+                author: 'alice',
+                url: 'https://www.yaohuo.me/bbs-123.html',
+                createdAt: '2026-05-20T00:00:00Z',
+                replyCount: 0
+              }
+            }
+          : {})
+      });
+    };
+    try {
+      let failedRead!: Awaited<ReturnType<typeof read>>;
+      await act(async () => {
+        if (status === 401) await expect(read()).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+        else failedRead = await read();
+      });
+      if (status !== 401)
+        expect(failedRead).toMatchObject(
+          entry === 'topic'
+            ? { accessRequirement: { type: 'login' } }
+            : entry === 'category'
+              ? { items: [{ title: 'Readable feed' }], errors: {} }
+              : entry === 'csrf'
+                ? { items: [], errors: {} }
+                : { id: topicId, title: 'Readable topic' }
+        );
+      if (status !== 401) {
+        await waitFor(() => expect(probes()).toHaveLength(1));
+        await act(async () => {
+          await read();
+        });
+        expect(probes()).toHaveLength(1);
+        expect(runtime().read.accountSessionViewModels[source]).toMatchObject({ isLoggedIn: true, isVerifying: true });
+        await act(async () => {
+          probe.resolve(
+            outcome === 'unknown'
+              ? json({ errors: ['您需要登录才能执行此操作。'] }, 403)
+              : json({
+                  current_user:
+                    outcome === 'anonymous'
+                      ? null
+                      : {
+                          id: outcome === 'changed' ? 'bob' : userId,
+                          username: outcome === 'changed' ? 'bob' : username
+                        }
+                })
+          );
+        });
+      } else expect(probes()).toHaveLength(0);
+      await waitFor(() => expect(runtime().read.accountSessionViewModels[source].isVerifying).toBe(false));
+      const loggedOut = outcome === 'anonymous' || outcome === 'expired';
+      expect(runtime().read.accountSessionViewModels[source]).toMatchObject(
+        loggedOut
+          ? { status: outcome, isLoggedIn: false, identityTrust: 'none' }
+          : { isLoggedIn: true, currentUser: { username: outcome === 'changed' ? 'bob' : username } }
+      );
+      expect(runtime().read.forumSessionEpochs[source]).toBe(epoch + Number(loggedOut || outcome === 'changed'));
+      if (outcome === 'unknown') expect(runtime().read.accountSessionViewModels[source].lastError).toBeTruthy();
+      if (loggedOut) {
+        const beforeLogin = probes().length;
+        await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: source }));
+        await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+        expect(probes()).toHaveLength(beforeLogin);
+        restored = true;
+        await fireEvent.press(view.getByText('检测登录'));
+        await waitFor(() => expect(view.queryByTestId('login-webview')).toBeNull());
+        expect(runtime().read.accountSessionViewModels[source]).toMatchObject({
+          isLoggedIn: true,
+          identityTrust: 'confirmed',
+          currentUser: { id: userId, username }
+        });
+        expect(runtime().read.forumSessionEpochs[source]).toBe(epoch + 2);
+        expect(probes()).toHaveLength(beforeLogin + 1);
+        let recovered!: Awaited<ReturnType<typeof read>>;
+        await act(async () => {
+          recovered = await read();
+        });
+        expect(recovered).toMatchObject(
+          entry === 'category'
+            ? { items: [{ category: 'Recovered category' }], errors: {} }
+            : entry === 'csrf'
+              ? { items: [], errors: {} }
+              : entry === 'editable-reply'
+                ? { replies: [{ contentMarkdown: 'restored raw reply' }] }
+                : entry === 'vote'
+                  ? { polls: [{ id: '100', title: 'Recovered vote' }] }
+                  : entry === 'favorite'
+                    ? { bookmarked: false, contentHtml: '<p>opening</p>' }
+                    : { id: topicId, contentHtml: '<p>opening</p>' }
+        );
+        expect(probes()).toHaveLength(beforeLogin + 1);
+      }
+      expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+    } finally {
+      probe.resolve(json({ current_user: { id: userId, username } }));
+      await view.unmount();
+    }
+  }
+);
+
 it('ignores stale, disabled, anonymous and login-surface recheck requests', async () => {
   const fetcher = jest.fn(async () => new Response('{}'));
   const hook = await renderRuntime(fetcher);
@@ -1638,11 +2475,208 @@ it('awaits the native cookie handoff before probing after login closes', async (
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
 });
 
+it.each(['open-login', 'open-login-with-fill'] as const)(
+  'opens the real login host for %s during closing and ignores the previous close receipt',
+  async (type) => {
+    jest.useFakeTimers();
+    const fetcher = jest.fn(
+      async () => new Response(JSON.stringify({ current_user: { id: 'alice', username: 'alice' } }))
+    );
+    const { view, runtime } = await renderManualLogin(fetcher);
+    const oldHandoff = Promise.withResolvers<void>();
+    try {
+      jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => oldHandoff.promise);
+      await fireEvent.press(view.getByLabelText('关闭'));
+      expect(view.queryByTestId('login-webview')).toBeNull();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+        await runtime().center.handleAccountCenterCommand({ type, site: 'linuxdo' });
+        await runtime().center.handleAccountCenterCommand({ type, site: 'linuxdo' });
+      });
+      expect(runtime().hosts.linuxDoVerificationVisible).toBe(false);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(350);
+      });
+      expect(runtime().hosts.linuxDoVerificationVisible).toBe(true);
+      expect(view.getByText('linux.do 登录')).toBeTruthy();
+      expect(view.getByTestId('login-webview').props.source.uri).toBe(
+        type === 'open-login-with-fill' ? LOGIN_FORM_ADAPTERS.linuxdo.loginUrl : 'https://linux.do/latest'
+      );
+      if (type === 'open-login-with-fill') {
+        await fireEvent(view.getByTestId('login-webview'), 'loadEnd', {
+          nativeEvent: { url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl }
+        });
+        expect(mockWebViewInjectJavaScript).toHaveBeenCalledWith(LOGIN_FORM_ADAPTERS.linuxdo.probeScript(2));
+      }
+      const newPage = view.getByTestId('login-webview');
+      const barriers = jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.length;
+      await act(async () => {
+        oldHandoff.resolve();
+      });
+      expect(view.getByTestId('login-webview')).toBe(newPage);
+      expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls).toHaveLength(barriers);
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+    } finally {
+      oldHandoff.resolve();
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  }
+);
+
+it.each(['closePanels', 'closeTopmostSurface'] as const)(
+  'retains the new credential fill when %s and the login command share one React batch',
+  async (close) => {
+    jest.useFakeTimers();
+    const fetcher = jest.fn(async () => new Response(JSON.stringify({ current_user: null })));
+    const { view, runtime } = await renderManualLogin(fetcher);
+    try {
+      await act(async () => {
+        await runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site: 'linuxdo' });
+      });
+      await act(async () => {
+        runtime().hosts[close]();
+        await runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site: 'linuxdo' });
+      });
+      await act(async () => jest.advanceTimersByTimeAsync(450));
+      expect(view.getByTestId('login-webview').props.source.uri).toBe(LOGIN_FORM_ADAPTERS.linuxdo.loginUrl);
+      await fireEvent(view.getByTestId('login-webview'), 'loadEnd', {
+        nativeEvent: { url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl }
+      });
+      expect(mockWebViewInjectJavaScript).toHaveBeenCalledWith(LOGIN_FORM_ADAPTERS.linuxdo.probeScript(2));
+    } finally {
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  }
+);
+
+it('clears a visible credential fill before a later verification surface', async () => {
+  jest.useFakeTimers();
+  const fetcher = jest.fn(async () => new Response(JSON.stringify({ current_user: null })));
+  const { view, runtime } = await renderManualLogin(fetcher);
+  try {
+    await act(async () => {
+      await runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site: 'linuxdo' });
+    });
+    await fireEvent.press(view.getByLabelText('关闭'));
+    await act(async () => jest.advanceTimersByTimeAsync(450));
+    await act(async () => runtime().hosts.showLinuxDoVerification('需要验证'));
+    await act(async () => jest.advanceTimersByTimeAsync(100));
+    expect(view.getByTestId('login-webview').props.source.uri).toBe('https://linux.do/latest');
+    await fireEvent(view.getByTestId('login-webview'), 'loadEnd', {
+      nativeEvent: { url: 'https://linux.do/latest' }
+    });
+    expect(mockWebViewInjectJavaScript.mock.calls).toHaveLength(1);
+  } finally {
+    await view.unmount();
+    jest.useRealTimers();
+  }
+});
+
+it.each(['navigation', 'background', 'disabled', 'verification'] as const)(
+  'clears a queued credential fill on %s before a subsequent verification surface',
+  async (exit) => {
+    jest.useFakeTimers();
+    const fetcher = jest.fn(
+      async () => new Response(JSON.stringify({ current_user: { id: 'alice', username: 'alice' } }))
+    );
+    const { view, runtime, change } = await renderManualLogin(fetcher);
+    let verification: Promise<boolean> | undefined;
+    try {
+      await fireEvent.press(view.getByLabelText('关闭'));
+      await act(async () => {
+        await runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site: 'linuxdo' });
+      });
+      if (exit === 'navigation') await act(async () => runtime().hosts.closePanels());
+      if (exit === 'background') {
+        await change({ active: false });
+        await change({ active: true });
+      }
+      if (exit === 'disabled') {
+        await change({ enabled: false });
+        await change({ enabled: true });
+      }
+      if (exit === 'verification') {
+        await act(async () => {
+          verification = runtime().hosts.showLinuxDoVerification('需要验证');
+        });
+      }
+      await act(async () => jest.advanceTimersByTimeAsync(450));
+      if (exit !== 'verification') {
+        expect(runtime().hosts.linuxDoVerificationVisible).toBe(false);
+        await act(async () => runtime().hosts.showLinuxDoVerification('需要验证'));
+        await act(async () => jest.advanceTimersByTimeAsync(100));
+      } else await verification;
+      expect(view.getByTestId('login-webview').props.source.uri).toBe('https://linux.do/latest');
+      mockWebViewInjectJavaScript.mockClear();
+      await fireEvent(view.getByTestId('login-webview'), 'loadEnd', {
+        nativeEvent: { url: 'https://linux.do/latest' }
+      });
+      expect(mockWebViewInjectJavaScript.mock.calls).toHaveLength(1);
+    } finally {
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  }
+);
+
+it('reopens the login host during closing after a failed cookie handoff', async () => {
+  jest.useFakeTimers();
+  const fetcher = jest.fn(async () => new Response(JSON.stringify({ current_user: null })));
+  const { view, runtime } = await renderManualLogin(fetcher);
+  try {
+    jest.mocked(setLinuxDoCookieResponseBarrier).mockRejectedValueOnce(new Error('disk unavailable'));
+    await fireEvent.press(view.getByLabelText('关闭'));
+    expect(fetcher).not.toHaveBeenCalled();
+    await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }));
+    await act(async () => jest.advanceTimersByTimeAsync(450));
+    expect(view.getByText('linux.do 登录')).toBeTruthy();
+    expect(view.getByTestId('login-webview').props.source.uri).toBe('https://linux.do/latest');
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(runtime().read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+  } finally {
+    await view.unmount();
+    jest.useRealTimers();
+  }
+});
+
+it('keeps a new credential fill when manual login replaces a queued verification', async () => {
+  jest.useFakeTimers();
+  const fetcher = jest.fn(
+    async () => new Response(JSON.stringify({ current_user: { id: 'alice', username: 'alice' } }))
+  );
+  const { view, runtime } = await renderManualLogin(fetcher);
+  let verification!: Promise<boolean>;
+  try {
+    await fireEvent.press(view.getByLabelText('关闭'));
+    await act(async () => {
+      await runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site: 'linuxdo' });
+      verification = runtime().hosts.showLinuxDoVerification('需要验证');
+      await runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site: 'linuxdo' });
+    });
+    await expect(verification).resolves.toBe(false);
+    await act(async () => jest.advanceTimersByTimeAsync(450));
+    expect(view.getByTestId('login-webview').props.source.uri).toBe(LOGIN_FORM_ADAPTERS.linuxdo.loginUrl);
+    await fireEvent(view.getByTestId('login-webview'), 'loadEnd', {
+      nativeEvent: { url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl }
+    });
+    expect(mockWebViewInjectJavaScript).toHaveBeenCalledWith(LOGIN_FORM_ADAPTERS.linuxdo.probeScript(2));
+  } finally {
+    await view.unmount();
+    jest.useRealTimers();
+  }
+});
+
 it('retries a failed close handoff before the account-center refresh and releases private access only afterward', async () => {
   const fetcher = jest.fn(
     async () => new Response(JSON.stringify({ current_user: { id: 'alice', username: 'alice' } }))
   );
-  const hook = await renderRuntime(fetcher);
+  await AsyncStorage.setItem('account-session.migration.v1', '1');
+  const hook = await renderRuntime(fetcher, true);
+  await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
+  seedAccount();
   await act(async () => {
     await hook.result.current.hosts.showLinuxDoVerification('登录');
   });
@@ -1666,6 +2700,7 @@ it('retries a failed close handoff before the account-center refresh and release
   });
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(hook.result.current.read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true);
+  await AsyncStorage.removeItem('account-session.migration.v1');
 });
 
 it.each(['alice', 'bob'])(

@@ -1,5 +1,6 @@
 import type { TopicStyles } from '../styles';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
+import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react-native';
 import { alphaColor, type ReaderTheme } from '@/ui/theme/tokens';
 
@@ -43,7 +44,9 @@ export function DetailActionButton({
   tone = 'primary',
   styles,
   theme,
-  onPress
+  onPress,
+  onLongPress,
+  iconContent
 }: {
   accessibilityLabel: string;
   active?: boolean;
@@ -60,6 +63,8 @@ export function DetailActionButton({
   styles: TopicStyles;
   theme: ReaderTheme;
   onPress: () => void;
+  onLongPress?: (event?: GestureResponderEvent) => void;
+  iconContent?: ReactNode;
 }) {
   const isTopicPrimaryAction = !alignStart;
   const Icon = active ? (activeIcon ?? icon) : icon;
@@ -89,6 +94,9 @@ export function DetailActionButton({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy: pending, disabled, selected: active }}
+      accessibilityHint={onLongPress ? '长按选择表情反应' : undefined}
+      accessibilityActions={onLongPress ? [{ name: 'longpress', label: '选择表情反应' }] : undefined}
+      onAccessibilityAction={onLongPress ? () => onLongPress() : undefined}
       disabled={disabled}
       style={[
         styles.detailActionButton,
@@ -100,10 +108,14 @@ export function DetailActionButton({
       onPress={() => {
         onPress();
       }}
+      onLongPress={onLongPress}
+      delayLongPress={400}
     >
       <View style={[styles.detailActionIconSlot, compact && styles.replyCompactActionIconSlot]}>
         {pending ? (
           <ActivityIndicator size="small" color={color} />
+        ) : iconContent ? (
+          iconContent
         ) : (
           <Icon size={resolvedIconSize} color={color} fill={fill} strokeWidth={active ? 2.1 : 1.8} />
         )}

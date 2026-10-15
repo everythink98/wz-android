@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
-import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
+import { sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
-import type { Fetcher } from '@/platform/network/request';
+import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import {
   createNodeSeekWebViewFallbackFetcher,
   isNodeSeekBrowserFetchUrl,
@@ -19,13 +19,9 @@ import {
 } from '@/sources/linuxdo/browserFallback';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { browserFetchIntentFromInit, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { errorMessage } from '@/platform/network/errors';
 import { clearManagedLoginCookies } from '@/platform/network/managedCookies';
 import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
-import {
-  LEGACY_COOKIE_SNAPSHOT_KEYS,
-  migrateLegacyCookieSnapshots
-} from '@/platform/storage/legacyCookieSnapshotMigration';
+import { LEGACY_COOKIE_SNAPSHOT_KEYS } from '@/platform/storage/legacyCookieSnapshotMigration';
 import {
   advanceCredentialWriteGeneration,
   createCredentialWriteGate,
@@ -75,6 +71,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   httpErrorStatus?: number;
   credentialGeneration?: number;
   browserFetchIntent?: BrowserFetchIntent;
+  beforeSend?: () => void;
   settled?: boolean;
 };
 
@@ -247,31 +244,6 @@ export function useSessionController({
     [dispatchSiteSessionEvent]
   );
 
-  useEffect(() => {
-    const trace = beginDiagnosticTrace('credential', 'migrate-cookie-snapshots');
-    void (async () => {
-      const migration = await migrateLegacyCookieSnapshots();
-      const [nodeSeekUserAgent, linuxDoUserAgent] = await Promise.all([
-        SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
-        SecureStore.getItemAsync(LINUXDO_USER_AGENT_STORAGE_KEY)
-      ]);
-      const cleanNodeSeekUserAgent = sanitizeNodeSeekUserAgent(nodeSeekUserAgent || '');
-      if (cleanNodeSeekUserAgent) {
-        commitNodeSeekWebViewUserAgent(cleanNodeSeekUserAgent);
-      }
-      const cleanLinuxDoUserAgent = sanitizeLinuxDoUserAgent(linuxDoUserAgent || '');
-      if (cleanLinuxDoUserAgent) {
-        commitLinuxDoWebViewUserAgent(cleanLinuxDoUserAgent);
-      }
-      finishDiagnosticTrace(trace, 'success', {
-        count: Object.values(migration).filter((status) => status === 'migrated').length
-      });
-    })().catch((error) => {
-      finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
-      notify(`旧登录快照迁移失败：${errorMessage(error)}`);
-    });
-  }, [commitLinuxDoWebViewUserAgent, commitNodeSeekWebViewUserAgent, notify]);
-
   const startNextNodeSeekBrowserFetch = useCallback(() => {
     startNextBrowserFetchRequest({
       canStart: (request) =>
@@ -356,6 +328,9 @@ export function useSessionController({
           },
           credentialGeneration: nodeSeekCredentialGateRef.current.generation,
           browserFetchIntent,
+          beforeSend: () => {
+            prepareRequestToSend(init);
+          },
           abortSignal: init?.signal || undefined
         };
         request.abortHandler = () => {
@@ -425,7 +400,6 @@ export function useSessionController({
       const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
       if (credentialIsCurrent && userAgent) {
         commitNodeSeekWebViewUserAgent(userAgent);
-        void SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, userAgent).catch(() => undefined);
       }
       const settled = settleBrowserFetchRequestOnce(current, () => {
         const challenge = Boolean(data.challenge);
@@ -473,9 +447,13 @@ export function useSessionController({
     [nodeSeekBrowserFetchCurrentRef, rejectNodeSeekBrowserFetch]
   );
 
-  const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
+  const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode?: number) => {
     if (nodeSeekBrowserFetchCurrentRef.current?.id === requestId) {
-      nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
+      if (statusCode === undefined) {
+        delete nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus;
+      } else {
+        nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
+      }
     }
   }, []);
 
@@ -669,7 +647,6 @@ export function useSessionController({
       const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
       if (credentialIsCurrent && isLinuxDoPage && userAgent) {
         commitLinuxDoWebViewUserAgent(userAgent);
-        void SecureStore.setItemAsync(LINUXDO_USER_AGENT_STORAGE_KEY, userAgent).catch(() => undefined);
       }
       const settled = settleBrowserFetchRequestOnce(current, () => {
         const challenge = Boolean(data.challenge);
@@ -829,6 +806,7 @@ export function useSessionController({
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
     forumFetchWithWebViewFallback,
+    nodeSeekFetchWithWebViewFallback,
     forumSessionEpochs,
     hiddenBrowserFetchRequests: {
       linuxDo: linuxDoBrowserFetchRequest,

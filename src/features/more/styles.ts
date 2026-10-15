@@ -149,6 +149,9 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
       paddingBottom: 124
     },
+    readingSettingsContent: {
+      paddingTop: 12
+    },
     updatePanel: {
       gap: 12,
       paddingVertical: 16

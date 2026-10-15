@@ -153,7 +153,11 @@ node scripts/check-reader-scroll-boundaries.mjs '<main-session>' '<ignored-evide
 
 ### 诊断导出与崩溃还原
 
+当前关键链路按 operation 判读：`read-user-agent` 只记录实际默认身份读取及耗时，`identity_unavailable` 表示 provider 未能提供身份；缓存与并发复用不重复记录。可见验证面板的排队事件在 `state=queued` 后必须有打开、取消、替换或失效终态。L 站互动通过闭集 `requestType` 区分反应、普通赞、创建加电和删除加电；`state=unconfirmed` 与 `didDispatch=true` 表示请求可能已发送而结果尚未确认，不能据此重发。写后核对的 `interaction-reconcile` 和通知详情的 `notification-detail-retry → notification-detail-resume → notification-detail` 在各自 intent 中使用 `parentTraceId` 接续，后续事件按 `traceId` 归组。`export-cleanup` 单独说明页面就绪后 idle 维护的结果。日志只保留分类、布尔值、计数和匿名引用，不含 UA 原文、反应 ID、加电正文、私信内容或原始对象 ID。
+
 用户设备上的事后排障先使用「更多 → 问题诊断」导出，不靠重现故障或结束进程取代已有证据。新 Android journal 在私有非备份目录保存 JS/Native 各四份 2 MiB、最长七天和独立最多 256 KiB 最近崩溃文件；旧两份 1 MiB cache 仍参与导出。高流量会提前轮转，操作系统强杀前的异步队列可能未写盘，不能承诺七天完整记录。
+
+诊断分享文件在私有 `diagnostic-exports` 至少保留 24 小时。正常前台页面就绪后的 idle callback 只清理本功能过期文件；bootstrap、headless 和启动恢复错误页不自动遍历该目录。创建新导出前仍先清理过期文件并检查 32 份/128 MiB 双限额，满额明确失败；不截断报告、不淘汰未过期文件，分享调用后不得因 chooser 返回或拒绝删除本次文件。
 
 先读导出的 `diagnostic-metadata` 与 `diagnostic-coverage`：核对 buildId、versionCode、事件时间范围、journal/writer 状态和丢弃/损坏/读写失败计数；`sources` 分别声明 JS、Native、crash、两份旧 cache 和旧 Native ring 的状态、事件数、损坏行及首尾时间，没有事件时不凭空补时间。Native 的 JS/Native 分段健康计数跨进程保存，`expiredSegmentCount` 区分保留期淘汰，`crashReadFailureCount` 区分最近崩溃文件读取失败。再按事件自身 buildId/processSessionId 分组；普通请求用 `appSessionId + traceId + requestId` 串联 JS transport、Native DNS/connect/response 和 fallback，恢复事件用 `parentTraceId/requestId` 追溯证据与阈值，不能只看最后一次 `rotate-read-runtime`。`previous-exit` 只说明 Android 为对应前一进程提供的退出原因；无记录不证明没有崩溃，ANR/native-crash 原因不等于已有完整堆栈。
 
@@ -544,6 +548,12 @@ node scripts/check-notification-refresh-cancel.mjs '<ignored-evidence-directory>
 
 ### 冷启动对照
 
+本地冷启动性能与外站读取分开评价。优先检查进程→JS、JS→React、本机资料/身份恢复、导航与实际首帧，以及主线程长帧；线上首批帖子耗时只用于读取功能观察，不能据此判断 App 初始化快慢。`page-ready` 是正常导航与当前页面布局共同完成后的逻辑标记，实际首帧须从原生帧呈现证据独立核对。启动恢复错误页布局也会隐藏 Splash，但不记录正常 `page-ready`，不能混入正常冷启动样本。下面的普通入口工具默认会读取已启用的外站，不提供离线开关；本地问题优先复用现有 trace 与受控测试，不反复请求外站作性能对照。需要零外站实验时，只隔离最终传输边界，并核对 Native 图片/WebView 等通道；不得预读或 mock 掉生产本地初始化。
+
+启动结构验收应核对导入阶段零默认 UA Native 读取、保存身份与 ReaderData 并行恢复，以及正常页面就绪后才安排导出清理。默认 UA 首次按需准备与 HTTP 读取分开记时；V2EX 和已有保存 UA 的来源不等待其他站准备，图片出网 UA 由真实 Native owner 核对，音视频需在真实 source/key 创建前准备完成。四站开启时，首页初始「全部」只构建当前与一个相邻来源，共两个完整 scene，远端访问和连续手势仍按既有 Feed owner 独立验收。Account 保存 UA 与 legacy 恢复故障使用受控 fixture 验证旧键保留、可见「重试启动」及恢复后的身份；不得清设备数据或登录态制造故障。对应行为 owner 见 product map，固定结构减少不等于首帧或偶发慢启动已改善。
+
+立即返回网络失败会改变错误页与 WebView 回退时序，不能作为未受干扰的首屏对照。受控传输应等待原请求取消，并记录等待区间；从 trace 核对首个 App buffer 呈现前没有请求结算或回退 WebView 创建，缺少可核对的等待结束记录时标为 `NOT_VERIFIED`。报告保留内核进程起点与 App 标记起点，两者不能混称；覆盖安装首启单列，同包相邻普通样本只重启进程，切包后的首启重新单列。
+
 启动图通过 `expo-splash-screen` 的 drawable 配置和 `plugins/withSharedAppIcon.js` 共用 `assets/icon.webp`；React 占位用原生资源名，不再 require 完整 PNG。WebP 是 `assets/icon.png` 的无损副本；更新图标时同步转换并核对解码后的 RGBA 像素一致（Pillow：`image.save(path, lossless=True, method=6, exact=True)`）。`assets/splashscreen.xml` 保持原生 288 dp 画布内居中 200 dp 图标；两种入口的显示尺寸同时核对。缩包验收比较同签名、同 ABI 的 release APK，并确认只保留一份 `reader_app_icon`，无 `assets_icon` 或五档 `splashscreen_logo` 位图。
 
 使用相同配置的 Release Hermes 测试包，先按覆盖安装规则确认签名、APK SHA 与 firstInstallTime，再执行：
@@ -555,6 +565,29 @@ node scripts/check-cold-start.mjs --serial <serial> --apk <匹配的本地APK路
 输出父目录须已存在，文件必须是 `.codex-tmp` 内的新路径。默认三批、每批十次；工具不安装或清数据，只 force-stop 指定 App 并通过 launcher 启动。每轮校验 COLD 启动、新进程身份和阶段所属 buildId，以进程启动以来的 Native 单调毫秒记录 `page-ready`、本机恢复及首批 Feed；`TotalTime` 单列为系统显示指标，不与 Native 毫秒相加。Feed 空态、失败和二十秒内缺少内容阶段不补零，不算帖子成功。各轮等本轮内容终态或采样截止后再间隔五秒，保持请求波顺序执行。工具不会清 logcat；仅读取当前 PID 的固定 `WzStartup` 阶段。
 
 首次覆盖安装、旧版迁移和设备重启后的启动单独观察，不纳入普通冷启动。前后保持来源设置、资料规模、设备、电源状态和构建类型一致；计时期间不运行构建、测试、Hermes sampling 或其他设备操作。报告三批中位数、p90、最慢值，以及首次详情/公式/编辑器和通知/深链接的独立结果；页面就绪信号不能代替实际交互或首批帖子。退出、缺少页面就绪、构建或安装身份变化立即停止并保留结果。原生图标视觉必须使用 Release 包检查，开发客户端不作效果证据。
+
+`scripts/startup-inline-requires.metro.cjs` 是独立编译实验，不是正常构建的默认配置。它继承 Expo 默认值，开启 `inlineRequires`，并让 `index.ts`、`App.tsx`、`src/app/AppRoot.tsx`、`src/app/AppComposition.tsx` 保持原求值方式，保留启动注册与 Splash 初始化。真实 Metro/Expo 转换后执行的任务注册、依赖延迟和启动顺序由 `tests/tooling/startup-inline-requires.test.ts` 验证；正常启动行为仍由原有 App/Account owner 验证。GitHub 依据、实际产物和限制见 `REG-NAV-010`，配置生效不代表首帧变快。
+
+复跑编译对照时，先使用项目要求的 Node.js 22，在 `.codex-tmp` 下新建空输出目录。以下命令只生成本地 bundle，不运行 App 或请求外站；示例目录已存在时应换新目录，不覆盖旧证据：
+
+```powershell
+$startupOutput = '.codex-tmp/startup-inline-requires-new'
+New-Item -ItemType Directory -Path $startupOutput -ErrorAction Stop | Out-Null
+$startupPreviousMetroConfig = $env:EXPO_OVERRIDE_METRO_CONFIG
+try {
+  $env:EXPO_OVERRIDE_METRO_CONFIG = $null
+  node node_modules/expo/bin/cli export:embed --platform android --entry-file index.ts --dev false --minify true --max-workers 2 --unstable-transform-profile hermes-stable --bundle-output "$startupOutput/baseline.bundle" --sourcemap-output "$startupOutput/baseline.map"
+  if ($LASTEXITCODE -ne 0) { throw 'Baseline bundle failed' }
+  $startupCandidateConfig = Resolve-Path -LiteralPath scripts/startup-inline-requires.metro.cjs
+  $env:EXPO_OVERRIDE_METRO_CONFIG = $startupCandidateConfig.Path
+  node node_modules/expo/bin/cli export:embed --platform android --entry-file index.ts --dev false --minify true --max-workers 2 --unstable-transform-profile hermes-stable --bundle-output "$startupOutput/candidate.bundle" --sourcemap-output "$startupOutput/candidate.map"
+  if ($LASTEXITCODE -ne 0) { throw 'Candidate bundle failed' }
+} finally {
+  $env:EXPO_OVERRIDE_METRO_CONFIG = $startupPreviousMetroConfig
+}
+```
+
+当前 Expo 57 的 `export:embed --config` 未把参数传入实际 loader，不能用于这项对照。`EXPO_OVERRIDE_METRO_CONFIG` 必须在启动 CLI 前设置；它是 Expo 内部接口，升级时重新核对。核对两份 source map 的源文件集合及内容 hash 完全一致、四个 bootstrap factory 相同、后台任务的顶层依赖调用确实变化，再用 Android 构建实际选择的 `hermesc` 优化编译两份 bundle。模块延迟、bundle 字节数和编译耗时只属于编译证据；采用候选前仍须执行本节的零外站配对首帧对照，并单列首次非首页访问、通知/深链接与后台任务验收。
 
 ### ReaderData SQLite 升级验收
 
@@ -719,7 +752,7 @@ npm run release:android
 
 脚本会执行 preflight、`npm run verify`、clean Expo prebuild、Release native 测试与编译、正式 arm64 签名构建、签名/版本校验、同代码开发签名 x86_64 Smoke 构建及 manifest 生成。原生测试复用 `scripts/native-test-plan.mjs` 的 App task spec 与 init overlay；签名构建前检查本次生成的 XML，全部指定 class 必须有实际执行的成功结果。缺失、过期、失败或全部跳过报告均阻止打包，Gradle 退出 0 或 `NO-SOURCE` 不能单独放行。签名变量只注入正式 `assembleRelease` 子进程；正式 APK 禁止 debug 签名。
 
-用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify --replay-directory <专项目录>`。`--skip-verify` 跳过脚本内的全量 `npm run verify`；`--replay-directory` 将 Smoke 后的默认设备 Replay 批次替换为指定目录中的 `.ad` 文件，仍先执行覆盖安装、首次安装时间与 APK_SANITY 检查。版本、clean-tree、prebuild、原生测试/编译和签名校验仍执行；manifest 的 `verificationScope` 记为 `targeted`，默认发布记为 `full`。未指定 Replay 目录时仍使用 `tests/device`，不能假定 `--skip-verify` 同时跳过默认 Replay。专项目录只放本次实际需要的回放文件，并遵守各脚本的设备与偏好前置条件；例如 Feed 手势发布可单独选择 `tests/device/feed-gesture-priority.ad`，不能把含其他专项的整个目录当成最小回归。发布说明必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
+用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify --replay-directory <专项目录>`。`--skip-verify` 跳过脚本内的全量 `npm run verify`；`--replay-directory` 将 Smoke 后的默认设备 Replay 批次替换为指定目录中的 `.ad` 文件，仍先执行覆盖安装、首次安装时间与 APK_SANITY 检查。版本、clean-tree、prebuild、原生测试/编译和签名校验仍执行；manifest 的 `verificationScope` 记为 `targeted`，默认发布记为 `full`。未指定 Replay 目录时仍使用 `tests/device`，不能假定 `--skip-verify` 同时跳过默认 Replay。专项目录只放本次实际需要的回放文件，并遵守各脚本的设备与偏好前置条件；例如 Feed 手势发布可单独选择 `tests/device/feed-gesture-priority.ad`，不能把含其他专项的整个目录当成最小回归。内部交付记录必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
 
 预期产物：
 
@@ -728,7 +761,13 @@ npm run release:android
 - `release-manifest.json`：与正式 APK 一同上传，供更新检查和 provenance 使用。
 - `diagnostic-symbols/<buildId>/`：本机 ignored 符号归档，含 combined source map、R8 mapping、Git SHA 与两个 APK 的 SHA-256；符号缺失或同 buildId 产物冲突使发布失败。该目录保留用于事后还原，不随 APK 上传，不进入 Git。
 
-脚本不执行 Git commit、tag 或 GitHub 上传。Smoke 和 Replay 通过且当次明确获准远端上传后，发布 `app-arm64-v8a-release.apk` 与 `release-manifest.json`；发布说明记录正式 APK SHA-256。不要提交或输出 keystore、`.env.release.local`、密码或 token。
+脚本不执行 Git commit、tag 或 GitHub 上传。Smoke 和 Replay 通过且当次明确获准远端上传后，发布 `app-arm64-v8a-release.apk` 与 `release-manifest.json`。不要提交或输出 keystore、`.env.release.local`、密码或 token。
+
+### 更新公告
+
+对外更新公告只包含「更新内容」和「问题修复」，没有对应条目时省略该部分。按本次版本差异逐项列出用户可见的新增、调整和修复，写清适用站点、使用场景及必要条件，不遗漏实际变化，也不把尚未修复的问题写成已修复。
+
+公告不披露测试项目、验证结果、未验证范围、构建过程、内部实现、提交记录、签名或校验值。验证证据和交付信息保留在内部记录及 release manifest 中，不进入 GitHub Release 正文或 App 更新说明。
 
 ## 工具进程收口
 

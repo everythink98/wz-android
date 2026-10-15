@@ -1,7 +1,8 @@
+import type { HTMLElement } from 'node-html-parser';
 import type { QuotedPostMetadata, QuotedPostReference, Reply, Source, Topic, TopicDetail } from './models';
 import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
-import { parseForumTopicLink } from './links';
-import { textContentFromHtml } from './html';
+import { parseForumTopicLink, parseForumUserLink } from './links';
+import { absoluteUrl, createForumTextIndex, textContentFromHtml } from './html';
 
 export type { QuotedPostReference } from './models';
 
@@ -52,22 +53,22 @@ export function boundedQuotedPostPreview(value: string | undefined) {
     .trimEnd()}…`;
 }
 
-export type DiscourseQuoteNode = {
-  getAttribute?: (name: string) => string | undefined;
-  querySelector?: (selector: string) => DiscourseQuoteNode | null;
-  text?: string;
-  toString?: () => string;
-};
-
-function discourseQuoteNodeAttribute(node: DiscourseQuoteNode | null | undefined, name: string) {
-  return String(node?.getAttribute?.(name) || '').trim();
+function discourseQuoteNodeAttribute(node: HTMLElement | null | undefined, name: string) {
+  return String(node?.getAttribute(name) || '').trim();
 }
 
-function discourseQuoteNodeText(node: DiscourseQuoteNode | null | undefined) {
-  return textContentFromHtml(node?.toString?.() || node?.text || '');
+function discourseQuoteNodeText(node: HTMLElement | null | undefined) {
+  return textContentFromHtml(node?.toString() || '');
 }
 
-function quotedAuthorLabelFromTitle(value: string) {
+function quotedAuthorLabelFromTitle(title: HTMLElement | null, topicLink: HTMLElement | null | undefined) {
+  if (!title) return '';
+  const value = createForumTextIndex(title, topicLink ? new Set([topicLink]) : undefined)
+    .range(title)
+    .map(({ tape, start, end }) => tape.text.slice(start, end))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
   return (
     value.match(/^([^:：]{1,64})\s*[:：]/)?.[1]?.trim() ||
     value.match(/([^:：\s]{1,64})\s*[:：]\s*$/)?.[1]?.trim() ||
@@ -88,7 +89,7 @@ function quotedAuthorLabelFromAvatarUrl(value: string) {
 }
 
 export function discourseQuotedPostMetadataFromNode(
-  node: DiscourseQuoteNode,
+  node: HTMLElement,
   source: DiscourseSource,
   topicId?: string
 ): QuotedPostMetadata | null {
@@ -102,22 +103,28 @@ export function discourseQuotedPostMetadataFromNode(
     topicId
   );
   if (!reference) return null;
-  const title = node.querySelector?.('.title');
+  const title = node.querySelector('.title');
+  const topicLink = [
+    ...node.querySelectorAll('.quote-title__text-content a'),
+    ...(title?.querySelectorAll('a') || [])
+  ].find((link) => !parseForumUserLink(discourseQuoteNodeAttribute(link, 'href'), sourceCatalog[source].baseUrl));
   const username = discourseQuoteNodeAttribute(node, 'data-username');
+  const rawAvatar = discourseQuoteNodeAttribute(title?.querySelector('img'), 'src');
+  const avatarUrl = absoluteUrl(rawAvatar, sourceCatalog[source].baseUrl);
+  const avatar = avatarUrl && /^https?:\/\//i.test(avatarUrl) ? avatarUrl : undefined;
   const label =
     username ||
     discourseQuoteNodeAttribute(node, 'data-display-name') ||
-    quotedAuthorLabelFromAvatarUrl(discourseQuoteNodeAttribute(title?.querySelector?.('img'), 'src')) ||
-    quotedAuthorLabelFromTitle(discourseQuoteNodeText(title));
+    quotedAuthorLabelFromAvatarUrl(rawAvatar) ||
+    quotedAuthorLabelFromTitle(title, topicLink);
   const preview = boundedQuotedPostPreview(
-    discourseQuoteNodeText(node.querySelector?.('blockquote')).replace(/\[![^\]]+\][+-]?[ \t]*/gim, '')
+    discourseQuoteNodeText(node.querySelector('blockquote')).replace(/\[![^\]]+\][+-]?[ \t]*/gim, '')
   );
-  const topicLink = node.querySelector?.('.quote-title__text-content a') || title?.querySelector?.('a');
   const topicTitle = discourseQuoteNodeText(topicLink);
   const topicUrl = discourseQuoteNodeAttribute(topicLink, 'href');
   return {
     reference,
-    ...(label ? { author: { label, ...(username ? { username } : {}) } } : {}),
+    ...(label ? { author: { label, ...(avatar ? { avatar } : {}), ...(username ? { username } : {}) } } : {}),
     ...(preview ? { preview } : {}),
     ...(topicTitle ? { topicTitle } : {}),
     ...(topicUrl ? { topicUrl } : {})

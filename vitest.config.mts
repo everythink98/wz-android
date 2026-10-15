@@ -8,6 +8,7 @@ export default defineConfig({
     }
   },
   test: {
+    setupFiles: ['tests/unit/setup.ts'],
     environment: 'node',
     pool: 'forks',
     maxWorkers: 2,

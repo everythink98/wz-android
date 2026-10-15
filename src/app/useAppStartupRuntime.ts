@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
-import { recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
+import { pruneDiagnosticExports } from '@/platform/diagnostics/diagnosticExportFiles';
 import { navigationRef } from './appNavigation';
 
 const iconSource = { uri: 'reader_app_icon' };
@@ -23,12 +25,26 @@ export function useAppStartupRuntime(onNavigationReady?: () => void, getCurrentR
   const completed = useRef(false);
   const scheduled = useRef(false);
   const active = useRef(true);
+  const maintenance = useRef<number | null>(null);
+  const splashHidden = useRef(false);
+
+  const hideSplashOnce = useCallback(() => {
+    if (!active.current || splashHidden.current) return;
+    splashHidden.current = true;
+    try {
+      SplashScreen.hide();
+      recordStartupPhase('splash-hidden');
+    } catch (error) {
+      recordDiagnosticError('app', 'startup', error);
+    }
+  }, []);
 
   useEffect(() => {
     active.current = true;
     recordStartupPhase('react-mounted');
     return () => {
       active.current = false;
+      if (maintenance.current !== null) cancelIdleCallback(maintenance.current);
     };
   }, []);
 
@@ -43,14 +59,24 @@ export function useAppStartupRuntime(onNavigationReady?: () => void, getCurrentR
       laidOutRoutes.current.clear();
       recordStartupPhase('page-layout');
       recordStartupPhase('page-ready');
+      hideSplashOnce();
       try {
-        SplashScreen.hide();
-        recordStartupPhase('splash-hidden');
+        maintenance.current = requestIdleCallback(() => {
+          maintenance.current = null;
+          if (!active.current) return;
+          const trace = beginDiagnosticTrace('diagnostic', 'export-cleanup');
+          try {
+            pruneDiagnosticExports();
+            finishDiagnosticTrace(trace, 'success');
+          } catch (error) {
+            finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+          }
+        });
       } catch (error) {
         recordDiagnosticError('app', 'startup', error);
       }
     });
-  }, [getCurrentRouteKey]);
+  }, [getCurrentRouteKey, hideSplashOnce]);
 
   const onReady = useCallback(() => {
     if (navigationReady.current) return;
@@ -69,5 +95,5 @@ export function useAppStartupRuntime(onNavigationReady?: () => void, getCurrentR
     [finish]
   );
 
-  return { iconSource, onLayout, onReady, onRouteChange: finish };
+  return { iconSource, onLayout, onReady, onRecoveryLayout: hideSplashOnce, onRouteChange: finish };
 }

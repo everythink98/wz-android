@@ -62,17 +62,17 @@ describe('visual scenario catalog', () => {
     }
   });
 
-  it('renders every rendered scenario in both themes', async () => {
-    for (const scenario of visualScenarioCatalog.filter(({ kind }) => kind === 'rendered')) {
-      for (const theme of ['light', 'dark'] as const) {
-        const view = await render(
-          <GestureHandlerRootView>
-            <VisualScenarioView appearance={{ theme }} id={scenario.id} />
-          </GestureHandlerRootView>
-        );
-        await view.unmount();
-      }
-    }
+  it.each(
+    visualScenarioCatalog
+      .filter(({ kind }) => kind === 'rendered')
+      .flatMap(({ id }) => (['light', 'dark'] as const).map((theme) => ({ id, theme })))
+  )('renders $id in the $theme theme', async ({ id, theme }) => {
+    const view = await render(
+      <GestureHandlerRootView>
+        <VisualScenarioView appearance={{ theme }} id={id} />
+      </GestureHandlerRootView>
+    );
+    await view.unmount();
   });
 
   it.each(['search.aggregate.partial', 'user.profile.long'])(

@@ -26,6 +26,12 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       minWidth: 0,
       gap: 2
     },
+    levelRefreshSlot: {
+      width: 48,
+      height: 48,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
     levelEyebrow: {
       color: theme.muted,
       fontFamily: appFontFamily,

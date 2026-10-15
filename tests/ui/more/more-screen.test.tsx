@@ -468,6 +468,8 @@ describe('More screen state and actions', () => {
     const retryLevel = view.getByLabelText('重试等级');
     await fireEvent.press(view.getByLabelText('刷新账号'));
     await waitFor(() => expect(refreshLevel).toHaveBeenCalledTimes(1));
+    await fireEvent.press(retryLevel);
+    expect(refreshLevel).toHaveBeenCalledTimes(2);
     await fireEvent.press(view.getByText('linux.do 等级'));
     expect(view.queryByLabelText('重试等级')).toBeNull();
     expect(view.getByLabelText('重试等级', { includeHiddenElements: true })).toBe(retryLevel);

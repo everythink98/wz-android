@@ -43,6 +43,7 @@ import { normalizeUserReference, userFromReply, userReferenceFromUsername } from
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
+import { LinuxDoBoostButton, LinuxDoBoosts, LinuxDoReactionButton } from './LinuxDoPostInteractions';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { DiscoursePolicyPanel } from '@/ui/content/DiscoursePolicyPanel';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
@@ -464,7 +465,8 @@ export function ReplyItem({
     [upvoteDecision, likeDecision, dislikeDecision].some(
       (decision) => decision.allowed || decision.reason === 'already-complete' || decision.reason === 'pending'
     );
-  const canUseDiscoursePostActions = isDiscourse && Boolean(canReply || canEdit || canDelete || canLike);
+  const canUseDiscoursePostActions =
+    isDiscourse && Boolean(canReply || canEdit || canDelete || canLike || reply.siteExtension?.canBoost);
   const discourseReplyReactionStats = isDiscourse
     ? source === 'linuxdo'
       ? linuxDoReactionStats(reply, discourseEmojiUrls)
@@ -647,7 +649,7 @@ export function ReplyItem({
                             contentSource={reference.source}
                             small
                             name={quotedAuthorName}
-                            uri={quotedReply?.authorAvatar}
+                            uri={quote.author?.avatar || quotedReply?.authorAvatar}
                           />
                         </Pressable>
                         <View style={styles.quoteAuthorTextBlock}>
@@ -674,7 +676,7 @@ export function ReplyItem({
                                 : sameTopic && onLocateReply({ floor: reference.postNumber })
                             }
                           >
-                            <Text style={styles.replyMeta}>引用 #{reference.postNumber}</Text>
+                            <Text style={[styles.replyMeta, styles.quoteMeta]}>引用 #{reference.postNumber}</Text>
                           </Pressable>
                         </View>
                       </View>
@@ -934,7 +936,8 @@ export function ReplyItem({
                     />
                   ) : null}
                   {canLike ? (
-                    <DetailActionButton
+                    <LinuxDoReactionButton
+                      post={reply}
                       alignStart
                       active={Boolean(reply.liked)}
                       tone="success"
@@ -948,6 +951,7 @@ export function ReplyItem({
                       onPress={() => onInteract('like', reply.commentId)}
                     />
                   ) : null}
+                  <LinuxDoBoostButton post={reply} alignStart styles={styles} theme={theme} disabled={actionBusy} />
                   {canDelete ? (
                     <DetailActionButton
                       alignStart
@@ -962,6 +966,7 @@ export function ReplyItem({
                   ) : null}
                 </View>
               ) : null}
+              {source === 'linuxdo' ? <LinuxDoBoosts post={reply} /> : null}
             </>
           ) : null}
         </View>

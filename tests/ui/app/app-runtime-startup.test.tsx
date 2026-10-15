@@ -8,14 +8,32 @@ import { createEmptyReaderState, type ReaderChange, type ReaderCommand } from '@
 import { useFeedController } from '@/features/feed/useFeedController';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import React from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
+import { saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
+import type { Fetcher } from '@/platform/network/request';
+import { notificationPermissionGranted } from '@/platform/notifications/notificationSystem';
+import { render, fireEvent } from '../render';
 
 const mockUseAccountRuntime = jest.fn();
 const mockShowLinuxDoVerification = jest.fn<(_message?: string, _recovery?: LinuxDoReadRecovery) => Promise<boolean>>(
   async () => true
 );
 const mockNotify = jest.fn<(message?: string) => void>();
-const mockUseNotificationsRuntime = jest.fn();
+const mockUseNotificationsRuntime =
+  jest.fn<
+    (
+      options: Parameters<typeof import('@/features/notifications/useNotificationsRuntime').useNotificationsRuntime>[0]
+    ) => void
+  >();
 let mockActualReader = false;
+let mockActualAccount = false;
+let mockActualNotifications = false;
+let mockNetworkReady = false;
+const mockNetworkFetcher = jest.fn<Fetcher>();
 const mockLoadReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
 const mockImportReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
 const mockCommitReader = jest.fn<(command: ReaderCommand) => Promise<ReaderChange>>();
@@ -98,23 +116,27 @@ jest.mock('@/platform/network/useNetworkProxyRuntime', () => ({
     ensureNetworkProxyReady: jest.fn(async () => {
       throw new Error('代理状态读取中。');
     }),
-    loaded: false,
-    networkProxyFetcher: jest.fn(async () => {
-      throw new Error('代理状态读取中。');
-    }),
+    loaded: mockNetworkReady,
+    networkProxyFetcher: mockNetworkFetcher,
     proxyState: { enabled: false, activeId: null, profiles: [] },
     selectProxyProfile: jest.fn(),
     setProxyEnabled: jest.fn(),
     summary: '代理状态读取中',
     testProxyProfile: jest.fn(),
     upsertProxyProfile: jest.fn(),
-    webViewBlockMessage: '代理状态读取中。'
+    webViewBlockMessage: mockNetworkReady ? '' : '代理状态读取中。'
   })
 }));
 
 jest.mock('@/features/account/useAccountRuntime', () => ({
-  useAccountRuntime: (options: unknown) => {
+  useAccountRuntime: (
+    options: Parameters<typeof import('@/features/account/useAccountRuntime').useAccountRuntime>[0]
+  ) => {
     mockUseAccountRuntime(options);
+    if (mockActualAccount)
+      return jest
+        .requireActual<typeof import('@/features/account/useAccountRuntime')>('@/features/account/useAccountRuntime')
+        .useAccountRuntime(options);
     return {
       center: {
         account: {
@@ -152,6 +174,7 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
         forumSessionEpochs: mockForumSessionEpochs,
         getLinuxDoUserAgent: jest.fn(),
         getNodeSeekUserAgent: jest.fn(),
+        notificationFetcher: mockNetworkFetcher,
         identityBarriers: {},
         readGateway: mockReadGateway,
         reconcileAccountStatus: jest.fn(),
@@ -176,8 +199,16 @@ jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
 }));
 
 jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
-  useNotificationsRuntime: (options: unknown) => {
+  useNotificationsRuntime: (
+    options: Parameters<typeof import('@/features/notifications/useNotificationsRuntime').useNotificationsRuntime>[0]
+  ) => {
     mockUseNotificationsRuntime(options);
+    if (mockActualNotifications)
+      return jest
+        .requireActual<typeof import('@/features/notifications/useNotificationsRuntime')>(
+          '@/features/notifications/useNotificationsRuntime'
+        )
+        .useNotificationsRuntime(options);
     return {
       identityKeys: {},
       activeSources: [],
@@ -188,6 +219,39 @@ jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
     };
   }
 }));
+
+jest.mock('@/platform/network/managedCookies', () => ({
+  ...jest.requireActual<typeof import('@/platform/network/managedCookies')>('@/platform/network/managedCookies'),
+  setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined)
+}));
+
+jest.mock('@/platform/notifications/notificationSystem', () => ({
+  dismissSourceNotification: jest.fn(async () => undefined),
+  dismissSourceNotificationExact: jest.fn(async () => undefined),
+  notificationPermissionGranted: jest.fn(async () => false),
+  openNotificationSystemSettings: jest.fn(async () => undefined),
+  presentSourceNotification: jest.fn(async (_source: string, _digest: unknown, identifier: string) => identifier),
+  reconcileSourceNotificationSlots: jest.fn(async () => undefined),
+  requestNotificationPermission: jest.fn(async () => false),
+  syncNotificationBackgroundRegistration: jest.fn(async () => false)
+}));
+
+jest.mock('expo-notifications', () => ({
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  clearLastNotificationResponse: jest.fn(() => undefined),
+  getLastNotificationResponse: jest.fn(() => null)
+}));
+
+jest.mock('react-native-webview', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View } = require('react-native') as typeof import('react-native');
+  return {
+    WebView: ReactModule.forwardRef(function MockWebView(props: Record<string, unknown>, ref) {
+      ReactModule.useImperativeHandle(ref, () => ({ stopLoading: jest.fn(), injectJavaScript: jest.fn() }), []);
+      return ReactModule.createElement(View, { ...props, testID: 'mock-webview' });
+    })
+  };
+});
 
 jest.mock('@/app/useForumCatalogRuntime', () => ({
   useForumCatalogRuntime: (options: unknown) => {
@@ -202,6 +266,10 @@ jest.mock('@/app/useContentSourceQueryCleanup', () => ({ useContentSourceQueryCl
 describe('app runtime startup', () => {
   beforeEach(() => {
     mockActualReader = false;
+    mockActualAccount = false;
+    mockActualNotifications = false;
+    mockNetworkReady = false;
+    mockNetworkFetcher.mockReset().mockRejectedValue(new Error('代理状态读取中。'));
     mockReaderData = undefined;
     mockReaderDataLoaded = true;
     mockSessionsReady = true;
@@ -216,6 +284,146 @@ describe('app runtime startup', () => {
     mockUseAppUpdateRuntime.mockClear();
     mockUseForumCatalogRuntime.mockClear();
     mockCommitReader.mockReset();
+  });
+
+  it('loads foreground NodeSeek unread counts and notifications after native security responses recover in the shared browser', async () => {
+    mockActualAccount = true;
+    mockActualNotifications = true;
+    mockNetworkReady = true;
+    mockInitialForegroundReady = true;
+    mockReaderData = createEmptyReaderData();
+    mockReaderData.settings.contentSources = mockReaderData.settings.contentSources.map((entry) => ({
+      ...entry,
+      enabled: entry.source === 'nodeseek'
+    }));
+    await AsyncStorage.setItem('account-session.migration.v1', '1');
+    await saveAccountSessionSnapshot(
+      accountSessionSnapshotFromEvent(createAccountSessionSnapshot('nodeseek'), {
+        type: 'session-updated',
+        loggedIn: true,
+        currentUser: { source: 'nodeseek', id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' }
+      })
+    );
+    const userAgentRead = jest.spyOn(SecureStore, 'getItemAsync').mockResolvedValue(null);
+    const permissionChecks: ReturnType<typeof Promise.withResolvers<boolean>>[] = [];
+    jest.mocked(notificationPermissionGranted).mockImplementation(() => {
+      const check = Promise.withResolvers<boolean>();
+      permissionChecks.push(check);
+      return check.promise;
+    });
+    const nativeRequests: { url: string; response: ReturnType<typeof Promise.withResolvers<Response>> }[] = [];
+    mockNetworkFetcher.mockImplementation((url) => {
+      const response = Promise.withResolvers<Response>();
+      nativeRequests.push({ url, response });
+      return response.promise;
+    });
+    let runtime!: ReturnType<typeof useAppRuntime>;
+    function Harness() {
+      runtime = useAppRuntime();
+      return runtime.accountHost;
+    }
+    let view!: Awaited<ReturnType<typeof render>>;
+    await act(async () => {
+      view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    });
+    await act(async () => {
+      permissionChecks.forEach((check) => check.resolve(false));
+    });
+    const completeDocument = async (path: string, data: unknown) => {
+      const url = `https://www.nodeseek.com${path}`;
+      await waitFor(() => expect(nativeRequests.at(-1)?.url).toBe(url));
+      await act(async () => {
+        nativeRequests.at(-1)!.response.resolve(
+          new Response('<html><title>NodeSeek | security check</title><body>Checking your browser</body></html>', {
+            status: 403,
+            headers: { 'content-type': 'text/html' }
+          })
+        );
+      });
+      await waitFor(() => expect(view.getByTestId('mock-webview').props.source.uri).toBe(url));
+      const browser = view.getByTestId('mock-webview');
+      const requestId = Number(
+        /const requestId = (\d+);/.exec(browser.props.injectedJavaScriptBeforeContentLoaded)?.[1]
+      );
+      expect(Number.isSafeInteger(requestId) && requestId > 0).toBe(true);
+      await fireEvent(browser, 'message', {
+        nativeEvent: {
+          url: browser.props.source.uri,
+          data: JSON.stringify({
+            type: 'nodeseek-browser-fetch',
+            id: requestId,
+            url: browser.props.source.uri,
+            html: JSON.stringify(data)
+          })
+        }
+      });
+    };
+    try {
+      await waitFor(() =>
+        expect(mockNetworkFetcher).toHaveBeenCalledWith(
+          'https://www.nodeseek.com/api/notification/unread-count',
+          expect.anything()
+        )
+      );
+      await completeDocument('/api/notification/unread-count', { atMe: 1, reply: 2, message: 0 });
+      await waitFor(() => expect(runtime.routes!.notificationRouteRuntime.unreadTotal).toBe(3));
+      let list!: ReturnType<NonNullable<typeof runtime.routes>['notificationRouteRuntime']['gateway']['listPage']>;
+      await act(async () => {
+        list = runtime.routes!.notificationRouteRuntime.gateway.listPage('nodeseek', {
+          categoryId: 'mentions',
+          expectedIdentityKey: 'nodeseek:42'
+        });
+      });
+      await completeDocument('/api/notification/at-me/list?page=1', {
+        atList: [{ id: 13, post_id: 832584, commenter_id: 7, commenter_name: 'bob', post_title: 'Recovered mention' }],
+        hasMore: false
+      });
+      await expect(list).resolves.toMatchObject({
+        items: [{ id: 'at-me:13', title: 'Recovered mention', unread: true }],
+        quality: 'complete'
+      });
+      expect(mockNetworkFetcher.mock.calls.map(([url]) => url)).toEqual([
+        'https://www.nodeseek.com/api/notification/unread-count',
+        'https://www.nodeseek.com/api/notification/at-me/list?page=1'
+      ]);
+      expect(view.queryByTestId('mock-webview')).toBeNull();
+      const notificationFetcher = mockUseNotificationsRuntime.mock.calls.at(-1)![0].fetcher;
+      for (const url of ['https://linux.do/notifications.json', 'https://yaohuo.me/bbs/receive.aspx']) {
+        const original = new Response('original security response', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        });
+        mockNetworkFetcher.mockResolvedValueOnce(original);
+        expect(await notificationFetcher(url)).toBe(original);
+      }
+      const rejectedWrite = new Response('write rejected', {
+        status: 403,
+        headers: { 'cf-mitigated': 'challenge' }
+      });
+      mockNetworkFetcher.mockResolvedValueOnce(rejectedWrite);
+      expect(await notificationFetcher('https://www.nodeseek.com/api/notification/mark-read', { method: 'POST' })).toBe(
+        rejectedWrite
+      );
+      const callsBeforeStaleIdentity = mockNetworkFetcher.mock.calls.length;
+      await expect(
+        runtime.routes!.notificationRouteRuntime.gateway.listPage('nodeseek', {
+          expectedIdentityKey: 'nodeseek:previous-account'
+        })
+      ).rejects.toThrow('账号状态已变化');
+      expect(mockNetworkFetcher).toHaveBeenCalledTimes(callsBeforeStaleIdentity);
+      expect(view.queryByTestId('mock-webview')).toBeNull();
+    } finally {
+      nativeRequests.forEach(({ response }) => response.resolve(new Response('', { status: 503 })));
+      await act(async () => {
+        await view.unmount();
+        permissionChecks.forEach((check) => check.resolve(false));
+        await Promise.allSettled(permissionChecks.map((check) => check.promise));
+      });
+      jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+      userAgentRead.mockRestore();
+      await AsyncStorage.removeItem('account-session.v1.nodeseek');
+      await AsyncStorage.removeItem('account-session.migration.v1');
+    }
   });
 
   it.each(['visit', 'topic-summary'] as const)(

@@ -55,12 +55,16 @@ type RecoverySession = {
   lastCheckTraceId?: string;
 };
 
-type QueuedLinuxDoVerification = {
-  message: string;
-  promise: Promise<boolean>;
-  recovery?: LinuxDoReadRecovery;
-  resolve: (accepted: boolean) => void;
-};
+type QueuedLinuxDoVerification =
+  | { kind: 'login'; trace: DiagnosticTrace }
+  | {
+      kind: 'verification';
+      trace: DiagnosticTrace;
+      message: string;
+      promise: Promise<boolean>;
+      recovery?: LinuxDoReadRecovery;
+      resolve: (accepted: boolean) => void;
+    };
 
 function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
   if ('kind' in recovery) return recovery.isCurrent();
@@ -106,6 +110,7 @@ export function useVerificationController({
   linuxDoWebViewSessionRef,
   isLinuxDoSurfaceVisible,
   notify,
+  onQueuedLinuxDoLoginCanceled = () => undefined,
   onBeforeLinuxDoSurfaceOpened = () => undefined,
   onLoginWebViewFailure,
   onLinuxDoSurfaceClosed = () => undefined,
@@ -139,6 +144,7 @@ export function useVerificationController({
   linuxDoWebViewSessionRef: Ref<number>;
   isLinuxDoSurfaceVisible: () => boolean;
   notify: (message: string) => void;
+  onQueuedLinuxDoLoginCanceled?: () => void;
   onBeforeLinuxDoSurfaceOpened?: () => void;
   onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
   onLinuxDoSurfaceClosed?: (options: {
@@ -189,6 +195,9 @@ export function useVerificationController({
   } | null>(null);
   const checkLinuxDoCookieRef = useRef<() => Promise<void>>(async () => undefined);
   const queuedLinuxDoVerificationRef = useRef<QueuedLinuxDoVerification | null>(null);
+  const onQueuedLinuxDoLoginCanceledRef = useRef(onQueuedLinuxDoLoginCanceled);
+  useCommitRefValue(onQueuedLinuxDoLoginCanceledRef, onQueuedLinuxDoLoginCanceled);
+  const changeLinuxDoPanelRef = useRef<(visible: boolean) => boolean>(() => false);
   const showLinuxDoVerificationRef = useRef<
     ((message?: string, recovery?: LinuxDoReadRecovery) => Promise<boolean>) | null
   >(null);
@@ -266,9 +275,19 @@ export function useVerificationController({
       recoverySessionRef.current = null;
       ++checkingRequestIdRef.current;
       const queued = queuedLinuxDoVerificationRef.current;
-      if (queued?.recovery) cancelRecoveryTarget({ recovery: queued.recovery });
-      queuedLinuxDoVerificationRef.current?.resolve(false);
+      if (queued) finishDiagnosticTrace(queued.trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+      if (queued?.kind === 'verification') {
+        if (queued.recovery) cancelRecoveryTarget({ recovery: queued.recovery });
+        queued.resolve(false);
+      }
       queuedLinuxDoVerificationRef.current = null;
+      if (linuxDoVerificationTraceRef.current) {
+        finishDiagnosticTrace(linuxDoVerificationTraceRef.current, 'canceled', {
+          source: 'linuxdo',
+          reason: 'canceled'
+        });
+        linuxDoVerificationTraceRef.current = null;
+      }
       if (linuxDoWebViewMountTimerRef.current) clearTimeout(linuxDoWebViewMountTimerRef.current);
       if (linuxDoPanelCloseSettleTimerRef.current) clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
     },
@@ -619,10 +638,16 @@ export function useVerificationController({
       }
       if (cancelCurrentRecovery) {
         const queuedRecovery = queuedLinuxDoVerificationRef.current;
-        if (queuedRecovery?.recovery) {
-          cancelRecoveryTarget({ recovery: queuedRecovery.recovery });
-        }
-        queuedRecovery?.resolve(false);
+        if (queuedRecovery)
+          finishDiagnosticTrace(queuedRecovery.trace, 'canceled', {
+            source: 'linuxdo',
+            reason: 'canceled',
+            closeReason: reason
+          });
+        if (queuedRecovery?.kind === 'verification') {
+          if (queuedRecovery.recovery) cancelRecoveryTarget({ recovery: queuedRecovery.recovery });
+          queuedRecovery.resolve(false);
+        } else if (queuedRecovery?.kind === 'login') onQueuedLinuxDoLoginCanceledRef.current();
         queuedLinuxDoVerificationRef.current = null;
       }
       const trace = linuxDoVerificationTraceRef.current;
@@ -672,21 +697,50 @@ export function useVerificationController({
         if (!queued) {
           return;
         }
+        if (queued.kind === 'login') {
+          const opened = changeLinuxDoPanelRef.current(true);
+          finishDiagnosticTrace(queued.trace, opened ? 'success' : 'blocked', {
+            source: 'linuxdo',
+            state: opened ? 'open' : 'disabled',
+            isRecovery: false,
+            ...(opened ? {} : { reason: 'source_disabled' })
+          });
+          if (!opened) onQueuedLinuxDoLoginCanceledRef.current();
+          return;
+        }
         if (
           queued.recovery &&
           (linuxDoCanceledRecoveriesRef.current.has(queued.recovery) || !isActiveRecoveryQuery(queued.recovery))
         ) {
+          finishDiagnosticTrace(queued.trace, 'stale', { source: 'linuxdo', reason: 'stale' });
           queued.resolve(false);
           return;
         }
         const showQueued = showLinuxDoVerificationRef.current;
         if (!showQueued) {
+          finishDiagnosticTrace(queued.trace, 'blocked', { source: 'linuxdo', reason: 'not_ready' });
           queued.resolve(false);
           return;
         }
-        void showQueued(queued.message, queued.recovery).then(queued.resolve, () => {
-          queued.resolve(false);
-        });
+        markDiagnosticStage(queued.trace, 'apply', { source: 'linuxdo', state: 'resuming' });
+        void showQueued(queued.message, queued.recovery).then(
+          (accepted) => {
+            finishDiagnosticTrace(queued.trace, accepted ? 'success' : 'blocked', {
+              source: 'linuxdo',
+              state: accepted ? 'open' : 'read-blocked',
+              isRecovery: Boolean(queued.recovery),
+              ...(accepted ? {} : { reason: 'not_ready' })
+            });
+            queued.resolve(accepted);
+          },
+          (error) => {
+            finishDiagnosticTrace(queued.trace, 'failure', {
+              source: 'linuxdo',
+              reason: normalizeDiagnosticReason(error)
+            });
+            queued.resolve(false);
+          }
+        );
       };
 
       if (!wasVisible) {
@@ -742,9 +796,25 @@ export function useVerificationController({
           return false;
         }
         if (linuxDoPanelClosingSessionRef.current !== null) {
-          markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'busy' });
-          finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'busy' });
-          return false;
+          const queued = queuedLinuxDoVerificationRef.current;
+          if (queued?.kind === 'verification') {
+            finishDiagnosticTrace(queued.trace, 'canceled', { source: 'linuxdo', reason: 'superseded' });
+            if (queued.recovery) cancelRecoveryTarget({ recovery: queued.recovery });
+            queued.resolve(false);
+          }
+          queuedLinuxDoVerificationRef.current = {
+            kind: 'login',
+            trace:
+              queued?.kind === 'login'
+                ? queued.trace
+                : beginDiagnosticTrace('webview', 'open', {
+                    source: 'linuxdo',
+                    state: 'queued',
+                    isRecovery: false
+                  })
+          };
+          markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'queued' });
+          return true;
         }
         onBeforeLinuxDoSurfaceOpened();
         markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'open' });
@@ -782,6 +852,7 @@ export function useVerificationController({
       resetLinuxDoWebView
     ]
   );
+  useCommitRefValue(changeLinuxDoPanelRef, changeLinuxDoPanel);
 
   const showLinuxDoVerification = useCallback(
     async (message = 'linux.do 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
@@ -824,20 +895,33 @@ export function useVerificationController({
       }
       if (linuxDoPanelClosingSessionRef.current !== null) {
         const previousQueued = queuedLinuxDoVerificationRef.current;
-        if (previousQueued && previousQueued.recovery === recovery) {
+        if (previousQueued?.kind === 'verification' && previousQueued.recovery === recovery) {
+          markDiagnosticStage(previousQueued.trace, 'guard', {
+            source: 'linuxdo',
+            reason: 'duplicate',
+            state: 'queued'
+          });
           previousQueued.message = message;
           notify(message);
           return previousQueued.promise;
         }
-        if (previousQueued?.recovery) {
-          cancelRecoveryTarget({ recovery: previousQueued.recovery });
-        }
-        previousQueued?.resolve(false);
+        if (previousQueued)
+          finishDiagnosticTrace(previousQueued.trace, 'canceled', { source: 'linuxdo', reason: 'superseded' });
+        if (previousQueued?.kind === 'verification') {
+          if (previousQueued.recovery) cancelRecoveryTarget({ recovery: previousQueued.recovery });
+          previousQueued.resolve(false);
+        } else if (previousQueued?.kind === 'login') onQueuedLinuxDoLoginCanceledRef.current();
         let resolveQueued!: (accepted: boolean) => void;
         const queuedPromise = new Promise<boolean>((resolve) => {
           resolveQueued = resolve;
         });
         queuedLinuxDoVerificationRef.current = {
+          kind: 'verification',
+          trace: beginDiagnosticTrace('webview', 'recover', {
+            source: 'linuxdo',
+            state: 'queued',
+            isRecovery: Boolean(recovery)
+          }),
           message,
           promise: queuedPromise,
           recovery,
@@ -1318,6 +1402,17 @@ export function useVerificationController({
   useCommitRefValue(checkLinuxDoCookieRef, checkLinuxDoCookie);
 
   const cancelLinuxDoCheckForInactiveApp = useCallback(() => {
+    if (queuedLinuxDoVerificationRef.current?.kind === 'login') {
+      finishDiagnosticTrace(queuedLinuxDoVerificationRef.current.trace, 'canceled', {
+        source: 'linuxdo',
+        reason: 'canceled',
+        state: 'background'
+      });
+      queuedLinuxDoVerificationRef.current = null;
+      const trace = linuxDoVerificationTraceRef.current;
+      if (trace) finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
+      onQueuedLinuxDoLoginCanceledRef.current();
+    }
     cancelLinuxDoEgressProbe('background');
     const session = recoverySessionRef.current;
     if (session?.phase === 'checking') {

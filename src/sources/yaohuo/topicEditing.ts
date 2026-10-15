@@ -1,3 +1,4 @@
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { decodeHtml, elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html';
 import {
   type TopicDraft,
@@ -22,7 +23,7 @@ async function page(path: string, options: Options) {
       {
         headers: {
           ...YAOHUO_ACTION_HEADERS,
-          'user-agent': options.userAgent,
+          'user-agent': await resolveWebViewUserAgent(options.userAgent, options.signal),
           'cache-control': 'no-cache'
         }
       },
@@ -125,7 +126,7 @@ export async function editYaohuoTopic(options: Options & { draft: TopicDraft }):
         method: 'POST',
         headers: {
           ...YAOHUO_ACTION_HEADERS,
-          'user-agent': options.userAgent,
+          'user-agent': await resolveWebViewUserAgent(options.userAgent, options.signal),
           'content-type': 'application/x-www-form-urlencoded'
         },
         body: fields.toString()

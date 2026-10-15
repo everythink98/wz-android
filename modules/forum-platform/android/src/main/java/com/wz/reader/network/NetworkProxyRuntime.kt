@@ -196,7 +196,8 @@ private object MediaRequestCookieContext {
 }
 
 internal class ForumMediaRequestInterceptor(
-  private val sourceForUri: (URI) -> String? = ::managedCookieSource
+  private val sourceForUri: (URI) -> String? = ::managedCookieSource,
+  private val defaultUserAgent: () -> String = { NetworkProxyRuntime.readDefaultMediaUserAgent() }
 ) : Interceptor {
   override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
     val request = chain.request()
@@ -221,6 +222,16 @@ internal class ForumMediaRequestInterceptor(
       .removeHeader(FORUM_MEDIA_KIND_HEADER)
       .removeHeader(FORUM_MEDIA_GENERATION_HEADER)
       .removeHeader("Cookie")
+      .apply {
+        if (request.header("User-Agent").isNullOrBlank()) {
+          val userAgent = try {
+            defaultUserAgent()
+          } catch (error: Exception) {
+            throw java.io.IOException("默认浏览器身份读取失败", error)
+          }
+          header("User-Agent", userAgent)
+        }
+      }
       .tag(ForumMediaRequestTag::class.java, ForumMediaRequestTag(source, kind))
       .cacheControl(CacheControl.Builder().noStore().build())
       .build()
@@ -1736,6 +1747,10 @@ object NetworkProxyRuntime {
     currentGeneration.configureMediaClient(builder)
 
   internal fun currentReadNetworkGeneration(): Long = currentGeneration.generation
+
+  internal fun readDefaultMediaUserAgent(): String = readProcessDefaultWebViewUserAgent(
+    applicationContext ?: throw IllegalStateException("网络运行时尚未安装")
+  )
 
   internal fun currentMediaTransportGeneration(
     runtimeGeneration: Long = currentGeneration.generation

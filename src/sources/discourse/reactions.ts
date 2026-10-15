@@ -25,14 +25,14 @@ function reactionStat(reaction: ReactionSummary, emojiUrls: DiscourseEmojiUrlMap
 }
 
 export function discourseReactionStats(
-  item: Pick<Reply | TopicDetail, 'reactionSummary' | 'likeCount'>,
+  item: Pick<Reply | TopicDetail, 'reactionSummary' | 'likeCount' | 'currentUserReaction'>,
   emojiUrls: DiscourseEmojiUrlMap = {}
 ) {
   const reactions = item.reactionSummary || [];
   const hasHeartReaction = reactions.some((reaction) => reaction.id === 'heart');
   const likeCount = item.likeCount;
   return [
-    !hasHeartReaction && typeof likeCount === 'number' && likeCount > 0
+    item.currentUserReaction === undefined && !hasHeartReaction && typeof likeCount === 'number' && likeCount > 0
       ? reactionStat({ id: 'heart', count: likeCount }, emojiUrls)
       : null,
     ...reactions.map((reaction) => reactionStat(reaction, emojiUrls))

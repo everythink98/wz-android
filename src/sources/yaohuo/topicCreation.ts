@@ -1,3 +1,4 @@
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { decodeHtml, elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html';
 import { parseForumTopicLink } from '@/domain/forum/links';
 import type {
@@ -29,7 +30,14 @@ async function readPage(path: string, { fetcher, userAgent, signal }: Options) {
   const response = await fetchWithTimeout(
     url,
     withBrowserFetchIntent(
-      { method: 'GET', headers: { ...YAOHUO_ACTION_HEADERS, 'user-agent': userAgent, 'cache-control': 'no-cache' } },
+      {
+        method: 'GET',
+        headers: {
+          ...YAOHUO_ACTION_HEADERS,
+          'user-agent': await resolveWebViewUserAgent(userAgent, signal),
+          'cache-control': 'no-cache'
+        }
+      },
       { owner: 'write', priority: 'write' }
     ),
     { fetcher, signal }
@@ -265,7 +273,7 @@ export async function createYaohuoTopic({
         method: 'POST',
         headers: {
           ...YAOHUO_ACTION_HEADERS,
-          'user-agent': options.userAgent,
+          'user-agent': await resolveWebViewUserAgent(options.userAgent, options.signal),
           referer: page.url,
           ...(typeof requestBody === 'string' ? { 'content-type': 'application/x-www-form-urlencoded' } : {})
         },

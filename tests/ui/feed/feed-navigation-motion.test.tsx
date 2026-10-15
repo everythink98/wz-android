@@ -138,15 +138,27 @@ describe('Feed navigation motion', () => {
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
   });
 
-  it('commits cross-page taps immediately without animation or duplicate native confirmation', async () => {
+  it('defers distant scenes and commits cross-page taps without animation or duplicate native confirmation', async () => {
     const onFeedSourceChange = jest.fn();
     const view = await render(
-      <FeedNavigationHarness onFeedSourceChange={onFeedSourceChange} sources={['v2ex', 'linuxdo', 'nodeseek']} />
+      <FeedNavigationHarness
+        onFeedSourceChange={onFeedSourceChange}
+        sources={['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']}
+      />
     );
     const pager = view.getByTestId('native-feed-pager');
 
+    expect(view.getAllByTestId(/^feed-secondary-/, { includeHiddenElements: true })).toHaveLength(2);
+    expect(view.getAllByText('正在读取主题...', { includeHiddenElements: true })).toHaveLength(2);
+    expect(view.queryByTestId('feed-secondary-linuxdo', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByTestId('feed-secondary-nodeseek', { includeHiddenElements: true })).toBeNull();
+    expect(onFeedSourceChange).not.toHaveBeenCalled();
+
     await fireEvent.press(view.getByTestId('feed-source-nodeseek'));
     expect(view.getByRole('tab', { name: 'NodeSeek，已选择' })).toBeTruthy();
+    expect(within(view.getByTestId('feed-secondary-nodeseek')).getByText('新帖子')).toBeTruthy();
+    expect(view.getByLabelText('正在读取主题...')).toBeTruthy();
+    expect(view.getAllByTestId(/^feed-secondary-/, { includeHiddenElements: true })).toHaveLength(5);
     expect(onFeedSourceChange.mock.calls).toEqual([['nodeseek']]);
     expect(mockSetPageWithoutAnimation).toHaveBeenLastCalledWith(3);
     expect(mockSetPage).not.toHaveBeenCalled();

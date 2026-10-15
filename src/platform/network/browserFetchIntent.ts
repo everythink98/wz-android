@@ -1,6 +1,6 @@
 import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 
-export type BrowserFetchOwner = 'feed' | 'topic' | 'user' | 'search' | 'account' | 'write';
+export type BrowserFetchOwner = 'feed' | 'topic' | 'user' | 'search' | 'account' | 'account-overview' | 'write';
 export type BrowserFetchPriority = 'background' | 'foreground' | 'write';
 
 export type BrowserFetchIntent = {

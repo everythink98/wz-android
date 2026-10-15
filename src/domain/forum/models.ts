@@ -35,6 +35,9 @@ export type SourceLoadOutcomeKind = 'data' | 'empty' | 'partial' | 'error' | 'au
 
 type SiteExtension = {
   boostCount?: number;
+  boosts?: DiscourseBoost[];
+  canBoost?: boolean;
+  interactionUnconfirmed?: boolean;
   needsApproval?: boolean;
 };
 
@@ -100,7 +103,17 @@ export interface ReactionSummary {
   count: number;
 }
 
+export type CurrentUserReaction = { id: string; canUndo: boolean };
+
+export type DiscourseBoost = {
+  id: number;
+  user: UserReference;
+  content: ({ text: string } | { emoji: string; imageUrl: string })[];
+  canDelete: boolean;
+};
+
 export interface QuotedAuthorReference {
+  avatar?: string;
   label: string;
   username?: string;
 }
@@ -201,6 +214,7 @@ export interface Reply {
   systemAction?: boolean;
   actionCode?: string;
   reactionSummary?: ReactionSummary[];
+  currentUserReaction?: CurrentUserReaction | null;
   siteExtension?: SiteExtension;
   polls?: TopicPoll[];
 }
@@ -299,6 +313,7 @@ export interface TopicDetail extends Topic {
   collected?: boolean;
   locked?: boolean;
   reactionSummary?: ReactionSummary[];
+  currentUserReaction?: CurrentUserReaction | null;
 }
 
 interface UserReferenceBase {

@@ -17,6 +17,8 @@ export type TopicComposerRouteRuntimeValue = {
   ensureNetworkProxyReady: () => Promise<void>;
   ensureWritableSession: (source: TopicCreationSource) => Promise<WritableSessionTicket>;
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
+  onSessionExpired: (source: TopicCreationSource, requestSessionEpoch: number) => void;
+  requestAccountRecheck: (source: TopicCreationSource, requestSessionEpoch: number, parentTraceId?: string) => void;
   ensureNodeImageApiKey: () => Promise<string | null>;
   getUserAgent: (source: TopicCreationSource) => string;
   getEmojiUrls: ReadGateway['getEmojiUrls'];

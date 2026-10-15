@@ -2,7 +2,14 @@ import { resolveLinuxDoUpload as fetchLinuxDoUploadUrl } from '@/sources/linuxdo
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { useMutation, useMutationState, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
+import {
+  queryOptions,
+  useMutation,
+  useMutationState,
+  useQueryClient,
+  type InfiniteData,
+  type QueryKey
+} from '@tanstack/react-query';
 import {
   buildNodeSeekCollectionRequest,
   buildNodeSeekEditReplyRequest,
@@ -46,6 +53,13 @@ import {
   type InteractionType
 } from '@/domain/forum/topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import {
+  discourseBoostStats,
+  discourseReactionPreview,
+  type DiscourseInteractionPatch
+} from '@/domain/forum/discourseInteractions';
+import { discoursePostFields } from '@/sources/discourse/model';
+import { linuxDoBoostFromData } from '@/sources/linuxdo/boosts';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { setLinuxDoPolicyAcceptance } from '@/sources/linuxdo/policy';
 import type { ReplyEditTarget, ReplyRefreshCommand, ReplyRefreshTarget } from '../model/types';
@@ -75,7 +89,11 @@ import {
   markDiagnosticStage,
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import {
+  diagnosticRef,
+  normalizeDiagnosticReason,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnosticPolicy';
 import type { TopicSessionController } from '../useTopicSessionController';
 import type {
   ComposerSnapshot,
@@ -327,7 +345,7 @@ export function useTopicActionsController({
   notify: (message: string) => void;
   onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
   requestAccountRecheck: RequestAccountRecheck;
-  readGateway: Pick<ReadGateway, 'getReadPlan'>;
+  readGateway: Pick<ReadGateway, 'getReadPlan' | 'getReply' | 'getLinuxDoInteractionConfig' | 'getEmojiUrls'>;
   refreshTopicReplies: (command?: ReplyRefreshCommand, trace?: DiagnosticTrace) => Promise<unknown>;
   refreshWholeTopic: () => Promise<unknown>;
   siteSessionViewModels: SiteSessionViewModels;
@@ -349,6 +367,15 @@ export function useTopicActionsController({
   const refreshWholeTopicRef = useCommittedRef(refreshWholeTopic);
   const replyComposerIntentRef = useCommittedRef(replyComposerIntent);
   const authenticatedFetcher = useMemo(() => rejectUnauthorizedResponse(fetcher), [fetcher]);
+  const reportAccountError = useCallback(
+    (error: unknown, ticket: WritableSessionTicket | undefined, trace: DiagnosticTrace) => {
+      if (!ticket || !activeRef.current || !writableTicketCurrentRef.current(ticket)) return;
+      if (isRawUnauthorized(error)) onSessionExpired(ticket.source, ticket.sessionEpoch);
+      else if (ticket.source === 'linuxdo' && errorRequiresAccountRecheck(error))
+        requestAccountRecheck(ticket.source, ticket.sessionEpoch, trace.traceId);
+    },
+    [activeRef, writableTicketCurrentRef, onSessionExpired, requestAccountRecheck]
+  );
   const nodeSeekUserId = nodeSeekUserIdForSession(siteSessionViewModels.nodeseek);
   const detachReplyEdit = topicComposer.detachEdit;
   const openReplyEditor = topicComposer.editReply;
@@ -360,6 +387,15 @@ export function useTopicActionsController({
   const policySubmissionsRef = useRef<Record<string, PolicySubmission>>({});
   const policyScope = `${detail?.source}:${detail?.id}:${sessionEpochs.linuxdo}:${siteSessionViewModels.linuxdo.currentUser?.id}`;
   const policyScopeRef = useCommittedRef(policyScope);
+  const [boostComposer, setBoostComposer] = useState<{ postId: number; content: string } | null>(null);
+  const boostDraftsRef = useRef(new Map<number, string>());
+  useLayoutEffect(() => {
+    setBoostComposer(null);
+    boostDraftsRef.current.clear();
+  }, [policyScope]);
+  useLayoutEffect(() => {
+    if (!active) setBoostComposer(null);
+  }, [active]);
   useLayoutEffect(() => {
     setPolicyBusy(false);
     return () => {
@@ -410,7 +446,7 @@ export function useTopicActionsController({
         targetPresent ??= Boolean(request.reply?.commentId || request.reply?.deletePath || request.reply?.floor);
       } else if (request.action === 'like' && interactionTarget) {
         objectAllowed ??= isDiscourseSource(actionTopic?.source)
-          ? canToggleDiscourseLike(interactionTarget)
+          ? !actionTopic?.archived && canToggleDiscourseLike(interactionTarget)
           : interactionTarget.canLike !== false;
         targetPresent ??= Boolean(interactionTarget.commentId);
         if (actionTopic?.source === 'nodeseek' && request.interaction) {
@@ -421,6 +457,11 @@ export function useTopicActionsController({
           }[request.interaction] as 'upvoted' | 'liked' | 'disliked';
           alreadyComplete ??= interactionTarget[completedField] === true;
         }
+      } else if (request.action === 'boost' && interactionTarget) {
+        objectAllowed ??=
+          interactionTarget.siteExtension?.canBoost === true &&
+          !('systemAction' in interactionTarget && interactionTarget.systemAction);
+        targetPresent ??= Boolean(interactionTarget.commentId);
       } else if (request.action === 'vote') {
         objectAllowed ??= !request.poll?.closed;
         targetPresent ??= Boolean(request.poll);
@@ -504,7 +545,7 @@ export function useTopicActionsController({
         ) {
           const message = errorMessage(error);
           notify(message);
-          onSessionExpired(variables.ticket.source, variables.ticket.sessionEpoch);
+          reportAccountError(error, variables.ticket, variables.trace);
           throw new HandledMutationError(message, 'failure', 'login_required');
         }
         if (
@@ -513,7 +554,7 @@ export function useTopicActionsController({
           isWritableSessionTicketCurrent(variables.ticket) &&
           variables.isCurrent?.() !== false
         ) {
-          requestAccountRecheck(variables.ticket.source, variables.ticket.sessionEpoch, variables.trace.traceId);
+          reportAccountError(error, variables.ticket, variables.trace);
         }
         throw error;
       }
@@ -571,13 +612,15 @@ export function useTopicActionsController({
     (request) => {
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
       const target = request.target || request.reply;
+      const postInteraction =
+        request.interaction || (request.action === 'like' || request.action === 'boost' ? request.action : undefined);
       const actionKey =
         request.actionKey ||
-        (actionTopic && request.interaction && target?.commentId
+        (actionTopic && postInteraction && target?.commentId
           ? topicActionStateKey({
               topicKey: topicKey(actionTopic),
               targetId: target.commentId,
-              action: request.interaction
+              action: postInteraction
             })
           : actionTopic && request.action === 'vote' && request.poll
             ? topicPollVoteActionKey(topicKey(actionTopic), request.poll)
@@ -1006,21 +1049,32 @@ export function useTopicActionsController({
       action: DiscourseAction,
       trace: DiagnosticTrace,
       ticket: WritableSessionTicket,
-      preTransport?: () => void
+      preTransport?: () => void,
+      dispatchState?: RequestDispatchState
     ) => {
       assertWritableTicket(ticket);
       preTransport?.();
       try {
         assertWritableTicket(ticket);
         const result = await runLinuxDoAction({
-          fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () => {
-            assertWritableTicket(ticket);
-            preTransport?.();
-          }),
+          fetcher: (input, init) =>
+            withRequestBeforeSend(
+              withDiagnosticFetcher(trace, authenticatedFetcher),
+              () => {
+                assertWritableTicket(ticket);
+                preTransport?.();
+              },
+              init?.method && init.method !== 'GET' ? dispatchState : undefined
+            )(input, init),
           request: buildDiscourseActionRequest(action),
           userAgent: linuxDoUserAgent()
         });
-        markDiagnosticStage(trace, 'transport', { source: 'linuxdo', state: 'confirmed', serverConfirmed: true });
+        const hasPostResult = ['toggle-reaction', 'set-like', 'create-boost'].includes(action.type);
+        markDiagnosticStage(trace, 'transport', {
+          source: 'linuxdo',
+          state: hasPostResult ? 'body-ready' : 'confirmed',
+          ...(hasPostResult ? {} : { serverConfirmed: true })
+        });
         assertWritableTicket(ticket, true);
         return result ?? true;
       } catch (error) {
@@ -1032,7 +1086,13 @@ export function useTopicActionsController({
           throw new HandledMutationError(message, 'blocked', 'login_required');
         }
         notify(message);
-        throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
+        throw new HandledMutationError(
+          message,
+          'failure',
+          normalizeDiagnosticReason(error),
+          false,
+          Boolean(error && typeof error === 'object' && 'serverRejected' in error && error.serverRejected)
+        );
       }
     },
     [assertWritableTicket, authenticatedFetcher, linuxDoUserAgent, notify, showLinuxDoVerification]
@@ -1054,6 +1114,445 @@ export function useTopicActionsController({
       return () => apply({ ...patch, mode: patch.mode === 'add' ? 'remove' : 'add' });
     },
     [cacheKeys, queryClient]
+  );
+
+  const patchLinuxDoPost = useCallback(
+    (postId: number, patch: DiscourseInteractionPatch, keys: Pick<MutationVariables, 'detailKey' | 'replyKeys'>) => {
+      const update = (reply: Reply) => (reply.commentId === postId ? { ...reply, ...patch } : reply);
+      queryClient.setQueryData<TopicDetail>(keys.detailKey, (current) =>
+        current
+          ? {
+              ...current,
+              ...(current.commentId === postId ? patch : {}),
+              replies: current.replies.map(update)
+            }
+          : current
+      );
+      keys.replyKeys.forEach((key) => updateReplyCache(queryClient, key, (replies) => replies.map(update)));
+    },
+    [queryClient]
+  );
+  const linuxDoInteractionConfigQuery = useMemo(
+    () =>
+      queryOptions({
+        queryKey: forumQueryKeys.interactionConfig(sessionEpochs.linuxdo),
+        staleTime: 5 * 60_000,
+        queryFn: ({ signal }) => readGateway.getLinuxDoInteractionConfig({ signal })
+      }),
+    [readGateway, sessionEpochs.linuxdo]
+  );
+  const loadLinuxDoInteractionConfig = useCallback(
+    () => queryClient.fetchQuery(linuxDoInteractionConfigQuery),
+    [queryClient, linuxDoInteractionConfigQuery]
+  );
+  const interactionReadsRef = useRef(new Map<number, { controller: AbortController; promise: Promise<boolean> }>());
+  const getLinuxDoPost = useCallback(
+    (postId: number) => {
+      const view = policyContentRef.current;
+      if (!view.topicDetail || view.topicDetail.source !== 'linuxdo') return null;
+      const keys = cacheKeys(view.topicDetail);
+      const cachedOpening = queryClient.getQueryData<TopicDetail>(keys.detailKey);
+      const cachedReplies = queryClient.getQueryData<ReplyCache>(keys.repliesKey);
+      const opening = cachedOpening || view.topicDetail;
+      const target =
+        opening.commentId === postId
+          ? opening
+          : cachedReplies?.pages.flatMap((page) => page.items).find((reply) => reply.commentId === postId) ||
+            cachedOpening?.replies.find((reply) => reply.commentId === postId) ||
+            (!cachedOpening && !cachedReplies
+              ? view.topicReplies.find((reply) => reply.commentId === postId)
+              : undefined);
+      return target ? { opening, target } : null;
+    },
+    [cacheKeys, policyContentRef, queryClient]
+  );
+  useLayoutEffect(
+    () => () => {
+      interactionReadsRef.current.forEach(({ controller }) => controller.abort());
+      interactionReadsRef.current.clear();
+    },
+    [active, policyScope]
+  );
+  const recheckLinuxDoPost = useCallback(
+    async (postId: number, suppliedTicket?: WritableSessionTicket, parentTrace?: DiagnosticTrace) => {
+      const pending = interactionReadsRef.current.get(postId);
+      if (pending) return pending.promise;
+      const { opening, target } = getLinuxDoPost(postId) || {};
+      const trace = beginDiagnosticTrace('topic', 'interaction-reconcile', {
+        source: 'linuxdo',
+        parentTraceId: parentTrace?.traceId,
+        ...(opening ? { topicRef: diagnosticRef('topic', topicKey(opening)) } : {})
+      });
+      if (!opening || opening.source !== 'linuxdo' || !target) {
+        finishDiagnosticTrace(trace, 'blocked', { source: 'linuxdo', reason: 'missing_target' });
+        return false;
+      }
+      const actionKey = topicActionStateKey({ topicKey: topicKey(opening), targetId: postId, action: 'like' });
+      if (!suppliedTicket && pendingActionReservationsRef.current.has(`${opening.source}:${opening.id}:${actionKey}`)) {
+        finishDiagnosticTrace(trace, 'blocked', { source: 'linuxdo', reason: 'busy' });
+        return false;
+      }
+      const floor = opening.commentId === postId ? 1 : 'floor' in target ? target.floor : undefined;
+      if (!floor) {
+        finishDiagnosticTrace(trace, 'blocked', { source: 'linuxdo', reason: 'missing_target' });
+        return false;
+      }
+      const controller = new AbortController();
+      const scope = policyScopeRef.current;
+      const promise = (async () => {
+        try {
+          const ticket = await (suppliedTicket || ensureWritableSession('linuxdo'));
+          if (!activeRef.current || scope !== policyScopeRef.current || controller.signal.aborted)
+            throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
+          assertWritableTicket(ticket);
+          const reply = await readGateway.getReply(
+            {
+              source: 'linuxdo',
+              id: opening.id,
+              floor,
+              signal: controller.signal
+            },
+            { trace }
+          );
+          if (
+            !activeRef.current ||
+            scope !== policyScopeRef.current ||
+            controller.signal.aborted ||
+            reply.commentId !== postId
+          ) {
+            finishDiagnosticTrace(trace, controller.signal.aborted ? 'canceled' : 'stale', {
+              source: 'linuxdo',
+              floor,
+              reason: controller.signal.aborted ? 'canceled' : 'stale',
+              isTargetMatch: reply.commentId === postId
+            });
+            return false;
+          }
+          assertWritableTicket(ticket);
+          patchLinuxDoPost(
+            postId,
+            {
+              currentUserReaction: reply.currentUserReaction,
+              reactionSummary: reply.reactionSummary,
+              likeCount: reply.likeCount,
+              liked: reply.liked,
+              canLike: reply.canLike,
+              siteExtension: reply.siteExtension
+            },
+            cacheKeys(opening, ticket)
+          );
+          finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', floor, state: 'confirmed', localApplied: true });
+          return true;
+        } catch (error) {
+          const failure = mutationFailure(error);
+          finishDiagnosticTrace(trace, controller.signal.aborted ? 'canceled' : failure.outcome, {
+            source: 'linuxdo',
+            floor,
+            reason: controller.signal.aborted ? 'canceled' : failure.reason
+          });
+          return false;
+        } finally {
+          if (interactionReadsRef.current.get(postId)?.controller === controller)
+            interactionReadsRef.current.delete(postId);
+        }
+      })();
+      interactionReadsRef.current.set(postId, { controller, promise });
+      return promise;
+    },
+    [
+      activeRef,
+      assertWritableTicket,
+      cacheKeys,
+      ensureWritableSession,
+      getLinuxDoPost,
+      patchLinuxDoPost,
+      policyContentRef,
+      policyScopeRef,
+      readGateway
+    ]
+  );
+
+  const mutateLinuxDoPost = useCallback(
+    async (
+      postId: number,
+      intent:
+        | { kind: 'reaction'; reactionId?: string }
+        | { kind: 'create-boost'; content: string }
+        | { kind: 'delete-boost'; boostId: number }
+    ) => {
+      const { opening, target } = getLinuxDoPost(postId) || {};
+      if (!opening || opening.source !== 'linuxdo' || !target || ('systemAction' in target && target.systemAction))
+        return false;
+      if (target.siteExtension?.interactionUnconfirmed) {
+        const reconciled = await recheckLinuxDoPost(postId);
+        notify(reconciled ? '已核对最新状态，请重新选择操作' : '互动结果尚未确认，请稍后刷新核对');
+        return false;
+      }
+      const isReaction = intent.kind === 'reaction';
+      const boost =
+        intent.kind === 'delete-boost'
+          ? target.siteExtension?.boosts?.find((item) => item.id === intent.boostId)
+          : undefined;
+      const action = isReaction ? 'like' : 'boost';
+      const objectAllowed = isReaction
+        ? !opening.archived && canToggleDiscourseLike(target)
+        : intent.kind === 'create-boost'
+          ? target.siteExtension?.canBoost === true
+          : boost?.canDelete === true;
+      const trace = beginDiagnosticTrace('topic', 'interaction', {
+        source: 'linuxdo',
+        action: isReaction ? 'like' : 'boost',
+        requestType: intent.kind === 'reaction' ? 'interaction' : intent.kind,
+        topicRef: diagnosticRef('topic', topicKey(opening)),
+        floor: opening.commentId === postId ? 1 : 'floor' in target ? target.floor : undefined
+      });
+      const scope = policyScopeRef.current;
+      const isCurrent = () => activeRef.current && scope === policyScopeRef.current;
+      let resultPatch: DiscourseInteractionPatch = {};
+      const dispatchState: RequestDispatchState = { mayHaveSent: false };
+      const success = await executeMutation(opening, {
+        actionKey: topicActionStateKey({ topicKey: topicKey(opening), targetId: postId, action }),
+        busy: false,
+        decision: { action, objectAllowed, target, targetPresent: true },
+        trace,
+        isCurrent,
+        task: async (ticket) => {
+          interactionReadsRef.current.get(postId)?.controller.abort();
+          interactionReadsRef.current.delete(postId);
+          let request: DiscourseAction;
+          let rollback: DiscourseInteractionPatch | undefined;
+          const keys = cacheKeys(opening, ticket);
+          if (intent.kind === 'reaction') {
+            const config = await loadLinuxDoInteractionConfig();
+            assertWritableTicket(ticket);
+            if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
+            const latest = getLinuxDoPost(postId)?.target;
+            if (!latest || latest.siteExtension?.interactionUnconfirmed || !canToggleDiscourseLike(latest))
+              throw new HandledMutationError('当前内容不允许此操作', 'blocked', 'permission_denied');
+            const previous =
+              latest.currentUserReaction?.id ??
+              (latest.currentUserReaction === undefined && latest.liked ? config.reactionForLike : null);
+            const id = intent.reactionId || previous || config.reactionForLike;
+            if (config.reactionsEnabled && id !== previous && !config.enabledReactions.includes(id))
+              throw new Error('当前站点不支持这个反应');
+            if (!config.reactionsEnabled && intent.reactionId && id !== config.reactionForLike)
+              throw new Error('当前站点未启用表情反应');
+            request = config.reactionsEnabled
+              ? { type: 'toggle-reaction', postId, reactionId: id }
+              : { type: 'set-like', postId, active: !latest.liked };
+            markDiagnosticStage(trace, 'guard', {
+              source: 'linuxdo',
+              requestType: request.type,
+              isReactionsEnabled: config.reactionsEnabled,
+              itemCount: config.enabledReactions.length
+            });
+            rollback = {
+              currentUserReaction: latest.currentUserReaction,
+              reactionSummary: latest.reactionSummary,
+              liked: latest.liked
+            };
+            patchLinuxDoPost(postId, discourseReactionPreview(latest, id, config.reactionForLike), keys);
+            markDiagnosticStage(trace, 'apply', {
+              source: 'linuxdo',
+              requestType: request.type,
+              state: 'optimistic',
+              localApplied: true,
+              mode: id === previous ? 'remove' : 'add'
+            });
+          } else if (intent.kind === 'create-boost') {
+            const [config, emojis] = await Promise.all([
+              loadLinuxDoInteractionConfig(),
+              readGateway.getEmojiUrls({ source: 'linuxdo' })
+            ]);
+            assertWritableTicket(ticket);
+            if (!config.boostsEnabled || !discourseBoostStats(intent.content, Object.keys(emojis)).valid)
+              throw new Error('加电最多 16 个字符、5 个表情，请检查内容');
+            request = { type: 'create-boost', postId, content: intent.content };
+          } else request = { type: 'delete-boost', boostId: intent.boostId };
+          markDiagnosticStage(trace, 'guard', {
+            source: 'linuxdo',
+            requestType: request.type,
+            state: 'ready',
+            ...(intent.kind === 'create-boost' ? { contentLength: intent.content.length } : {})
+          });
+          const checkTarget = () => {
+            if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
+            const current = getLinuxDoPost(postId)?.target;
+            if (
+              !current ||
+              current.siteExtension?.interactionUnconfirmed ||
+              policyContentRef.current.topicDetail?.archived ||
+              ('systemAction' in current && current.systemAction) ||
+              (intent.kind === 'reaction' && !canToggleDiscourseLike(current)) ||
+              (intent.kind === 'delete-boost' &&
+                !current.siteExtension?.boosts?.some((item) => item.id === intent.boostId && item.canDelete)) ||
+              (intent.kind === 'create-boost' && current.siteExtension?.canBoost !== true)
+            )
+              throw new HandledMutationError('当前内容不允许此操作', 'blocked', 'permission_denied');
+          };
+          try {
+            const result = await runLinuxDoRequest(request, trace, ticket, checkTarget, dispatchState);
+            if (intent.kind === 'reaction') {
+              const fields = discoursePostFields(result);
+              if (
+                !fields ||
+                fields.commentId !== postId ||
+                (request.type === 'toggle-reaction' && !('currentUserReaction' in fields))
+              )
+                throw new Error('表情反应返回内容不完整');
+              resultPatch = {
+                currentUserReaction: fields.currentUserReaction,
+                reactionSummary: fields.reactionSummary || [],
+                likeCount: fields.likeCount,
+                liked: fields.liked,
+                canLike: fields.canLike
+              };
+            } else if (intent.kind === 'create-boost') {
+              const created = linuxDoBoostFromData(result);
+              if (!created) throw new Error('加电返回内容不完整');
+              resultPatch = {
+                siteExtension: {
+                  ...target.siteExtension,
+                  boosts: [...(target.siteExtension?.boosts || []), created],
+                  boostCount: (target.siteExtension?.boostCount || target.siteExtension?.boosts?.length || 0) + 1,
+                  canBoost: false
+                }
+              };
+            } else
+              resultPatch = {
+                siteExtension: {
+                  ...target.siteExtension,
+                  boosts: target.siteExtension?.boosts?.filter((item) => item.id !== intent.boostId),
+                  boostCount: Math.max(
+                    0,
+                    (target.siteExtension?.boostCount || target.siteExtension?.boosts?.length || 0) - 1
+                  ),
+                  canBoost: false
+                }
+              };
+            markDiagnosticStage(trace, 'parse', {
+              source: 'linuxdo',
+              requestType: request.type,
+              state: 'confirmed',
+              serverConfirmed: true
+            });
+            if (!isCurrent())
+              patchLinuxDoPost(
+                postId,
+                { siteExtension: { ...target.siteExtension, interactionUnconfirmed: true } },
+                keys
+              );
+            return result;
+          } catch (error) {
+            const rejected = error instanceof HandledMutationError && error.serverRejected;
+            if (
+              dispatchState.mayHaveSent &&
+              !rejected &&
+              !isRawUnauthorized(error) &&
+              scope === policyScopeRef.current
+            ) {
+              patchLinuxDoPost(
+                postId,
+                { siteExtension: { ...getLinuxDoPost(postId)?.target.siteExtension, interactionUnconfirmed: true } },
+                keys
+              );
+              if (isCurrent()) notify('互动结果尚未确认，请先核对，勿重复提交');
+              markDiagnosticStage(trace, 'apply', {
+                source: 'linuxdo',
+                requestType: request.type,
+                state: 'unconfirmed',
+                didDispatch: true,
+                serverConfirmed: false,
+                reason: 'unconfirmed'
+              });
+            } else if (rollback && isCurrent()) {
+              patchLinuxDoPost(postId, rollback, keys);
+              markDiagnosticStage(trace, 'rollback', {
+                source: 'linuxdo',
+                requestType: request.type,
+                state: 'local',
+                localApplied: true,
+                isServerRejected: rejected,
+                reason: normalizeDiagnosticReason(error)
+              });
+            }
+            throw error;
+          }
+        },
+        applyResult: (_result, variables) => {
+          patchLinuxDoPost(postId, resultPatch, variables);
+          if (intent.kind === 'create-boost' && boostDraftsRef.current.get(postId) === intent.content) {
+            boostDraftsRef.current.delete(postId);
+            setBoostComposer((current) =>
+              current?.postId === postId && current.content === intent.content ? null : current
+            );
+          }
+        },
+        afterSuccess:
+          intent.kind === 'reaction'
+            ? undefined
+            : (_result, variables) => recheckLinuxDoPost(postId, variables.ticket, trace),
+        successMessage: (_result, refreshed) =>
+          refreshed === false
+            ? '操作已提交，请刷新核对最新状态'
+            : intent.kind === 'reaction'
+              ? '反应已更新'
+              : intent.kind === 'create-boost'
+                ? '加电已提交'
+                : '加电已删除'
+      });
+      return success && isCurrent();
+    },
+    [
+      activeRef,
+      assertWritableTicket,
+      cacheKeys,
+      executeMutation,
+      getLinuxDoPost,
+      loadLinuxDoInteractionConfig,
+      notify,
+      patchLinuxDoPost,
+      policyContentRef,
+      policyScopeRef,
+      readGateway,
+      recheckLinuxDoPost,
+      runLinuxDoRequest
+    ]
+  );
+  const reactToPost = useCallback(
+    (postId: number, reactionId?: string) => mutateLinuxDoPost(postId, { kind: 'reaction', reactionId }),
+    [mutateLinuxDoPost]
+  );
+  const openBoostComposer = useCallback((postId: number) => {
+    setBoostComposer({ postId, content: boostDraftsRef.current.get(postId) || '' });
+  }, []);
+  const changeBoostContent = useCallback((content: string) => {
+    setBoostComposer((current) => {
+      if (!current) return current;
+      boostDraftsRef.current.set(current.postId, content);
+      return { ...current, content };
+    });
+  }, []);
+  const closeBoostComposer = useCallback(() => setBoostComposer(null), []);
+  const submitBoost = useCallback(
+    () =>
+      boostComposer
+        ? mutateLinuxDoPost(boostComposer.postId, { kind: 'create-boost', content: boostComposer.content })
+        : Promise.resolve(false),
+    [boostComposer, mutateLinuxDoPost]
+  );
+  const deleteBoost = useCallback(
+    (postId: number, boostId: number) => {
+      Alert.alert('删除加电？', '确认删除这条加电内容？', [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => void mutateLinuxDoPost(postId, { kind: 'delete-boost', boostId })
+        }
+      ]);
+    },
+    [mutateLinuxDoPost]
   );
 
   const submitReply = useCallback(
@@ -1944,25 +2443,36 @@ export function useTopicActionsController({
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
       if (actionTopic?.source !== 'linuxdo') throw new Error('当前入口不支持图片地址解析');
       const trace = beginDiagnosticTrace('reply', 'image-load', { source: 'linuxdo' });
+      let ticket: WritableSessionTicket | undefined;
       try {
-        const ticket = await ensureWritableSession('linuxdo');
+        ticket = await ensureWritableSession('linuxdo');
+        const requestTicket = ticket;
         assertWritableTicket(ticket);
         const url = await fetchLinuxDoUploadUrl({
           shortUrl,
           userAgent: linuxDoUserAgent(),
           fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
-            assertWritableTicket(ticket)
+            assertWritableTicket(requestTicket)
           )
         });
         assertWritableTicket(ticket);
         finishDiagnosticTrace(trace, 'success');
         return url;
       } catch (error) {
+        reportAccountError(error, ticket, trace);
         finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
         throw error;
       }
     },
-    [topicDetail, selectedTopic, ensureWritableSession, assertWritableTicket, authenticatedFetcher, linuxDoUserAgent]
+    [
+      topicDetail,
+      selectedTopic,
+      ensureWritableSession,
+      assertWritableTicket,
+      authenticatedFetcher,
+      linuxDoUserAgent,
+      reportAccountError
+    ]
   );
 
   const loadLinuxDoEditorData = useCallback(
@@ -1979,12 +2489,14 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
         throw new Error(`当前入口不支持 LinuxDo ${operation === 'load-templates' ? '模板' : '投票配置'}`);
       }
+      let ticket: WritableSessionTicket | undefined;
       try {
-        const ticket = await ensureWritableSession('linuxdo');
+        ticket = await ensureWritableSession('linuxdo');
+        const requestTicket = ticket;
         assertWritableTicket(ticket);
         const result = await read({
           fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
-            assertWritableTicket(ticket)
+            assertWritableTicket(requestTicket)
           ),
           userAgent: linuxDoUserAgent()
         });
@@ -1992,6 +2504,7 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: itemCount(result) });
         return result;
       } catch (error) {
+        reportAccountError(error, ticket, trace);
         if (isLoginRequiredError(error)) showLinuxDoVerification(errorMessage(error));
         finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
         throw error;
@@ -2001,6 +2514,7 @@ export function useTopicActionsController({
       assertWritableTicket,
       authenticatedFetcher,
       linuxDoUserAgent,
+      reportAccountError,
       showLinuxDoVerification,
       ensureWritableSession,
       selectedTopic,
@@ -2026,12 +2540,14 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
         throw new Error('当前入口不支持 LinuxDo 模板');
       }
+      let ticket: WritableSessionTicket | undefined;
       try {
-        const ticket = await ensureWritableSession('linuxdo');
+        ticket = await ensureWritableSession('linuxdo');
+        const requestTicket = ticket;
         assertWritableTicket(ticket);
         await recordLinuxDoTemplateUse({
           fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
-            assertWritableTicket(ticket)
+            assertWritableTicket(requestTicket)
           ),
           id,
           userAgent: linuxDoUserAgent()
@@ -2039,6 +2555,7 @@ export function useTopicActionsController({
         assertWritableTicket(ticket, true);
         finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', serverConfirmed: true });
       } catch (error) {
+        reportAccountError(error, ticket, trace);
         const message = errorMessage(error);
         if (isLoginRequiredError(error)) {
           showLinuxDoVerification(message);
@@ -2051,6 +2568,7 @@ export function useTopicActionsController({
       assertWritableTicket,
       authenticatedFetcher,
       linuxDoUserAgent,
+      reportAccountError,
       showLinuxDoVerification,
       ensureWritableSession,
       selectedTopic,
@@ -2464,6 +2982,16 @@ export function useTopicActionsController({
 
   return {
     actionBusy,
+    boostComposer,
+    openBoostComposer,
+    closeBoostComposer,
+    changeBoostContent,
+    submitBoost,
+    deleteBoost,
+    reactToPost,
+    recheckLinuxDoPost,
+    loadLinuxDoInteractionConfig,
+    linuxDoInteractionConfigQuery,
     replyImageUploading,
     bookmarkOnDiscourseSite,
     collectOnNodeSeekSite,

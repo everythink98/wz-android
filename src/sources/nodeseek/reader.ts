@@ -7,7 +7,7 @@ import {
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import type { NodeSeekSearchFilter } from '@/domain/forum/searchFilters';
 import type {
   Category,
@@ -204,7 +204,10 @@ export async function fetchNodeSeekTextResult(
   const headers: HeadersInit = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
     Referer: BASE_URL,
-    'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT,
+    'User-Agent': await resolveWebViewUserAgent(
+      new Headers(requestHeaders).get('User-Agent') || options.nodeSeekUserAgent,
+      options.signal
+    ),
     ...requestHeaders
   };
   const response = await fetchWithTimeout(
@@ -1195,6 +1198,18 @@ export async function searchNodeSeek(
     searchPath(trimmedQuery, page, requestOptions.filter),
     requestOptions
   );
+  if (/^\s*\{/.test(sourceResult.text)) {
+    let data: unknown;
+    try {
+      data = JSON.parse(sourceResult.text);
+    } catch {
+      // Unrecognized content still goes through the search completeness check.
+    }
+    if (isRecord(data) && data.success === false && typeof data.message === 'string' && data.message.trim()) {
+      rejectForumReadResponse(sourceResult.response);
+      throw new Error(data.message.trim());
+    }
+  }
   const document = sourceResult.pageDocument ?? parseNodeSeekPageDocument(sourceResult.text);
   const parsedSearch = parseNodeSeekSearchTopics(document);
   const candidateCount = parsedSearch.candidateCount;

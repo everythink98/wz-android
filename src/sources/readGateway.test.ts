@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
@@ -16,8 +18,68 @@ import { createDiscourseReadingRuntime } from '@/platform/query/discourseReading
 import { createLinuxDoWebViewFallbackFetcher } from '@/sources/linuxdo/browserFallback';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { RequestCanceledError } from '@/platform/network/request';
+import type { Fetcher } from '@/platform/network/request';
+import type { SessionSource, Source } from '@/domain/forum/sourceCatalog';
+
+afterEach(() => setDiagnosticWriter(null));
 
 describe('source gateway reads', () => {
+  it('reads interaction settings through the managed topic lane and discards unrelated bootstrap data', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    const signal = new AbortController().signal;
+    const fetcher = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(
+          `<script id="data-preloaded" type="application/json">${JSON.stringify({
+            currentUser: { username: 'private-user' },
+            siteSettings: {
+              discourse_reactions_enabled: true,
+              discourse_reactions_enabled_reactions: 'heart|bili_057',
+              discourse_boosts_enabled: true,
+              discourse_boosts_max_per_post: 50
+            }
+          })}</script>`
+        )
+    );
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      nodeSeekUserAgent: () => 'test',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityKey: 'linuxdo:7',
+        identityTrust: 'confirmed',
+        sessionEpoch: 4,
+        sourceEnabled: true
+      })
+    });
+    const config = await gateway.getLinuxDoInteractionConfig({ signal });
+    expect(config).toMatchObject({ enabledReactions: ['heart', 'bili_057'], boostsEnabled: true });
+    expect(config).not.toHaveProperty('currentUser');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toBe('https://linux.do/latest');
+    expect(browserFetchIntentFromInit(fetcher.mock.calls[0][1])).toMatchObject({
+      owner: 'topic',
+      priority: 'foreground'
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: 'getLinuxDoInteractionConfig',
+        phase: 'parse',
+        state: 'confirmed',
+        isReactionsEnabled: true,
+        isBoostsEnabled: true,
+        itemCount: 2,
+        count: 50
+      })
+    );
+    expect(JSON.stringify(events)).not.toMatch(/private-user|bili_057|linuxdo:7/);
+  });
   it.each([
     { path: '/site.json', status: 400, recheck: true },
     { path: '/session/current.json', status: 400, recheck: true },
@@ -464,4 +526,348 @@ describe('source gateway reads', () => {
     });
     expect(fetcher).not.toHaveBeenCalledWith(expect.stringContaining('book_re.aspx'), expect.anything());
   });
+});
+
+function accountFailureFixture(fetcher: Fetcher, enabledSources: readonly Source[] = ['linuxdo']) {
+  const requestAccountRecheck = vi.fn();
+  const onSessionExpired = vi.fn();
+  const gateway = createReadGateway({
+    fetcher,
+    anonymousFetcher: fetcher,
+    getEnabledSources: () => enabledSources,
+    nodeSeekUserAgent: () => 'audit',
+    requestAccountRecheck,
+    onSessionExpired,
+    readSessionRuntimeSnapshot: (source) => ({
+      source,
+      authenticated: true,
+      authSurfaceOpen: false,
+      identityKey: `${source}:7`,
+      identityTrust: 'confirmed',
+      sessionEpoch: 4,
+      sourceEnabled: true
+    })
+  });
+  return { gateway, requestAccountRecheck, onSessionExpired };
+}
+
+const loginNotice = { errors: ['您需要登录才能执行此操作。'] };
+
+describe('read authentication failures through the production gateway', () => {
+  it('preserves aggregate content before reporting both expired sources even when the first event changes its read plan', async () => {
+    const epochs = { linuxdo: 110, nodeseek: 110 };
+    const preserve = vi.fn();
+    const onSessionExpired = vi.fn((source: SessionSource) => {
+      expect(preserve).toHaveBeenCalledOnce();
+      if (source === 'linuxdo' || source === 'nodeseek') epochs[source]++;
+    });
+    const fetcher = vi.fn(async (input: string) =>
+      input.includes('nodeseek') || input.endsWith('/site.json')
+        ? new Response('expired', { status: 401 })
+        : Response.json({
+            topic_list: {
+              topics: [{ id: 1, title: 'readable', category_id: 5, created_at: '2026-10-12T00:00:00Z', posts_count: 1 }]
+            }
+          })
+    );
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo', 'nodeseek'],
+      nodeSeekUserAgent: () => 'test',
+      onSessionExpired,
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityKey: `${source}:7`,
+        identityTrust: 'confirmed',
+        sessionEpoch: source === 'linuxdo' || source === 'nodeseek' ? epochs[source] : 0,
+        sourceEnabled: true
+      })
+    });
+    await expect(gateway.getFeed({ source: 'all' }, { onBeforeSessionChange: preserve })).rejects.toThrow('请求已取消');
+    expect(preserve).toHaveBeenCalledOnce();
+    expect(preserve.mock.calls[0][0]).toMatchObject({ items: [{ source: 'linuxdo', title: 'readable' }] });
+    expect(onSessionExpired).toHaveBeenCalledTimes(2);
+    expect(onSessionExpired.mock.calls).toEqual(
+      expect.arrayContaining([
+        ['linuxdo', 110],
+        ['nodeseek', 110]
+      ])
+    );
+  });
+
+  it.each(['cancel', 'epoch', 'disabled', 'surface'] as const)(
+    'discards a late optional authentication failure after %s',
+    async (change) => {
+      let complete!: (response: Response) => void;
+      const pending = new Promise<Response>((resolve) => {
+        complete = resolve;
+      });
+      const fetcher = vi.fn(async (input: string) =>
+        input.endsWith('/site.json')
+          ? pending
+          : Response.json({
+              topic_list: {
+                topics: [
+                  { id: 1, title: 'readable', category_id: 5, created_at: '2026-10-12T00:00:00Z', posts_count: 1 }
+                ]
+              }
+            })
+      );
+      let epoch = 120;
+      let enabled = true;
+      let surface = false;
+      const onSessionExpired = vi.fn();
+      const requestAccountRecheck = vi.fn();
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => (enabled ? ['linuxdo'] : []),
+        nodeSeekUserAgent: () => 'test',
+        onSessionExpired,
+        requestAccountRecheck,
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated: true,
+          authSurfaceOpen: surface,
+          identityKey: 'linuxdo:7',
+          identityTrust: 'confirmed',
+          sessionEpoch: epoch,
+          sourceEnabled: enabled
+        })
+      });
+      const abort = new AbortController();
+      const result = gateway.getFeed({ source: 'linuxdo', signal: abort.signal }).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      if (change === 'cancel') abort.abort();
+      else if (change === 'epoch') epoch++;
+      else if (change === 'disabled') enabled = false;
+      else surface = true;
+      complete(new Response('expired', { status: 401 }));
+      if (change === 'cancel') expect(await result).toMatchObject({ items: [{ title: 'readable' }] });
+      else expect(await result).toBeInstanceOf(Error);
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(requestAccountRecheck).not.toHaveBeenCalled();
+    }
+  );
+
+  it('reports a shared optional category failure for the live reader after the first reader is canceled', async () => {
+    let complete!: (response: Response) => void;
+    const categoryResponse = new Promise<Response>((resolve) => {
+      complete = resolve;
+    });
+    const fetcher = vi.fn(async (input: string) =>
+      input.endsWith('/site.json')
+        ? categoryResponse
+        : Response.json({
+            topic_list: {
+              topics: [{ id: 1, title: 'readable', category_id: 5, created_at: '2026-10-12T00:00:00Z', posts_count: 1 }]
+            }
+          })
+    );
+    const { gateway, onSessionExpired } = accountFailureFixture(fetcher);
+    const canceled = new AbortController();
+    const first = gateway.getFeed({ source: 'linuxdo', signal: canceled.signal }).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    const second = gateway.getFeed({ source: 'linuxdo' });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    canceled.abort();
+    complete(new Response('expired', { status: 401 }));
+    await expect(first).resolves.toMatchObject({ items: [{ title: 'readable' }] });
+    await expect(second).resolves.toMatchObject({ items: [{ title: 'readable' }] });
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+  });
+  it.each([403, 404])(
+    'rechecks confirmed linux.do identity when topic HTTP %s explicitly requires login',
+    async (status) => {
+      const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(async () =>
+        Response.json(loginNotice, { status })
+      );
+      const result = await gateway.getTopic({ source: 'linuxdo', id: '1' }).catch((error: unknown) => error);
+      expect.soft(result).toMatchObject({ source: 'linuxdo', title: '受限帖子', accessRequirement: { type: 'login' } });
+      expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+      expect(onSessionExpired).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([401, 403])(
+    'passes authentication failure from optional feed category HTTP %s to Account owner',
+    async (status) => {
+      const fetcher = vi.fn(async (input: string) =>
+        new URL(input).pathname === '/site.json'
+          ? Response.json(loginNotice, { status })
+          : Response.json({
+              topic_list: {
+                topics: [
+                  {
+                    id: 1,
+                    title: 'valid feed item',
+                    category_id: 5,
+                    created_at: '2026-10-12T00:00:00Z',
+                    posts_count: 1
+                  }
+                ]
+              }
+            })
+      );
+      const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(fetcher);
+      const result = await gateway.getFeed({ source: 'linuxdo', limit: 1 }).catch((error: unknown) => error);
+      expect.soft(result).toMatchObject({ items: [{ id: '1', category: '未分类' }], errors: {} });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      if (status === 401) expect(onSessionExpired).toHaveBeenCalledTimes(1);
+      else expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([401, 403])('passes authentication failure from search CSRF HTTP %s to Account owner', async (status) => {
+    const fetcher = vi.fn(async (input: string) =>
+      new URL(input).pathname === '/session/csrf.json'
+        ? Response.json(loginNotice, { status })
+        : Response.json({ topics: [], posts: [], grouped_search_result: { more_full_page_results: false } })
+    );
+    const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(fetcher);
+    const result = await gateway.searchTopics({ source: 'linuxdo', query: 'AI' }).catch((error: unknown) => error);
+    expect.soft(result).toMatchObject({ items: [], errors: {} });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    if (status === 401) expect(onSessionExpired).toHaveBeenCalledTimes(1);
+    else expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not recheck ordinary missing topic HTTP 404', async () => {
+    const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(async () =>
+      Response.json({ errors: ['页面不存在或已被删除'] }, { status: 404 })
+    );
+    await expect(gateway.getTopic({ source: 'linuxdo', id: '1' })).rejects.toMatchObject({
+      kind: 'ordinary',
+      status: 404
+    });
+    expect(requestAccountRecheck).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('does not recheck ordinary permission requirement HTTP 403', async () => {
+    const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(async () =>
+      Response.json({ errors: ['您没有权限访问此主题。'] }, { status: 403 })
+    );
+    await expect(gateway.getTopic({ source: 'linuxdo', id: '1' })).resolves.toMatchObject({
+      accessRequirement: { type: 'permission' }
+    });
+    expect(requestAccountRecheck).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('does not recheck Cloudflare challenge HTTP 403', async () => {
+    const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(
+      async () =>
+        new Response('<title>Just a moment...</title>', { status: 403, headers: { 'Content-Type': 'text/html' } })
+    );
+    await expect(gateway.getTopic({ source: 'linuxdo', id: '1' })).rejects.toMatchObject({
+      kind: 'verification-required'
+    });
+    expect(requestAccountRecheck).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('rechecks explicit search login failure HTTP 403', async () => {
+    const { gateway, requestAccountRecheck, onSessionExpired } = accountFailureFixture(async (input) =>
+      new URL(input).pathname === '/session/csrf.json'
+        ? Response.json({ csrf: 'synthetic' })
+        : Response.json(loginNotice, { status: 403 })
+    );
+    await expect(gateway.searchTopics({ source: 'linuxdo', query: 'AI' })).rejects.toMatchObject({
+      kind: 'login-required',
+      reason: 'account-recheck-required'
+    });
+    expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('passes raw HTTP 401 from optional Yaohuo favorite lookup to Account owner', async () => {
+    const fetcher = vi.fn(async (input: string) =>
+      input.includes('favlist.aspx')
+        ? new Response('expired', { status: 401 })
+        : new Response(
+            '<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>更多回帖(0)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>'
+          )
+    );
+    const { gateway, onSessionExpired } = accountFailureFixture(fetcher, ['yaohuo']);
+    const result = await gateway.getTopic({
+      source: 'yaohuo',
+      id: '123',
+      topic: {
+        source: 'yaohuo',
+        id: '123',
+        title: '妖火帖子',
+        author: 'alice',
+        url: 'https://www.yaohuo.me/bbs-123.html',
+        createdAt: '2026-05-20T00:00:00Z',
+        replyCount: 0
+      }
+    });
+    expect.soft(result).toMatchObject({ source: 'yaohuo', id: '123', contentHtml: '<p>body</p>' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes raw HTTP 401 from optional NodeSeek vote lookup to Account owner', async () => {
+    const page =
+      '<html><head><title>Poll topic</title></head><body><a class="post-title" href="/post-128-1">Poll topic</a><div class="content-item" data-comment-id="1"><a href="/space/1">alice</a><article class="post-content"><p>主题 <a href="nsapp://vote?id=100">nsapp://vote?id=100</a></p></article></div></body></html>';
+    const fetcher = vi.fn(
+      async (input: string) =>
+        new Response(input.includes('/api/vote/info/100') ? 'expired' : page, {
+          status: input.includes('/api/vote/info/100') ? 401 : 200,
+          headers: { 'Content-Type': 'text/html' }
+        })
+    );
+    const { gateway, onSessionExpired } = accountFailureFixture(fetcher, ['nodeseek']);
+    const result = await gateway.getTopic({ source: 'nodeseek', id: '128' });
+    expect.soft(result).toMatchObject({ source: 'nodeseek', id: '128', title: 'Poll topic' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([401, 403])(
+    'passes authentication failure from editable reply hydration HTTP %s to Account owner',
+    async (status) => {
+      const fetcher = vi.fn(async (input: string) =>
+        new URL(input).pathname === '/posts/1002.json'
+          ? Response.json(loginNotice, { status })
+          : Response.json({
+              id: 900,
+              title: 'normal topic',
+              slug: 'topic',
+              created_at: '2026-10-12T00:00:00Z',
+              posts_count: 2,
+              post_stream: {
+                stream: [1001, 1002],
+                posts: [
+                  {
+                    id: 1001,
+                    post_number: 1,
+                    username: 'alice',
+                    cooked: '<p>opening</p>',
+                    created_at: '2026-10-12T00:00:00Z'
+                  },
+                  {
+                    id: 1002,
+                    post_number: 2,
+                    username: 'bob',
+                    cooked: '<p>reply</p>',
+                    created_at: '2026-10-12T00:01:00Z',
+                    can_edit: true
+                  }
+                ]
+              }
+            })
+      );
+      const { gateway, onSessionExpired, requestAccountRecheck } = accountFailureFixture(fetcher);
+      const result = await gateway.getTopic({ source: 'linuxdo', id: '900' });
+      expect.soft(result).toMatchObject({ id: '900', title: 'normal topic', replies: [{ commentId: 1002 }] });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      if (status === 401) expect(onSessionExpired).toHaveBeenCalledTimes(1);
+      else expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+    }
+  );
 });

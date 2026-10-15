@@ -58,6 +58,7 @@ import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credential
 import { fetchLinuxDoTemplates } from '@/sources/linuxdo/templates';
 import { resolveLinuxDoUpload } from '@/sources/linuxdo/uploadUrls';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { forumResponseAccountFailure } from '@/sources/sessionFailure';
 import { retryEmojiCatalog } from '@/sources/discourse/retryEmojiCatalog';
 import { normalizeReplyImageAsset } from '@/sources/imageUpload';
 import type { StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
@@ -466,13 +467,30 @@ export function useTopicComposerController({
       assertOwner(value, ticket);
       await owner.ensureNetworkProxyReady();
       assertOwner(value, ticket);
+      let reported = false;
+      const accountFetcher: Fetcher = async (input, init) => {
+        const response = await owner.fetcher(input, init);
+        const reason =
+          !reported && (await forumResponseAccountFailure(value.source, input, response, init?.signal ?? undefined));
+        if (reason && !reported && !init?.signal?.aborted) {
+          try {
+            assertOwner(value, ticket);
+          } catch {
+            return response;
+          }
+          reported = true;
+          if (reason === 'http-401') runtimeRef.current.onSessionExpired(ticket.source, ticket.sessionEpoch);
+          else runtimeRef.current.requestAccountRecheck(ticket.source, ticket.sessionEpoch);
+        }
+        return response;
+      };
       const fetcher: Fetcher = (input, init) =>
         withRequestBeforeSend(
-          owner.fetcher,
+          accountFetcher,
           () => assertOwner(value, ticket),
           init?.method && !['GET', 'HEAD', 'OPTIONS'].includes(init.method.toUpperCase()) ? dispatchState : undefined
         )(input, init);
-      return { ticket, fetcher, userAgent: owner.getUserAgent(value.source) };
+      return { ticket, fetcher, accountFetcher, userAgent: owner.getUserAgent(value.source) };
     },
     [assertOwner, runtimeRef]
   );
@@ -971,11 +989,7 @@ export function useTopicComposerController({
           notify: runtimeRef.current.notify,
           createPoll: async (poll, options) => {
             const pollFetcher: Fetcher = (input, init) =>
-              withRequestBeforeSend(
-                runtimeRef.current.fetcher,
-                assertSubmissionCurrent,
-                options.dispatchState
-              )(input, init);
+              withRequestBeforeSend(access.accountFetcher, assertSubmissionCurrent, options.dispatchState)(input, init);
             const response = await runNodeSeekAction({
               fetcher: pollFetcher,
               userAgent: access.userAgent,

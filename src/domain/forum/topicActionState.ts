@@ -3,7 +3,7 @@ import { prepareReplyContent, prepareTopicContent } from './topicContentSplit';
 
 export type InteractionType = 'upvote' | 'like' | 'dislike';
 type InteractionMode = 'add' | 'remove';
-export type TopicActionStateKind = InteractionType | 'collection' | 'bookmark';
+export type TopicActionStateKind = InteractionType | 'boost' | 'collection' | 'bookmark';
 
 type InteractionPatch = {
   commentId: number;
@@ -21,7 +21,8 @@ export function topicActionStateKey({
   targetId: string | number;
   action: TopicActionStateKind;
 }) {
-  return `${topicKey}:${targetId}:${action}`;
+  // Reactions and boosts share the same post snapshot.
+  return `${topicKey}:${targetId}:${action === 'boost' ? 'like' : action}`;
 }
 
 function nextCount(value: number | undefined, delta: number) {

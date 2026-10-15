@@ -14,7 +14,7 @@ import {
   isCloudflareChallengeResponse,
   LinuxDoCloudflareError
 } from '@/platform/network/cloudflareChallenge';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { runLinuxDoAction } from './actionClient';
 import { LINUXDO_BASE_URL, linuxDoRequestError } from './protocol';
 import { normalizeLinuxDoPollCapabilities } from './pollCapabilities';
@@ -58,7 +58,7 @@ export async function loadLinuxDoTopicCreationContext(options: Options): Promise
     fetchWithTimeout(
       `${LINUXDO_BASE_URL}/latest`,
       withBrowserFetchIntent(
-        { headers: { Accept: 'text/html', 'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT } },
+        { headers: { Accept: 'text/html', 'User-Agent': await resolveWebViewUserAgent(userAgent, signal) } },
         browserFetchIntent
       ),
       { fetcher, signal }

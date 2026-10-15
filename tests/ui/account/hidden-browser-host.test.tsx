@@ -3,6 +3,7 @@ import { act, render } from '@testing-library/react-native';
 import React, { createRef } from 'react';
 import type { WebView } from 'react-native-webview';
 import { HiddenBrowserHost } from '@/features/account/HiddenBrowserHost';
+import { NODESEEK_BROWSER_FETCH_SCRIPT } from '@/features/account/useHiddenBrowserFetchController';
 
 const mockInjectJavaScript = jest.fn();
 let mockWebViewProps: Record<string, any> = {};
@@ -54,9 +55,6 @@ describe('HiddenBrowserHost linux.do transport', () => {
     expect(mockWebViewPropsByUrl.get('https://www.nodeseek.com/post-1-1')?.source).toEqual({
       uri: 'https://www.nodeseek.com/post-1-1'
     });
-    expect(
-      mockWebViewPropsByUrl.get('https://www.nodeseek.com/post-1-1')?.injectedJavaScriptBeforeContentLoaded
-    ).toBeUndefined();
     expect(mockWebViewPropsByUrl.get('https://linux.do/latest.json')?.source).toEqual({
       uri: 'https://linux.do/latest.json'
     });
@@ -68,37 +66,44 @@ describe('HiddenBrowserHost linux.do transport', () => {
     expect(mockWebViewPropsByUrl).toHaveProperty('size', 0);
   });
 
-  it('passes the account owner into the NodeSeek identity probe script', async () => {
-    const url = 'https://www.nodeseek.com/';
-    await render(
-      <HiddenBrowserHost
-        blockedMessage=""
-        failLinuxDoBrowserFetchById={jest.fn()}
-        failNodeSeekBrowserFetchById={jest.fn()}
-        handleLinuxDoBrowserFetchMessage={jest.fn()}
-        handleNodeSeekBrowserFetchMessage={jest.fn()}
-        linuxDoBrowserWebViewRef={createRef<WebView>()}
-        nodeSeekBrowserWebViewRef={createRef<WebView>()}
-        onLinuxDoHttpErrorStatus={jest.fn()}
-        onNodeSeekHttpErrorStatus={jest.fn()}
-        state={{
-          linuxDo: { request: null, userAgent: 'LinuxDo Agent' },
-          nodeSeek: {
-            request: { id: 3, url, owner: 'account' },
-            userAgent: 'NodeSeek Agent'
-          }
-        }}
-        styles={{} as never}
-      />
-    );
+  it.each(['account', 'topic', undefined] as const)(
+    'starts the full NodeSeek %s polling script before load end and retains the load-end fallback',
+    async (owner) => {
+      const url = 'https://www.nodeseek.com/';
+      await render(
+        <HiddenBrowserHost
+          blockedMessage=""
+          failLinuxDoBrowserFetchById={jest.fn()}
+          failNodeSeekBrowserFetchById={jest.fn()}
+          handleLinuxDoBrowserFetchMessage={jest.fn()}
+          handleNodeSeekBrowserFetchMessage={jest.fn()}
+          linuxDoBrowserWebViewRef={createRef<WebView>()}
+          nodeSeekBrowserWebViewRef={createRef<WebView>()}
+          onLinuxDoHttpErrorStatus={jest.fn()}
+          onNodeSeekHttpErrorStatus={jest.fn()}
+          state={{
+            linuxDo: { request: null, userAgent: 'LinuxDo Agent' },
+            nodeSeek: {
+              request: { id: 3, url, owner },
+              userAgent: 'NodeSeek Agent'
+            }
+          }}
+          styles={{} as never}
+        />
+      );
 
-    expect(mockWebViewPropsByUrl.get(url)?.injectedJavaScriptBeforeContentLoaded).toEqual(
-      expect.stringContaining('const requestOwner = "account";')
-    );
-    mockWebViewPropsByUrl.get(url)?.onLoadEnd();
+      const script = NODESEEK_BROWSER_FETCH_SCRIPT.replace('__NODESEEK_BROWSER_FETCH_ID__', '3').replace(
+        '__NODESEEK_BROWSER_FETCH_OWNER__',
+        JSON.stringify(owner ?? null)
+      );
+      expect(mockWebViewPropsByUrl.get(url)?.injectedJavaScriptBeforeContentLoaded).toBe(script);
+      expect(mockInjectJavaScript).not.toHaveBeenCalled();
+      mockWebViewPropsByUrl.get(url)?.onLoadEnd();
 
-    expect(mockInjectJavaScript).toHaveBeenCalledWith(expect.stringContaining('const requestOwner = "account";'));
-  });
+      expect(mockInjectJavaScript).toHaveBeenCalledTimes(1);
+      expect(mockInjectJavaScript).toHaveBeenCalledWith(script);
+    }
+  );
 
   it('inspects a main-document 429 instead of failing before DOM classification', async () => {
     const failLinuxDoBrowserFetchById = jest.fn();

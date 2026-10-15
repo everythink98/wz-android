@@ -1,8 +1,15 @@
 import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CancelledError, isCancelledError } from '@tanstack/react-query';
 import type { WebView } from 'react-native-webview';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import * as SecureStore from 'expo-secure-store';
+import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
+import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { migrateLegacyCookieSnapshots } from '@/platform/storage/legacyCookieSnapshotMigration';
+import {
+  createCredentialWriteGate,
+  enqueueCredentialWriteForGeneration,
+  replaceCredentialWrite
+} from '@/platform/storage/credentialWriteGate';
 import type { Fetcher } from '@/platform/network/request';
 import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -49,6 +56,7 @@ import {
   type WritableSessionTicket
 } from '@/domain/session/writableSessionGate';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import { RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { useAccountStatusController } from './useAccountStatusController';
 import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
@@ -110,23 +118,169 @@ export function useAccountRuntime({
   const linuxDoPanelClosingSessionRef = useRef<number | null>(null);
   const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-  const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
+  const nodeSeekWebViewUserAgentRef = useRef('');
+  const linuxDoWebViewUserAgentRef = useRef('');
   const prepareAuthSurfaceOpenRef = useRef<(surface: AuthSurface) => void>(() => undefined);
   const credentialFailureHandlerRef = useRef<
     (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) => void
   >(() => undefined);
   const credentialClearIntentHandlerRef = useRef<(site: CredentialSite) => void>(() => undefined);
-  const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-  const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
-  const commitNodeSeekWebViewUserAgent = useCallback((userAgent: string) => {
-    nodeSeekWebViewUserAgentRef.current = userAgent;
-    setNodeSeekWebViewUserAgent(userAgent);
+  const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState('');
+  const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState('');
+  const userAgentGatesRef = useRef({ nodeseek: createCredentialWriteGate(), linuxdo: createCredentialWriteGate() });
+  const userAgentWritesRef = useRef<Partial<Record<'nodeseek' | 'linuxdo', Promise<unknown>>>>({});
+  const setUserAgent = useCallback((site: 'nodeseek' | 'linuxdo', userAgent: string) => {
+    if (site === 'nodeseek') {
+      nodeSeekWebViewUserAgentRef.current = userAgent;
+      setNodeSeekWebViewUserAgent(userAgent);
+    } else {
+      linuxDoWebViewUserAgentRef.current = userAgent;
+      setLinuxDoWebViewUserAgent(userAgent);
+    }
   }, []);
-  const commitLinuxDoWebViewUserAgent = useCallback((userAgent: string) => {
-    linuxDoWebViewUserAgentRef.current = userAgent;
-    setLinuxDoWebViewUserAgent(userAgent);
-  }, []);
+  const commitUserAgent = useCallback(
+    (site: 'nodeseek' | 'linuxdo', userAgent: string) => {
+      setUserAgent(site, userAgent);
+      const write = replaceCredentialWrite(userAgentGatesRef.current[site], () =>
+        SecureStore.setItemAsync(
+          site === 'nodeseek' ? NODESEEK_USER_AGENT_STORAGE_KEY : LINUXDO_USER_AGENT_STORAGE_KEY,
+          userAgent
+        )
+      );
+      userAgentWritesRef.current[site] = write;
+      void write.catch(() => undefined);
+    },
+    [setUserAgent]
+  );
+  const commitNodeSeekWebViewUserAgent = useCallback(
+    (userAgent: string) => commitUserAgent('nodeseek', userAgent),
+    [commitUserAgent]
+  );
+  const commitLinuxDoWebViewUserAgent = useCallback(
+    (userAgent: string) => commitUserAgent('linuxdo', userAgent),
+    [commitUserAgent]
+  );
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [restoredUserAgentAttempt, setRestoredUserAgentAttempt] = useState<number | null>(null);
+  const [legacyRestoreRevision, setLegacyRestoreRevision] = useState(0);
+  const [restoredIdentities, setRestoredIdentities] = useState<{
+    attempt: number;
+    sources: readonly SessionSite[];
+  } | null>(null);
+  const localUserAgentsReady = restoredUserAgentAttempt === restoreAttempt;
+  const [sessionRestoreError, setSessionRestoreError] = useState('');
+  const isSourceIdentityReady = useCallback(
+    (source: SessionSite) =>
+      ready &&
+      localUserAgentsReady &&
+      restoredIdentities?.attempt === restoreAttempt &&
+      restoredIdentities.sources.includes(source),
+    [localUserAgentsReady, ready, restoreAttempt, restoredIdentities]
+  );
+  const retrySessionRestore = useCallback(() => {
+    if (localUserAgentsReady) setLegacyRestoreRevision((revision) => revision + 1);
+    else setRestoreAttempt((attempt) => attempt + 1);
+  }, [localUserAgentsReady]);
+  const notifyRef = useRef(notify);
+  useCommitRefValue(notifyRef, notify);
+  useEffect(() => {
+    let active = true;
+    const generations = {
+      nodeseek: userAgentGatesRef.current.nodeseek.generation,
+      linuxdo: userAgentGatesRef.current.linuxdo.generation
+    };
+    setSessionRestoreError('');
+    void Promise.all([
+      SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
+      SecureStore.getItemAsync(LINUXDO_USER_AGENT_STORAGE_KEY)
+    ])
+      .then(([nodeSeekUserAgent, linuxDoUserAgent]) => {
+        if (!active) return;
+        if (generations.nodeseek === 0 && userAgentGatesRef.current.nodeseek.generation === 0)
+          setUserAgent('nodeseek', sanitizeNodeSeekUserAgent(nodeSeekUserAgent ?? ''));
+        if (generations.linuxdo === 0 && userAgentGatesRef.current.linuxdo.generation === 0)
+          setUserAgent('linuxdo', sanitizeLinuxDoUserAgent(linuxDoUserAgent ?? ''));
+        setRestoredUserAgentAttempt(restoreAttempt);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSessionRestoreError('本地登录身份读取失败，请重试');
+        notifyRef.current('本地登录身份读取失败，请重试');
+      });
+    return () => {
+      active = false;
+    };
+  }, [restoreAttempt, setUserAgent]);
+  useEffect(() => {
+    if (!ready || !localUserAgentsReady) return;
+    const pendingSources = enabledSessionSources.filter((source) => !isSourceIdentityReady(source));
+    if (!pendingSources.length) {
+      setSessionRestoreError('');
+      return;
+    }
+    let active = true;
+    const isRestorationCurrent = () =>
+      active && pendingSources.every((source) => enabledSourcesRef.current.includes(source));
+    void migrateLegacyCookieSnapshots({
+      enabledSources: pendingSources,
+      isCurrent: isRestorationCurrent,
+      restoreUserAgent: async (site, legacyUserAgent) => {
+        const gate = userAgentGatesRef.current[site];
+        const userAgentRef = site === 'nodeseek' ? nodeSeekWebViewUserAgentRef : linuxDoWebViewUserAgentRef;
+        if (isRestorationCurrent() && (!userAgentRef.current || gate.generation > 0)) {
+          const userAgent =
+            userAgentRef.current ||
+            (site === 'nodeseek'
+              ? sanitizeNodeSeekUserAgent(legacyUserAgent)
+              : sanitizeLinuxDoUserAgent(legacyUserAgent));
+          const write = enqueueCredentialWriteForGeneration(gate, gate.generation, async ({ isCurrent }) => {
+            if (!isRestorationCurrent()) return;
+            await SecureStore.setItemAsync(
+              site === 'nodeseek' ? NODESEEK_USER_AGENT_STORAGE_KEY : LINUXDO_USER_AGENT_STORAGE_KEY,
+              userAgent
+            );
+            if (isRestorationCurrent() && isCurrent()) setUserAgent(site, userAgent);
+          });
+          userAgentWritesRef.current[site] = write;
+          await write;
+        }
+        // A Native submission can replace a pending legacy write. Await its persisted identity before deleting old keys.
+        let write = userAgentWritesRef.current[site];
+        while (write) {
+          await write;
+          if (!isRestorationCurrent() || write === userAgentWritesRef.current[site]) break;
+          write = userAgentWritesRef.current[site];
+        }
+      }
+    })
+      .then((migration) => {
+        if (!isRestorationCurrent()) return;
+        if (Object.values(migration).some((state) => state === 'retained'))
+          throw new Error('Local identity restore is incomplete');
+        setSessionRestoreError('');
+        setRestoredIdentities((previous) => ({
+          attempt: restoreAttempt,
+          sources: [...new Set([...(previous?.attempt === restoreAttempt ? previous.sources : []), ...pendingSources])]
+        }));
+      })
+      .catch(() => {
+        if (!isRestorationCurrent()) return;
+        setSessionRestoreError('本地登录身份读取失败，请重试');
+        notifyRef.current('本地登录身份读取失败，请重试');
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    enabledSessionSources,
+    isSourceIdentityReady,
+    legacyRestoreRevision,
+    localUserAgentsReady,
+    ready,
+    restoreAttempt,
+    setUserAgent
+  ]);
+  const sessionIdentityReady = ready && localUserAgentsReady && enabledSessionSources.every(isSourceIdentityReady);
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
@@ -203,22 +357,25 @@ export function useAccountRuntime({
     ) => Promise<AccountReconcileResult>
   >(async () => ({ status: 'stale' }));
   const applyAccountSessionEventRef = useRef<(event: ScopedSiteSessionEvent) => boolean>(() => false);
-  const readSessionRuntimeSnapshot = useCallback((source: SessionSite): SessionRuntimeSnapshot => {
-    const sourceEnabled = enabledSourcesRef.current.includes(source);
-    const account =
-      appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source)) ||
-      createAccountSessionSnapshot(source);
-    const access = accountSessionAccess(account);
-    return {
-      source,
-      authenticated: access.authenticated,
-      authSurfaceOpen: sourceEnabled && hasAuthSurfaceBarrierForSource(authSurfaceRegistryRef.current, source),
-      identityKey: access.identityKey,
-      identityTrust: access.identityTrust,
-      sessionEpoch: forumSessionEpochsRef.current[source],
-      sourceEnabled
-    };
-  }, []);
+  const readSessionRuntimeSnapshot = useCallback(
+    (source: SessionSite): SessionRuntimeSnapshot => {
+      const sourceEnabled = enabledSourcesRef.current.includes(source);
+      const account =
+        appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source)) ||
+        createAccountSessionSnapshot(source);
+      const access = accountSessionAccess(account);
+      return {
+        source,
+        authenticated: access.authenticated,
+        authSurfaceOpen: sourceEnabled && hasAuthSurfaceBarrierForSource(authSurfaceRegistryRef.current, source),
+        identityKey: access.identityKey,
+        identityTrust: isSourceIdentityReady(source) ? access.identityTrust : 'unknown',
+        sessionEpoch: forumSessionEpochsRef.current[source],
+        sourceEnabled
+      };
+    },
+    [isSourceIdentityReady]
+  );
   const notificationPrivateAccessAllowed = useCallback(
     (source: SessionSite, identityKey: string) => {
       const snapshot = readSessionRuntimeSnapshot(source);
@@ -417,7 +574,7 @@ export function useAccountRuntime({
   );
   const status = useAccountStatusController({
     enabledSources: enabledSessionSources,
-    enabledSourcesReady: ready,
+    enabledSourcesReady: sessionIdentityReady,
     fetcher: session.forumFetchWithWebViewFallback,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
@@ -428,6 +585,11 @@ export function useAccountRuntime({
   const reconcileAccountStatus = useCallback(
     async (...args: Parameters<typeof reconcileAccountStatusBase>): Promise<AccountReconcileResult> => {
       const source = args[0];
+      if (!enabledSourcesRef.current.includes(source)) return { status: 'stale' };
+      if (!isSourceIdentityReady(source) || !status.hydrated) {
+        const error = new Error('本地登录身份尚未就绪，请稍后重试');
+        return { status: 'unknown', error: error.message, errorInfo: sourceErrorFromUnknown(source, error) };
+      }
       const tickets = Object.values(authSurfaceRegistryRef.current.active).filter(
         (ticket) => ticket?.source === source && ticket.phase === 'reconciling'
       );
@@ -469,7 +631,7 @@ export function useAccountRuntime({
       }
       return result;
     },
-    [handoffLinuxDoCookies, reconcileAccountStatusBase]
+    [handoffLinuxDoCookies, isSourceIdentityReady, reconcileAccountStatusBase, status.hydrated]
   );
   const reconcileAuthSurfaceAccountStatus = useCallback(
     (source: SessionSite, options: { surfaceGeneration?: number; publishAnonymous?: boolean } = {}) =>
@@ -613,9 +775,11 @@ export function useAccountRuntime({
     linuxDoWebViewSessionRef,
     isLinuxDoSurfaceVisible: isLinuxDoPanelVisible,
     notify,
+    onQueuedLinuxDoLoginCanceled: () => handleClearCredentialLoginIntent('linuxdo'),
     onBeforeLinuxDoSurfaceOpened: () => prepareAuthSurfaceOpenRef.current('linuxdo-login'),
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     onLinuxDoSurfaceClosed: ({ authoritativeResult, reason, parentTraceId }) => {
+      handleClearCredentialLoginIntent('linuxdo');
       finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason, parentTraceId);
       if (authoritativeResult)
         void linuxDoCookieHandoffRef.current?.then(
@@ -711,14 +875,6 @@ export function useAccountRuntime({
     closeYaohuoLoginPanel,
     enabledSessionSourceSet
   ]);
-  const previousLinuxDoPanelVisibleRef = useRef(showLinuxDoPanel);
-  useEffect(() => {
-    if (previousLinuxDoPanelVisibleRef.current && !showLinuxDoPanel) {
-      handleClearCredentialLoginIntent('linuxdo');
-    }
-    previousLinuxDoPanelVisibleRef.current = showLinuxDoPanel;
-  }, [handleClearCredentialLoginIntent, showLinuxDoPanel]);
-
   const account = useAccountController({
     checkingRequestIdRef,
     clearLinuxDoLoginState: async () => {
@@ -769,9 +925,13 @@ export function useAccountRuntime({
         await openUser(command.user, command.initialTab);
         return;
       }
+      if (command.type === 'refresh' && (!sessionIdentityReady || !status.hydrated)) {
+        if (sessionRestoreError) retrySessionRestore();
+        return;
+      }
       await credentials.handleAccountCenterCommand(command);
     },
-    [credentials, openUser]
+    [credentials, openUser, retrySessionRestore, sessionIdentityReady, sessionRestoreError, status.hydrated]
   );
   const showYaohuoLogin = useCallback(
     (message = '请先登录妖火。') => {
@@ -1091,6 +1251,7 @@ export function useAccountRuntime({
       forumSessionEpochs: session.forumSessionEpochs,
       getLinuxDoUserAgent,
       getNodeSeekUserAgent,
+      notificationFetcher: session.nodeSeekFetchWithWebViewFallback,
       notificationPrivateAccessAllowed,
       readGateway,
       reconcileAccountStatus,
@@ -1133,6 +1294,13 @@ export function useAccountRuntime({
       }
     },
     hosts: {
+      startupRecovery: sessionRestoreError
+        ? createElement(RecoverableEmptyState, {
+            message: sessionRestoreError,
+            actionLabel: '重试启动',
+            onAction: retrySessionRestore
+          })
+        : null,
       closePanels,
       closeTopmostSurface,
       element: hostElement,

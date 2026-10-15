@@ -17,7 +17,7 @@ import type {
   NotificationAdapterAccess,
   NotificationListOptions
 } from '@/sources/notificationAdapter';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
 import { isNodeSeekChallengeResponse, NODESEEK_BASE_URL, nodeSeekTopicUrl } from './protocol';
@@ -116,7 +116,7 @@ async function fetchJson(path: string, options: NotificationAdapterAccess) {
         headers: {
           Accept: 'application/json, text/plain, */*',
           Referer: `${NODESEEK_BASE_URL}/notification`,
-          'User-Agent': options.userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT,
+          'User-Agent': await resolveWebViewUserAgent(options.userAgent, options.signal),
           'X-Requested-With': 'XMLHttpRequest'
         }
       },

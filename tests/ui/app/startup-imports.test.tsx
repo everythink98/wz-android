@@ -19,6 +19,9 @@ describe('startup module evaluation', () => {
       jest.doMock('expo', () => ({ ...jest.requireActual<object>('expo'), registerRootComponent: jest.fn() }));
       jest.doMock('expo-dev-client', () => ({}));
       require('../../../index');
+      const constants = require('expo-constants');
+      expect(constants.default.executionEnvironment).toBe(constants.ExecutionEnvironment.Bare);
+      expect(require('expo').isRunningInExpoGo()).toBe(false);
       loads.forEach((load) => expect(load).not.toHaveBeenCalled());
     });
     modules.forEach((name) => jest.dontMock(name));

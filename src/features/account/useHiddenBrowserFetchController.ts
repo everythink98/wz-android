@@ -18,11 +18,12 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     const text = pageText(Infinity);
     return /^\\s*[{[]/.test(text) ? text : "";
   };
-  const isChallengePage = () => {
-    const hasChallengeElement = Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], #cf-challenge-running, #challenge-running, #challenge-stage, form#challenge-form, form[action*='/cdn-cgi/challenge'], iframe[src*='challenges.cloudflare.com'], script[src*='challenge-platform'], script[src*='/cdn-cgi/challenge']"));
+  const isChallengePage = (includeDetectionScript = false) => {
+    const hasChallengeElement = Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], #cf-challenge-running, #challenge-running, #challenge-stage, form#challenge-form, form[action*='/cdn-cgi/challenge'], iframe[src*='challenges.cloudflare.com']"));
+    const hasDetectionScript = includeDetectionScript && Boolean(document.querySelector("script[src*='challenge-platform'], script[src*='/cdn-cgi/challenge']"));
     const hasChallengeHeading = Array.from(document.querySelectorAll("h1, h2")).some((heading) => challengeHeadingPattern.test((heading.textContent || "").trim()));
     const hasChallengeConfig = Array.from(document.scripts || []).some((script) => /window\._cf_chl_opt|__cf_chl|cf_chl_/i.test(script.textContent || ""));
-    return challengeTitlePattern.test(document.title || "") || hasChallengeElement || hasChallengeHeading || hasChallengeConfig;
+    return challengeTitlePattern.test(document.title || "") || hasChallengeElement || hasChallengeHeading || hasChallengeConfig || hasDetectionScript;
   };
   const restrictedNoticePattern = new RegExp(${JSON.stringify(ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE)}, "i");
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
@@ -32,6 +33,12 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const hasSearchPageContent = () => isNodeSeekSearchPage()
     && (Boolean(document.querySelector(".post-list-item"))
       || /没有找到|没有结果|暂无|未找到|no results|nothing found/i.test(pageText()));
+  const hasRuntimeAccountUser = () => {
+    const config = window.__config__;
+    return Boolean(config && typeof config === "object"
+      && Object.prototype.hasOwnProperty.call(config, "user")
+      && (config.user === null || (typeof config.user === "object" && !Array.isArray(config.user))));
+  };
   const hasAccountEvidence = () => {
     const config = window.__config__ && typeof window.__config__ === "object"
       ? window.__config__
@@ -173,6 +180,34 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     }
     return windowConfigPostDataHtml();
   };
+  const windowConfigUserHtml = () => {
+    const html = document.documentElement ? document.documentElement.outerHTML : "";
+    const user = window.__config__?.user;
+    if (!user || typeof user !== "object" || Array.isArray(user) || !document.documentElement) {
+      return html;
+    }
+    const scripts = [...html.matchAll(/<script\\b[^>]*>([\\s\\S]*?)<\\/script>/gi)].map((match) => match[1]);
+    const attributes = [...html.matchAll(/\\sdata-[\\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]+[^"']*)["']/g)].map((match) => match[1]);
+    let embedded = {};
+    for (const candidate of [...scripts, ...attributes].flatMap((text) => text.match(/eyJ[A-Za-z0-9+/=]+/g) || [])) {
+      try {
+        const json = decodeURIComponent(Array.from(atob(candidate), (char) => "%" + char.charCodeAt(0).toString(16).padStart(2, "0")).join(""));
+        const parsed = JSON.parse(json);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          && ["user", "currentUser", "current_user", "account", "postData", "rotateTopics", "topicList", "allCategory", "posts"].some((key) => parsed[key])) {
+          embedded = parsed;
+          break;
+        }
+      } catch {}
+    }
+    // Keep the reader's first embedded payload and homepage DOM, replacing only its stale user.
+    const page = document.documentElement.cloneNode(true);
+    const script = document.createElement("script");
+    script.type = "application/json";
+    script.textContent = base64Json({ ...embedded, user });
+    (page.querySelector("head") || page).prepend(script);
+    return page.outerHTML;
+  };
   const hasPendingVotePanel = () => {
     const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
       const style = window.getComputedStyle(element);
@@ -226,10 +261,10 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     } catch {}
   };
   const postResult = () => {
-    const challenge = !hasReadablePage() && isChallengePage();
+    const challenge = !(requestOwner === "account-overview" ? hasRuntimeAccountUser() : hasReadablePage()) && isChallengePage(true);
     const json = jsonText();
     const anonymousAccountHtml = !challenge
-      && requestOwner === "account"
+      && (requestOwner === "account" || requestOwner === "account-overview")
       && window.__config__
       && typeof window.__config__ === "object"
       && Object.prototype.hasOwnProperty.call(window.__config__, "user")
@@ -243,7 +278,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       url: location.href,
       title: document.title || "",
       challenge,
-      html: challenge ? "" : (json || compactHtml || (document.documentElement ? document.documentElement.outerHTML : "")),
+      html: challenge ? "" : (json || compactHtml || windowConfigUserHtml()),
       userAgent: navigator.userAgent || ""
     });
     try {
@@ -252,16 +287,28 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
+    if (jsonText()) {
+      postResult();
+      return;
+    }
+    if (requestOwner === "account-overview") {
+      if (hasRuntimeAccountUser() || isChallengePage()) {
+        postResult();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        postError('NodeSeek 账号资料没有加载完成，请重试');
+        return;
+      }
+      setTimeout(waitForReadablePage, 500);
+      return;
+    }
     if (requestOwner === "account") {
       if (hasAccountEvidence() || isChallengePage() || Date.now() >= deadline) {
         postResult();
         return;
       }
       setTimeout(waitForReadablePage, 500);
-      return;
-    }
-    if (jsonText()) {
-      postResult();
       return;
     }
     if (embeddedPostDataHtml()) {

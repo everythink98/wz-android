@@ -1,7 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { inactivePostInteractionActions } from '../topicInteractionFixture';
 import React, { type ReactNode, type RefObject } from 'react';
 import type { FlashListRef } from '@shopify/flash-list';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View, type MeasureOnSuccessCallback } from 'react-native';
+import type { PanGestureHandlerEventPayload } from 'react-native-gesture-handler';
+import { createGestureController, getByGestureTestId } from 'react-native-gesture-handler/jest-utils';
 import RenderHTML, { RenderHTMLConfigProvider, TRenderEngineProvider, useContentWidth } from 'react-native-render-html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { compileForumContent, prepareTopicContent, prepareReplyContent } from '@/domain/forum/topicContentSplit';
@@ -13,6 +16,7 @@ import { useTopicSessionController } from '@/features/topic/useTopicSessionContr
 import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
 import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { createTheme } from '@/ui/theme/tokens';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 import { act, fireEvent, render, within } from '../render';
@@ -25,6 +29,7 @@ import { topicListReadingFloor, type TopicListItem } from '@/features/topic/mode
 let mockReadingList: {
   data: TopicListItem[];
   onLoad: () => void;
+  showCells: (visible: boolean) => void;
   onViewableItemsChanged: (event: {
     viewableItems: { item: TopicListItem; index: number; isViewable: boolean }[];
   }) => void;
@@ -33,10 +38,15 @@ let mockReadingList: {
 let mockPreventRemove = false;
 const mockCancelNativeSelection = jest.fn<() => Promise<void>>(() => Promise.resolve());
 const mockReadingImages = new Map<string, { onDisplay?: () => void; onLoad?: (event: unknown) => void }>();
+const mockReadingImageMounts = new Map<string, number>();
 jest.mock('expo-image', () => ({
   ...jest.requireActual<typeof import('expo-image')>('expo-image'),
   Image: (props: { source?: { uri?: string }; onDisplay?: () => void; onLoad?: (event: unknown) => void }) => {
     if (props.source?.uri) mockReadingImages.set(props.source.uri, props);
+    const uri = props.source?.uri;
+    require('react').useEffect(() => {
+      if (uri) mockReadingImageMounts.set(uri, (mockReadingImageMounts.get(uri) || 0) + 1);
+    }, [uri]);
     return require('react').createElement(require('react-native').View, props);
   }
 }));
@@ -65,6 +75,9 @@ jest.mock('react-native', () => {
   return actual;
 });
 
+// Exercise Text's native responder handlers for phrasing links, rather than the preset's passthrough mock.
+jest.unmock('react-native/Libraries/Text/Text');
+
 jest.mock('expo-video', () => ({
   VideoView: require('react-native').View,
   createVideoPlayer: jest.fn(() => ({})),
@@ -92,19 +105,21 @@ jest.mock('react-native-reanimated', () => {
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
   return {
-    FlashList: (props: typeof mockReadingList & { renderItem: (info: unknown) => ReactNode }) => {
-      mockReadingList = props;
+    FlashList: (props: Omit<typeof mockReadingList, 'showCells'> & { renderItem: (info: unknown) => ReactNode }) => {
+      const [visible, showCells] = ReactModule.useState(true);
+      mockReadingList = { ...props, showCells };
       const { data, renderItem } = props;
       return ReactModule.createElement(
         require('react-native').View,
         null,
-        data.map((item, index) =>
-          ReactModule.createElement(
-            ReactModule.Fragment,
-            { key: item.key },
-            renderItem({ item, index, target: 'Cell' })
+        visible &&
+          data.map((item, index) =>
+            ReactModule.createElement(
+              ReactModule.Fragment,
+              { key: item.key },
+              renderItem({ item, index, target: 'Cell' })
+            )
           )
-        )
       );
     },
     useMappingHelper: () => ({ getMappingKey: (key: string) => key }),
@@ -473,6 +488,8 @@ it('records the current floor when filtering replaces content at the same visibl
 function ProductionContentList({
   active = true,
   actions,
+  contentWidth = 320,
+  settings = selectionReaderData.settings,
   topic,
   quotedReplies,
   onOpenImagePreview = () => undefined,
@@ -482,6 +499,8 @@ function ProductionContentList({
 }: {
   active?: boolean;
   actions?: Partial<React.ComponentProps<typeof TopicContentList>['actions']>;
+  contentWidth?: number;
+  settings?: typeof selectionReaderData.settings;
   topic: ReturnType<typeof prepareTopicContent>;
   quotedReplies: Record<string, Reply>;
   onOpenImagePreview?: Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview'];
@@ -498,7 +517,7 @@ function ProductionContentList({
     onOpenTopic: () => undefined,
     onOpenUser: () => undefined,
     selectedTopic: topic,
-    settings: selectionReaderData.settings,
+    settings,
     theme: selectionTheme,
     topicDetail: topic,
     webViewBlockMessage: ''
@@ -511,6 +530,7 @@ function ProductionContentList({
       active={active}
       readingPaused={readingPaused}
       actions={{
+        ...inactivePostInteractionActions(),
         actionBusy: false,
         replyImageUploading: false,
         decisionFor: () => ({ allowed: false, reason: 'login-required' }),
@@ -539,7 +559,7 @@ function ProductionContentList({
       currentNodeSeekUser={undefined}
       discourseEmojiUrls={{}}
       headerState={null}
-      html={{ ...controller, contentWidth: 320, mediaSessionIdentity: 'selection-test' }}
+      html={{ ...controller, contentWidth, mediaSessionIdentity: 'selection-test' }}
       nodeSeekUserId={null}
       onImagePreviewDescriptors={() => undefined}
       onOpenTopic={unexpected}
@@ -609,6 +629,322 @@ function ProductionContentList({
 }
 
 describe('topic rich-text selection', () => {
+  it.each(['block', 'phrasing'] as const)(
+    'rejects a two-finger drag owned by a %s image link and preserves the next single-finger image tap',
+    async (kind) => {
+      const imageUrl = 'https://images.invalid/linked.png';
+      const onOpenImagePreview = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>();
+      const linkedImage = `<a href="${imageUrl}"><img src="${imageUrl}" alt="linked image" width="120" height="240"></a>`;
+      const topic = prepareTopicContent({
+        ...selectionTopic,
+        source: 'linuxdo',
+        url: 'https://linux.do/t/42',
+        contentHtml: sanitizeContentHtml(
+          kind === 'phrasing' ? `<p>before ${linkedImage} after</p>` : linkedImage,
+          'https://linux.do/'
+        )
+      });
+      const view = await render(
+        <QueryTestWrapper>
+          <ProductionContentList topic={topic} quotedReplies={{}} onOpenImagePreview={onOpenImagePreview} />
+        </QueryTestWrapper>
+      );
+      try {
+        await act(async () => {
+          mockReadingList.onViewableItemsChanged({
+            viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+          });
+          mockReadingList.onLoad();
+        });
+        const anchor = view.getByTestId('a');
+        const image = within(anchor).getByLabelText('linked image');
+        const target = { measure: (callback: MeasureOnSuccessCallback) => callback(0, 0, 320, 240, 0, 0) };
+        const touch = (x: number, count: number) => {
+          const point = (identifier: number) => ({ identifier, pageX: x, pageY: 60 + identifier * 40 });
+          return {
+            currentTarget: target,
+            target,
+            persist: () => undefined,
+            stopPropagation: () => undefined,
+            nativeEvent: {
+              ...point(0),
+              touches: Array.from({ length: count }, (_, index) => point(index)),
+              changedTouches: [point(count === 2 ? 1 : 0)]
+            }
+          };
+        };
+        expect(anchor).not.toBe(image);
+        expect(anchor.props.accessibilityRole).toBe('link');
+        expect(anchor.props.onResponderGrant).toEqual(expect.any(Function));
+        expect(image.props.onResponderGrant).toEqual(expect.any(Function));
+        await fireEvent(anchor, 'responderGrant', touch(110, 1));
+        // The child receives touch starts, while the outer link owns the native responder.
+        // Deliver only installed host handlers; fireEvent would also find props dropped by a composite.
+        await act(async () => {
+          image.props.onTouchStart?.(touch(110, 1));
+          anchor.props.onTouchStart?.(touch(110, 1));
+          image.props.onTouchStart?.(touch(110, 2));
+          anchor.props.onTouchStart?.(touch(110, 2));
+        });
+        await fireEvent(anchor, 'responderMove', touch(50, 2));
+        await act(async () => anchor.props.onTouchMove?.(touch(50, 2)));
+        await fireEvent(anchor, 'touchEnd', touch(50, 1));
+        await fireEvent(anchor, 'responderMove', touch(40, 1));
+        await act(async () => anchor.props.onTouchMove?.(touch(40, 1)));
+        await fireEvent(anchor, 'touchEnd', touch(40, 0));
+        await fireEvent(anchor, 'responderRelease', touch(40, 0));
+        expect(onOpenImagePreview).not.toHaveBeenCalled();
+
+        await fireEvent(anchor, 'click', { currentTarget: target, target, nativeEvent: {} });
+        expect(onOpenImagePreview).toHaveBeenCalledTimes(1);
+        expect(onOpenImagePreview).toHaveBeenLastCalledWith(imageUrl);
+
+        await fireEvent(image, 'responderGrant', touch(80, 1));
+        await act(async () => {
+          image.props.onTouchStart?.(touch(80, 1));
+          anchor.props.onTouchStart?.(touch(80, 1));
+        });
+        await fireEvent(image, 'responderRelease', touch(80, 0));
+        await fireEvent(image, 'touchEnd', touch(80, 0));
+        expect(onOpenImagePreview).toHaveBeenCalledTimes(2);
+        expect(onOpenImagePreview).toHaveBeenLastCalledWith(imageUrl, undefined, undefined);
+
+        await fireEvent(anchor, 'responderGrant', touch(80, 1));
+        await act(async () => anchor.props.onTouchStart?.(touch(80, 1)));
+        await fireEvent(anchor, 'responderRelease', touch(80, 0));
+        expect(onOpenImagePreview).toHaveBeenCalledTimes(3);
+        expect(onOpenImagePreview).toHaveBeenLastCalledWith(imageUrl);
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['opening', 'reply'] as const)(
+    'rejects a two-finger drag on a %s gallery image and accepts the next single-finger tap',
+    async (role) => {
+      const onOpenImagePreview = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>();
+      const html = sanitizeContentHtml(
+        '<div class="d-image-grid" data-mode="carousel">' +
+          '<img src="https://images.invalid/touch-1.png" alt="touch gallery image" width="320" height="240">' +
+          '<img src="https://images.invalid/touch-2.png" width="320" height="240"></div>',
+        'https://linux.do/'
+      );
+      const topic = prepareTopicContent({
+        ...selectionTopic,
+        source: 'linuxdo',
+        contentHtml: role === 'opening' ? html : '<p>opening</p>',
+        replies:
+          role === 'reply'
+            ? [prepareReplyContent({ author: 'alice', contentHtml: html, createdAt: '', floor: 2 }, 'linuxdo')]
+            : []
+      });
+      const view = await render(
+        <QueryTestWrapper>
+          <ProductionContentList topic={topic} quotedReplies={{}} onOpenImagePreview={onOpenImagePreview} />
+        </QueryTestWrapper>
+      );
+      try {
+        await act(async () => {
+          mockReadingList.onViewableItemsChanged({
+            viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+          });
+          mockReadingList.onLoad();
+        });
+        const image = view.getByLabelText('touch gallery image');
+        const target = { measure: (callback: MeasureOnSuccessCallback) => callback(0, 0, 320, 240, 0, 0) };
+        const touch = (x: number, count: number) => {
+          const point = (identifier: number) => ({ identifier, pageX: x, pageY: 60 + identifier * 40 });
+          return {
+            currentTarget: target,
+            target,
+            persist: () => undefined,
+            stopPropagation: () => undefined,
+            nativeEvent: {
+              ...point(0),
+              touches: Array.from({ length: count }, (_, index) => point(index)),
+              changedTouches: [point(count === 2 ? 1 : 0)]
+            }
+          };
+        };
+        expect(image.props.onResponderGrant).toEqual(expect.any(Function));
+        await fireEvent(image, 'responderGrant', touch(240, 1));
+        await fireEvent(image, 'touchStart', touch(240, 1));
+        await fireEvent(image, 'touchStart', touch(240, 2));
+        await fireEvent(image, 'touchMove', touch(80, 2));
+        await fireEvent(image, 'responderMove', touch(80, 2));
+        await fireEvent(image, 'touchEnd', touch(80, 1));
+        await fireEvent(image, 'responderMove', touch(70, 1));
+        await fireEvent(image, 'touchEnd', touch(70, 0));
+        // The real Pressability release emits onPress even though the carousel rejected this pan.
+        await fireEvent(image, 'responderRelease', touch(70, 0));
+        expect(onOpenImagePreview).not.toHaveBeenCalled();
+
+        await fireEvent(image, 'responderGrant', touch(160, 1));
+        await fireEvent(image, 'touchStart', touch(160, 1));
+        await fireEvent(image, 'responderRelease', touch(160, 0));
+        await fireEvent(image, 'touchEnd', touch(160, 0));
+        expect(onOpenImagePreview).toHaveBeenCalledTimes(1);
+        expect(onOpenImagePreview).toHaveBeenCalledWith('https://images.invalid/touch-1.png', undefined, undefined);
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['opening', 'reply'] as const)(
+    'configures a single-pointer horizontal gallery gesture in %s content and cancels selection only when scrolling starts',
+    async (role) => {
+      const html = sanitizeContentHtml(
+        '<div class="d-image-grid" data-mode="carousel">' +
+          '<img src="https://images.invalid/gesture-1.png" width="200" height="100">' +
+          '<img src="https://images.invalid/gesture-2.png" width="200" height="100"></div>',
+        'https://linux.do/'
+      );
+      const topic = prepareTopicContent({
+        ...selectionTopic,
+        source: 'linuxdo',
+        url: 'https://linux.do/t/42',
+        contentHtml: '<p>selectable opening</p>' + (role === 'opening' ? html : ''),
+        replies:
+          role === 'reply'
+            ? [prepareReplyContent({ author: 'alice', contentHtml: html, createdAt: '', floor: 2 }, 'linuxdo')]
+            : []
+      });
+      const view = await render(
+        <QueryTestWrapper>
+          <TopicRouteBackBoundary
+            imagePreviewOpen={false}
+            replyComposerOpen={false}
+            closeImagePreview={jest.fn()}
+            closeReplyComposer={jest.fn()}
+          >
+            <ProductionContentList topic={topic} quotedReplies={{}} />
+          </TopicRouteBackBoundary>
+        </QueryTestWrapper>
+      );
+      try {
+        const surface = view.getByTestId('topic-selection-surface').props;
+        await act(async () => surface.onSelectionChange({ nativeEvent: { active: true, revision: surface.revision } }));
+        expect(mockPreventRemove).toBe(true);
+        mockCancelNativeSelection.mockClear();
+
+        const pan = getByGestureTestId('rnrc-gesture-handler');
+        expect(pan.config).toMatchObject({
+          enabled: true,
+          activeOffsetXStart: -10,
+          activeOffsetXEnd: 10,
+          failOffsetYStart: -10,
+          failOffsetYEnd: 10,
+          maxPointers: 1
+        });
+        const gesture = createGestureController<PanGestureHandlerEventPayload>('rnrc-gesture-handler');
+        // RNGH injects recognized states here; native threshold arbitration needs device coverage.
+        await act(async () => {
+          gesture.begin({ translationX: 0, translationY: 0 });
+          gesture.fail({ translationX: 0, translationY: 11 });
+        });
+        expect(mockCancelNativeSelection).not.toHaveBeenCalled();
+        expect(mockPreventRemove).toBe(true);
+        await act(async () => {
+          gesture.begin({ translationX: 0, translationY: 0 });
+          gesture.activate({ translationX: 11, translationY: 0 });
+        });
+        expect(mockCancelNativeSelection).not.toHaveBeenCalled();
+        await act(async () => gesture.update({ translationX: 12, translationY: 0 }));
+        expect(mockCancelNativeSelection).toHaveBeenCalledTimes(1);
+        expect(mockPreventRemove).toBe(false);
+        await act(async () => {
+          gesture.update({ translationX: 20, translationY: 0 });
+          gesture.end({ translationX: 20, translationY: 0, velocityX: 0, velocityY: 0 });
+        });
+        expect(mockCancelNativeSelection).toHaveBeenCalledTimes(1);
+      } finally {
+        await view.unmount();
+        mockCancelNativeSelection.mockClear();
+      }
+    }
+  );
+
+  it.each(['opening', 'reply'] as const)(
+    'renders a bounded carousel in %s content, switches pages and opens the selected image',
+    async (role) => {
+      const onOpenImagePreview = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>();
+      const html = sanitizeContentHtml(
+        '<div class="d-image-grid" data-mode="carousel">' +
+          Array.from({ length: 10 }, (_, index) => {
+            const image = `<img src="https://images.invalid/slide-${index}.png" alt="gallery slide ${index}" width="230" height="500">`;
+            return role === 'opening'
+              ? `<a class="lightbox" href="https://images.invalid/full-${index}.png">${image}</a>`
+              : image;
+          }).join('') +
+          '</div>',
+        'https://linux.do/'
+      );
+      const topic = prepareTopicContent({
+        ...selectionTopic,
+        source: 'linuxdo',
+        url: 'https://linux.do/t/42',
+        contentHtml: role === 'opening' ? html : '<p>opening</p>',
+        replies:
+          role === 'reply'
+            ? [prepareReplyContent({ author: 'alice', contentHtml: html, createdAt: '', floor: 2 }, 'linuxdo')]
+            : []
+      });
+      const tree = (contentWidth = 320) => (
+        <QueryTestWrapper>
+          <ProductionContentList
+            topic={topic}
+            quotedReplies={{}}
+            contentWidth={contentWidth}
+            onOpenImagePreview={onOpenImagePreview}
+          />
+        </QueryTestWrapper>
+      );
+      const view = await render(tree());
+      await act(async () => {
+        mockReadingList.onViewableItemsChanged({
+          viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+        });
+        mockReadingList.onLoad();
+      });
+      const gallery = within(view.getByTestId('topic-image-gallery'));
+      expect(gallery.getByText('1 / 10')).toBeTruthy();
+      expect(gallery.getAllByTestId('topic-image-frame', { includeHiddenElements: true })).toHaveLength(3);
+      const firstSize = StyleSheet.flatten(gallery.getByTestId('topic-image-frame').props.style);
+      expect(firstSize.height).toBeLessThanOrEqual(400);
+      expect(firstSize.width / firstSize.height).toBeCloseTo(230 / 500);
+      const firstImageUri = 'https://images.invalid/slide-0.png';
+      const firstImageMounts = mockReadingImageMounts.get(firstImageUri);
+      expect(firstImageMounts).toBeGreaterThan(0);
+      await view.rerender(tree(280.4));
+      const viewportSize = StyleSheet.flatten(gallery.getByTestId('topic-image-gallery-carousel').props.style);
+      await fireEvent(view.getByTestId('topic-image-gallery-carousel'), 'layout', {
+        nativeEvent: { layout: { x: 0, y: 0, width: viewportSize.width, height: viewportSize.height } }
+      });
+      expect(mockReadingImageMounts.get(firstImageUri)).toBe(firstImageMounts);
+      await fireEvent.press(gallery.getByLabelText('上一张图片'));
+      expect(gallery.getByText('10 / 10')).toBeTruthy();
+      await fireEvent.press(gallery.getByLabelText('下一张图片'));
+      expect(gallery.getByText('1 / 10')).toBeTruthy();
+      const pageStyle = StyleSheet.flatten(gallery.getByTestId('__CAROUSEL_ITEM_0__').props.style);
+      expect(viewportSize.width % 1).not.toBe(0);
+      expect(pageStyle.width).toBe(viewportSize.width);
+      for (let page = 0; page < 4; page++) await fireEvent.press(gallery.getByLabelText('下一张图片'));
+      expect(gallery.getByText('5 / 10')).toBeTruthy();
+      await act(async () => mockReadingList.showCells(false));
+      expect(view.queryByTestId('topic-image-gallery')).toBeNull();
+      await act(async () => mockReadingList.showCells(true));
+      const restoredGallery = within(view.getByTestId('topic-image-gallery'));
+      expect(restoredGallery.getByText('5 / 10')).toBeTruthy();
+      expect(restoredGallery.getAllByTestId('topic-image-frame', { includeHiddenElements: true })).toHaveLength(3);
+      expect(restoredGallery.queryByLabelText('gallery slide 0', { includeHiddenElements: true })).toBeNull();
+      await fireEvent.press(restoredGallery.getByLabelText('gallery slide 4'));
+      expect(onOpenImagePreview).toHaveBeenCalledWith('https://images.invalid/slide-4.png', undefined, undefined);
+      await view.unmount();
+    }
+  );
+
   it('keeps prose and a clickable image in order between separate terminal sections', async () => {
     const onOpenImagePreview = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>();
     const imageUrl = 'https://img.example/terminal-proof.png';
@@ -736,21 +1072,38 @@ describe('topic rich-text selection', () => {
     expect(view.getByText('尚未确认阅读当前版本')).toBeTruthy();
   });
 
-  it('keeps table hosts mounted across background and foreground action updates', async () => {
+  it('keeps table hosts mounted across lifecycle and unrelated reading settings updates', async () => {
     const topic = prepareTopicContent({
       ...selectionTopic,
       contentHtml: '<table><tr><th>项目</th><th>内容</th></tr><tr><td>表格</td><td>保持位置</td></tr></table>'
     });
-    const tree = (active: boolean) => (
-      <QueryTestWrapper>
-        <ProductionContentList active={active} topic={topic} quotedReplies={{}} />
-      </QueryTestWrapper>
+    const initialStyle = { settings: selectionReaderData.settings, theme: selectionTheme };
+    const tree = (active: boolean, style = initialStyle, contentWidth = 320) => (
+      <ReaderStyleProvider value={style}>
+        <QueryTestWrapper>
+          <ProductionContentList
+            active={active}
+            contentWidth={contentWidth}
+            settings={style.settings}
+            topic={topic}
+            quotedReplies={{}}
+          />
+        </QueryTestWrapper>
+      </ReaderStyleProvider>
     );
     const view = await render(tree(true));
     const scroll = view.getByTestId('topic-html-table-scroll');
     const cell = view.getByText('保持位置');
     for (const active of [true, false, true]) {
       await view.rerender(tree(active));
+      expect(view.getByTestId('topic-html-table-scroll') === scroll).toBe(true);
+      expect(view.getByText('保持位置') === cell).toBe(true);
+    }
+    for (const [settings, contentWidth] of [
+      [{ ...selectionReaderData.settings, listDensity: 'compact' }, 320],
+      [{ ...selectionReaderData.settings, contentWidth: 'wide' }, 400]
+    ] satisfies [typeof selectionReaderData.settings, number][]) {
+      await view.rerender(tree(true, { settings, theme: selectionTheme }, contentWidth));
       expect(view.getByTestId('topic-html-table-scroll') === scroll).toBe(true);
       expect(view.getByText('保持位置') === cell).toBe(true);
     }
@@ -1305,17 +1658,15 @@ describe('topic rich-text selection', () => {
 
   it('passes existing content through when the Android native selection module is unavailable', async () => {
     let UnavailableSelectionSurface: typeof TopicSelectionSurface | undefined;
+    const expo = require('expo-modules-core') as typeof import('expo-modules-core');
+    jest.mocked(expo.requireNativeViewManager).mockImplementationOnce(() => {
+      throw new Error('ForumContentSelection unavailable');
+    });
     jest.isolateModules(() => {
       jest.doMock('react', () => React);
-      jest.doMock('expo-modules-core', () => ({
-        requireNativeViewManager: () => {
-          throw new Error('ForumContentSelection unavailable');
-        }
-      }));
       UnavailableSelectionSurface = require('@/features/topic/selection/TopicSelectionSurface').TopicSelectionSurface;
     });
     jest.dontMock('react');
-    jest.dontMock('expo-modules-core');
     if (!UnavailableSelectionSurface) throw new Error('Expected the fallback selection surface.');
 
     const row = compileForumContent({ html: '<p>正文</p>', role: 'opening', source: 'nodeseek' }).rows[0]!;

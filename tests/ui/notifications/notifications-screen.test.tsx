@@ -137,6 +137,7 @@ let mockSafeAreaBottom = 0;
 let mockSafeAreaTop = 0;
 let mockNotificationFlashListExtraData: unknown;
 let mockNotificationFlashListData: unknown;
+let mockNotificationFlashListInstance: object;
 let mockNotificationNestedScrollEnabled: boolean | undefined;
 const mockNotificationScrollToOffset = jest.fn();
 
@@ -176,6 +177,8 @@ jest.mock('@shopify/flash-list', () => {
       renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
       testID?: string;
     }) => {
+      const [instance] = ReactModule.useState({});
+      mockNotificationFlashListInstance = instance;
       ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockNotificationScrollToOffset }));
       mockNotificationFlashListExtraData = extraData;
       mockNotificationFlashListData = data;
@@ -523,16 +526,24 @@ describe('notification screens', () => {
     expect(view.queryByText('linux.do · 已到当前末尾')).toBeNull();
   });
 
-  it('resets list position only when filters change and suppresses pagination during manual refresh', async () => {
+  it('keeps the list mounted while filters reset its position and manual refresh suppresses pagination', async () => {
     const props = listProps();
     const view = await render(<NotificationsScreen {...props} hasMore />);
+    const instance = mockNotificationFlashListInstance;
     mockNotificationScrollToOffset.mockClear();
     await view.rerender(<NotificationsScreen {...props} hasMore refreshing />);
     expect(view.queryByTestId('notification-list-end-reached')).toBeNull();
     expect(mockNotificationScrollToOffset).not.toHaveBeenCalled();
     await view.rerender(<NotificationsScreen {...props} hasMore unreadOnly />);
+    expect(mockNotificationFlashListInstance).toBe(instance);
     expect(mockNotificationScrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
     expect(view.getByTestId('notification-list-end-reached')).toBeTruthy();
+    for (const filter of [{ source: 'nodeseek' as const }, { source: 'nodeseek' as const, categoryId: 'messages' }]) {
+      mockNotificationScrollToOffset.mockClear();
+      await view.rerender(<NotificationsScreen {...props} {...filter} hasMore unreadOnly />);
+      expect(mockNotificationFlashListInstance).toBe(instance);
+      expect(mockNotificationScrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
+    }
   });
 
   it('lets repeated manual scrolling interrupt pending bottom-follow across new messages and return-to-latest actions', async () => {

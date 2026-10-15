@@ -140,6 +140,8 @@ export function TopicCreationFixture({
           async () => ({ status: 'same' })
         ),
       isWritableSessionTicketCurrent: (ticket) => validateWritableSessionTicket(ticket, snapshot(ticket.source)),
+      onSessionExpired: () => {},
+      requestAccountRecheck: () => {},
       ensureNodeImageApiKey: async () => null,
       getUserAgent: () => 'isolated-topic-proof',
       getTopic: async () => {

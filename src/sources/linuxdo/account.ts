@@ -1,6 +1,6 @@
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import type {
   Topic,
@@ -235,7 +235,7 @@ export async function getLinuxDoCurrentUserIdentity(options: LinuxDoCurrentUserO
           Accept: 'application/json, text/javascript, */*; q=0.01',
           'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
           Referer: BASE_URL,
-          'User-Agent': options.linuxDoUserAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
+          'User-Agent': await resolveWebViewUserAgent(options.linuxDoUserAgent, options.signal),
           'X-Requested-With': 'XMLHttpRequest'
         }
       },

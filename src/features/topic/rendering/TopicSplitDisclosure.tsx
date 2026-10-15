@@ -93,6 +93,16 @@ export function useTopicSplitDisclosureScopeKey() {
   return useContext(TopicSplitDisclosureScopeContext);
 }
 
+export function useTopicImageGallery(semanticId: string) {
+  const store = useContext(TopicSplitDisclosureStoreContext);
+  const scopeKey = useTopicSplitDisclosureScopeKey();
+  if (!store || !scopeKey) throw new Error('TopicSplitDisclosureProvider and scope are required');
+  const key = `${scopeKey}\u0000imageGallery\u0000${semanticId}`;
+  const index = Number(store.activeTabByKey[key] || 0);
+  const select = useCallback((next: number) => store.selectTab(key, String(next)), [key, store]);
+  return { index, select };
+}
+
 export function topicSplitDisclosureKey(scopeKey: string, kind: TopicSplitDisclosureKind, semanticId: string) {
   return `${scopeKey}\u0000${kind}\u0000${semanticId}`;
 }

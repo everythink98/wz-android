@@ -1,4 +1,5 @@
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
+import { testPostInteractionReads } from '../topicInteractionFixture';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -95,7 +96,7 @@ import {
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { QueryObserver } from '@tanstack/react-query';
-import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
+import { prepareReplyContent, requirePreparedForumContent, type PreparedReply } from '@/domain/forum/topicContentSplit';
 import {
   nodeSeekPendingPollToken,
   normalizePendingNodeSeekPoll,
@@ -269,7 +270,8 @@ async function renderActions({
   siteSessionViewModels,
   siteSessionStates,
   topicDetail = detail,
-  topicReplies = []
+  topicReplies = [],
+  interactionReads = {}
 }: {
   active?: boolean;
   sessionEpochs?: ForumSessionEpochs;
@@ -290,6 +292,7 @@ async function renderActions({
   siteSessionStates?: SiteSessionStates;
   topicDetail?: TopicDetail;
   topicReplies?: Reply[];
+  interactionReads?: Partial<ReturnType<typeof testPostInteractionReads>>;
 } = {}) {
   const hook = await renderNativeHook(
     (props: {
@@ -323,6 +326,8 @@ async function renderActions({
         onSessionExpired,
         requestAccountRecheck,
         readGateway: {
+          ...testPostInteractionReads(),
+          ...interactionReads,
           getReadPlan: () => ({
             state: 'ready',
             lane: 'authenticated',
@@ -368,6 +373,539 @@ function seedTopicCache(
 }
 
 describe('topic action query mutations', () => {
+  function reactionPost(postId: number, id: string | null, count: number) {
+    return {
+      id: postId,
+      post_number: 2,
+      username: 'alice',
+      cooked: '<p>body</p>',
+      created_at: '2026-07-20T00:00:00.000Z',
+      actions_summary: [{ id: 2, count, can_act: true, acted: id === 'heart' }],
+      like_count: count,
+      reactions: id ? [{ id, type: 'emoji', count }] : [],
+      current_user_reaction: id ? { id, can_undo: true } : null
+    };
+  }
+
+  it('switches and cancels custom reactions on a comment using one request and the returned counts', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const reply: Reply = {
+      ...editableReply,
+      canLike: true,
+      currentUserReaction: { id: 'heart', canUndo: true },
+      reactionSummary: [{ id: 'heart', count: 3 }]
+    };
+    const opening = detailFor('linuxdo', { replies: [reply] });
+    const { detailKey, repliesKey } = seedTopicCache(opening, [reply]);
+    let selected: string | null = 'bili_057';
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return new Response(
+        JSON.stringify(String(input).endsWith('/session/csrf') ? { csrf: 'token' } : reactionPost(101, selected, 7))
+      );
+    });
+    const hook = await renderActions({ topicDetail: opening, topicReplies: [reply], fetcher });
+    await act(async () => {
+      expect(await hook.result.current.actions.reactToPost(101, 'bili_057')).toBe(true);
+    });
+    const cache = () => appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0].items[0];
+    expect(cache()).toMatchObject({
+      currentUserReaction: { id: 'bili_057', canUndo: true },
+      reactionSummary: [{ id: 'bili_057', count: 7 }]
+    });
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replies[0].currentUserReaction?.id).toBe('bili_057');
+    selected = null;
+    await act(async () => {
+      await hook.result.current.actions.reactToPost(101);
+    });
+    expect(cache()?.currentUserReaction).toBeNull();
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'apply', requestType: 'toggle-reaction', mode: 'add', localApplied: true }),
+        expect.objectContaining({ phase: 'apply', requestType: 'toggle-reaction', mode: 'remove', localApplied: true }),
+        expect.objectContaining({ phase: 'parse', requestType: 'toggle-reaction', state: 'confirmed' })
+      ])
+    );
+    expect(JSON.stringify(events)).not.toMatch(/bili_057|token|alice/);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'PUT').map(([url]) => String(url))).toEqual([
+      'https://linux.do/discourse-reactions/posts/101/custom-reactions/bili_057/toggle.json',
+      'https://linux.do/discourse-reactions/posts/101/custom-reactions/bili_057/toggle.json'
+    ]);
+  });
+
+  it('blocks concurrent reactions and boosts on one post and rolls back an explicit rejection', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', {
+      canLike: true,
+      currentUserReaction: null,
+      reactionSummary: [],
+      siteExtension: { boosts: [], canBoost: true }
+    });
+    const { detailKey } = seedTopicCache(opening);
+    const pendingResponse = Promise.withResolvers<Response>();
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return String(input).endsWith('/session/csrf') ? new Response('{"csrf":"token"}') : pendingResponse.promise;
+    });
+    const hook = await renderActions({ topicDetail: opening, fetcher });
+    let first!: Promise<boolean>;
+    await act(async () => {
+      first = hook.result.current.actions.reactToPost(opening.commentId!, 'laughing');
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.currentUserReaction?.id).toBe('laughing');
+    try {
+      await act(async () => {
+        expect(await hook.result.current.actions.reactToPost(opening.commentId!, 'heart')).toBe(false);
+        hook.result.current.actions.openBoostComposer(opening.commentId!);
+      });
+      await act(async () => hook.result.current.actions.changeBoostContent('合影'));
+      expect(hook.result.current.actions.decisionFor({ action: 'boost', target: opening }).reason).toBe('pending');
+      await act(async () => {
+        expect(await hook.result.current.actions.submitBoost()).toBe(false);
+      });
+    } finally {
+      await act(async () => {
+        pendingResponse.resolve(new Response('{"errors":["too many"]}', { status: 429 }));
+        await first;
+      });
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.currentUserReaction).toBeNull();
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.siteExtension?.interactionUnconfirmed).not.toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        phase: 'rollback',
+        state: 'local',
+        requestType: 'toggle-reaction',
+        isServerRejected: true
+      })
+    );
+  });
+
+  it('adds short text and custom emoji to the target comment without creating a floor', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const reply: Reply = { ...editableReply, siteExtension: { boosts: [], canBoost: true } };
+    const opening = detailFor('linuxdo', { replies: [reply], replyCount: 1 });
+    const { detailKey, repliesKey } = seedTopicCache(opening, [reply]);
+    const created = {
+      id: 99,
+      cooked: '<p>合影 <img class="emoji" alt=":bili_057:" src="/bili.png"></p>',
+      can_delete: true,
+      user: { id: 7, username: 'alice' }
+    };
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return new Response(JSON.stringify(String(input).endsWith('/session/csrf') ? { csrf: 'token' } : created));
+    });
+    const hook = await renderActions({ topicDetail: opening, topicReplies: [reply], fetcher });
+    await act(async () => hook.result.current.actions.openBoostComposer(101));
+    await act(async () => hook.result.current.actions.changeBoostContent('合影 :bili_057:'));
+    await act(async () => {
+      expect(await hook.result.current.actions.submitBoost()).toBe(true);
+    });
+    const target = appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0].items[0];
+    expect(target?.siteExtension).toMatchObject({
+      boosts: [
+        { id: 99, content: [{ text: '合影 ' }, { emoji: ':bili_057:', imageUrl: 'https://linux.do/bili.png' }] }
+      ],
+      canBoost: false
+    });
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replyCount).toBe(1);
+    expect(hook.result.current.actions.boostComposer).toBeNull();
+    const writes = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(writes).toHaveLength(1);
+    expect(String(writes[0][0])).toBe('https://linux.do/discourse-boosts/posts/101/boosts.json');
+    expect(new URLSearchParams(String(writes[0][1]?.body)).get('raw')).toBe('合影 :bili_057:');
+    const intent = events.find((event) => event.phase === 'intent' && event.requestType === 'create-boost');
+    expect(intent).toMatchObject({ topicRef: expect.stringMatching(/^topic-\d+$/), floor: 2 });
+    const reconciliation = events.find(
+      (event) => event.operation === 'interaction-reconcile' && event.phase === 'intent'
+    );
+    expect(reconciliation).toMatchObject({ parentTraceId: intent?.traceId });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: 'interaction-reconcile',
+        phase: 'finish',
+        traceId: reconciliation?.traceId,
+        outcome: 'failure'
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        traceId: intent?.traceId,
+        phase: 'finish',
+        outcome: 'partial',
+        reason: 'refresh_failed'
+      })
+    );
+    expect(JSON.stringify(events)).not.toMatch(/合影|bili_057|alice|token/);
+  });
+
+  it('preserves an uncertain boost draft and only reads when the user tries again', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { siteExtension: { boosts: [], canBoost: true } });
+    const { detailKey } = seedTopicCache(opening);
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      if (String(input).endsWith('/session/csrf')) return new Response('{"csrf":"token"}');
+      throw new Error('response lost');
+    });
+    const hook = await renderActions({ topicDetail: opening, fetcher });
+    await act(async () => hook.result.current.actions.openBoostComposer(opening.commentId!));
+    await act(async () => hook.result.current.actions.changeBoostContent('合影'));
+    await act(async () => {
+      expect(await hook.result.current.actions.submitBoost()).toBe(false);
+    });
+    expect(hook.result.current.actions.boostComposer?.content).toBe('合影');
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.siteExtension?.interactionUnconfirmed).toBe(true);
+    await act(async () => {
+      await hook.result.current.actions.submitBoost();
+    });
+    await hook.unmount();
+    const reopened = await renderActions({ topicDetail: opening, fetcher });
+    await act(async () => reopened.result.current.actions.openBoostComposer(opening.commentId!));
+    await act(async () => reopened.result.current.actions.changeBoostContent('合影'));
+    await act(async () => {
+      await reopened.result.current.actions.submitBoost();
+    });
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        phase: 'apply',
+        state: 'unconfirmed',
+        didDispatch: true,
+        serverConfirmed: false,
+        requestType: 'create-boost',
+        reason: 'unconfirmed'
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ operation: 'interaction-reconcile', phase: 'finish', outcome: 'failure' })
+    );
+  });
+
+  it('links a boost deletion to its authoritative post reconciliation without logging private fields', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const boost = {
+      id: 91827,
+      user: { source: 'linuxdo' as const, username: 'PRIVATE_USER', url: 'https://linux.do/u/private' },
+      content: [{ text: 'PRIVATE_BOOST' }],
+      canDelete: true
+    };
+    const reply: Reply = { ...editableReply, siteExtension: { boosts: [boost], boostCount: 1 } };
+    const opening = detailFor('linuxdo', { replies: [reply] });
+    const { repliesKey } = seedTopicCache(opening, [reply]);
+    const getReply = jest.fn<ReturnType<typeof testPostInteractionReads>['getReply']>(async () =>
+      prepareReplyContent({ ...reply, siteExtension: { boosts: [], boostCount: 0, canBoost: true } }, 'linuxdo')
+    );
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return new Response(String(input).endsWith('/session/csrf') ? '{"csrf":"PRIVATE_CSRF"}' : '{}');
+    });
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === '删除')?.onPress?.();
+    });
+    const hook = await renderActions({
+      topicDetail: opening,
+      topicReplies: [reply],
+      fetcher,
+      interactionReads: { getReply }
+    });
+    await act(async () => hook.result.current.actions.deleteBoost(101, boost.id));
+    await waitFor(() => expect(getReply).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(hook.result.current.actions.actionBusy).toBe(false));
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1);
+    expect(
+      appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0].items[0].siteExtension
+    ).toMatchObject({ boosts: [], boostCount: 0, canBoost: true });
+    const intent = events.find((event) => event.phase === 'intent' && event.requestType === 'delete-boost');
+    expect(intent).toBeDefined();
+    const reconciliation = events.find(
+      (event) => event.phase === 'intent' && event.operation === 'interaction-reconcile'
+    );
+    expect(reconciliation).toMatchObject({ parentTraceId: intent?.traceId });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        traceId: reconciliation?.traceId,
+        phase: 'finish',
+        outcome: 'success',
+        state: 'confirmed'
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ traceId: intent?.traceId, phase: 'finish', outcome: 'success' })
+    );
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE_|91827/);
+  });
+
+  it('keeps an incomplete reaction response unconfirmed and records its parse failure', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null });
+    const { detailKey } = seedTopicCache(opening);
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return new Response(String(input).endsWith('/session/csrf') ? '{"csrf":"PRIVATE_CSRF"}' : '{}');
+    });
+    const hook = await renderActions({ topicDetail: opening, fetcher });
+    await act(async () => {
+      expect(await hook.result.current.actions.reactToPost(opening.commentId!, 'heart')).toBe(false);
+    });
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.siteExtension?.interactionUnconfirmed).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({ phase: 'finish', outcome: 'failure', reason: 'invalid_response' })
+    );
+    expect(events.some((event) => event.serverConfirmed === true)).toBe(false);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1);
+    expect(JSON.stringify(events)).not.toContain('PRIVATE_CSRF');
+  });
+
+  it('records a stale post reconciliation without reading through a changed identity', async () => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    const opening = detailFor('linuxdo');
+    seedTopicCache(opening);
+    const getReply = jest.fn<ReturnType<typeof testPostInteractionReads>['getReply']>();
+    const hook = await renderActions({
+      topicDetail: opening,
+      isWritableSessionTicketCurrent: () => false,
+      interactionReads: { getReply }
+    });
+    await act(async () => {
+      expect(await hook.result.current.actions.recheckLinuxDoPost(opening.commentId!)).toBe(false);
+    });
+    expect(getReply).not.toHaveBeenCalled();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: 'interaction-reconcile',
+        phase: 'finish',
+        outcome: 'stale',
+        reason: 'stale'
+      })
+    );
+  });
+
+  it('stops a reaction before dispatch if the route becomes inactive while settings are loading', async () => {
+    const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null });
+    seedTopicCache(opening);
+    const loading =
+      Promise.withResolvers<
+        Awaited<ReturnType<ReturnType<typeof testPostInteractionReads>['getLinuxDoInteractionConfig']>>
+      >();
+    const hook = await renderActions({
+      topicDetail: opening,
+      interactionReads: { getLinuxDoInteractionConfig: () => loading.promise }
+    });
+    let pending!: Promise<boolean>;
+    await act(async () => {
+      pending = hook.result.current.actions.reactToPost(opening.commentId!, 'heart');
+    });
+    await hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
+    await act(async () => {
+      loading.resolve(await testPostInteractionReads().getLinuxDoInteractionConfig());
+      await pending;
+    });
+    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
+  });
+
+  it.each(['opening', 'reply'] as const)(
+    'shares an in-flight %s interaction recheck and permits a later read',
+    async (target) => {
+      const reply: Reply = { ...editableReply, canLike: true, currentUserReaction: null };
+      const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null, replies: [reply] });
+      seedTopicCache(opening, [reply]);
+      const postId = target === 'opening' ? opening.commentId! : reply.commentId!;
+      const result = prepareReplyContent(
+        { ...reply, commentId: postId, floor: target === 'opening' ? 1 : 2 },
+        'linuxdo'
+      );
+      const response = Promise.withResolvers<PreparedReply>();
+      const getReply = jest.fn<ReturnType<typeof testPostInteractionReads>['getReply']>(() => response.promise);
+      const hook = await renderActions({ topicDetail: opening, topicReplies: [reply], interactionReads: { getReply } });
+      let first!: Promise<boolean>;
+      let second!: Promise<boolean>;
+      await act(async () => {
+        first = hook.result.current.actions.recheckLinuxDoPost(postId);
+        second = hook.result.current.actions.recheckLinuxDoPost(postId);
+      });
+      const concurrentRequests = getReply.mock.calls.length;
+      await act(async () => {
+        response.resolve(result);
+        expect(await first).toBe(true);
+        expect(await second).toBe(true);
+      });
+      await act(async () => {
+        expect(await hook.result.current.actions.recheckLinuxDoPost(postId)).toBe(true);
+      });
+      await hook.unmount();
+      expect(concurrentRequests).toBe(1);
+      expect(getReply).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('keeps a confirmed reaction when an earlier interaction recheck ignores cancellation', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null, reactionSummary: [] });
+    const { detailKey } = seedTopicCache(opening);
+    const response = Promise.withResolvers<PreparedReply>();
+    const getReply = jest.fn<ReturnType<typeof testPostInteractionReads>['getReply']>(() => response.promise);
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return new Response(
+        JSON.stringify(
+          String(input).endsWith('/session/csrf') ? { csrf: 'token' } : reactionPost(opening.commentId!, 'laughing', 1)
+        )
+      );
+    });
+    const hook = await renderActions({ topicDetail: opening, fetcher, interactionReads: { getReply } });
+    let pending!: Promise<boolean>;
+    await act(async () => {
+      pending = hook.result.current.actions.recheckLinuxDoPost(opening.commentId!);
+    });
+    await act(async () => {
+      expect(await hook.result.current.actions.reactToPost(opening.commentId!, 'laughing')).toBe(true);
+    });
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.currentUserReaction?.id).toBe('laughing');
+    const aborted = getReply.mock.calls[0][0].signal?.aborted;
+    let reconciled: boolean | undefined;
+    await act(async () => {
+      response.resolve(
+        prepareReplyContent(
+          {
+            ...editableReply,
+            commentId: opening.commentId!,
+            floor: 1,
+            canLike: true,
+            currentUserReaction: null,
+            reactionSummary: []
+          },
+          'linuxdo'
+        )
+      );
+      reconciled = await pending;
+    });
+    const current = appQueryClient.getQueryData<TopicDetail>(detailKey)?.currentUserReaction;
+    await hook.unmount();
+    expect(current?.id).toBe('laughing');
+    expect(aborted).toBe(true);
+    expect(reconciled).toBe(false);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1);
+  });
+
+  it('blocks manual interaction reads while a post mutation is pending', async () => {
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const opening = detailFor('linuxdo', { canLike: true, currentUserReaction: null, reactionSummary: [] });
+    const { detailKey } = seedTopicCache(opening);
+    const writeResponse = Promise.withResolvers<Response>();
+    const readResponse = Promise.withResolvers<PreparedReply>();
+    const getReply = jest.fn<ReturnType<typeof testPostInteractionReads>['getReply']>(() => readResponse.promise);
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return String(input).endsWith('/session/csrf') ? new Response('{"csrf":"token"}') : writeResponse.promise;
+    });
+    const hook = await renderActions({ topicDetail: opening, fetcher, interactionReads: { getReply } });
+    let mutation!: Promise<boolean>;
+    let recheck!: Promise<boolean>;
+    await act(async () => {
+      mutation = hook.result.current.actions.reactToPost(opening.commentId!, 'laughing');
+    });
+    await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true));
+    await act(async () => {
+      recheck = hook.result.current.actions.recheckLinuxDoPost(opening.commentId!);
+    });
+    const readsDuringWrite = getReply.mock.calls.length;
+    await act(async () => {
+      writeResponse.resolve(new Response(JSON.stringify(reactionPost(opening.commentId!, 'laughing', 1))));
+      expect(await mutation).toBe(true);
+    });
+    let reconciled: boolean | undefined;
+    await act(async () => {
+      readResponse.resolve(
+        prepareReplyContent(
+          {
+            ...editableReply,
+            commentId: opening.commentId!,
+            floor: 1,
+            canLike: true,
+            currentUserReaction: null,
+            reactionSummary: []
+          },
+          'linuxdo'
+        )
+      );
+      reconciled = await recheck;
+    });
+    const current = appQueryClient.getQueryData<TopicDetail>(detailKey)?.currentUserReaction;
+    await hook.unmount();
+    expect(current?.id).toBe('laughing');
+    expect(readsDuringWrite).toBe(0);
+    expect(reconciled).toBe(false);
+  });
+
+  it('keeps a replacement recheck reserved after a canceled route read finishes late', async () => {
+    const opening = detailFor('linuxdo', { canLike: true });
+    seedTopicCache(opening);
+    const obsolete = Promise.withResolvers<PreparedReply>();
+    const replacement = Promise.withResolvers<PreparedReply>();
+    const getReply = jest
+      .fn<ReturnType<typeof testPostInteractionReads>['getReply']>()
+      .mockImplementationOnce(() => obsolete.promise)
+      .mockImplementation(() => replacement.promise);
+    const result = prepareReplyContent({ ...editableReply, commentId: opening.commentId!, floor: 1 }, 'linuxdo');
+    const hook = await renderActions({ topicDetail: opening, interactionReads: { getReply } });
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    let shared!: Promise<boolean>;
+    await act(async () => {
+      first = hook.result.current.actions.recheckLinuxDoPost(opening.commentId!);
+    });
+    await hook.rerender({ active: false, sessionEpochs: initialForumSessionEpochs });
+    await hook.rerender({ active: true, sessionEpochs: initialForumSessionEpochs });
+    await act(async () => {
+      second = hook.result.current.actions.recheckLinuxDoPost(opening.commentId!);
+    });
+    await act(async () => {
+      obsolete.resolve(result);
+      expect(await first).toBe(false);
+    });
+    await act(async () => {
+      shared = hook.result.current.actions.recheckLinuxDoPost(opening.commentId!);
+    });
+    await act(async () => {
+      replacement.resolve(result);
+      expect(await second).toBe(true);
+      expect(await shared).toBe(true);
+    });
+    await hook.unmount();
+    expect(getReply).toHaveBeenCalledTimes(2);
+  });
+
   const policy: DiscoursePostPolicy = {
     postId: '121',
     version: '1',
@@ -908,6 +1446,99 @@ describe('topic action query mutations', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(isWritableSessionTicketCurrent).toHaveBeenCalledTimes(6);
   });
+
+  it.each([
+    ['templates', 401],
+    ['templates', 403],
+    ['templates', 404],
+    ['poll-capabilities', 401],
+    ['poll-capabilities', 403],
+    ['poll-capabilities', 404],
+    ['template-use', 401],
+    ['template-use', 403],
+    ['template-use', 404],
+    ['upload-url', 401],
+    ['upload-url', 403],
+    ['upload-url', 404]
+  ] satisfies [string, number][])(
+    'reports %s login HTTP %s failures to Account without replaying',
+    async (operation, status) => {
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      const onSessionExpired = jest.fn();
+      const requestAccountRecheck = jest.fn();
+      const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/session/csrf')) return new Response('{"csrf":"fixture"}');
+        return new Response('{"errors":["您需要登录才能执行此操作。"]}', { status });
+      });
+      const hook = await renderActions({
+        fetcher,
+        onSessionExpired,
+        requestAccountRecheck,
+        topicDetail: detailFor('linuxdo')
+      });
+      let failure: unknown;
+      await act(async () => {
+        try {
+          if (operation === 'templates') await hook.result.current.actions.loadLinuxDoTemplates();
+          else if (operation === 'poll-capabilities') await hook.result.current.actions.loadLinuxDoPollCapabilities();
+          else if (operation === 'template-use') await hook.result.current.actions.useLinuxDoTemplate('7');
+          else await hook.result.current.actions.resolveLinuxDoUpload('upload://fixture.png');
+        } catch (error) {
+          failure = error;
+        }
+      });
+      expect(failure).toMatchObject(
+        status === 401
+          ? { reason: 'http-401', status }
+          : { reason: 'account-recheck-required', kind: 'login-required', status }
+      );
+      if (status === 401) expect(onSessionExpired).toHaveBeenCalledWith('linuxdo', initialForumSessionEpochs.linuxdo);
+      else
+        expect(requestAccountRecheck).toHaveBeenCalledWith(
+          'linuxdo',
+          initialForumSessionEpochs.linuxdo,
+          expect.any(String)
+        );
+      expect(fetcher).toHaveBeenCalledTimes(operation === 'templates' ? 1 : 2);
+      hook.unmount();
+    }
+  );
+
+  it.each(['templates', 'poll-capabilities', 'template-use', 'upload-url'] as const)(
+    'ignores stale %s login responses without invalidating the replacement account',
+    async (operation) => {
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      let current = true;
+      const onSessionExpired = jest.fn();
+      const requestAccountRecheck = jest.fn();
+      const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/session/csrf')) return new Response('{"csrf":"fixture"}');
+        current = false;
+        return new Response('{"errors":["请先登录"]}', { status: 401 });
+      });
+      const hook = await renderActions({
+        fetcher,
+        onSessionExpired,
+        requestAccountRecheck,
+        isWritableSessionTicketCurrent: () => current,
+        topicDetail: detailFor('linuxdo')
+      });
+      await act(async () => {
+        const operationResult =
+          operation === 'templates'
+            ? hook.result.current.actions.loadLinuxDoTemplates()
+            : operation === 'poll-capabilities'
+              ? hook.result.current.actions.loadLinuxDoPollCapabilities()
+              : operation === 'template-use'
+                ? hook.result.current.actions.useLinuxDoTemplate('7')
+                : hook.result.current.actions.resolveLinuxDoUpload('upload://fixture.png');
+        await expect(operationResult).rejects.toBeInstanceOf(Error);
+      });
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(requestAccountRecheck).not.toHaveBeenCalled();
+      hook.unmount();
+    }
+  );
 
   it('stops LinuxDo template accounting when the writable ticket changes after CSRF', async () => {
     let ticketCurrent = true;

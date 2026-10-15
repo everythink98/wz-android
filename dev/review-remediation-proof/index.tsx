@@ -1556,6 +1556,7 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
       getLinuxDoUserAgent: () => '',
       getNodeSeekUserAgent: () => '',
       onSessionExpired: () => undefined,
+      requestAccountRecheck: () => undefined,
       openSource: () => false,
       privateAccessAllowed: () => false,
       remoteReady: false,

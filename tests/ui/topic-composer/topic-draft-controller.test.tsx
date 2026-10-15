@@ -93,13 +93,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 function response(body: string, status = 200) {
-  return {
-    ok: status < 400,
-    status,
-    text: async () => body,
-    json: async () => JSON.parse(body),
-    headers: new Headers()
-  } as Response;
+  return new Response(new TextEncoder().encode(body), { status });
 }
 const config = Buffer.from(
   JSON.stringify({ user: { rank: 2 }, allCategory: [{ key: 'tech', cn_text: '技术' }] })
@@ -121,6 +115,8 @@ function runtimeFor(id = '123', fetcher?: Fetcher): TopicComposerRouteRuntimeVal
         return response(`<script>decode('${config}')</script>`);
       }),
     ensureNetworkProxyReady: async () => {},
+    onSessionExpired: jest.fn(),
+    requestAccountRecheck: jest.fn(),
     ensureWritableSession: async (source) => ({
       source,
       identityKey: siteSessionIdentityKey(sessions[source]),
@@ -660,7 +656,10 @@ describe('topic draft lifecycle', () => {
     ['linuxdo', 'csrf', 502, 'failed'],
     ['linuxdo', 'upload', 422, 'failed'],
     ['linuxdo', 'upload', 403, 'failed'],
+    ['linuxdo', 'upload', 401, 'failed'],
+    ['linuxdo', 'upload', 'login-404', 'failed'],
     ['nodeseek', 'upload', 401, 'failed'],
+    ['yaohuo', 'upload', 401, 'failed'],
     ['nodeseek', 'upload', 422, 'failed'],
     ['yaohuo', 'upload', 422, 'failed'],
     ['linuxdo', 'upload', 408, 'unknown'],
@@ -684,17 +683,23 @@ describe('topic draft lifecycle', () => {
       if (upload) uploads.push(url);
       if (upload || (phase === 'csrf' && url.endsWith('/session/csrf'))) {
         if (outcome === 'network') throw new Error('connection lost');
+        if (outcome === 'login-404') return response('{"errors":["请先登录"]}', 404);
         return response('{"errors":["Upload rejected"],"message":"Upload rejected"}', Number(outcome));
       }
       return transport.fetcher(url, init);
     };
-    const hook = await setup(saved, runtimeFor('123', fetcher));
+    const runtime = runtimeFor('123', fetcher);
+    const hook = await setup(saved, runtime);
     await act(async () => {
       await hook.result.current.uploadFiles(saved.attachments, false);
     });
     expect(uploads).toHaveLength(phase === 'csrf' ? 0 : 1);
     expect(hook.result.current.draft?.attachments[0]?.status).toBe(expected);
     expect((await loadTopicDraft(source, saved.identityKey))?.attachments[0]?.status).toBe(expected);
+    if (source === 'linuxdo' && outcome === 401) expect(runtime.onSessionExpired).toHaveBeenCalledWith(source, 0);
+    else expect(runtime.onSessionExpired).not.toHaveBeenCalled();
+    if (outcome === 'login-404') expect(runtime.requestAccountRecheck).toHaveBeenCalledWith(source, 0);
+    else expect(runtime.requestAccountRecheck).not.toHaveBeenCalled();
     expect(mockDeletedFiles).toEqual([]);
   });
 

@@ -484,6 +484,122 @@ describe('notification gateway', () => {
     expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
+  it.each([403, 404])('requests account reconciliation for an explicit login-required HTTP %s', async (status) => {
+    const requestAccountRecheck = vi.fn();
+    const onSessionExpired = vi.fn();
+    const gateway = createNotificationGateway({
+      requestAccountRecheck,
+      onSessionExpired,
+      readAccess: () => ({
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        fetcher: async () => new Response('{"errors":["您需要登录才能执行此操作。"]}', { status })
+      }),
+      requestSessionEpoch: () => 9
+    });
+    await expect(gateway.listPage('linuxdo')).rejects.toMatchObject({
+      reason: 'account-recheck-required',
+      kind: 'login-required',
+      status
+    });
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(requestAccountRecheck).toHaveBeenCalledWith('linuxdo', 9, expect.any(String));
+  });
+
+  it('reports authentication loss from every guarded LinuxDo notification consumer without replaying writes', async () => {
+    const operations: ((gateway: ReturnType<typeof createNotificationGateway>) => Promise<unknown>)[] = [
+      (gateway) => gateway.getCategories('linuxdo', 'linuxdo:7'),
+      (gateway) => gateway.readUnreadSnapshot('linuxdo'),
+      (gateway) => gateway.loadDetail(historyItem, 'linuxdo:7'),
+      (gateway) => gateway.loadEarlierMessages(historyItem, '2', 'linuxdo:7'),
+      (gateway) => gateway.setPolicyAcceptance(announcement, policy, true, 'linuxdo:7'),
+      (gateway) =>
+        gateway.markRead(
+          { ...announcement, remoteReadId: '1' },
+          { notification: announcement, title: announcement.title },
+          'linuxdo:7'
+        ),
+      (gateway) => gateway.markAllRead('linuxdo', 'linuxdo:7'),
+      (gateway) => gateway.replyToConversation(historyItem, 'draft', 'linuxdo:7'),
+      (gateway) =>
+        gateway.uploadReplyImage('linuxdo', {
+          expectedIdentityKey: 'linuxdo:7',
+          file: { uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png' }
+        }),
+      (gateway) => gateway.resolveLinuxDoUpload('upload://image.png', 'linuxdo:7'),
+      (gateway) => gateway.loadLinuxDoPollCapabilities('linuxdo:7'),
+      (gateway) => gateway.loadLinuxDoTemplates('linuxdo:7'),
+      (gateway) => gateway.recordLinuxDoTemplateUse('7', 'linuxdo:7')
+    ];
+    for (const run of operations) {
+      const requestAccountRecheck = vi.fn();
+      const fetcher = vi.fn(
+        async (_url: string, _init?: RequestInit) =>
+          new Response('{"errors":["您需要登录才能执行此操作。"]}', { status: 404 })
+      );
+      const gateway = createNotificationGateway({
+        requestAccountRecheck,
+        requestSessionEpoch: () => 9,
+        readAccess: () => ({ identityKey: 'linuxdo:7', userId: '7', username: 'alice', fetcher })
+      });
+      await expect(run(gateway)).rejects.toMatchObject({ reason: 'account-recheck-required' });
+      expect(requestAccountRecheck).toHaveBeenCalledExactlyOnceWith('linuxdo', 9, expect.any(String));
+      expect(new Set(fetcher.mock.calls.map(([url, init]) => `${init?.method || 'GET'} ${url}`)).size).toBe(
+        fetcher.mock.calls.length
+      );
+    }
+  });
+
+  it.each([
+    [404, '{"errors":["页面不存在"]}'],
+    [403, '{"errors":["您无权执行此操作"]}'],
+    [403, '<title>Just a moment...</title>']
+  ])('does not expire or reconcile an unrelated HTTP %s response', async (status, body) => {
+    const requestAccountRecheck = vi.fn();
+    const onSessionExpired = vi.fn();
+    const gateway = createNotificationGateway({
+      requestAccountRecheck,
+      onSessionExpired,
+      readAccess: () => ({
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        fetcher: async () => new Response(body, { status: Number(status) })
+      })
+    });
+    await expect(gateway.listPage('linuxdo')).rejects.toBeInstanceOf(Error);
+    expect(requestAccountRecheck).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it.each(['epoch', 'identity', 'disabled', 'aborted'] as const)(
+    'ignores an authentication failure when its %s changes in flight',
+    async (change) => {
+      const controller = new AbortController();
+      let current = true;
+      const requestAccountRecheck = vi.fn();
+      const onSessionExpired = vi.fn();
+      const gateway = createNotificationGateway({
+        requestAccountRecheck,
+        onSessionExpired,
+        requestSessionEpoch: () => (current || change !== 'epoch' ? 9 : 10),
+        sourceAllowed: () => current || change !== 'disabled',
+        privateAccessAllowed: () => current || change !== 'identity',
+        readAccess: () => ({
+          identityKey: 'linuxdo:7',
+          userId: '7',
+          fetcher: async () => {
+            current = false;
+            if (change === 'aborted') controller.abort();
+            return new Response('{"errors":["您需要登录才能执行此操作。"]}', { status: 404 });
+          }
+        })
+      });
+      await expect(gateway.listPage('linuxdo', { signal: controller.signal })).rejects.toBeInstanceOf(Error);
+      expect(requestAccountRecheck).not.toHaveBeenCalled();
+      expect(onSessionExpired).not.toHaveBeenCalled();
+    }
+  );
+
   it('rejects every direct source operation before access or adapter work when the source is disabled', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.markAllRead = vi.fn(async () => ({ confirmed: true }));
