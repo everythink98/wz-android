@@ -239,13 +239,19 @@ try {
           `CLASSPATH=${remote} app_process / TouchTrace '${points.map((point) => point.join(',')).join(';')}'`
         );
         writeFileSync(path.join(evidence, `${kind}-${duration}-${direction}-timing.txt`), delivered);
-        const actualTimes = delivered
+        const timestamps = delivered
           .toString()
           .trim()
           .split(';')
           .filter(Boolean)
-          .map((point) => Number(point.split(',')[0]));
+          .map((point) => point.split(',').map(Number));
+        const actualTimes = timestamps.map(([time]) => time);
         assert.equal(actualTimes.length, points.length, 'Every injected event must have timing evidence.');
+        assert.deepEqual(
+          timestamps.map(([, , sampleTime]) => sampleTime),
+          points.map(([time]) => time),
+          'Injected sample timestamps must preserve the requested trajectory.'
+        );
         assert(
           actualTimes.every((time, index) => Math.abs(time - points[index][0]) <= 50),
           'BLOCKED_BY_ENV: input delivery drift exceeded 50ms; this is not the requested gesture speed.'

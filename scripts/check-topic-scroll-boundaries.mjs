@@ -84,12 +84,18 @@ try {
           'shell',
           `CLASSPATH=${remote} app_process / TouchTrace '${points.map((point) => point.join(',')).join(';')}'`
         );
-        const actualTimes = delivered
+        const timestamps = delivered
           .trim()
           .split(';')
           .filter(Boolean)
-          .map((point) => Number(point.split(',')[0]));
+          .map((point) => point.split(',').map(Number));
+        const actualTimes = timestamps.map(([time]) => time);
         assert.equal(actualTimes.length, points.length);
+        assert.deepEqual(
+          timestamps.map(([, , sampleTime]) => sampleTime),
+          points.map(([time]) => time),
+          'Injected sample timestamps must preserve the requested trajectory.'
+        );
         assert(
           actualTimes.every((time, index) => Math.abs(time - points[index][0]) <= 50),
           'Input timing drift exceeded 50 ms.'

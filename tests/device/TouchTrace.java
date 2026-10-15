@@ -17,11 +17,13 @@ public class TouchTrace {
       long time = start + Long.parseLong(p[0]);
       SystemClock.sleep(Math.max(0, time - SystemClock.uptimeMillis()));
       int action = Integer.parseInt(p[1]);
-      if (action == MotionEvent.ACTION_DOWN) down = SystemClock.uptimeMillis();
-      MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
+      // Sample time describes the requested motion; dispatch latency must not reshape its velocity.
+      if (action == MotionEvent.ACTION_DOWN) down = time;
+      MotionEvent event = MotionEvent.obtain(down, time, action,
           Float.parseFloat(p[2]), Float.parseFloat(p[3]), 0);
       event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-      delivered.append(event.getEventTime() - start).append(',').append(action).append(';');
+      delivered.append(SystemClock.uptimeMillis() - start).append(',').append(action)
+          .append(',').append(event.getEventTime() - start).append(';');
       try {
         if (!(Boolean) inject.invoke(manager, event, 2)) throw new AssertionError("Injection failed");
       } finally {
