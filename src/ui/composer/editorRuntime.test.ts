@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Editor } from '@tiptap/core';
 import { GapCursor } from '@tiptap/pm/gapcursor';
+import { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { Plugin } from '@tiptap/pm/state';
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
 import { act, createElement } from 'react';
@@ -149,6 +151,69 @@ function activateToolbarUpload(
 }
 
 describe('Composer editor runtime codec', () => {
+  it('edits a rich paragraph without scanning the whole document for unchanged table headers and keeps undo intact', async () => {
+    const headerExtension = composerEditorExtensions().find((extension) => extension.name === 'strictGfmTableHeaders');
+    if (!headerExtension?.config.addProseMirrorPlugins)
+      throw new Error('The production table header extension is missing');
+    const pluginFactory = vi.spyOn(headerExtension.config, 'addProseMirrorPlugins');
+    const markdown = [
+      '开头正文',
+      ...Array.from({ length: 128 }, (_, index) => `普通段落 ${index}`),
+      '# 标题',
+      '| 名称 | 数量 |\n| --- | --- |\n| 原文 | 2 |'
+    ].join('\n\n');
+    const { host, send } = await mountRuntime({ markdown });
+    const editor = (host.querySelector('.composer-document') as HTMLElement & { editor: Editor }).editor;
+    const plugins = pluginFactory.mock.results
+      .flatMap((result) => (result.type === 'return' ? result.value : []))
+      .filter((plugin) => editor.state.plugins.includes(plugin) && plugin.spec.appendTransaction);
+    pluginFactory.mockRestore();
+    expect(plugins).toHaveLength(1);
+    const plugin = plugins[0]!;
+    const append = plugin.spec.appendTransaction;
+    if (!append) throw new Error('The installed table header transaction hook is missing');
+    const before = editor.getJSON();
+    const beforeMarkdown = editor.getMarkdown();
+    let checkingHeaders = false;
+    let wholeDocumentPasses = 0;
+    let visitedNodes = 0;
+    const descendants = ProseMirrorNode.prototype.descendants;
+    const scan = vi.spyOn(ProseMirrorNode.prototype, 'descendants').mockImplementation(function (
+      this: ProseMirrorNode,
+      visit
+    ) {
+      if (!checkingHeaders || this.type.name !== 'doc') return descendants.call(this, visit);
+      wholeDocumentPasses += 1;
+      return descendants.call(this, (node, position, parent, index) => {
+        visitedNodes += 1;
+        return visit(node, position, parent, index);
+      });
+    });
+    const headerAppend = vi.spyOn(plugin.spec, 'appendTransaction').mockImplementation(function (
+      this: typeof plugin,
+      ...args
+    ) {
+      checkingHeaders = true;
+      try {
+        return append.apply(this, args);
+      } finally {
+        checkingHeaders = false;
+      }
+    });
+    try {
+      await act(async () => editor.view.dispatch(editor.state.tr.insertText('新增', 2)));
+      expect(headerAppend).toHaveBeenCalled();
+    } finally {
+      headerAppend.mockRestore();
+      scan.mockRestore();
+    }
+    expect(editor.getMarkdown()).toBe(beforeMarkdown.replace('开头正文', '开新增头正文'));
+    await send({ type: 'COMMAND', payload: { name: 'undo' } });
+    expect(editor.getJSON()).toEqual(before);
+    expect(editor.getMarkdown()).toBe(beforeMarkdown);
+    expect({ wholeDocumentPasses, visitedNodes }).toEqual({ wholeDocumentPasses: 0, visitedNodes: 0 });
+  });
+
   it('blocks rich text mutations during settlement and unlocks on a replacement document', async () => {
     const { host, send, postMessage } = await mountRuntime({ markdown: '已发送', documentEpoch: 3 });
     await send({
@@ -181,6 +246,137 @@ describe('Composer editor runtime codec', () => {
       .map(([raw]) => JSON.parse(String(raw)))
       .findLast((reply) => reply.payload.requestId === 'replacement');
     expect(replacement.payload.snapshot.markdown).toBe('新文档');
+  });
+
+  it.each(['linuxdo', 'nodeseek'] as const)(
+    'edits ordinary %s source text without materializing the unchanged document',
+    async (site) => {
+      let markdown = `## 标题\n\n${'普通正文，保留 Markdown 格式。\n'.repeat(128)}`;
+      if (site === 'nodeseek') markdown += `\n${nodeSeekPendingPollToken('source_guard')}`;
+      const { host, send, postMessage } = await mountRuntime({ site, mode: 'source', markdown });
+      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      let wholeDocumentReads = 0;
+      for (const inserted of ['甲', '乙', '丙']) {
+        const from = Math.floor(markdown.length / 2);
+        const materialize = vi.spyOn(source.state.doc, 'toString');
+        try {
+          await act(async () => source.dispatch({ changes: { from, insert: inserted } }));
+          wholeDocumentReads += materialize.mock.calls.length;
+        } finally {
+          materialize.mockRestore();
+        }
+        markdown = markdown.slice(0, from) + inserted + markdown.slice(from);
+      }
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'ordinary-source-edits' } });
+      const reply = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((message) => message.payload?.requestId === 'ordinary-source-edits');
+      expect(reply.payload.snapshot).toMatchObject({ markdown, mode: 'source', revision: 3 });
+      expect(wholeDocumentReads).toBe(0);
+    }
+  );
+
+  it.each([nodeSeekPendingPollToken('source_guard'), 'nsapp://vote?id=12345'])(
+    'keeps source poll protection correct after edits, insertion and removal for %s',
+    async (token) => {
+      const prefix = '## 标题\n\n开头\n\n';
+      let markdown = `${prefix}${token}\n\n结尾`;
+      const { host, send, postMessage } = await mountRuntime({ site: 'nodeseek', mode: 'source', markdown });
+      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      const dispatch = async (from: number, to: number, insert = '') => {
+        await act(async () => source.dispatch({ changes: { from, to, insert } }));
+      };
+      await dispatch(prefix.length + 2, prefix.length + 3);
+      expect(source.state.doc.toString()).toBe(markdown);
+
+      await dispatch(0, 2, '###');
+      markdown = `###${markdown.slice(2)}`;
+      const firstToken = markdown.indexOf(token);
+      await dispatch(firstToken + 2, firstToken + 2, '破坏');
+      expect(source.state.doc.toString()).toBe(markdown);
+
+      await dispatch(markdown.length, markdown.length, `\n\n${token}`);
+      markdown += `\n\n${token}`;
+      const addedToken = markdown.lastIndexOf(token);
+      await dispatch(addedToken + 2, addedToken + 3);
+      expect(source.state.doc.toString()).toBe(markdown);
+
+      await dispatch(firstToken, firstToken + token.length);
+      markdown = markdown.slice(0, firstToken) + markdown.slice(firstToken + token.length);
+      await dispatch(markdown.indexOf(token), markdown.indexOf(token) + token.length, '普通替换正文');
+      markdown = markdown.replace(token, '普通替换正文');
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'protected-source-edits' } });
+      const reply = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((message) => message.payload?.requestId === 'protected-source-edits');
+      expect(reply.payload.snapshot.markdown).toBe(markdown);
+    }
+  );
+
+  it.each([
+    ['a trimmed poll ID across lines', '<!-- wz:nodeseek-poll: \nsource_guard\n -->', true],
+    [
+      'an unfinished prefix before another poll',
+      `<!-- wz:nodeseek-poll:unfinished\n\n${nodeSeekPendingPollToken('source_guard')}`,
+      false
+    ]
+  ] as const)('preserves source protection for %s', async (_label, initial, protectedToken) => {
+    let markdown = `## 标题\n\n${initial}`;
+    const { host, send, postMessage } = await mountRuntime({ site: 'nodeseek', mode: 'source', markdown });
+    const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+    await act(async () => source.dispatch({ changes: { from: 0, insert: '前缀\n' } }));
+    markdown = `前缀\n${markdown}`;
+    const inside = markdown.lastIndexOf('source_guard');
+    await act(async () => source.dispatch({ changes: { from: inside, to: inside + 1 } }));
+    if (!protectedToken) markdown = markdown.slice(0, inside) + markdown.slice(inside + 1);
+    expect(source.state.doc.toString()).toBe(markdown);
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'unusual-source-poll' } });
+    const reply = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((message) => message.payload?.requestId === 'unusual-source-poll');
+    expect(reply.payload.snapshot.markdown).toBe(markdown);
+  });
+
+  it('protects a poll formed by disjoint source changes and releases two removed poll ranges', async () => {
+    const local = nodeSeekPendingPollToken('source_guard');
+    let markdown = `nsapp://vote?\nid=12345\n\n普通正文\n\n${local}`;
+    const { host, send, postMessage } = await mountRuntime({ site: 'nodeseek', mode: 'source', markdown });
+    const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+    const newline = markdown.indexOf('\n');
+    const ordinary = markdown.indexOf('普通正文');
+    await act(async () =>
+      source.dispatch({
+        changes: [
+          { from: newline, to: newline + 1 },
+          { from: ordinary, to: ordinary, insert: '新前缀' }
+        ]
+      })
+    );
+    markdown = markdown.replace('vote?\nid=', 'vote?id=').replace('普通正文', '新前缀普通正文');
+    const digit = markdown.indexOf('12345');
+    const localStart = markdown.indexOf(local);
+    await act(async () => source.dispatch({ changes: { from: digit, to: digit + 1 } }));
+    expect(source.state.doc.toString()).toBe(markdown);
+    await act(async () => source.dispatch({ changes: { from: localStart + 2, to: localStart + 3 } }));
+    expect(source.state.doc.toString()).toBe(markdown);
+
+    const remote = 'nsapp://vote?id=12345';
+    await act(async () =>
+      source.dispatch({
+        changes: [
+          { from: 0, to: remote.length, insert: '前文' },
+          { from: localStart, to: localStart + local.length, insert: '后文' }
+        ]
+      })
+    );
+    markdown = markdown.replace(remote, '前文').replace(local, '后文');
+    await act(async () => source.dispatch({ changes: { from: 1, to: 2, insert: '言' } }));
+    markdown = `前言${markdown.slice(2)}`;
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'disjoint-source-edits' } });
+    const reply = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((message) => message.payload?.requestId === 'disjoint-source-edits');
+    expect(reply.payload.snapshot.markdown).toBe(markdown);
   });
 
   it('returns a request error for oversized source text and recovers after editing', async () => {
@@ -2953,6 +3149,99 @@ describe('Composer editor runtime codec', () => {
     editor.commands.deleteRow();
 
     expect(editor.getMarkdown().split('\n').find(Boolean)).toContain('Body A');
+  });
+
+  it('normalizes tables after multi-step changes and an appended prefix while preserving undo and redo', () => {
+    const editor = new Editor({
+      extensions: composerEditorExtensions(),
+      content: '# 原标题\n\n原正文',
+      contentType: 'markdown',
+      injectCSS: false
+    });
+    editors.push(editor);
+    const before = editor.getJSON();
+    editor.registerPlugin(
+      new Plugin({
+        appendTransaction(transactions, _oldState, state) {
+          if (!transactions.some((transaction) => transaction.getMeta('add-table-prefix'))) return null;
+          return state.tr.insert(0, state.schema.nodes.paragraph.create(null, state.schema.text('追加事务前缀')));
+        }
+      }),
+      (plugin, plugins) => [plugin, ...plugins]
+    );
+    const table = (label: string) =>
+      editor.schema.nodeFromJSON({
+        type: 'table',
+        content: [
+          {
+            type: 'tableRow',
+            content: [{ type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: label }] }] }]
+          },
+          {
+            type: 'tableRow',
+            content: [
+              { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: '数据' }] }] }
+            ]
+          }
+        ]
+      });
+    const transaction = editor.state.tr.insert(0, table('表一'));
+    transaction.insert(transaction.doc.content.size, table('表二'));
+    transaction.insert(0, editor.schema.nodes.paragraph.create(null, editor.schema.text('同事务前缀')));
+    editor.view.dispatch(transaction.setMeta('add-table-prefix', true));
+    const after = editor.getJSON();
+    const tables: ProseMirrorNode[] = [];
+    editor.state.doc.forEach((node) => {
+      if (node.type.name === 'table') tables.push(node);
+    });
+    expect(tables).toHaveLength(2);
+    const cellTypes = (row: ProseMirrorNode) => {
+      const types: string[] = [];
+      row.forEach((cell) => types.push(cell.type.name));
+      return types;
+    };
+    for (const node of tables) {
+      expect(cellTypes(node.child(0))).toEqual(['tableHeader']);
+      expect(cellTypes(node.child(1))).toEqual(['tableCell']);
+    }
+    expect(editor.getMarkdown()).toContain('# 原标题');
+    expect(editor.getMarkdown()).toContain('表一');
+    expect(editor.getMarkdown()).toContain('表二');
+    expect(editor.commands.undo()).toBe(true);
+    expect(editor.getJSON()).toEqual(before);
+    expect(editor.commands.redo()).toBe(true);
+    expect(editor.getJSON()).toEqual(after);
+  });
+
+  it('normalizes pasted and replacement HTML table headers without losing headings or body text', async () => {
+    const { host } = await mountRuntime({ markdown: '# 原标题\n\n正文' });
+    const editor = (host.querySelector('.composer-document') as HTMLElement & { editor: Editor }).editor;
+    const table = '<table><tbody><tr><td>首行</td></tr><tr><td>次行</td></tr></tbody></table>';
+    const tableHeaderTypes = () => {
+      const types: string[] = [];
+      editor.state.doc.forEach((node) => {
+        if (node.type.name === 'table') node.child(0).forEach((cell) => types.push(cell.type.name));
+      });
+      return types;
+    };
+    await act(async () => {
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+      editor.view.pasteHTML(
+        table,
+        Object.assign(new Event('paste', { bubbles: true, cancelable: true }), { clipboardData: null })
+      );
+    });
+    expect(tableHeaderTypes()).toEqual(['tableHeader']);
+    expect(editor.getMarkdown()).toContain('# 原标题');
+    expect(editor.getMarkdown()).toContain('正文');
+    expect(editor.getMarkdown()).toMatch(/^\|[ \t]*首行[ \t]*\|$/m);
+    await act(async () =>
+      editor.commands.setContent(`<h2>替换标题</h2><p>替换正文</p>${table}`, { contentType: 'html' })
+    );
+    expect(tableHeaderTypes()).toEqual(['tableHeader']);
+    expect(editor.getMarkdown()).toContain('## 替换标题');
+    expect(editor.getMarkdown()).toContain('替换正文');
+    expect(editor.getMarkdown()).toMatch(/^\|[ \t]*首行[ \t]*\|$/m);
   });
 
   it('applies alignment to the complete GFM column', () => {

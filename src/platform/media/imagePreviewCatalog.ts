@@ -58,6 +58,8 @@ type ImagePreviewEntry = {
 };
 
 export interface PreparedImagePreviewCatalog {
+  readonly contentWidth: number;
+  readonly pixelRatio: number;
   readonly entries: readonly {
     readonly descriptor: ForumImagePreviewDescriptor;
     readonly entry: ImagePreviewEntry | null;
@@ -86,13 +88,23 @@ export function isPreviewableImageUrl(url: unknown): boolean {
 export function prepareImagePreviewCatalog(
   descriptors: readonly ForumImagePreviewDescriptor[],
   contentWidth: number,
-  pixelRatio: number
+  pixelRatio: number,
+  previous?: PreparedImagePreviewCatalog
 ): PreparedImagePreviewCatalog {
+  const retained =
+    previous?.contentWidth === contentWidth && previous.pixelRatio === pixelRatio
+      ? new Map(previous.entries.map((entry) => [entry.descriptor, entry]))
+      : undefined;
   return {
-    entries: descriptors.map((descriptor) => ({
-      descriptor,
-      entry: imagePreviewEntryFromDescriptor(descriptor, contentWidth, pixelRatio)
-    }))
+    contentWidth,
+    pixelRatio,
+    entries: descriptors.map(
+      (descriptor) =>
+        retained?.get(descriptor) || {
+          descriptor,
+          entry: imagePreviewEntryFromDescriptor(descriptor, contentWidth, pixelRatio)
+        }
+    )
   };
 }
 

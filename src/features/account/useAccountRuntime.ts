@@ -24,7 +24,7 @@ import {
   type ScopedSiteSessionEvent,
   type SessionSite
 } from '@/domain/session/siteSessionState';
-import { sourceValues, type Source } from '@/domain/forum/sourceCatalog';
+import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 import {
   beginAuthSurface,
   closeOtherAuthSurfaces,
@@ -497,7 +497,7 @@ export function useAccountRuntime({
     (source, requestSessionEpoch, parentTraceId) => {
       const current = readSessionRuntimeSnapshot(source);
       if (
-        source !== 'linuxdo' ||
+        (source !== 'linuxdo' && source !== 'nodeseek') ||
         !current.authenticated ||
         current.authSurfaceOpen ||
         current.identityTrust !== 'confirmed' ||
@@ -506,7 +506,7 @@ export function useAccountRuntime({
       )
         return;
       void reconcileAccountStatusRef.current(source, { parentTraceId }).catch(() => {
-        notify('linux.do 登录状态暂时无法确认，请稍后重试账号核对');
+        notify(`${sourceCatalog[source].label} 登录状态暂时无法确认，请稍后重试账号核对`);
       });
     },
     [notify, readSessionRuntimeSnapshot]

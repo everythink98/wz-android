@@ -27,6 +27,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     pillText: { color: theme.muted, fontFamily, fontSize: fontSize(11), fontWeight: '500' },
     pillTextActive: { color: theme.primary, fontWeight: '600' },
     subtabRail: { gap: 20, paddingRight: 18, paddingVertical: 0 },
+    wrappingRail: { flexDirection: 'row', flexWrap: 'wrap', paddingRight: 0, rowGap: 4 },
     subtab: {
       minHeight: 34,
       justifyContent: 'center',
@@ -67,6 +68,7 @@ export function PillRail({
   compactTabs = false,
   disabled = false,
   items,
+  layout = 'scroll',
   variant = 'pills',
   value,
   resetScrollKey,
@@ -76,6 +78,7 @@ export function PillRail({
   compactTabs?: boolean;
   disabled?: boolean;
   items: { value: string; label: string }[];
+  layout?: 'scroll' | 'wrap';
   variant?: 'pills' | 'tabs' | 'subtabs';
   value: string;
   resetScrollKey?: string | number;
@@ -89,6 +92,39 @@ export function PillRail({
   useEffect(() => {
     if (resetScrollKey !== undefined) scrollRef.current?.scrollTo({ x: 0, animated: false });
   }, [resetScrollKey]);
+  const railStyle = isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail;
+  const content = items.map((item, index) => (
+    <Pressable
+      testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}
+      hitSlop={TOUCH_HIT_SLOP}
+      key={index}
+      accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}
+      accessibilityRole="button"
+      accessibilityState={{ disabled, selected: value === item.value }}
+      disabled={disabled}
+      style={
+        isTabs
+          ? [styles.tab, compactTabs && styles.compactTab, value === item.value && styles.tabActive]
+          : isSubtabs
+            ? [styles.subtab, value === item.value && styles.subtabActive]
+            : [styles.pill, value === item.value && styles.pillActive]
+      }
+      onPress={() => onChange(item.value)}
+    >
+      <Text
+        style={
+          isTabs
+            ? [styles.tabText, value === item.value && styles.tabTextActive]
+            : isSubtabs
+              ? [styles.subtabText, value === item.value && styles.subtabTextActive]
+              : [styles.pillText, value === item.value && styles.pillTextActive]
+        }
+      >
+        {item.label}
+      </Text>
+    </Pressable>
+  ));
+  if (layout === 'wrap') return <View style={[railStyle, styles.wrappingRail]}>{content}</View>;
   return (
     <ScrollView
       overScrollMode="never"
@@ -96,39 +132,9 @@ export function PillRail({
       horizontal
       showsHorizontalScrollIndicator={false}
       fadingEdgeLength={0}
-      contentContainerStyle={isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail}
+      contentContainerStyle={railStyle}
     >
-      {items.map((item, index) => (
-        <Pressable
-          testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}
-          hitSlop={TOUCH_HIT_SLOP}
-          key={index}
-          accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}
-          accessibilityRole="button"
-          accessibilityState={{ disabled, selected: value === item.value }}
-          disabled={disabled}
-          style={
-            isTabs
-              ? [styles.tab, compactTabs && styles.compactTab, value === item.value && styles.tabActive]
-              : isSubtabs
-                ? [styles.subtab, value === item.value && styles.subtabActive]
-                : [styles.pill, value === item.value && styles.pillActive]
-          }
-          onPress={() => onChange(item.value)}
-        >
-          <Text
-            style={
-              isTabs
-                ? [styles.tabText, value === item.value && styles.tabTextActive]
-                : isSubtabs
-                  ? [styles.subtabText, value === item.value && styles.subtabTextActive]
-                  : [styles.pillText, value === item.value && styles.pillTextActive]
-            }
-          >
-            {item.label}
-          </Text>
-        </Pressable>
-      ))}
+      {content}
     </ScrollView>
   );
 }

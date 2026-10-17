@@ -193,7 +193,8 @@ try {
     ? [
         'com.wz.reader.TopicShareCaptureInstrumentedTest#singleLongPngIncludesAllRowsAndKeepsEveryBitmapUnder256Rows',
         'com.wz.reader.TopicShareCaptureInstrumentedTest#cancellationDiskFailureAndChangingLayoutDiscardThePartialPng',
-        'com.wz.reader.TopicShareCaptureInstrumentedTest#realFabricScrollViewAndExpoImageCaptureThroughTheJsBridge'
+        'com.wz.reader.TopicShareCaptureInstrumentedTest#realFabricScrollViewAndExpoImageCaptureThroughTheJsBridge',
+        'com.wz.reader.TopicShareCaptureInstrumentedTest#realShareSheetPreservesOriginalImageDetailAndExportsOnePng'
       ].join(',')
     : hardwarePressure
       ? 'com.wz.reader.NetworkImageHardwarePressureInstrumentedTest'

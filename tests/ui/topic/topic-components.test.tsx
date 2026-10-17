@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { type ComponentProps } from 'react';
+import { createRoot } from 'test-renderer';
 import { Pressable, StyleSheet, Text, ToastAndroid, type StyleProp, type ViewStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
@@ -16,6 +17,7 @@ import { TopicPolls } from '@/features/topic/components/TopicPolls';
 import { NodeSeekStardustCard } from '@/features/topic/components/NodeSeekStardustCard';
 import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { createTheme } from '@/ui/theme/tokens';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTestStyles as createStyles } from '../styleFixture';
 import {
   buildVirtualizedReplyItems as buildVirtualizedReplyItemsFromPlan,
@@ -48,11 +50,27 @@ import {
 const mockAnimatedKeyboardStateSet = jest.fn();
 const mockComposerBottomSheetClose = jest.fn();
 
-jest.mock('@shopify/flash-list', () => ({
-  useMappingHelper: () => ({
-    getMappingKey: (key: string | number) => String(key)
-  })
-}));
+jest.mock('scheduler', () => jest.requireActual('scheduler/unstable_mock'));
+
+jest.mock('@shopify/flash-list', () => {
+  const { useFlashListContext } = jest.requireActual<
+    typeof import('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider')
+  >('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider');
+  const { useLayoutState } = jest.requireActual<
+    typeof import('@shopify/flash-list/dist/recyclerview/hooks/useLayoutState')
+  >('@shopify/flash-list/dist/recyclerview/hooks/useLayoutState');
+  const { useRecyclingState } = jest.requireActual<
+    typeof import('@shopify/flash-list/dist/recyclerview/hooks/useRecyclingState')
+  >('@shopify/flash-list/dist/recyclerview/hooks/useRecyclingState');
+  return {
+    useFlashListContext,
+    useLayoutState,
+    useRecyclingState,
+    useMappingHelper: () => ({
+      getMappingKey: (key: string | number) => String(key)
+    })
+  };
+});
 
 jest.mock('@gorhom/bottom-sheet', () => {
   const ReactModule = require('react') as typeof React;
@@ -553,6 +571,40 @@ describe('Topic real child components', () => {
     }
   });
 
+  it('does not carry a pending copy gesture into a rebound reply', async () => {
+    const copy = jest.mocked(Clipboard.setStringAsync);
+    copy.mockClear();
+    const props = replyProps({
+      bodyContent: compiledRichText('<p>original reply body</p>'),
+      reply: {
+        ...replyProps().reply,
+        contentHtml: '<p>original reply body</p>',
+        quotedPosts: [],
+        replyTarget: undefined
+      }
+    });
+    const nextReply = { ...props.reply, commentId: 23, floor: 3, contentHtml: '<p>rebound reply body</p>' };
+    const touch = { nativeEvent: { pageX: 100, pageY: 100, touches: [{ pageX: 100, pageY: 100 }] } };
+    const view = await render(<ReplyItem {...props} />);
+    try {
+      await fireEvent(view.getByTestId('html-source'), 'touchStart', touch);
+      await view.rerender(
+        <ReplyItem {...props} bodyContent={compiledRichText(nextReply.contentHtml)} reply={nextReply} replyFloor={3} />
+      );
+      expect(view.queryByText('original reply body')).toBeNull();
+      expect(view.getByText('rebound reply body')).toBeTruthy();
+      await fireEvent(view.getByTestId('html-source'), 'longPress');
+      expect(copy).not.toHaveBeenCalled();
+
+      await fireEvent(view.getByTestId('html-source'), 'touchStart', touch);
+      await fireEvent(view.getByTestId('html-source'), 'longPress');
+      expect(copy).toHaveBeenCalledTimes(1);
+      expect(copy).toHaveBeenCalledWith('rebound reply body');
+    } finally {
+      await view.unmount();
+    }
+  });
+
   it('copies literal reply entities and code line breaks while opening-post selection is active', async () => {
     const selection = jest.spyOn(TopicSelection, 'useTopicSelectionRowRef').mockReturnValue({
       active: true,
@@ -682,6 +734,200 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('结果待确认').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText('结果待确认'));
     expect(pay).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['unknown', 'submitted'] as const)(
+    'keeps a rebound stardust receive isolated from an earlier %s payment',
+    async (outcome) => {
+      const firstReceive = {
+        receiverMemberId: '42',
+        amount: 3,
+        refId: 100,
+        description: 'original receive',
+        oneTime: true
+      };
+      const nextReceive = {
+        receiverMemberId: '84',
+        amount: 7,
+        refId: 200,
+        description: 'rebound receive',
+        oneTime: true
+      };
+      const payment = Promise.withResolvers<Awaited<ReturnType<TopicActionsController['payNodeSeekStardust']>>>();
+      const load = jest.fn<TopicActionsController['loadNodeSeekStardustStatus']>(async (receive) => ({
+        participantCount: receive.refId === nextReceive.refId ? 2 : 0,
+        totalAmount: receive.refId === nextReceive.refId ? 14 : 0,
+        paid: false,
+        closed: false
+      }));
+      const pay = jest.fn<TopicActionsController['payNodeSeekStardust']>(() => payment.promise);
+      const actions = stardustActions(load, pay);
+      const view = await render(<NodeSeekStardustCard actions={actions} receive={firstReceive} />);
+      try {
+        await waitFor(() => expect(view.getByText('0 人已付 · 累计 0 Stardust')).toBeTruthy());
+        await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+        expect(pay).toHaveBeenCalledTimes(1);
+        expect(pay).toHaveBeenCalledWith(firstReceive);
+        await view.rerender(<NodeSeekStardustCard actions={actions} receive={nextReceive} />);
+        await waitFor(() => expect(view.getByText('2 人已付 · 累计 14 Stardust')).toBeTruthy());
+        expect(load).toHaveBeenNthCalledWith(2, nextReceive);
+        const availableBeforeOldPaymentSettles =
+          view.queryByLabelText('支付 7 Stardust')?.props.accessibilityState.disabled === false;
+
+        await act(async () => {
+          payment.resolve(outcome);
+          await payment.promise;
+        });
+        expect(view.queryByText('付款结果未知，请先在原站确认，切勿直接重复付款。')).toBeNull();
+        expect(view.queryByLabelText('结果待确认')).toBeNull();
+        expect(view.queryByLabelText('已关闭')).toBeNull();
+        expect(view.getByText('2 人已付 · 累计 14 Stardust')).toBeTruthy();
+        expect(view.getByLabelText('支付 7 Stardust').props.accessibilityState.disabled).toBe(false);
+        expect(load).toHaveBeenCalledTimes(2);
+        expect(availableBeforeOldPaymentSettles).toBe(true);
+      } finally {
+        await act(async () => payment.resolve(outcome));
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['pending', 'unknown', 'submitted'] as const)(
+    'shows only the new receive on its first committed frame after a %s payment',
+    async (outcome) => {
+      const firstReceive = {
+        receiverMemberId: '42',
+        amount: 3,
+        refId: 100,
+        description: 'original receive',
+        oneTime: true
+      };
+      const nextReceive = {
+        ...firstReceive,
+        receiverMemberId: '84',
+        amount: 7,
+        refId: 200,
+        description: 'new receive'
+      };
+      const payment = Promise.withResolvers<Awaited<ReturnType<TopicActionsController['payNodeSeekStardust']>>>();
+      const nextStatus =
+        Promise.withResolvers<Awaited<ReturnType<TopicActionsController['loadNodeSeekStardustStatus']>>>();
+      const load = jest.fn<TopicActionsController['loadNodeSeekStardustStatus']>(async (receive) =>
+        receive.refId === nextReceive.refId
+          ? nextStatus.promise
+          : { participantCount: 1, totalAmount: 3, paid: false, closed: false }
+      );
+      const actions = stardustActions(load, () => payment.promise);
+      const commits: { available: boolean; oldStatus: boolean; oldNotice: boolean; closed: boolean; busy: boolean }[] =
+        [];
+      let observeCommit: (() => void) | undefined;
+      const card = (receive: typeof firstReceive) => (
+        <React.Profiler id="stardust-receive" onRender={() => observeCommit?.()}>
+          <NodeSeekStardustCard actions={actions} receive={receive} />
+        </React.Profiler>
+      );
+      const view = await render(card(firstReceive));
+      try {
+        await waitFor(() => expect(view.getByText('1 人已付 · 累计 3 Stardust')).toBeTruthy());
+        await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+        if (outcome !== 'pending') {
+          await act(async () => payment.resolve(outcome));
+          await waitFor(() =>
+            expect(view.getByLabelText(outcome === 'unknown' ? '结果待确认' : '已关闭')).toBeTruthy()
+          );
+        }
+        observeCommit = () => {
+          if (!view.queryByText('new receive')) return;
+          commits.push({
+            available: view.queryByLabelText('支付 7 Stardust')?.props.accessibilityState.disabled === false,
+            oldStatus: Boolean(view.queryByText('1 人已付 · 累计 3 Stardust')),
+            oldNotice: Boolean(view.queryByText('付款结果未知，请先在原站确认，切勿直接重复付款。')),
+            closed: Boolean(view.queryByLabelText('已关闭')),
+            busy: Boolean(view.queryByLabelText('正在确认…'))
+          });
+        };
+
+        await view.rerender(card(nextReceive));
+        expect(commits.length).toBeGreaterThan(0);
+        expect(commits[0]).toEqual({ available: true, oldStatus: false, oldNotice: false, closed: false, busy: false });
+      } finally {
+        observeCommit = undefined;
+        await view.unmount();
+        await act(async () => {
+          payment.resolve('canceled');
+          nextStatus.resolve({ participantCount: 0, totalAmount: 0, paid: false, closed: false });
+        });
+      }
+    }
+  );
+
+  it('ignores an old receive status that resolves between the new commit and passive cleanup', async () => {
+    const scheduler = jest.requireMock<{
+      unstable_flushAllWithoutAsserting: () => boolean;
+      unstable_flushUntilNextPaint: () => void;
+    }>('scheduler');
+    const firstReceive = { receiverMemberId: '42', amount: 3, refId: 100, description: 'old receive', oneTime: true };
+    const nextReceive = { ...firstReceive, receiverMemberId: '84', amount: 7, refId: 200, description: 'new receive' };
+    const firstStatus =
+      Promise.withResolvers<Awaited<ReturnType<TopicActionsController['loadNodeSeekStardustStatus']>>>();
+    const nextStatus =
+      Promise.withResolvers<Awaited<ReturnType<TopicActionsController['loadNodeSeekStardustStatus']>>>();
+    const load = jest.fn<TopicActionsController['loadNodeSeekStardustStatus']>((receive) =>
+      receive.refId === firstReceive.refId ? firstStatus.promise : nextStatus.promise
+    );
+    const actions = stardustActions(load);
+    const root = createRoot();
+    const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    const commits: { oldClosed: boolean; available: boolean }[] = [];
+    const card = (receive: typeof firstReceive) => (
+      <ReaderStyleProvider value={{ settings: readerData.settings, theme }}>
+        <React.Profiler
+          id="stardust-status"
+          onRender={() => {
+            const view = within(root.container);
+            if (view.queryByText('new receive')) {
+              commits.push({
+                oldClosed: Boolean(view.queryByText('该收款已关闭')),
+                available: view.queryByLabelText('支付 7 Stardust')?.props.accessibilityState.disabled === false
+              });
+            }
+          }}
+        >
+          <NodeSeekStardustCard actions={actions} receive={receive} />
+        </React.Profiler>
+      </ReaderStyleProvider>
+    );
+    try {
+      root.render(card(firstReceive));
+      await Promise.resolve();
+      scheduler.unstable_flushAllWithoutAsserting();
+      expect(load).toHaveBeenCalledTimes(1);
+
+      root.render(card(nextReceive));
+      await Promise.resolve();
+      scheduler.unstable_flushUntilNextPaint();
+      expect(within(root.container).getByText('new receive')).toBeTruthy();
+      expect(load).toHaveBeenCalledTimes(1);
+
+      firstStatus.resolve({ participantCount: 1, totalAmount: 3, paid: true, closed: true });
+      await firstStatus.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(load).toHaveBeenCalledTimes(1);
+      scheduler.unstable_flushAllWithoutAsserting();
+      expect(load).toHaveBeenNthCalledWith(2, nextReceive);
+      expect(commits.length).toBeGreaterThan(0);
+      expect(commits.every((commit) => !commit.oldClosed && commit.available)).toBe(true);
+
+      await act(async () => {
+        nextStatus.resolve({ participantCount: 2, totalAmount: 14, paid: false, closed: false });
+      });
+      expect(within(root.container).getByText('2 人已付 · 累计 14 Stardust')).toBeTruthy();
+    } finally {
+      await act(async () => root.unmount());
+      globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    }
   });
 
   it('does not downgrade an explicit success when status refresh fails', async () => {

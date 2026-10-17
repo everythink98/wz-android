@@ -19,7 +19,7 @@ export function TopicShareOptions({
 }: {
   topic: Topic;
   onClose: () => void;
-  onShareLink: () => Promise<unknown>;
+  onShareLink: (signal: AbortSignal) => Promise<unknown>;
   onCopyLink: () => Promise<void>;
   onShareImage?: () => void;
 }) {
@@ -27,6 +27,7 @@ export function TopicShareOptions({
   const insets = useSafeAreaInsets();
   const current = useRef(true);
   const running = useRef(false);
+  const operationAbort = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState<'link' | 'copy' | null>(null);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
@@ -34,20 +35,24 @@ export function TopicShareOptions({
     current.current = true;
     return () => {
       current.current = false;
+      operationAbort.current?.abort();
     };
   }, []);
   const close = () => {
     current.current = false;
+    operationAbort.current?.abort();
     onClose();
   };
   const run = async (action: 'link' | 'copy') => {
     if (running.current || !current.current) return;
     running.current = true;
+    const abort = new AbortController();
+    operationAbort.current = abort;
     setBusy(action);
     setError('');
     setFeedback('');
     try {
-      if (action === 'link') await onShareLink();
+      if (action === 'link') await onShareLink(abort.signal);
       else {
         await onCopyLink();
         if (current.current) setFeedback('链接已复制');
@@ -55,6 +60,7 @@ export function TopicShareOptions({
     } catch (cause) {
       if (current.current) setError(errorMessage(cause));
     } finally {
+      operationAbort.current = null;
       running.current = false;
       if (current.current) setBusy(null);
     }

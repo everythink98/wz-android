@@ -8,7 +8,7 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { focusManager, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
-import type { SourceErrorInfo } from '@/domain/forum/models';
+import type { SourceErrorInfo, Topic, TopicLocationTarget } from '@/domain/forum/models';
 import { isRecord } from '@/domain/forum/html';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource, sourceCatalog } from '@/domain/forum/sourceCatalog';
@@ -1780,6 +1780,10 @@ function EnabledNotificationDetailRoute({
       }
     }
   }, [canAccessSource, detailQuery.data?.reply, gateway, identityKey, item.source, runtime.composer]);
+  const openTopic = useLatestCallback((linkedTopic?: Topic, linkedLocation?: TopicLocationTarget) => {
+    const topic = linkedTopic || targetTopic;
+    if (topic) navigation.navigate('Topic', { topic, location: linkedTopic ? linkedLocation : location });
+  });
   return (
     <NotificationDetailScreen
       canOpenTopic={Boolean(targetTopic)}
@@ -1834,10 +1838,7 @@ function EnabledNotificationDetailRoute({
       topicReplyAction={item.kind === 'mention' || item.kind === 'reply'}
       onOpenExternalUrl={openExternalUrl}
       onRetry={() => void retryDetail()}
-      onOpenTopic={(linkedTopic, linkedLocation) => {
-        const topic = linkedTopic || targetTopic;
-        if (topic) navigation.navigate('Topic', { topic, location: linkedTopic ? linkedLocation : location });
-      }}
+      onOpenTopic={openTopic}
       onOpenReply={() => {
         setReplyError('');
         setReplyStatus('');

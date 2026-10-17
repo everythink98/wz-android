@@ -18,6 +18,48 @@ function html(value: string) {
 }
 
 describe('NodeSeek notifications', () => {
+  it.each([
+    ['mentions', 'error'],
+    ['replies', 'message'],
+    ['messages', 'error'],
+    ['unread', 'message']
+  ] as const)(
+    'requests account confirmation when the own %s endpoint cannot find its user',
+    async (categoryId, field) => {
+      const fetcher = vi.fn(async () => new Response(JSON.stringify({ [field]: 'USER NOT FOUND' }), { status: 500 }));
+      const access = { fetcher, identityKey: 'nodeseek:7', userId: '7' };
+      await expect(
+        categoryId === 'unread'
+          ? nodeSeekNotificationAdapter.readUnreadSnapshot(access)
+          : nodeSeekNotificationAdapter.listPage({ ...access, categoryId })
+      ).rejects.toMatchObject({
+        source: 'nodeseek',
+        kind: 'login-required',
+        reason: 'account-recheck-required',
+        status: 500,
+        message: 'NodeSeek 登录状态需要重新确认，请重新检测登录'
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    [500, { error: 'Internal Server Error' }],
+    [500, { error: 'USER NOT FOUND temporarily' }],
+    [404, { error: 'USER NOT FOUND' }],
+    [503, { error: 'USER NOT FOUND' }]
+  ])('does not turn an unrelated HTTP %s notification failure into account loss', async (status, payload) => {
+    const error = await nodeSeekNotificationAdapter
+      .readUnreadSnapshot({
+        identityKey: 'nodeseek:7',
+        userId: '7',
+        fetcher: async () => new Response(JSON.stringify(payload), { status: Number(status) })
+      })
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toHaveProperty('reason', 'account-recheck-required');
+  });
+
   it('counts invalid message rows separately from a normal unread filter', async () => {
     const page = await nodeSeekNotificationAdapter.listPage({
       categoryId: 'messages',
@@ -921,6 +963,10 @@ describe('NodeSeek notifications', () => {
     );
     fetcher.mockImplementation(async () => json({ success: false, message: '用户不存在', msgArray: [] }));
     await expect(nodeSeekNotificationAdapter.loadDetail(item, access)).rejects.toThrow('用户不存在');
+    fetcher.mockImplementation(async () => new Response('{"error":"USER NOT FOUND"}', { status: 500 }));
+    const error = await nodeSeekNotificationAdapter.loadDetail(item, access).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toHaveProperty('reason', 'account-recheck-required');
   });
 
   it.each(['', 'not-a-uid', '0', '9007199254740992'])(

@@ -13,9 +13,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from 'react-native-paper';
 import { ArrowLeft, Download, Share2, X } from 'lucide-react-native';
-import { Image } from 'expo-image';
-import RenderHTML, { defaultHTMLElementModels, type CustomBlockRenderer } from 'react-native-render-html';
+import { Image, type ImageRef } from 'expo-image';
+import RenderHTML, {
+  defaultHTMLElementModels,
+  TChildrenRenderer,
+  type CustomBlockRenderer,
+  type TNode
+} from 'react-native-render-html';
 
+import { FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { TopicDetail } from '@/domain/forum/models';
 import { normalizeMediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
@@ -24,8 +31,12 @@ import { captureLongTopicImage } from '@/platform/media/topicShareCapture';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { errorMessage } from '@/platform/network/errors';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
+import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
+import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
+import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, lineHeightMultiplier, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { createTheme, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { createHtmlCustomElementModels } from '../rendering/htmlElementModels';
 import { prepareTopicShareContent } from '../topicShareContent';
 import { shareTopicImageFile } from '../shareTopicImageFile';
 
@@ -46,76 +57,106 @@ const tableModels = {
   td: defaultHTMLElementModels.td.extend({ getUADerivedStyleFromAttributes: () => ({}) })
 };
 
-const ShareImage: CustomBlockRenderer = ({ tnode }) => {
+function ShareImage({ tnode }: { tnode: TNode }) {
   const progress = useContext(ImageProgressContext);
+  const contentWidth = useForumContentWidth();
+  const [image, setImage] = useState<ImageRef | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [containerWidth, setContainerWidth] = useState(0);
   const [enabled, setEnabled] = useState(false);
   const index = Number(tnode.attributes['data-share-image-index']);
+  const uri = tnode.attributes.src;
+  const referrerPolicy = normalizeMediaReferrerPolicy(tnode.attributes.referrerpolicy);
+  const mediaContext = progress?.mediaContext;
+  const nodeSeekUserAgent = progress?.nodeSeekUserAgent;
+  const onStart = progress?.onStart;
+  const onError = progress?.onError;
   useEffect(() => {
     if (progress && index < progress.completed.size + 4) setEnabled(true);
   }, [index, progress]);
+  useEffect(() => {
+    if (!enabled || !mediaContext) return;
+    let current = true;
+    let decoded: ImageRef | undefined;
+    setImage(null);
+    onStart?.(index);
+    // shortcut: cap very tall decodes for memory; use region decoding if full detail of tall images is required.
+    void Image.loadAsync(
+      { uri, ...imageSourceFromUrl(uri, { mediaContext, nodeSeekUserAgent, referrerPolicy }) },
+      { maxWidth: 1440, maxHeight: 10_000 }
+    ).then(
+      (loaded) => {
+        if (!current) loaded.release();
+        else {
+          decoded = loaded;
+          setImage(loaded);
+        }
+      },
+      () => {
+        if (current) onError?.();
+      }
+    );
+    return () => {
+      current = false;
+      decoded?.release();
+    };
+  }, [enabled, index, mediaContext, nodeSeekUserAgent, onError, onStart, referrerPolicy, uri]);
   if (!progress) return null;
-  const uri = tnode.attributes.src;
   const requestedHeight = Number(tnode.attributes['data-share-height']);
   const width = Math.min(
-    containerWidth || progress.width,
+    Math.min(containerWidth || contentWidth, contentWidth),
     Number(tnode.attributes['data-share-width']) || size.width || progress.width,
     requestedHeight && size.height ? (requestedHeight * size.width) / size.height : Infinity
   );
   const height = size.width ? (width * size.height) / size.width : 120;
+  const inline = tnode.tagName === INLINE_FORUM_IMAGE_TAG;
+  const sticker = tnode.tagName === FORUM_STICKER_TAG;
+  const renderedImage = (
+    <Image
+      accessibilityLabel={tnode.attributes.alt || '正文图片'}
+      source={image}
+      style={{ width, height }}
+      contentFit="contain"
+      transition={0}
+      autoplay={false}
+      onLoadStart={() => progress.onStart(index)}
+      onLoad={({ source }) => {
+        if (source.width <= 0 || source.height <= 0 || (progress.width * source.height) / source.width > 10_000) {
+          progress.onError();
+          return;
+        }
+        setSize({ width: source.width, height: source.height });
+      }}
+      onDisplay={() => progress.onComplete(index)}
+      onError={progress.onError}
+    />
+  );
+  if (inline) return renderedImage;
   return (
     <View
-      style={{ maxWidth: '100%', alignSelf: 'stretch' }}
+      style={{ maxWidth: '100%', alignSelf: sticker ? 'flex-start' : 'stretch' }}
       onLayout={({ nativeEvent }) => setContainerWidth(nativeEvent.layout.width)}
     >
-      <Image
-        accessibilityLabel={tnode.attributes.alt || '正文图片'}
-        source={
-          enabled
-            ? {
-                uri,
-                ...imageSourceFromUrl(uri, {
-                  mediaContext: progress.mediaContext,
-                  nodeSeekUserAgent: progress.nodeSeekUserAgent,
-                  referrerPolicy: normalizeMediaReferrerPolicy(tnode.attributes.referrerpolicy)
-                })
-              }
-            : null
-        }
-        style={{ width, height }}
-        contentFit="contain"
-        transition={0}
-        autoplay={false}
-        onLoadStart={() => progress.onStart(index)}
-        onLoad={({ source }) => {
-          if (source.width <= 0 || source.height <= 0 || (progress.width * source.height) / source.width > 10_000) {
-            progress.onError();
-            return;
-          }
-          setSize({ width: source.width, height: source.height });
-        }}
-        onDisplay={() => progress.onComplete(index)}
-        onError={progress.onError}
-      />
+      {renderedImage}
     </View>
+  );
+}
+
+const ShareTableCell: CustomBlockRenderer = ({ TDefaultRenderer, ...props }) => {
+  const [width, setWidth] = useState(0);
+  return (
+    <TDefaultRenderer {...props}>
+      <View testID="topic-share-cell-content" onLayout={({ nativeEvent }) => setWidth(nativeEvent.layout.width)}>
+        <ForumContentWidthBoundary width={width}>
+          <TChildrenRenderer tchildren={props.tnode.children} />
+        </ForumContentWidthBoundary>
+      </View>
+    </TDefaultRenderer>
   );
 };
 
-const renderers = { img: ShareImage };
 const defaultTextProps = { selectable: false };
 const renderersProps = { a: { onPress: () => undefined } };
-const tagsStyles = {
-  p: { marginTop: 0, marginBottom: 12 },
-  pre: { backgroundColor: '#f2f4f5', padding: 10, fontFamily: 'monospace', whiteSpace: 'pre' as const },
-  code: { fontFamily: 'monospace', backgroundColor: '#f2f4f5' },
-  blockquote: { borderLeftWidth: 3, borderLeftColor: '#c3c9ce', paddingLeft: 12, marginLeft: 0 },
-  a: { color: '#285f86', textDecorationLine: 'underline' as const },
-  table: { marginBottom: 12 },
-  tr: { flexDirection: 'row' as const },
-  td: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: '#d6dade', padding: 6 },
-  th: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: '#d6dade', padding: 6, fontWeight: '700' as const }
-};
 
 export function TopicShareSheet({
   topic,
@@ -134,6 +175,45 @@ export function TopicShareSheet({
   const { width: windowWidth } = useWindowDimensions();
   const width = Math.min(windowWidth - 32, 480);
   const contentWidth = width - 48;
+  const { htmlBaseStyle, htmlClassesStyles, htmlIgnoredStyles, htmlTagsStyles } = useMemo(
+    () =>
+      buildHtmlRenderingStyles({
+        settings,
+        theme: createTheme({ theme: 'light' }),
+        enableDiscourseCallouts: isDiscourseSource(topic.source)
+      }),
+    [settings, topic.source]
+  );
+  const tagsStyles = useMemo(
+    () => ({
+      ...htmlTagsStyles,
+      pre: { ...htmlTagsStyles.pre, fontFamily: 'monospace', whiteSpace: 'pre' as const },
+      table: { ...htmlTagsStyles.table, marginBottom: 12 },
+      td: { ...htmlTagsStyles.td, flex: 1, flexShrink: 1, minWidth: 0 },
+      th: { ...htmlTagsStyles.th, flex: 1, flexShrink: 1, minWidth: 0 }
+    }),
+    [htmlTagsStyles]
+  );
+  const models = useMemo(
+    () => ({ ...createHtmlCustomElementModels(settings.lineHeight), ...tableModels }),
+    [settings.lineHeight]
+  );
+  const renderers = useMemo(
+    () => ({
+      ...createForumStickerRenderers({
+        fontScale: settings.fontScale,
+        mediaContext,
+        mediaSessionIdentity: mediaContext.sessionIdentity,
+        nodeSeekMediaUserAgent: nodeSeekUserAgent
+      }),
+      td: ShareTableCell,
+      th: ShareTableCell,
+      img: ShareImage,
+      [INLINE_FORUM_IMAGE_TAG]: ShareImage,
+      [FORUM_STICKER_TAG]: ShareImage
+    }),
+    [mediaContext, nodeSeekUserAgent, settings.fontScale]
+  );
   const stackActions = windowWidth < 360 || settings.fontScale * PixelRatio.getFontScale() > 1.3;
   const scrollRef = useRef<ScrollView>(null);
   const mounted = useRef(true);
@@ -207,10 +287,8 @@ export function TopicShareSheet({
   }, [attempt, completed.size, imageCount]);
 
   const density = PixelRatio.get();
-  // view-shot allocates the full native bitmap; Android streams larger captures in bounded strips.
+  // Android always redraws at export resolution; view-shot retains the full native bitmap on other platforms.
   const needsBoundedCapture = width * height * density * density > 24_000_000 || height * density > 32_000;
-  const boundedCapture = useRef(false);
-  boundedCapture.current = needsBoundedCapture;
   const tooLarge = Platform.OS !== 'android' && needsBoundedCapture;
   const error =
     document.kind === 'error'
@@ -257,7 +335,7 @@ export function TopicShareSheet({
       // Wait for the layout after the final decoded image before reading native pixels.
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       if (!mounted.current || !canCapture.current) return;
-      if (boundedCapture.current && Platform.OS === 'android') {
+      if (Platform.OS === 'android') {
         const captured = await captureLongTopicImage(scrollRef.current, abort.signal);
         uri = captured.uri;
         release = captured.release;
@@ -337,11 +415,14 @@ export function TopicShareSheet({
                 <RenderHTML
                   contentWidth={contentWidth}
                   source={source}
-                  baseStyle={styles.body}
+                  baseStyle={htmlBaseStyle}
+                  emSize={typeof htmlBaseStyle.fontSize === 'number' ? htmlBaseStyle.fontSize : 16}
                   tagsStyles={tagsStyles}
-                  customHTMLElementModels={tableModels}
+                  classesStyles={htmlClassesStyles}
+                  allowedStyles={HTML_ALLOWED_INLINE_STYLES}
+                  ignoredStyles={htmlIgnoredStyles}
+                  customHTMLElementModels={models}
                   renderers={renderers}
-                  enableCSSInlineProcessing={false}
                   defaultTextProps={defaultTextProps}
                   renderersProps={renderersProps}
                 />
@@ -439,12 +520,6 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       marginBottom: 10
     },
     date: { color: '#65717b', fontSize: font(12), lineHeight: font(19), marginBottom: 24 },
-    body: {
-      color: '#20252b',
-      fontSize: font(16),
-      lineHeight: Math.round(font(16) * lineHeightMultiplier(settings.lineHeight)),
-      fontFamily: fontFamilyValue(settings.fontFamily)
-    },
     footer: { marginTop: 20, borderTopWidth: 1, borderTopColor: '#e3e7eb', paddingTop: 16, gap: 6 },
     link: { color: '#285f86', fontSize: font(12), lineHeight: font(18) },
     actions: {

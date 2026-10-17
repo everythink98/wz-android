@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-index 80c6803..01279fc 100644
+index 80c6803..e87a533 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 @@ -3,12 +3,16 @@ package com.reactnativecommunity.webview;
@@ -143,7 +143,7 @@ index 80c6803..01279fc 100644
      public void setBasicAuthCredential(RNCBasicAuthCredential credential) {
          mRNCWebViewClient.setBasicAuthCredential(credential);
      }
-@@ -416,10 +537,14 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -416,10 +537,19 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
  
      @Override
      public void destroy() {
@@ -154,17 +154,49 @@ index 80c6803..01279fc 100644
          }
          super.destroy();
 +        // Cancellation can destroy a page before onPageFinished persists its response cookies.
-+        CookieManager.getInstance().flush();
++        android.os.Trace.beginSection("WZ.WebView.CookieFlush.destroy");
++        try {
++            CookieManager.getInstance().flush();
++        } finally {
++            android.os.Trace.endSection();
++        }
      }
  
    public ThemedReactContext getThemedReactContext() {
-@@ -465,4 +590,4 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -465,4 +595,4 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
              return waitingForCommandLoadUrl;
          }
      }
 -}
 \ No newline at end of file
 +}
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+index 209b855..753a981 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+@@ -49,9 +49,20 @@ public class RNCWebViewClient extends WebViewClient {
+     @Override
+     public void onPageFinished(WebView webView, String url) {
+         super.onPageFinished(webView, url);
+-        String cookies = CookieManager.getInstance().getCookie(url);
++        String cookies;
++        android.os.Trace.beginSection("WZ.WebView.CookieRead.pageFinished");
++        try {
++            cookies = CookieManager.getInstance().getCookie(url);
++        } finally {
++            android.os.Trace.endSection();
++        }
+         if (cookies != null) {
+-            CookieManager.getInstance().flush();
++            android.os.Trace.beginSection("WZ.WebView.CookieFlush.pageFinished");
++            try {
++                CookieManager.getInstance().flush();
++            } finally {
++                android.os.Trace.endSection();
++            }
+         }
+ 
+         if (!mLastLoadFailed) {
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 index f83033b..c60eb23 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt

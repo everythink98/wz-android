@@ -21,6 +21,18 @@ const mockReleaseLongCapture = jest.fn<(id: string) => void>();
 let mockLongCaptureAvailable = true;
 const mockFiles = new Map<string, Uint8Array>();
 let mockCopyWait: Promise<void> | undefined;
+const mockLoadImage = jest.fn<
+  (
+    source: { uri: string },
+    options: unknown
+  ) => Promise<{
+    uri: string;
+    width: number;
+    height: number;
+    release: () => void;
+  }>
+>();
+const mockReleaseImage = jest.fn<() => void>();
 
 jest.mock('expo', () => {
   const actual = jest.requireActual<typeof import('expo')>('expo');
@@ -47,7 +59,11 @@ jest.mock('react-native-view-shot', () => ({
 jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View } = require('react-native') as typeof import('react-native');
-  return { Image: (props: ComponentProps<typeof Image>) => ReactModule.createElement(View, props) };
+  return {
+    Image: Object.assign((props: ComponentProps<typeof Image>) => ReactModule.createElement(View, props), {
+      loadAsync: (source: { uri: string }, options: unknown) => mockLoadImage(source, options)
+    })
+  };
 });
 jest.mock('expo-sharing', () => ({
   isAvailableAsync: async () => true,
@@ -131,6 +147,7 @@ async function settleFrames() {
 beforeEach(() => {
   jest.useFakeTimers({ doNotFake: ['performance'] });
   jest.spyOn(PixelRatio, 'get').mockReturnValue(1);
+  jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
   mockCaptureRef.mockReset().mockResolvedValue(captureUri);
   mockLongCapture.mockReset().mockImplementation(async () => {
     mockFiles.set(captureUri, imageBytes);
@@ -148,6 +165,13 @@ beforeEach(() => {
   mockFiles.clear();
   mockFiles.set(captureUri, imageBytes);
   mockCopyWait = undefined;
+  mockReleaseImage.mockReset();
+  mockLoadImage.mockReset().mockImplementation(async ({ uri }) => ({
+    uri,
+    width: 640,
+    height: 480,
+    release: mockReleaseImage
+  }));
 });
 
 afterEach(() => {
@@ -156,6 +180,86 @@ afterEach(() => {
 });
 
 describe('Topic body image sharing', () => {
+  it('uses reading typography and preserves safe alignment and emphasis in the exported body', async () => {
+    const view = await render(
+      <TopicShareSheet
+        topic={{
+          ...topic,
+          contentHtml:
+            '<h2>正文标题</h2><p style="text-align:right;color:#bb2222"><span class="bbcode-s">右对齐删除线</span></p><font size="5">放大正文</font>'
+        }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    expect(view.getByText('正文标题')).toHaveStyle({ fontSize: 20, lineHeight: 28 });
+    expect(view.getByText('右对齐删除线')).toHaveStyle({ textDecorationLine: 'line-through' });
+    expect(view.getByText('右对齐删除线')).toHaveStyle({ textAlign: 'right', color: '#bb2222' });
+    expect(view.getByText('放大正文')).toHaveStyle({ fontSize: 24, lineHeight: 36 });
+  });
+
+  it.each([1, 3])('exports short Android bodies at the same resolution at density %s', async (density) => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    jest.spyOn(PixelRatio, 'get').mockReturnValue(density);
+    jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
+    const view = await render(<TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />);
+    await layout(view, 1200);
+    await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
+    await settleFrames();
+    expect(mockLongCapture).toHaveBeenCalledWith('long-capture', 73);
+    expect(mockCaptureRef).not.toHaveBeenCalled();
+    expect(mockShareAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('decodes original image detail for export independently of the preview size and releases it on unmount', async () => {
+    const view = await render(
+      <TopicShareSheet
+        topic={{ ...topic, contentHtml: '<img src="https://example.com/original.png" alt="原图">' }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    expect(mockLoadImage).toHaveBeenCalledWith(expect.objectContaining({ uri: 'https://example.com/original.png' }), {
+      maxWidth: 1440,
+      maxHeight: 10_000
+    });
+    await view.unmount();
+    expect(mockReleaseImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases a decode that finishes after closing and lets a failed decode reload', async () => {
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof mockLoadImage>>>();
+    mockLoadImage.mockReturnValueOnce(pending.promise);
+    const props = {
+      topic: { ...topic, contentHtml: '<img src="https://example.com/original.png" alt="原图">' },
+      mediaContext,
+      onClose: jest.fn()
+    };
+    const closing = await render(<TopicShareSheet {...props} />);
+    await closing.unmount();
+    await act(async () => {
+      pending.resolve({
+        uri: 'https://example.com/original.png',
+        width: 1440,
+        height: 1000,
+        release: mockReleaseImage
+      });
+      await pending.promise;
+    });
+    expect(mockReleaseImage).toHaveBeenCalledTimes(1);
+
+    mockLoadImage.mockRejectedValueOnce(new Error('decode failed'));
+    const retrying = await render(<TopicShareSheet {...props} />);
+    expect(retrying.getByRole('alert')).toHaveTextContent(/有图片未能加载/);
+    expect(retrying.getByRole('button', { name: '分享图片' })).toBeDisabled();
+    await fireEvent.press(retrying.getByRole('button', { name: '重新加载图片' }));
+    await fireEvent(retrying.getByLabelText('原图'), 'load', { source: { width: 1440, height: 1000 } });
+    await fireEvent(retrying.getByLabelText('原图'), 'display');
+    await layout(retrying);
+    expect(retrying.queryByRole('alert')).toBeNull();
+    expect(retrying.getByRole('button', { name: '分享图片' })).toBeEnabled();
+  });
+
   it('renders the complete opening and waits for every displayed image and content layout before sharing one PNG', async () => {
     const view = await render(
       <TopicShareSheet
@@ -207,23 +311,19 @@ describe('Topic body image sharing', () => {
     await fireEvent.press(button);
     await fireEvent.press(button);
     await settleFrames();
-    expect(mockCaptureRef).toHaveBeenCalledTimes(1);
-    expect(mockCaptureRef).toHaveBeenCalledWith(expect.anything(), {
-      format: 'png',
-      result: 'tmpfile',
-      snapshotContentContainer: true
-    });
+    expect(mockLongCapture).toHaveBeenCalledTimes(1);
+    expect(mockLongCapture).toHaveBeenCalledWith('long-capture', 73);
     expect(mockShareAsync).toHaveBeenCalledTimes(1);
     const [sharedUri, options] = mockShareAsync.mock.calls[0];
     expect(sharedUri).not.toBe(captureUri);
     expect(mockFiles.get(sharedUri)).toEqual(imageBytes);
     expect(options).toEqual({ dialogTitle: topic.title, mimeType: 'image/png', UTI: 'public.png' });
-    expect(mockReleaseCapture).not.toHaveBeenCalled();
+    expect(mockReleaseLongCapture).not.toHaveBeenCalled();
     await act(async () => {
       pendingShare.resolve();
       await pendingShare.promise;
     });
-    expect(mockReleaseCapture).toHaveBeenCalledWith(captureUri);
+    expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
     expect(mockFiles.get(sharedUri)).toEqual(imageBytes);
   });
 
@@ -285,20 +385,20 @@ describe('Topic body image sharing', () => {
     }
     await fireEvent.press(view.getByRole('button', { name: '保存到相册' }));
     await settleFrames();
-    expect(mockCaptureRef).toHaveBeenCalledTimes(1);
+    expect(mockLongCapture).toHaveBeenCalledTimes(1);
     expect(mockCreateAsset).toHaveBeenCalledWith(captureUri);
     expect(mockRequestPermissions).not.toHaveBeenCalled();
     expect(mockShareAsync).not.toHaveBeenCalled();
     expect(view.getByRole('button', { name: '保存到相册' })).toBeDisabled();
     expect(view.getByRole('button', { name: '分享图片' })).toBeDisabled();
-    expect(mockReleaseCapture).not.toHaveBeenCalled();
+    expect(mockReleaseLongCapture).not.toHaveBeenCalled();
     expect(mockFiles.get(captureUri)).toEqual(imageBytes);
     await act(async () => {
       saving.resolve();
       await saving.promise;
     });
     expect(view.getByText('已保存到相册')).toBeTruthy();
-    expect(mockReleaseCapture).toHaveBeenCalledWith(captureUri);
+    expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
     expect(mockFiles.has(captureUri)).toBe(false);
     expect(view.getByRole('button', { name: '保存到相册' })).toBeDisabled();
     expect(view.getByRole('button', { name: '分享图片' })).toBeEnabled();
@@ -360,6 +460,25 @@ describe('Topic body image sharing', () => {
     await fireEvent(view.getByLabelText('表情图'), 'load', { source: { width: 128, height: 128 } });
     expect(StyleSheet.flatten(view.getByLabelText('表格图').props.style)).toMatchObject({ width: 96, height: 72 });
     expect(StyleSheet.flatten(view.getByLabelText('表情图').props.style)).toMatchObject({ width: 20, height: 20 });
+  });
+
+  it('keeps a table image mixed with text within the measured cell content width', async () => {
+    const view = await render(
+      <TopicShareSheet
+        topic={{
+          ...topic,
+          contentHtml:
+            '<table><tr><td>前<img src="https://example.com/mixed.png" alt="混排图">后</td><td>另一列</td></tr></table>'
+        }}
+        mediaContext={mediaContext}
+        onClose={jest.fn()}
+      />
+    );
+    await fireEvent(view.getAllByTestId('topic-share-cell-content')[0], 'layout', {
+      nativeEvent: { layout: { width: 96, height: 120, x: 0, y: 0 } }
+    });
+    await fireEvent(view.getByLabelText('混排图'), 'load', { source: { width: 640, height: 480 } });
+    expect(view.getByLabelText('混排图')).toHaveStyle({ width: 96, height: 72 });
   });
 
   it.each(['share', 'save'])(
@@ -484,6 +603,7 @@ describe('Topic body image sharing', () => {
     'shows a %s capture failure and lets the user retry successfully',
     async (mode) => {
       const long = mode !== 'standard';
+      if (!long) jest.replaceProperty(Platform, 'OS', 'ios');
       if (long) {
         jest.replaceProperty(Platform, 'OS', 'android');
         jest.spyOn(native, 'findNodeHandle').mockReturnValue(73);
@@ -512,6 +632,7 @@ describe('Topic body image sharing', () => {
   it.each(['close button', 'Android back', 'Android back to options', 'unmount'])(
     'does not share a late capture after %s',
     async (action) => {
+      jest.replaceProperty(Platform, 'OS', 'ios');
       const pendingCapture = Promise.withResolvers<string>();
       mockCaptureRef.mockReturnValueOnce(pendingCapture.promise);
       const onClose = jest.fn();
@@ -552,8 +673,8 @@ describe('Topic body image sharing', () => {
     await layout(view);
     await fireEvent.press(view.getByRole('button', { name: '分享图片' }));
     await settleFrames();
-    expect(mockCaptureRef).toHaveBeenCalledTimes(1);
-    expect(mockReleaseCapture).not.toHaveBeenCalled();
+    expect(mockLongCapture).toHaveBeenCalledTimes(1);
+    expect(mockReleaseLongCapture).not.toHaveBeenCalled();
     await fireEvent.press(view.getByRole('button', { name: '关闭' }));
     await act(async () => {
       copying.resolve();
@@ -561,6 +682,6 @@ describe('Topic body image sharing', () => {
     });
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mockShareAsync).not.toHaveBeenCalled();
-    expect(mockReleaseCapture).toHaveBeenCalledWith(captureUri);
+    expect(mockReleaseLongCapture).toHaveBeenCalledWith('long-capture');
   });
 });

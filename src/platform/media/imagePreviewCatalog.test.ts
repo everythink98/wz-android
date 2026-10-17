@@ -27,6 +27,40 @@ function catalog(
 }
 
 describe('image preview catalog', () => {
+  it('reuses only retained descriptors at the same display size and density', () => {
+    const first = { source: 'https://images.invalid/first.webp' };
+    const second = { source: 'https://images.invalid/second.webp' };
+    const added = { source: 'https://images.invalid/added.webp' };
+    const placeholder = { source: 'https://images.invalid/transparent.gif' };
+    const original = prepareImagePreviewCatalog([first, second, placeholder], 300, 2);
+    const extended = prepareImagePreviewCatalog([added, first, second, placeholder], 300, 2, original);
+    expect(extended.entries[1]).toBe(original.entries[0]);
+    expect(extended.entries[2]).toBe(original.entries[1]);
+    expect(original.entries[2].entry).toBeNull();
+    expect(extended.entries[3]).toBe(original.entries[2]);
+    const resized = prepareImagePreviewCatalog([first, second], 700, 2, extended);
+    expect(resized.entries[0]).not.toBe(original.entries[0]);
+    const scaled = prepareImagePreviewCatalog([first, second], 300, 3, extended);
+    expect(scaled.entries[0]).not.toBe(original.entries[0]);
+    const reduced = prepareImagePreviewCatalog([first], 300, 2, extended);
+    const restored = prepareImagePreviewCatalog([first, second], 300, 2, reduced);
+    expect(restored.entries[0]).toBe(original.entries[0]);
+    expect(restored.entries[1]).not.toBe(original.entries[1]);
+  });
+
+  it('reconciles duplicate reading origins without mutating reused preparation', () => {
+    const source = 'https://images.invalid/shared.webp';
+    const first = { source, readingOrigin: { topicId: '42', floor: 2 } };
+    const second = { source, readingOrigin: { topicId: '42', floor: 3 } };
+    const original = prepareImagePreviewCatalog([first], 300, 2);
+    const extended = prepareImagePreviewCatalog([second, first], 300, 2, original);
+    expect(projectImagePreviewCatalog(extended).items[0].readingOrigin).toBeUndefined();
+    expect(projectImagePreviewCatalog(original).items[0].readingOrigin).toEqual(first.readingOrigin);
+    const reduced = prepareImagePreviewCatalog([first], 300, 2, extended);
+    expect(reduced.entries[0]).toBe(original.entries[0]);
+    expect(projectImagePreviewCatalog(reduced).items[0].readingOrigin).toEqual(first.readingOrigin);
+  });
+
   it('reprojects inline exclusions from a prepared preview catalog', () => {
     const first = 'https://cdn.example.com/first-640.jpg';
     const second = 'https://cdn.example.com/first-1280.jpg';

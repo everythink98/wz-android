@@ -20,6 +20,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type ViewStyle,
+  PixelRatio,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -140,7 +141,7 @@ import {
 } from '../media/TopicBodyMediaCoordinator';
 import { ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
 import { useTopicBodyMediaViewport } from '../media/useTopicBodyMediaViewport';
-import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
+import { diagnosticRef, type DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import {
@@ -162,9 +163,11 @@ import {
 } from '../selection/TopicSelectionSurface';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
+const REPLY_START_REACHED_THRESHOLD = 3;
 const REPLY_END_REACHED_THRESHOLD = 0.55;
 const TOPIC_VISIBLE_CONTENT_POSITION = {
-  shouldAnchorItem: (item: TopicListItem) => item.type !== 'replyControls' && item.type !== 'replyWindowStart'
+  shouldAnchorItem: (item: TopicListItem) =>
+    item.type !== 'topicHeader' && item.type !== 'replyControls' && item.type !== 'replyWindowStart'
 };
 
 const CONTENT_ROW_TRIM_LEADING: ViewStyle = {
@@ -214,11 +217,13 @@ function TopicSelectionRenderHtmlConfig({
   selectable?: boolean;
 }) {
   const rowActive = useTopicSelectionRowActive();
+  const textSelectable = selectable ?? !rowActive;
+  const defaultTextProps = useMemo(() => ({ selectable: textSelectable }), [textSelectable]);
   const content = (
     <RenderHTMLConfigProvider
       renderers={renderers}
       renderersProps={renderersProps}
-      defaultTextProps={{ selectable: selectable ?? !rowActive }}
+      defaultTextProps={defaultTextProps}
       enableExperimentalBRCollapsing
       enableExperimentalGhostLinesPrevention
       enableExperimentalMarginCollapsing
@@ -236,7 +241,6 @@ function TopicSelectionRenderHtmlConfig({
 function topicListContentScope(item: TopicListItem) {
   if (item.type === 'topicQuoteSummary') return `topic-quote:${item.content.instanceKey}`;
   if (item.type === 'topicQuoteContent') return `topic-quote:${item.instanceKey}`;
-  if (item.type === 'topicAcceptedAnswerContent') return 'accepted-answer';
   if (item.type === 'topicContent') return 'opening';
   if (item.type === 'replyQuoteContent') return `reply-quote:${item.instanceKey}`;
   if (item.type === 'replyContent') return `reply:${getReplyKey(item.reply)}:body`;
@@ -315,12 +319,12 @@ function TopicListItemFrame({
 }) {
   const markFirstRow = useTopicBodyMediaFirstRowMarker();
   const marker = useTopicSelectionRowRef(selectionRowKey);
-  const markedRef = useRef(false);
+  const markedRef = useRef<number | undefined>(undefined);
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
       onLayout?.(event);
-      if (markedRef.current || firstRowStartedAt === undefined) return;
-      markedRef.current = true;
+      if (firstRowStartedAt === undefined || markedRef.current === firstRowStartedAt) return;
+      markedRef.current = firstRowStartedAt;
       markFirstRow(monotonicNowMs() - firstRowStartedAt);
     },
     [firstRowStartedAt, markFirstRow, onLayout]
@@ -505,6 +509,7 @@ export const TopicContentList = memo(function TopicContentList({
   const onLoadMoreReplies = read.loadMoreReplies;
   const onLoadPreviousReplies = read.loadPreviousReplies;
   const onLocateReply = read.locateReply;
+  const onCancelReplyLocation = read.cancelReplyLocation;
   const onReplyToFloor = commands.composer.replyToFloor;
   const onToggleReplyQuote = read.toggleReplyQuote;
   const onToggleTopicBodyQuote = read.toggleTopicBodyQuote;
@@ -706,7 +711,56 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [detailTopicStateKey]
   );
-  const autoLoadRepliesArmedRef = useRef(false);
+  const replyScroll = useRef({
+    phase: 'idle' as 'idle' | 'drag' | 'momentum',
+    momentum: false,
+    offset: 0,
+    correction: 0,
+    start: '',
+    end: ''
+  });
+  const replyLoadPending = useRef(false);
+  const stopReplyScroll = useCallback(() => {
+    replyScroll.current.phase = 'idle';
+    replyScroll.current.momentum = false;
+  }, []);
+  const recordScrollCommand = useCallback(
+    (
+      scrollReason: NonNullable<DiagnosticFields['scrollReason']>,
+      target: Pick<DiagnosticFields, 'targetIndex' | 'offset'>
+    ) => {
+      const fields = { source: item?.source, topicRef: detailTopicDiagnosticRef, scrollReason, ...target };
+      const trace = beginDiagnosticTrace('topic', 'scroll-command', fields);
+      finishDiagnosticTrace(trace, 'success', fields);
+    },
+    [detailTopicDiagnosticRef, item?.source]
+  );
+  const loadedReplyCount = sourceReplies.length;
+  const firstReplyFloor = sourceReplies[0]?.floor;
+  const lastReplyFloor = sourceReplies.at(-1)?.floor;
+  const replyWindowCursor = `${read.replyPreviousCursor?.page}:${read.replyPreviousCursor?.offset}:${read.replyNextPage}:${read.replyNextOffset}`;
+  useEffect(() => {
+    const fields = {
+      source: item?.source,
+      topicRef: detailTopicDiagnosticRef,
+      cursorRef: diagnosticRef('cursor', `${detailTopicStateKey}:${replyOrder}:${replyWindowCursor}`),
+      replyOrder,
+      itemCount: loadedReplyCount,
+      firstFloor: firstReplyFloor,
+      lastFloor: lastReplyFloor
+    };
+    const trace = beginDiagnosticTrace('topic', 'scroll-window', fields);
+    finishDiagnosticTrace(trace, 'success', fields);
+  }, [
+    detailTopicDiagnosticRef,
+    detailTopicStateKey,
+    firstReplyFloor,
+    item?.source,
+    lastReplyFloor,
+    loadedReplyCount,
+    replyOrder,
+    replyWindowCursor
+  ]);
   const repliesByFloor = useMemo(() => {
     void quoteStateVersion;
     const next = new Map<number, Reply>();
@@ -766,21 +820,27 @@ export const TopicContentList = memo(function TopicContentList({
     previewImages: openingPreviewImages,
     showsAccessNotice: topicShowsAccessNotice
   } = openingContent;
+  const openingImagePreviewDescriptors = useMemo(
+    () =>
+      itemSource === 'linuxdo'
+        ? openingPreviewImages.map((descriptor) => ({
+            ...descriptor,
+            readingOrigin: { topicId: selectedTopic.id, floor: 1 }
+          }))
+        : openingPreviewImages,
+    [itemSource, openingPreviewImages, selectedTopic.id]
+  );
   const loadedQuotedReplyValues = useMemo(() => Object.values(loadedQuotedReplies), [loadedQuotedReplies]);
   const imagePreviewDescriptors = useMemo(
     () =>
       itemSource
         ? [
-            ...openingPreviewImages.map((descriptor) =>
-              itemSource === 'linuxdo'
-                ? { ...descriptor, readingOrigin: { topicId: selectedTopic.id, floor: 1 } }
-                : descriptor
-            ),
+            ...openingImagePreviewDescriptors,
             ...imagePreviewDescriptorsForReplies(sourceReplies, itemSource, selectedTopic.id),
             ...imagePreviewDescriptorsForReplies(loadedQuotedReplyValues, itemSource)
           ]
-        : openingPreviewImages,
-    [itemSource, loadedQuotedReplyValues, openingPreviewImages, sourceReplies, selectedTopic.id]
+        : openingImagePreviewDescriptors,
+    [itemSource, loadedQuotedReplyValues, openingImagePreviewDescriptors, sourceReplies, selectedTopic.id]
   );
   const catalogReadyElapsedRef = useRef<{ elapsedMs?: number; topicRef: string }>({ topicRef: '' });
   useLayoutEffect(() => {
@@ -853,11 +913,6 @@ export const TopicContentList = memo(function TopicContentList({
     !repliesLoading &&
     !repliesError;
   const terminalReplyItemKey = replyBoundaryConfirmed ? replyItems.at(-1)?.key : undefined;
-  const replyWindowIndexByKey = useMemo(
-    () => new Map(replies.map((reply, index) => [getReplyKey(reply), index])),
-    [replies]
-  );
-  const replyWindowStartKey = replies[0] ? getReplyKey(replies[0]) : '';
   const acceptedAnswerReply = acceptedAnswer?.reply;
   const copyAcceptedAnswerToClipboard = useCallback(() => {
     const copyText = stripHtml(acceptedAnswerReply?.contentHtml || '');
@@ -989,6 +1044,7 @@ export const TopicContentList = memo(function TopicContentList({
     (item) => item.type === 'topicContent' && item.content.type === 'content'
   )?.key;
   const firstOpeningRowStartedAt = topicResponseReadyCandidate;
+  const disclosureStore = useTopicSplitDisclosureStore(detailTopicStateKey);
   const acceptedAnswerListItems = useMemo<TopicListItem[]>(() => {
     if (!acceptedAnswer || topicShowsAccessNotice) return [];
     const visibleContent = acceptedAnswerExpanded
@@ -999,14 +1055,12 @@ export const TopicContentList = memo(function TopicContentList({
     return [
       {
         type: 'topicAcceptedAnswer',
-        key: `topic-accepted-answer-${acceptedAnswer.floor}`
-      },
-      ...visibleContent.map((content): TopicListItem => ({
-        type: 'topicAcceptedAnswerContent',
-        key: `topic-accepted-answer-${acceptedAnswer.floor}:${content.key}`,
-        content,
+        key: `topic-accepted-answer-${acceptedAnswer.floor}`,
+        content: visibleContent.filter(
+          (content) => !('row' in content) || topicSemanticRowVisible(content.row, 'accepted-answer', disclosureStore)
+        ),
         preview: !acceptedAnswerFullVisible
-      }))
+      }
     ];
   }, [
     acceptedAnswer,
@@ -1014,18 +1068,32 @@ export const TopicContentList = memo(function TopicContentList({
     acceptedAnswerContent.previewItems,
     acceptedAnswerExpanded,
     acceptedAnswerFullVisible,
+    disclosureStore,
     topicShowsAccessNotice
   ]);
   const topicPostludeVisible = Boolean(legacyTopicPollsVisible || topicHasPostActions);
-  const disclosureStore = useTopicSplitDisclosureStore(detailTopicStateKey);
+  const replyLocationRequestIdRef = useRef(0);
+  const [replyLocationCommand, setReplyLocationCommand] = useState<{
+    requestId: number;
+    target: ReplyLocationTarget;
+  } | null>(null);
+  const targetReply = location?.kind === 'reply' ? location.target : undefined;
+  const activeLocation = resolveTopicLocation(
+    topic,
+    replyLocationCommand ? { kind: 'reply', target: replyLocationCommand.target } : location
+  );
+  const activeTargetReply = activeLocation?.kind === 'reply' ? activeLocation.target : undefined;
+  // A middle window has an unloaded gap before it; the opening is not its preceding content.
+  const showOpening = !replyHasPrevious || activeLocation?.kind === 'opening';
   const unfilteredTopicListItems = useMemo<TopicListItem[]>(
     () => [
-      ...topicOpeningListItems,
-      ...acceptedAnswerListItems,
-      ...(topicPostludeVisible ? [{ type: 'topicPostlude' as const, key: 'topic-postlude' }] : []),
+      ...(showOpening ? [{ type: 'topicHeader' as const, key: 'topic-header' }] : []),
+      ...(showOpening ? topicOpeningListItems : []),
+      ...(showOpening ? acceptedAnswerListItems : []),
+      ...(showOpening && topicPostludeVisible ? [{ type: 'topicPostlude' as const, key: 'topic-postlude' }] : []),
       ...replyListItems
     ],
-    [acceptedAnswerListItems, replyListItems, topicOpeningListItems, topicPostludeVisible]
+    [acceptedAnswerListItems, replyListItems, showOpening, topicOpeningListItems, topicPostludeVisible]
   );
   const {
     items: topicListItems,
@@ -1038,6 +1106,10 @@ export const TopicContentList = memo(function TopicContentList({
     [disclosureStore, unfilteredTopicListItems]
   );
   const topicSelectionSessionKey = `${detailTopicStateKey}:${contentWidth}:${systemFontScale}:${settings.fontFamily}:${settings.fontScale}:${settings.lineHeight}`;
+  const replyWindowStartIndex = useMemo(
+    () => topicListItems.findIndex((listItem) => listItem.type === 'replyWindowStart'),
+    [topicListItems]
+  );
   const bodyMediaDiagnosticSession = useMemo(
     () =>
       item
@@ -1098,19 +1170,17 @@ export const TopicContentList = memo(function TopicContentList({
     );
     if (firstReplyIndex < 0) return;
     pendingReplyOrderScrollRef.current = false;
+    recordScrollCommand('reply-order', { targetIndex: firstReplyIndex });
     topicScrollRef.current?.scrollToIndex({ animated: true, index: firstReplyIndex, viewPosition: 0 });
-  }, [detailTopicStateKey, loadedDetailKey, repliesError, repliesLoading, topicListItems, topicScrollRef]);
-  const replyLocationRequestIdRef = useRef(0);
-  const [replyLocationCommand, setReplyLocationCommand] = useState<{
-    requestId: number;
-    target: ReplyLocationTarget;
-  } | null>(null);
-  const targetReply = location?.kind === 'reply' ? location.target : undefined;
-  const activeLocation = resolveTopicLocation(
-    topic,
-    replyLocationCommand ? { kind: 'reply', target: replyLocationCommand.target } : location
-  );
-  const activeTargetReply = activeLocation?.kind === 'reply' ? activeLocation.target : undefined;
+  }, [
+    detailTopicStateKey,
+    loadedDetailKey,
+    recordScrollCommand,
+    repliesError,
+    repliesLoading,
+    topicListItems,
+    topicScrollRef
+  ]);
   const targetReplyIdentity =
     activeLocation?.kind === 'opening'
       ? 'opening'
@@ -1270,6 +1340,10 @@ export const TopicContentList = memo(function TopicContentList({
         offset: index >= 0 ? anchor?.offset || 0 : 0,
         highlight: false
       };
+      recordScrollCommand(anchor ? 'reading-resume' : 'opening', {
+        ...(index >= 0 ? { targetIndex: index } : {}),
+        offset: index >= 0 ? anchor?.offset || 0 : 0
+      });
       if (index >= 0)
         void topicScrollRef.current?.scrollToIndex({ animated: false, index, viewOffset: anchor?.offset || 0 });
       else topicScrollRef.current?.scrollToOffset({ animated: !anchor, offset: 0 });
@@ -1291,6 +1365,10 @@ export const TopicContentList = memo(function TopicContentList({
         offset: rowIndex >= 0 ? anchor?.offset || 0 : 0,
         highlight: !activeTargetReply?.readingResume
       };
+      recordScrollCommand(activeTargetReply?.readingResume ? 'reading-resume' : 'reply-location', {
+        targetIndex: rowIndex >= 0 ? rowIndex : targetReplyListIndex,
+        offset: rowIndex >= 0 ? anchor?.offset || 0 : 0
+      });
       void topicScrollRef.current?.scrollToIndex({
         animated: !activeTargetReply?.readingResume,
         index: rowIndex >= 0 ? rowIndex : targetReplyListIndex,
@@ -1310,6 +1388,7 @@ export const TopicContentList = memo(function TopicContentList({
     onCommentQueryChange,
     onReplyFilterChange,
     read.readingEntry,
+    recordScrollCommand,
     replyFilter,
     targetIsOpeningPost,
     targetReplyCommandKey,
@@ -1332,22 +1411,32 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const pendingAcceptedAnswerScrollRef = useRef(false);
   const scrollToAcceptedAnswer = useCallback(() => {
+    stopReplyScroll();
     if (acceptedAnswerListIndex < 0) {
       pendingAcceptedAnswerScrollRef.current = true;
       onCommentQueryChange('');
       onReplyFilterChange('all');
       return;
     }
+    recordScrollCommand('accepted-answer', { targetIndex: acceptedAnswerListIndex });
     topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
-  }, [acceptedAnswerListIndex, onCommentQueryChange, onReplyFilterChange, topicScrollRef]);
+  }, [
+    acceptedAnswerListIndex,
+    onCommentQueryChange,
+    onReplyFilterChange,
+    recordScrollCommand,
+    stopReplyScroll,
+    topicScrollRef
+  ]);
   useEffect(() => {
     if (!pendingAcceptedAnswerScrollRef.current || acceptedAnswerListIndex < 0) {
       return;
     }
     pendingAcceptedAnswerScrollRef.current = false;
+    stopReplyScroll();
+    recordScrollCommand('accepted-answer', { targetIndex: acceptedAnswerListIndex });
     topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
-  }, [acceptedAnswerListIndex, topicScrollRef]);
-  const windowStartWithinPrefetchRef = useRef(false);
+  }, [acceptedAnswerListIndex, recordScrollCommand, stopReplyScroll, topicScrollRef]);
   const readingSessionRef = useRef<ReadingSession | null>(null);
   const readingVisibleRef = useRef<{ index?: number | null; item: TopicListItem }[]>([]);
   const readingScrollOffset = useRef(0);
@@ -1431,11 +1520,6 @@ export const TopicContentList = memo(function TopicContentList({
     detailTopicStateKey,
     readingScope
   ]);
-  const loadWindowStart = useCallback(() => {
-    if (replyStartError || !replyHasPrevious || loadingPreviousReplies || !autoLoadRepliesArmedRef.current) return;
-    autoLoadRepliesArmedRef.current = false;
-    void onLoadPreviousReplies();
-  }, [loadingPreviousReplies, onLoadPreviousReplies, replyHasPrevious, replyStartError]);
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null; isViewable?: boolean; item: TopicListItem }[] }) => {
       observeViewableItems({ viewableItems });
@@ -1444,62 +1528,116 @@ export const TopicContentList = memo(function TopicContentList({
         .sort((a, b) => (a.index || 0) - (b.index || 0));
       reportReadingVisible();
       confirmTargetPosition();
-      const visibleReplyIndexes = new Set<number>();
-      let windowStartVisible = false;
-      viewableItems.forEach(({ isViewable, item: listItem }) => {
-        if (isViewable === false) return;
-        if (listItem.type === 'replyWindowStart') {
-          windowStartVisible = true;
-          return;
-        }
-        if ('reply' in listItem) {
-          const index = replyWindowIndexByKey.get(getReplyKey(listItem.reply));
-          if (index !== undefined) visibleReplyIndexes.add(index);
-        }
-      });
-      const firstVisibleReplyIndex = Math.min(...visibleReplyIndexes);
-      windowStartWithinPrefetchRef.current =
-        windowStartVisible || (visibleReplyIndexes.size > 0 && firstVisibleReplyIndex <= visibleReplyIndexes.size);
-      if (windowStartWithinPrefetchRef.current) loadWindowStart();
     },
-    [confirmTargetPosition, loadWindowStart, observeViewableItems, replyWindowIndexByKey, reportReadingVisible]
+    [confirmTargetPosition, observeViewableItems, reportReadingVisible]
   );
-  const handleReplyEndReached = useCallback(() => {
-    if (replyEndError || !replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) return;
-    autoLoadRepliesArmedRef.current = false;
-    void onLoadMoreReplies();
-  }, [loadingMoreReplies, onLoadMoreReplies, replyEndError, replyHasMore]);
-  const armReplyAutoLoad = useCallback(
+  const beginReplyScroll = useCallback(
     ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+      handledTargetReplyRef.current = targetReplyCommandKey;
+      pendingTargetPositionRef.current = null;
+      onCancelReplyLocation();
       readingSessionRef.current?.interact();
-      autoLoadRepliesArmedRef.current = true;
-      if (windowStartWithinPrefetchRef.current) loadWindowStart();
-      // A location can consume FlashList's one-shot end event before any drag.
-      const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
-      if (
-        layoutMeasurement.height > 0 &&
-        Math.ceil(contentOffset.y + layoutMeasurement.height) >=
-          contentSize.height - REPLY_END_REACHED_THRESHOLD * layoutMeasurement.height
-      )
-        handleReplyEndReached();
+      const event: NativeScrollEvent & { contentOffsetCorrection?: { y: number } } = nativeEvent;
+      Object.assign(replyScroll.current, {
+        phase: 'drag',
+        momentum: true,
+        offset: event.contentOffset.y,
+        correction: event.contentOffsetCorrection?.y || 0,
+        start: '',
+        end: ''
+      });
     },
-    [handleReplyEndReached, loadWindowStart]
+    [onCancelReplyLocation, targetReplyCommandKey]
+  );
+  const advanceReplyScroll = useCallback(
+    (event: NativeScrollEvent & { contentOffsetCorrection?: { y: number } }) => {
+      const scroll = replyScroll.current;
+      const correction = event.contentOffsetCorrection?.y || 0;
+      const movement = Math.round(
+        (event.contentOffset.y - scroll.offset - (correction - scroll.correction)) * PixelRatio.get()
+      );
+      scroll.offset = event.contentOffset.y;
+      scroll.correction = correction;
+      if (
+        !active ||
+        scroll.phase === 'idle' ||
+        movement === 0 ||
+        replyLoadPending.current ||
+        loadingMoreReplies ||
+        loadingPreviousReplies
+      )
+        return;
+      const { contentOffset, contentSize, layoutMeasurement } = event;
+      if (layoutMeasurement.height <= 0) return;
+      let load: (() => ReturnType<typeof onLoadPreviousReplies>) | undefined;
+      if (movement < 0 && replyHasPrevious && !replyStartError && replyWindowStartIndex >= 0) {
+        const layout = topicScrollRef.current?.getLayout(replyWindowStartIndex);
+        if (!layout) return;
+        const boundary = (topicScrollRef.current?.getFirstItemOffset() || 0) + layout.y;
+        const cursor = `${read.replyPreviousCursor?.page}:${read.replyPreviousCursor?.offset}`;
+        if (
+          contentOffset.y + layoutMeasurement.height < boundary ||
+          contentOffset.y - boundary > REPLY_START_REACHED_THRESHOLD * layoutMeasurement.height ||
+          scroll.start === cursor
+        )
+          return;
+        scroll.start = cursor;
+        load = onLoadPreviousReplies;
+      } else if (movement > 0 && replyHasMore && !replyEndError) {
+        const cursor = `${read.replyNextPage}:${read.replyNextOffset}`;
+        if (
+          contentOffset.y + layoutMeasurement.height <
+            contentSize.height - REPLY_END_REACHED_THRESHOLD * layoutMeasurement.height ||
+          scroll.end === cursor
+        )
+          return;
+        scroll.end = cursor;
+        load = onLoadMoreReplies;
+      }
+      if (!load) return;
+      replyLoadPending.current = true;
+      void load().finally(() => {
+        replyLoadPending.current = false;
+      });
+    },
+    [
+      active,
+      loadingMoreReplies,
+      loadingPreviousReplies,
+      onLoadMoreReplies,
+      onLoadPreviousReplies,
+      read.replyNextOffset,
+      read.replyNextPage,
+      read.replyPreviousCursor,
+      replyEndError,
+      replyHasMore,
+      replyHasPrevious,
+      replyStartError,
+      replyWindowStartIndex,
+      topicScrollRef
+    ]
   );
   const requestWindowStartLoad = useCallback(() => {
-    autoLoadRepliesArmedRef.current = false;
+    stopReplyScroll();
     void onLoadPreviousReplies();
-  }, [onLoadPreviousReplies]);
+  }, [onLoadPreviousReplies, stopReplyScroll]);
   const requestWindowEndLoad = useCallback(() => {
-    autoLoadRepliesArmedRef.current = false;
+    stopReplyScroll();
     void onLoadMoreReplies();
-  }, [onLoadMoreReplies]);
+  }, [onLoadMoreReplies, stopReplyScroll]);
+  useLayoutEffect(() => {
+    stopReplyScroll();
+  }, [
+    active,
+    detailTopicStateKey,
+    mediaSessionIdentity,
+    replyFilter,
+    replyOrder,
+    commentQuery,
+    stopReplyScroll,
+    targetReplyCommandKey
+  ]);
   useEffect(() => {
-    autoLoadRepliesArmedRef.current = false;
-    windowStartWithinPrefetchRef.current = false;
-  }, [replyWindowStartKey]);
-  useEffect(() => {
-    autoLoadRepliesArmedRef.current = false;
-    windowStartWithinPrefetchRef.current = false;
     pendingAcceptedAnswerScrollRef.current = false;
   }, [item?.id, item?.source]);
   const tableStyles = useMemo(() => createTopicTableStyles(theme), [theme]);
@@ -1534,7 +1672,6 @@ export const TopicContentList = memo(function TopicContentList({
     (children: ReactNode, key?: string, onLayout?: (event: LayoutChangeEvent) => void) => {
       const frame = (
         <TopicListItemFrame
-          key={key}
           firstRowStartedAt={key && key === firstOpeningRowKey ? firstOpeningRowStartedAt : undefined}
           selectionRowKey={key && topicSelectionRowKeys.has(key) ? key : undefined}
           style={styles.topicListItemFrame}
@@ -1557,6 +1694,7 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const TopicListItemSeparator = useCallback(
     ({ leadingItem, trailingItem }: { leadingItem: TopicListItem; trailingItem: TopicListItem }) => {
+      if (leadingItem.type === 'topicHeader' || trailingItem.type === 'topicHeader') return null;
       if (continuesSameLogicalContentGroup(leadingItem, trailingItem)) return null;
       const leadingRow = topicListCompiledRow(leadingItem);
       const trailingRow = topicListCompiledRow(trailingItem);
@@ -1580,13 +1718,11 @@ export const TopicContentList = memo(function TopicContentList({
         leadingItem.type === 'topicQuoteSummary' ||
         leadingItem.type === 'topicQuoteContent' ||
         leadingItem.type === 'topicAcceptedAnswer' ||
-        leadingItem.type === 'topicAcceptedAnswerContent' ||
         leadingItem.type === 'topicPostlude' ||
         trailingItem.type === 'topicContent' ||
         trailingItem.type === 'topicQuoteSummary' ||
         trailingItem.type === 'topicQuoteContent' ||
         trailingItem.type === 'topicAcceptedAnswer' ||
-        trailingItem.type === 'topicAcceptedAnswerContent' ||
         trailingItem.type === 'topicPostlude'
           ? 10
           : topicListItemSpacing(leadingItem, trailingItem);
@@ -1621,7 +1757,7 @@ export const TopicContentList = memo(function TopicContentList({
           : undefined;
       const baseContentContainerStyle =
         context === 'accepted'
-          ? styles.topicAcceptedAnswerBody
+          ? undefined
           : context === 'quote'
             ? options?.quoteBodyFirst
               ? [styles.quoteBody, styles.quotePanelBody]
@@ -1631,29 +1767,23 @@ export const TopicContentList = memo(function TopicContentList({
               : undefined;
       const contentContainerStyle = [baseContentContainerStyle, trimLeadingStyle, trimTrailingStyle];
       const baseRowStyle =
-        context === 'accepted'
-          ? [styles.replyListItem, styles.topicAcceptedAnswer, topicColumnStyle]
-          : context === 'quote'
-            ? [
-                styles.replyListItem,
-                styles.quoteBox,
-                options?.quoteBodyLast ? styles.quoteRowBottom : styles.quoteRowContinuation,
-                topicColumnStyle
-              ]
-            : [styles.replyListItem, topicColumnStyle];
+        context === 'quote'
+          ? [
+              styles.replyListItem,
+              styles.quoteBox,
+              options?.quoteBodyLast ? styles.quoteRowBottom : styles.quoteRowContinuation,
+              topicColumnStyle
+            ]
+          : [styles.replyListItem, topicColumnStyle];
       const rowStyle = [baseRowStyle, trimLeadingStyle, trimTrailingStyle];
       const wrapContent = (children: ReactNode) => {
-        const content = <View style={contentContainerStyle}>{children}</View>;
-        return renderTopicListItemFrame(
-          context === 'accepted' && contentItem.type === 'content' ? (
-            <TopicCopySurface style={rowStyle} onCopy={copyAcceptedAnswerToClipboard}>
-              {content}
-            </TopicCopySurface>
-          ) : (
-            <View style={rowStyle}>{content}</View>
-          ),
-          frameKey
+        const content = (
+          <View key={frameKey} style={contentContainerStyle}>
+            {children}
+          </View>
         );
+        if (context === 'accepted') return content;
+        return renderTopicListItemFrame(<View style={rowStyle}>{content}</View>, frameKey);
       };
       if (contentItem.type === 'accessNotice') {
         return renderTopicListItemFrame(
@@ -1733,7 +1863,6 @@ export const TopicContentList = memo(function TopicContentList({
     [
       actionBusy,
       contentWidth,
-      copyAcceptedAnswerToClipboard,
       decisionFor,
       firstArticleBodyKey,
       genericHtmlRenderers,
@@ -1968,8 +2097,129 @@ export const TopicContentList = memo(function TopicContentList({
     upvoteDecision
   ]);
 
+  const listHeader = useMemo(() => {
+    if (!item) return null;
+    const topicHeaderStatusBadges = topicStatusBadges(item);
+    const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
+    return (
+      <View style={[styles.topicHeaderStack, titleOnlyV2ex && styles.titleOnlyHeaderStack]}>
+        <View style={[styles.article, topicColumnStyle]}>
+          {topic || topicError?.reason !== 'site-notice' ? (
+            <View style={[styles.topicMetaStack, titleOnlyV2ex && styles.titleOnlyMetaStack]}>
+              {!titleOnlyV2ex ? (
+                <View style={styles.topicBadgeRow}>
+                  <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>
+                    {sourceLabel(item.source)}
+                  </Text>
+                  {item.category ? (
+                    <Text style={styles.topicCategoryBadge} numberOfLines={1}>
+                      {item.category}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+              <Text
+                selectable
+                style={[styles.articleTitle, titleOnlyV2ex && styles.titleOnlyTitle]}
+                textBreakStrategy={titleOnlyV2ex ? 'balanced' : undefined}
+              >
+                {item.title}
+              </Text>
+              <Pressable
+                testID="topic-author"
+                accessibilityRole="button"
+                disabled={!userFromTopic(item)}
+                style={[styles.topicAuthorRow, titleOnlyV2ex && styles.titleOnlyAuthorRow]}
+                onPress={() => {
+                  const user = userFromTopic(item);
+                  if (user) {
+                    onOpenUser(user);
+                  }
+                }}
+              >
+                <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} small={titleOnlyV2ex} />
+                <View style={styles.topicAuthorMeta}>
+                  <View style={styles.replyAuthorNameRow}>
+                    <Text style={[styles.replyAuthor, titleOnlyV2ex && styles.titleOnlyAuthorName]} numberOfLines={1}>
+                      {item.author || '未知作者'}
+                    </Text>
+                    {item.authorLevelLabel ? (
+                      <Text
+                        style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}
+                        numberOfLines={1}
+                      >
+                        {item.authorLevelLabel}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text style={[styles.meta, titleOnlyV2ex && styles.titleOnlyAuthorDate]}>
+                    {formatDateTime(item.createdAt)}
+                    {typeof item.replyCount === 'number' ? ` · ${item.replyCount} 回复` : ''}
+                    {item.viewCount ? ` · ${item.viewCount} 浏览` : ''}
+                    {titleOnlyV2ex && topic.upvoteCount ? ` · ${topic.upvoteCount} UP 票` : ''}
+                  </Text>
+                </View>
+              </Pressable>
+              {itemAccessRequirementText ? (
+                <Text style={styles.topicAccessBadge}>{itemAccessRequirementText}</Text>
+              ) : null}
+              {topicHeaderStatusBadges.length ? (
+                <View style={styles.topicStatusRow}>
+                  {topicHeaderStatusBadges.map((badge) => (
+                    <View
+                      key={badge.label}
+                      style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}
+                    >
+                      <Text
+                        style={[styles.topicStatusBadgeText, topicStatusBadgeTextColorStyle(badge.tone, theme)]}
+                        numberOfLines={1}
+                      >
+                        {badge.label}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              {item.tags?.length ? (
+                <View style={styles.topicTagRow}>
+                  {item.tags.map((tag, index) => (
+                    <View
+                      key={`${tag}-${index}`}
+                      style={[styles.topicTagPill, !titleOnlyV2ex && topicTagColorStyle(tag, theme)]}
+                    >
+                      <Text
+                        style={[styles.topicTagText, !titleOnlyV2ex && topicTagTextColorStyle(tag, theme)]}
+                        numberOfLines={1}
+                      >
+                        {tag}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+          {headerState}
+          {topic && !topicError && !readingPositionReady ? <LoadingState text="正在读取主题..." /> : null}
+        </View>
+      </View>
+    );
+  }, [
+    headerState,
+    item,
+    onOpenUser,
+    readingPositionReady,
+    styles,
+    theme,
+    titleOnlyV2ex,
+    topic,
+    topicColumnStyle,
+    topicError
+  ]);
+
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(
     ({ index, item: listItem }) => {
+      if (listItem.type === 'topicHeader') return listHeader;
       if (listItem.type === 'topicContent') {
         return renderTopicContentItem(listItem.content);
       }
@@ -2089,18 +2339,23 @@ export const TopicContentList = memo(function TopicContentList({
               onLoad={loadAcceptedAnswer}
               onReadMore={acceptedAnswerReply && acceptedAnswerIsInSourceReplies ? scrollToAcceptedAnswer : undefined}
               onRevealFull={() => setAcceptedAnswerView({ expanded: true, full: true, key: acceptedAnswerViewKey })}
-            />
+            >
+              {listItem.content.length ? (
+                <TopicCopySurface onCopy={copyAcceptedAnswerToClipboard}>
+                  {listItem.content.map((content) =>
+                    renderTopicContentItem(content, {
+                      context: 'accepted',
+                      frameKey: `${listItem.key}:${content.key}`,
+                      scopeKey: 'accepted-answer',
+                      source: topic.source
+                    })
+                  )}
+                </TopicCopySurface>
+              ) : null}
+            </AcceptedAnswerPreview>
           </View>,
           listItem.key
         );
-      }
-      if (listItem.type === 'topicAcceptedAnswerContent') {
-        return renderTopicContentItem(listItem.content, {
-          context: 'accepted',
-          frameKey: listItem.key,
-          scopeKey: 'accepted-answer',
-          source: topic?.source
-        });
       }
       if (listItem.type === 'topicPostlude') {
         return topicPostlude;
@@ -2126,6 +2381,7 @@ export const TopicContentList = memo(function TopicContentList({
                 <View style={styles.replySelectionRow}>
                   <View style={styles.replyFilterRailSlot}>
                     <PillRail
+                      layout="wrap"
                       variant="subtabs"
                       items={[
                         { value: 'all', label: '全部' },
@@ -2316,12 +2572,14 @@ export const TopicContentList = memo(function TopicContentList({
       endedEmpty,
       closeReplyOrderMenu,
       commentQuery,
+      copyAcceptedAnswerToClipboard,
       contentWidth,
       decisionFor,
       expandedQuotes,
       genericHtmlRenderers,
       highlightedTargetKey,
       htmlRenderersProps,
+      listHeader,
       item?.author,
       item?.id,
       item?.url,
@@ -2391,112 +2649,6 @@ export const TopicContentList = memo(function TopicContentList({
     return <EmptyText text="未选择主题" />;
   }
 
-  const topicHeaderStatusBadges = topicStatusBadges(item);
-  const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
-  const listHeader = (
-    <View style={[styles.topicHeaderStack, titleOnlyV2ex && styles.titleOnlyHeaderStack]}>
-      <View style={[styles.article, topicColumnStyle]}>
-        {topic || topicError?.reason !== 'site-notice' ? (
-          <View style={[styles.topicMetaStack, titleOnlyV2ex && styles.titleOnlyMetaStack]}>
-            {!titleOnlyV2ex ? (
-              <View style={styles.topicBadgeRow}>
-                <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>
-                  {sourceLabel(item.source)}
-                </Text>
-                {item.category ? (
-                  <Text style={styles.topicCategoryBadge} numberOfLines={1}>
-                    {item.category}
-                  </Text>
-                ) : null}
-              </View>
-            ) : null}
-            <Text
-              selectable
-              style={[styles.articleTitle, titleOnlyV2ex && styles.titleOnlyTitle]}
-              textBreakStrategy={titleOnlyV2ex ? 'balanced' : undefined}
-            >
-              {item.title}
-            </Text>
-            <Pressable
-              testID="topic-author"
-              accessibilityRole="button"
-              disabled={!userFromTopic(item)}
-              style={[styles.topicAuthorRow, titleOnlyV2ex && styles.titleOnlyAuthorRow]}
-              onPress={() => {
-                const user = userFromTopic(item);
-                if (user) {
-                  onOpenUser(user);
-                }
-              }}
-            >
-              <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} small={titleOnlyV2ex} />
-              <View style={styles.topicAuthorMeta}>
-                <View style={styles.replyAuthorNameRow}>
-                  <Text style={[styles.replyAuthor, titleOnlyV2ex && styles.titleOnlyAuthorName]} numberOfLines={1}>
-                    {item.author || '未知作者'}
-                  </Text>
-                  {item.authorLevelLabel ? (
-                    <Text
-                      style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}
-                      numberOfLines={1}
-                    >
-                      {item.authorLevelLabel}
-                    </Text>
-                  ) : null}
-                </View>
-                <Text style={[styles.meta, titleOnlyV2ex && styles.titleOnlyAuthorDate]}>
-                  {formatDateTime(item.createdAt)}
-                  {typeof item.replyCount === 'number' ? ` · ${item.replyCount} 回复` : ''}
-                  {item.viewCount ? ` · ${item.viewCount} 浏览` : ''}
-                  {titleOnlyV2ex && topic.upvoteCount ? ` · ${topic.upvoteCount} UP 票` : ''}
-                </Text>
-              </View>
-            </Pressable>
-            {itemAccessRequirementText ? (
-              <Text style={styles.topicAccessBadge}>{itemAccessRequirementText}</Text>
-            ) : null}
-            {topicHeaderStatusBadges.length ? (
-              <View style={styles.topicStatusRow}>
-                {topicHeaderStatusBadges.map((badge) => (
-                  <View
-                    key={badge.label}
-                    style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}
-                  >
-                    <Text
-                      style={[styles.topicStatusBadgeText, topicStatusBadgeTextColorStyle(badge.tone, theme)]}
-                      numberOfLines={1}
-                    >
-                      {badge.label}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-            {item.tags?.length ? (
-              <View style={styles.topicTagRow}>
-                {item.tags.map((tag, index) => (
-                  <View
-                    key={`${tag}-${index}`}
-                    style={[styles.topicTagPill, !titleOnlyV2ex && topicTagColorStyle(tag, theme)]}
-                  >
-                    <Text
-                      style={[styles.topicTagText, !titleOnlyV2ex && topicTagTextColorStyle(tag, theme)]}
-                      numberOfLines={1}
-                    >
-                      {tag}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-          </View>
-        ) : null}
-        {headerState}
-        {topic && !topicError && !readingPositionReady ? <LoadingState text="正在读取主题..." /> : null}
-      </View>
-    </View>
-  );
-
   return (
     <TRenderEngineProvider
       baseStyle={htmlBaseStyle}
@@ -2562,6 +2714,28 @@ export const TopicContentList = memo(function TopicContentList({
                   ItemSeparatorComponent={TopicListItemSeparator}
                   keyboardShouldPersistTaps="always"
                   onScroll={(event) => {
+                    const previousViewport = nativeViewportRef.current;
+                    if (
+                      previousViewport.topicKey === detailTopicStateKey &&
+                      event.nativeEvent.layoutMeasurement.height > 0 &&
+                      previousViewport.offset > event.nativeEvent.layoutMeasurement.height &&
+                      event.nativeEvent.contentOffset.y <= 24
+                    ) {
+                      const nativeEvent: NativeScrollEvent & { contentOffsetCorrection?: { y: number } } =
+                        event.nativeEvent;
+                      const fields = {
+                        source: item?.source,
+                        topicRef: detailTopicDiagnosticRef,
+                        previousOffset: previousViewport.offset,
+                        offset: nativeEvent.contentOffset.y,
+                        contentHeight: nativeEvent.contentSize.height,
+                        viewportHeight: nativeEvent.layoutMeasurement.height,
+                        correction: nativeEvent.contentOffsetCorrection?.y || 0,
+                        scrollPhase: replyScroll.current.phase
+                      };
+                      const trace = beginDiagnosticTrace('topic', 'scroll-position', fields);
+                      finishDiagnosticTrace(trace, 'success', fields);
+                    }
                     nativeViewportRef.current = {
                       topicKey: detailTopicStateKey,
                       offset: event.nativeEvent.contentOffset.y,
@@ -2572,18 +2746,30 @@ export const TopicContentList = memo(function TopicContentList({
                     readingScrollOffset.current = event.nativeEvent.contentOffset.y;
                     readingSessionRef.current?.interact();
                     reportReadingVisible();
+                    advanceReplyScroll(event.nativeEvent);
                   }}
                   scrollEventThrottle={16}
-                  onMomentumScrollEnd={onTopicScroll}
-                  onScrollEndDrag={onTopicScroll}
-                  onEndReachedThreshold={REPLY_END_REACHED_THRESHOLD}
-                  onEndReached={handleReplyEndReached}
-                  onScrollBeginDrag={armReplyAutoLoad}
+                  onMomentumScrollBegin={() => {
+                    if (replyScroll.current.phase === 'idle' && replyScroll.current.momentum)
+                      replyScroll.current.phase = 'momentum';
+                  }}
+                  onMomentumScrollEnd={(event) => {
+                    if (replyScroll.current.phase === 'momentum') {
+                      replyScroll.current.phase = 'idle';
+                      replyScroll.current.momentum = false;
+                    }
+                    onTopicScroll(event);
+                  }}
+                  onScrollEndDrag={(event) => {
+                    replyScroll.current.phase = 'idle';
+                    replyScroll.current.momentum = Boolean(event.nativeEvent.velocity?.y);
+                    onTopicScroll(event);
+                  }}
+                  onScrollBeginDrag={beginReplyScroll}
                   onViewableItemsChanged={handleViewableItemsChanged}
                   extraData={listExtraData}
                   {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
                   maintainVisibleContentPosition={TOPIC_VISIBLE_CONTENT_POSITION}
-                  ListHeaderComponent={listHeader}
                   ListFooterComponent={
                     canShowReplies && replyEndError ? (
                       <View style={styles.topicListItemFrame}>

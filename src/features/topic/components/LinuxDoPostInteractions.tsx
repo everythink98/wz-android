@@ -12,17 +12,24 @@ import {
 import {
   FlatList,
   Keyboard,
+  Animated,
+  Easing,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
+  Vibration,
   View,
   useWindowDimensions,
-  type GestureResponderEvent
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+  type LayoutRectangle
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { useQuery } from '@tanstack/react-query';
-import { Rocket, Smile, X } from 'lucide-react-native';
+import { useFlashListContext, useLayoutState } from '@shopify/flash-list';
+import { ChevronDown, Rocket, Smile, X } from 'lucide-react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import type { DiscourseBoost, Reply, TopicDetail, UserReference } from '@/domain/forum/models';
 import { discourseBoostStats } from '@/domain/forum/discourseInteractions';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -35,6 +42,7 @@ import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { alphaColor, fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { DetailActionButton } from './TopicActionBar';
 
 type Post = Reply | TopicDetail;
@@ -46,6 +54,8 @@ type InteractionContext = Pick<
   openReactions: (postId: number, event?: GestureResponderEvent) => void;
   openUser: (user: UserReference) => void;
   overlayOpen: boolean;
+  expandedBoosts: ReadonlySet<number>;
+  expandBoosts: (postId: number) => void;
 };
 const Context = createContext<InteractionContext | null>(null);
 export function useLinuxDoInteractionOverlayOpen() {
@@ -55,16 +65,19 @@ export function useLinuxDoInteractionOverlayOpen() {
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = Math.round(14 * settings.fontScale);
   return StyleSheet.create({
-    bubbles: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+    bubbles: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 6, flexShrink: 0 },
+    boostViewport: { overflow: 'hidden' },
+    boostFooter: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
+    expandBoosts: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     bubble: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      minHeight: 40,
-      paddingLeft: 6,
-      paddingRight: 12,
-      paddingVertical: 4,
-      borderRadius: 20,
+      gap: 6,
+      minHeight: 32,
+      paddingLeft: 4,
+      paddingRight: 8,
+      paddingVertical: 3,
+      borderRadius: 16,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line,
       maxWidth: '100%',
@@ -72,18 +85,18 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     content: {
       color: theme.ink,
-      fontSize,
-      lineHeight: Math.round(22 * settings.fontScale),
+      fontSize: Math.round(12 * settings.fontScale),
+      lineHeight: Math.round(18 * settings.fontScale),
       includeFontPadding: false,
       fontFamily: fontFamilyValue(settings.fontFamily),
       flexShrink: 1
     },
-    bubbleAvatar: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-    bubbleContent: { flexShrink: 1, justifyContent: 'center', minHeight: 32 },
+    bubbleAvatar: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+    bubbleContent: { flexShrink: 1, justifyContent: 'center', minHeight: 24 },
     rocket: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line,
       alignItems: 'center',
@@ -189,12 +202,29 @@ export function LinuxDoReactionButton({
   );
 }
 
-function BoostBubble({ boost, postId }: { boost: DiscourseBoost; postId: number }) {
+function BoostBubble({
+  boost,
+  postId,
+  hidden,
+  onLayout
+}: {
+  boost: DiscourseBoost;
+  postId: number;
+  hidden: boolean;
+  onLayout: (event: LayoutChangeEvent) => void;
+}) {
   const context = useContext(Context);
   const { styles, settings } = useReaderThemeStyles(createStyles);
   const label = boost.content.map((part) => ('text' in part ? part.text : part.emoji)).join('');
   return (
-    <View style={styles.bubble}>
+    <View
+      style={styles.bubble}
+      testID={`post-boost-${postId}-${boost.id}`}
+      onLayout={onLayout}
+      pointerEvents={hidden ? 'none' : 'auto'}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`查看 ${boost.user.displayName || boost.user.username} 的资料`}
@@ -221,13 +251,31 @@ function BoostBubble({ boost, postId }: { boost: DiscourseBoost; postId: number 
         <Text style={styles.content}>
           {boost.content.map((part, index) =>
             'text' in part ? (
-              <Text key={index}>{part.text}</Text>
+              <Text key={index}>
+                {part.text.split(/(:[a-z0-9_+-]+(?::t\d)?:)/g).map((text, tokenIndex) => {
+                  const name = text.slice(1, -1);
+                  const imageUrl =
+                    tokenIndex % 2 === 1 && context && Object.hasOwn(context.emojiUrls, name)
+                      ? context.emojiUrls[name]
+                      : undefined;
+                  return imageUrl ? (
+                    <EmojiImage
+                      key={tokenIndex}
+                      url={imageUrl}
+                      label={text}
+                      size={Math.round(16 * settings.fontScale)}
+                    />
+                  ) : (
+                    text
+                  );
+                })}
+              </Text>
             ) : (
               <EmojiImage
                 key={index}
                 url={part.imageUrl}
                 label={part.emoji}
-                size={Math.round(18 * settings.fontScale)}
+                size={Math.round(16 * settings.fontScale)}
               />
             )
           )}
@@ -239,25 +287,178 @@ function BoostBubble({ boost, postId }: { boost: DiscourseBoost; postId: number 
 
 export function LinuxDoBoosts({ post }: { post: Post }) {
   const context = useContext(Context);
-  const { styles, theme } = useReaderThemeStyles(createStyles);
+  const listContext = useFlashListContext();
+  const reduceMotion = useReducedMotion();
+  const { styles, theme, settings } = useReaderThemeStyles(createStyles);
   const boosts = post.siteExtension?.boosts || [];
+  const postId = post.commentId;
+  const [layout, setLayout] = useState<{
+    postId: number | undefined;
+    boxes: Record<number, LayoutRectangle>;
+    width: number;
+    height: number;
+  }>({ postId, boxes: {}, width: 0, height: 0 });
+  const [transition, setTransition] = useLayoutState<{
+    postId: number;
+    from: number;
+    to: number;
+    progress: number;
+  } | null>(null);
+  const progress = useRef(new Animated.Value(0)).current;
+  const animation = useRef<Animated.CompositeAnimation | null>(null);
+  const updateProgress = useLatestCallback((value: number) => {
+    setTransition((current) => (current ? { ...current, progress: value } : current));
+  });
+  useEffect(() => {
+    const listener = progress.addListener(({ value }) => updateProgress(value));
+    return () => {
+      animation.current?.stop();
+      progress.removeListener(listener);
+    };
+  }, [progress, updateProgress]);
+  useEffect(() => () => animation.current?.stop(), [postId]);
+  if (layout.postId !== postId) {
+    setLayout({ postId, boxes: {}, width: 0, height: 0 });
+    setTransition(null, true);
+  }
   if (!boosts.length || !post.commentId) return null;
+  const expanded = context?.expandedBoosts.has(post.commentId) === true;
+  const expanding = expanded && transition?.postId === postId ? transition : null;
+  const measured = layout.postId === postId && layout.width > 0 && boosts.every((boost) => layout.boxes[boost.id]);
+  const rowTops = measured
+    ? [...new Set(boosts.map((boost) => Math.round(layout.boxes[boost.id].y)))].sort((a, b) => a - b)
+    : [];
+  const fifthRow = rowTops[4];
+  const collapsed = !expanded && fifthRow !== undefined;
   const allowed = context?.decisionFor({ action: 'boost', target: post }).allowed;
+  const actionsWidth = allowed ? 80 : 40;
+  const previewBoxes =
+    fifthRow === undefined
+      ? []
+      : boosts.map((boost) => layout.boxes[boost.id]).filter((box) => Math.round(box.y) < fifthRow);
+  const lastRow = previewBoxes.filter((box) => Math.round(box.y) === rowTops[3]);
+  const lastRowTop = Math.min(...lastRow.map((box) => box.y));
+  const lastRowBottom = Math.max(...lastRow.map((box) => box.y + box.height));
+  const actionsLeft = Math.max(...lastRow.map((box) => box.x + box.width)) + 6;
+  const inlineActions =
+    lastRow.length > 0 && actionsLeft + actionsWidth <= layout.width
+      ? { left: actionsLeft, top: Math.max(0, (lastRowTop + lastRowBottom - 40) / 2) }
+      : null;
+  const previewHeight = collapsed
+    ? Math.max(...previewBoxes.map((box) => box.y + box.height), inlineActions ? inlineActions.top + 40 : 0)
+    : !expanded && !measured
+      ? Math.min(4, boosts.length) * (Math.max(32, Math.round(18 * settings.fontScale) + 6) + 6) - 6
+      : undefined;
+  const rocket = (hidden = false) =>
+    allowed ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="添加加电"
+        style={styles.rocket}
+        hitSlop={8}
+        pointerEvents={hidden ? 'none' : 'auto'}
+        accessibilityElementsHidden={hidden}
+        importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+        onPress={() => context?.openBoostComposer(post.commentId!)}
+      >
+        <Rocket size={16} color={theme.muted} />
+      </Pressable>
+    ) : null;
   return (
-    <View style={styles.bubbles} testID={`post-boosts-${post.commentId}`}>
-      {boosts.map((boost) => (
-        <BoostBubble key={boost.id} boost={boost} postId={post.commentId!} />
-      ))}
-      {allowed ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="添加加电"
-          style={styles.rocket}
-          hitSlop={4}
-          onPress={() => context?.openBoostComposer(post.commentId!)}
+    <View testID={`post-boosts-${post.commentId}`}>
+      <View
+        style={[
+          styles.boostViewport,
+          expanding
+            ? { height: expanding.from + (expanding.to - expanding.from) * expanding.progress }
+            : { maxHeight: previewHeight }
+        ]}
+        testID={`post-boost-viewport-${post.commentId}`}
+      >
+        <View
+          style={styles.bubbles}
+          onLayout={({ nativeEvent: { layout: box } }) =>
+            setLayout((current) =>
+              current.postId !== postId || (current.height === box.height && current.width === box.width)
+                ? current
+                : { ...current, height: box.height, width: box.width }
+            )
+          }
         >
-          <Rocket size={20} color={theme.muted} />
-        </Pressable>
+          {boosts.map((boost) => (
+            <BoostBubble
+              key={boost.id}
+              boost={boost}
+              postId={post.commentId!}
+              hidden={collapsed && Math.round(layout.boxes[boost.id].y) >= fifthRow}
+              onLayout={({ nativeEvent: { layout: box } }) =>
+                setLayout((current) => {
+                  if (current.postId !== postId) return current;
+                  const previous = current.boxes[boost.id];
+                  if (
+                    previous?.x === box.x &&
+                    previous.y === box.y &&
+                    previous.width === box.width &&
+                    previous.height === box.height
+                  )
+                    return current;
+                  return { ...current, boxes: { ...current.boxes, [boost.id]: box } };
+                })
+              }
+            />
+          ))}
+          {rocket(collapsed)}
+        </View>
+      </View>
+      {collapsed || expanding ? (
+        <View
+          testID={`post-boost-actions-${post.commentId}`}
+          style={[
+            styles.boostFooter,
+            inlineActions && { position: 'absolute', ...inlineActions, width: actionsWidth, height: 40, marginTop: 0 },
+            expanding && {
+              ...(!inlineActions && { height: 40 * (1 - expanding.progress), marginTop: 6 * (1 - expanding.progress) }),
+              opacity: 1 - expanding.progress,
+              overflow: 'hidden'
+            }
+          ]}
+          pointerEvents={expanding ? 'none' : 'auto'}
+          accessibilityElementsHidden={Boolean(expanding)}
+          importantForAccessibility={expanding ? 'no-hide-descendants' : 'auto'}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`查看全部 ${boosts.length} 条加电`}
+            style={styles.expandBoosts}
+            onPress={() => {
+              if (!collapsed || previewHeight === undefined || animation.current) return;
+              listContext?.getRef()?.prepareForLayoutAnimationRender();
+              if (!reduceMotion) {
+                setTransition({ postId: post.commentId!, from: previewHeight, to: layout.height, progress: 0 });
+                progress.setValue(0);
+              }
+              context?.expandBoosts(post.commentId!);
+              listContext?.layout();
+              if (!reduceMotion) {
+                // Commit each height step together with FlashList's following cell positions.
+                animation.current = Animated.timing(progress, {
+                  toValue: 1,
+                  duration: 200,
+                  easing: Easing.inOut(Easing.cubic),
+                  useNativeDriver: false,
+                  isInteraction: false
+                });
+                animation.current.start(({ finished }) => {
+                  animation.current = null;
+                  if (finished) setTransition(null);
+                });
+              }
+            }}
+          >
+            <ChevronDown size={18} color={theme.muted} />
+          </Pressable>
+          {rocket()}
+        </View>
       ) : null}
     </View>
   );
@@ -314,6 +515,13 @@ export function LinuxDoPostInteractionsProvider({
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiQuery, setEmojiQuery] = useState('');
   const [reactionBusy, setReactionBusy] = useState(false);
+  const [expandedBoosts, setExpandedBoosts] = useState<ReadonlySet<number>>(() => new Set());
+  useEffect(() => {
+    setExpandedBoosts(new Set());
+  }, [scopeKey]);
+  const expandBoosts = useCallback((postId: number) => {
+    setExpandedBoosts((current) => (current.has(postId) ? current : new Set([...current, postId])));
+  }, []);
   const posts = useMemo(
     () =>
       new Map(
@@ -368,6 +576,7 @@ export function LinuxDoPostInteractionsProvider({
   const openReactions = useCallback(
     (postId: number, event?: GestureResponderEvent) => {
       setPicker({ postId, x: event?.nativeEvent.pageX ?? width / 2, y: event?.nativeEvent.pageY ?? height / 2 });
+      Vibration.vibrate(15);
     },
     [height, width]
   );
@@ -382,9 +591,22 @@ export function LinuxDoPostInteractionsProvider({
       emojiUrls,
       openReactions,
       openUser: onOpenUser,
-      overlayOpen
+      overlayOpen,
+      expandedBoosts,
+      expandBoosts
     }),
-    [decisionFor, reactToPost, openBoostComposer, deleteBoost, emojiUrls, onOpenUser, openReactions, overlayOpen]
+    [
+      decisionFor,
+      reactToPost,
+      openBoostComposer,
+      deleteBoost,
+      emojiUrls,
+      onOpenUser,
+      openReactions,
+      overlayOpen,
+      expandedBoosts,
+      expandBoosts
+    ]
   );
   const emojiNames = useMemo(() => Object.keys(emojiUrls), [emojiUrls]);
   const filteredEmojis = useMemo(

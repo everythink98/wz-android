@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, ScrollView } from 'react-native';
 import {
   type NavigationProp,
@@ -73,9 +73,64 @@ export function MoreRoute() {
     return () => subscription.remove();
   }, [active, showSettingsPanel]);
 
+  const account = useMemo(
+    () => ({ ...runtime.account, active: active && runtime.account.active }),
+    [active, runtime.account]
+  );
+  const utilities = useMemo(
+    () => ({
+      library: runtime.library,
+      backup: {
+        recovery: runtime.reader.status === 'recovery',
+        busy: backupBusy,
+        exportFile: exportBackupFile,
+        importFile: importBackupFile
+      },
+      diagnostics: {
+        busy: diagnosticBusy,
+        exportLog: exportDiagnosticLogFile
+      },
+      proxy: {
+        activeProfile: proxy.activeProfile,
+        applyError: proxy.applyError,
+        applyStatus: proxy.applyStatus,
+        state: proxy.proxyState,
+        summary: proxy.summary,
+        visible: showNetworkProxyPanel,
+        close: () => setShowNetworkProxyPanel(false),
+        open: () => setShowNetworkProxyPanel(true),
+        deleteProfile: proxy.deleteProxyProfile,
+        selectProfile: proxy.selectProxyProfile,
+        setEnabled: proxy.setProxyEnabled,
+        testProfile: proxy.testProxyProfile,
+        upsertProfile: proxy.upsertProxyProfile
+      },
+      settings: {
+        value: runtime.reader.data.settings,
+        visible: showSettingsPanel,
+        changeVisible: setShowSettingsPanel,
+        update: updateSettings
+      }
+    }),
+    [
+      runtime.library,
+      runtime.reader.status,
+      runtime.reader.data.settings,
+      backupBusy,
+      exportBackupFile,
+      importBackupFile,
+      diagnosticBusy,
+      exportDiagnosticLogFile,
+      proxy,
+      showNetworkProxyPanel,
+      showSettingsPanel,
+      updateSettings
+    ]
+  );
+
   return (
     <MoreScreen
-      account={{ ...runtime.account, active: active && runtime.account.active }}
+      account={account}
       contentSourcesExpanded={contentSourcesExpanded}
       scrollRef={scrollRef}
       update={{
@@ -90,40 +145,7 @@ export function MoreRoute() {
         resume: update.resumeAppUpdateDownload,
         install: update.installAppUpdate
       }}
-      utilities={{
-        library: runtime.library,
-        backup: {
-          recovery: runtime.reader.status === 'recovery',
-          busy: backupBusy,
-          exportFile: exportBackupFile,
-          importFile: importBackupFile
-        },
-        diagnostics: {
-          busy: diagnosticBusy,
-          exportLog: exportDiagnosticLogFile
-        },
-        proxy: {
-          activeProfile: proxy.activeProfile,
-          applyError: proxy.applyError,
-          applyStatus: proxy.applyStatus,
-          state: proxy.proxyState,
-          summary: proxy.summary,
-          visible: showNetworkProxyPanel,
-          close: () => setShowNetworkProxyPanel(false),
-          open: () => setShowNetworkProxyPanel(true),
-          deleteProfile: proxy.deleteProxyProfile,
-          selectProfile: proxy.selectProxyProfile,
-          setEnabled: proxy.setProxyEnabled,
-          testProfile: proxy.testProxyProfile,
-          upsertProfile: proxy.upsertProxyProfile
-        },
-        settings: {
-          value: runtime.reader.data.settings,
-          visible: showSettingsPanel,
-          changeVisible: setShowSettingsPanel,
-          update: updateSettings
-        }
-      }}
+      utilities={utilities}
       onContentSourcesExpandedChange={setContentSourcesExpanded}
     />
   );

@@ -13,7 +13,8 @@ const evidence = process.argv[2];
 assert(serial && evidence, 'Set ANDROID_SERIAL and pass an ignored evidence directory.');
 execFileSync('git', ['check-ignore', path.resolve(evidence)]);
 mkdirSync(evidence, { recursive: true });
-const device = (...args) => runAgentDevice([...args, '--platform', 'android', '--serial', serial]);
+const device = (...args) =>
+  runAgentDevice([...args, '--platform', 'android', '--serial', serial], { capture: true, echoCapture: false });
 device('wait', 'id="notification-source-all"', '10000');
 device('press', 'id="notification-source-all"');
 device(
@@ -22,14 +23,17 @@ device(
   '60000'
 );
 await setTimeout(1000);
+const nodes = JSON.parse(device('snapshot', '--json')).data.nodes;
+const list = nodes.find((node) => /^notification-outcome-(data|empty|partial)-all$/.test(node.identifier || ''))?.rect;
+assert(list?.x === 0 && list.height > 0, 'Start on a full, settled notification list.');
 
 function capture(name) {
   const bytes = execFileSync('adb', ['-s', serial, 'exec-out', 'screencap', '-p']);
   writeFileSync(path.join(evidence, `${name}.png`), bytes);
   const { width, height, data } = pngjs.PNG.sync.read(bytes);
   let blue = 0;
-  // The central refresh indicator, excluding the left-aligned selected tab and row avatars.
-  for (let y = Math.round(height * 0.12); y < height * 0.4; y++) {
+  // Error notices can move the list and its native refresh indicator below the header.
+  for (let y = list.y; y < Math.min(height, list.y + list.height * 0.3); y++) {
     for (let x = Math.round(width * 0.44); x < width * 0.56; x++) {
       const i = (y * width + x) * 4;
       if (data[i + 2] > 160 && data[i + 2] - data[i] > 35 && data[i + 2] - data[i + 1] > 15) blue++;
@@ -42,6 +46,7 @@ const baseline = capture('before');
 const x = Math.round(baseline.width * 0.51);
 const y = Math.round(baseline.height * 0.4);
 const end = Math.round(baseline.height * 0.78);
+assert(y > list.y && end < list.y + list.height, 'The existing pull trajectory must stay inside the list.');
 try {
   execFileSync('adb', [
     '-s',

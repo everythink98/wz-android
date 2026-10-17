@@ -506,6 +506,33 @@ describe('notification gateway', () => {
     expect(requestAccountRecheck).toHaveBeenCalledWith('linuxdo', 9, expect.any(String));
   });
 
+  it.each(['list', 'unread'] as const)(
+    'rechecks the captured NodeSeek account after an own-user %s failure',
+    async (entry) => {
+      const requestAccountRecheck = vi.fn();
+      const onSessionExpired = vi.fn();
+      const fetcher = vi.fn(async () => new Response('{"error":"USER NOT FOUND"}', { status: 500 }));
+      const gateway = createNotificationGateway({
+        requestAccountRecheck,
+        onSessionExpired,
+        requestSessionEpoch: () => 9,
+        readAccess: () => ({ identityKey: 'nodeseek:7', userId: '7', fetcher })
+      });
+      await expect(
+        entry === 'list'
+          ? gateway.listPage('nodeseek', { categoryId: 'mentions' })
+          : gateway.readUnreadSnapshot('nodeseek')
+      ).rejects.toMatchObject({
+        reason: 'account-recheck-required',
+        kind: 'login-required',
+        status: 500
+      });
+      expect(requestAccountRecheck).toHaveBeenCalledExactlyOnceWith('nodeseek', 9, expect.any(String));
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('reports authentication loss from every guarded LinuxDo notification consumer without replaying writes', async () => {
     const operations: ((gateway: ReturnType<typeof createNotificationGateway>) => Promise<unknown>)[] = [
       (gateway) => gateway.getCategories('linuxdo', 'linuxdo:7'),

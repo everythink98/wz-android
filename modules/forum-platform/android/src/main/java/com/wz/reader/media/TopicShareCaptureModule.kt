@@ -27,11 +27,14 @@ import kotlin.math.ceil
 import kotlin.math.min
 
 internal const val TOPIC_SHARE_STRIP_HEIGHT = 256
+internal const val TOPIC_SHARE_IMAGE_WIDTH = 1440
 
 // PNG uses one zlib stream across all IDAT chunks, so no full image is retained.
 internal class TopicSharePngWriter(output: OutputStream, private val width: Int, private val height: Int) : AutoCloseable {
   private val output = DataOutputStream(output)
-  private val row = ByteArray(1 + width.also { require(it in 1..1080 && height > 0) { "分享图片尺寸无效。" } } * 4)
+  // PNG Up filtering removes repeated scanline bytes without changing pixels.
+  private val row = ByteArray(1 + width.also { require(it in 1..TOPIC_SHARE_IMAGE_WIDTH && height > 0) { "分享图片尺寸无效。" } } * 4).apply { this[0] = 2 }
+  private val previousPixels = IntArray(width)
   private val deflater = Deflater()
   private val compressed = ByteArray(32 * 1024)
   private var rows = 0
@@ -65,11 +68,13 @@ internal class TopicSharePngWriter(output: OutputStream, private val width: Int,
     check(rows < height && pixels.size == width) { "分享图片像素行无效。" }
     for (x in pixels.indices) {
       val pixel = pixels[x]
+      val previous = previousPixels[x]
       val offset = 1 + x * 4
-      row[offset] = (pixel ushr 16).toByte()
-      row[offset + 1] = (pixel ushr 8).toByte()
-      row[offset + 2] = pixel.toByte()
-      row[offset + 3] = (pixel ushr 24).toByte()
+      row[offset] = ((pixel ushr 16) - (previous ushr 16)).toByte()
+      row[offset + 1] = ((pixel ushr 8) - (previous ushr 8)).toByte()
+      row[offset + 2] = (pixel - previous).toByte()
+      row[offset + 3] = ((pixel ushr 24) - (previous ushr 24)).toByte()
+      previousPixels[x] = pixel
     }
     deflater.setInput(row)
     while (!deflater.needsInput()) {
@@ -146,7 +151,7 @@ internal suspend fun captureTopicShareContent(
     check(content.width > 0 && content.height > 0) { "分享图片正文尚未排版完成。" }
     intArrayOf(content.width, content.height, scrollView.width, scrollView.height)
   }
-  val width = min(sourceSize[0], 1080)
+  val width = TOPIC_SHARE_IMAGE_WIDTH
   val scale = width.toDouble() / sourceSize[0]
   val height = ceil(sourceSize[1] * scale).toInt()
   val pixels = IntArray(width)

@@ -1,5 +1,5 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
-import { memo, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -143,14 +143,14 @@ function EmptyState({
   );
 }
 
-function NotificationRow({
+const NotificationRow = memo(function NotificationRow({
   item,
   showSource,
   onPress
 }: {
   item: ForumNotification;
   showSource: boolean;
-  onPress: () => void;
+  onPress: (item: ForumNotification) => void;
 }) {
   const { styles } = useReaderThemeStyles(createNotificationStyles);
   const title = notificationTitleText(item);
@@ -159,7 +159,7 @@ function NotificationRow({
       accessibilityRole="button"
       accessibilityLabel={notificationAccessibilityLabel(item)}
       style={[styles.row, item.unread && styles.rowUnread]}
-      onPress={onPress}
+      onPress={() => onPress(item)}
     >
       <Avatar contentSource={item.source} small name={item.actor.name} uri={item.actor.avatarUrl} />
       <View style={styles.rowBody}>
@@ -188,7 +188,7 @@ function NotificationRow({
       <View pointerEvents="none" style={styles.rowSeparator} />
     </Pressable>
   );
-}
+});
 
 export const NotificationsScreen = memo(function NotificationsScreen({
   initializationError = '',
@@ -255,6 +255,13 @@ export const NotificationsScreen = memo(function NotificationsScreen({
 }) {
   const { settings, styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const listRef = useRef<FlashListRef<ForumNotification>>(null);
+  const pressNotification = useLatestCallback(onItemPress);
+  const renderNotification = useCallback(
+    ({ item }: { item: ForumNotification }) => (
+      <NotificationRow item={item} showSource={source === 'all'} onPress={pressNotification} />
+    ),
+    [pressNotification, source]
+  );
   useEffect(() => {
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, [source, categoryId, unreadOnly]);
@@ -533,9 +540,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           </View>
         }
         refreshControl={<RefreshControl refreshing={refreshing} colors={[theme.primary]} onRefresh={onRefresh} />}
-        renderItem={({ item }) => (
-          <NotificationRow item={item} showSource={source === 'all'} onPress={() => onItemPress(item)} />
-        )}
+        renderItem={renderNotification}
         onEndReached={hasMore && !fetchingMore && !loading && !refreshing ? onLoadMore : undefined}
         onEndReachedThreshold={0.4}
       />
@@ -650,7 +655,7 @@ export function NotificationSettingsScreen({
   );
 }
 
-function DetailHtml({
+const DetailHtml = memo(function DetailHtml({
   contentWidth,
   html,
   message = false,
@@ -854,7 +859,7 @@ function DetailHtml({
       systemFonts={NOTIFICATION_HTML_FONTS}
     />
   );
-}
+});
 
 export function NotificationDetailScreen({
   actorUser,

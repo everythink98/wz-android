@@ -1,4 +1,5 @@
 import type { TopicStyles } from '../styles';
+import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { CheckCircle, ChevronDown, ChevronRight, ChevronUp } from 'lucide-react-native';
 import type { Reply, Source } from '@/domain/forum/models';
@@ -8,6 +9,7 @@ import { type ReaderTheme } from '@/ui/theme/tokens';
 import { Avatar } from '@/ui/avatar/Avatar';
 
 export function AcceptedAnswerPreview({
+  children,
   contentSource,
   expanded,
   floor,
@@ -21,6 +23,7 @@ export function AcceptedAnswerPreview({
   styles,
   theme
 }: {
+  children?: ReactNode;
   contentSource: Source;
   expanded: boolean;
   floor: number;
@@ -100,6 +103,7 @@ export function AcceptedAnswerPreview({
                   </View>
                 </View>
               ) : null}
+              {children}
             </>
           ) : (
             <View accessibilityLiveRegion="polite" style={styles.topicAcceptedAnswerAuthorMeta}>

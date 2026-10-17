@@ -17,6 +17,7 @@ import { createTheme, lineHeightMultiplier } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import * as notificationPresentation from '@/features/notifications/notificationPresentation';
 
 jest.mock('@/ui/media/ImagePreviewModal', () => {
   const ReactModule = require('react') as typeof React;
@@ -260,6 +261,33 @@ function notificationState(globalEnabled = true): NotificationState {
 }
 
 describe('notification screens', () => {
+  it('keeps unchanged message rows idle while pagination settles and updates only changed messages', async () => {
+    const title = jest.spyOn(notificationPresentation, 'notificationTitleText');
+    try {
+      const props = listProps();
+      const items = Array.from({ length: 20 }, (_, index) => ({ ...notification, id: `reply:${index}` }));
+      const view = await render(<NotificationsScreen {...props} items={items} hasMore />);
+      title.mockClear();
+      await view.rerender(<NotificationsScreen {...props} items={items} hasMore fetchingMore />);
+      await view.rerender(<NotificationsScreen {...props} items={items} hasMore />);
+      expect(title).not.toHaveBeenCalled();
+
+      const changed = { ...items[3], title: '已更新的主题' };
+      const updated = items.map((item, index) => (index === 3 ? changed : item));
+      await view.rerender(<NotificationsScreen {...props} items={updated} hasMore />);
+      expect(title).toHaveBeenCalledTimes(1);
+      expect(view.getByText('已更新的主题')).toBeTruthy();
+      const onItemPress = jest.fn();
+      title.mockClear();
+      await view.rerender(<NotificationsScreen {...props} items={updated} onItemPress={onItemPress} />);
+      expect(title).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByText('已更新的主题'));
+      expect(onItemPress).toHaveBeenCalledWith(changed);
+    } finally {
+      title.mockRestore();
+    }
+  });
+
   const imageDetail = {
     notification: { ...notification, kind: 'private-message' as const },
     title: '私信图片',

@@ -825,6 +825,7 @@ private object SvgPosterRendererRuntime {
       return
     }
     request.captureStarted = true
+    android.os.Trace.beginSection("WZ.Svg.Poster.Capture")
     val bitmap = try {
       Bitmap.createBitmap(
         prepared.dimensions.width,
@@ -833,7 +834,12 @@ private object SvgPosterRendererRuntime {
       ).also { target ->
         val canvas = Canvas(target)
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-        view.draw(canvas)
+        android.os.Trace.beginSection("WZ.Svg.Poster.Draw")
+        try {
+          view.draw(canvas)
+        } finally {
+          android.os.Trace.endSection()
+        }
       }
     } catch (error: OutOfMemoryError) {
       fail(request, "svg_render_oom", "SVG 海报渲染内存不足。", error)
@@ -841,6 +847,8 @@ private object SvgPosterRendererRuntime {
     } catch (error: Exception) {
       fail(request, "svg_render_failed", error.message ?: "SVG 海报取帧失败。", error)
       return
+    } finally {
+      android.os.Trace.endSection()
     }
     workExecutor.execute {
       try {

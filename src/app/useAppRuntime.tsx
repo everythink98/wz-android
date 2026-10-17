@@ -25,6 +25,7 @@ import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
 import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 
 export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
@@ -472,73 +473,134 @@ export function useAppRuntime() {
     ]
   );
 
-  const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(
+  const moreAccountCommand = useLatestCallback(accountRuntime.center.handleAccountCenterCommand);
+  const refreshMoreLinuxDoLevel = useLatestCallback(accountRuntime.center.account.refreshLinuxDoLevel);
+  const closeMoreAccountPanels = useLatestCallback(accountRuntime.hosts.closePanels);
+  const moreAccountRuntime = useMemo<MoreRouteRuntimeValue['account']>(
     () => ({
-      account: {
-        active: appActive,
-        enabledSessionSources,
-        read: {
-          gateway: readGateway,
-          sessionEpochs: forumSessionEpochs,
-          sessions: accountRuntime.read.accountSessionViewModels,
-          statusBusy: accountRuntime.read.statusBusy
+      active: appActive,
+      enabledSessionSources,
+      read: {
+        gateway: readGateway,
+        sessionEpochs: forumSessionEpochs,
+        sessions: accountRuntime.read.accountSessionViewModels,
+        statusBusy: accountRuntime.read.statusBusy
+      },
+      center: {
+        openCredits: (currency) => {
+          const user = accountRuntime.read.accountSessionViewModels.nodeseek.currentUser;
+          if (user && accountRuntime.read.accountSessionViewModels.nodeseek.canWrite) {
+            openNodeSeekCreditsRoute({ identityKey: `nodeseek:${user.id}`, userId: user.id, currency });
+          }
         },
-        center: {
-          openCredits: (currency) => {
-            const user = accountRuntime.read.accountSessionViewModels.nodeseek.currentUser;
-            if (user && accountRuntime.read.accountSessionViewModels.nodeseek.canWrite) {
-              openNodeSeekCreditsRoute({ identityKey: `nodeseek:${user.id}`, userId: user.id, currency });
-            }
-          },
-          command: accountRuntime.center.handleAccountCenterCommand,
-          credentials: {
-            summaries: accountRuntime.center.credentials.credentialSummaries,
-            pendingFillSite: accountRuntime.center.credentials.pendingCredentialFillSite
-          },
-          linuxDoLevel: {
-            busy: accountRuntime.center.account.linuxDoLevelBusy,
-            error: accountRuntime.center.account.linuxDoLevelError,
-            profile: accountRuntime.center.account.linuxDoLevelProfile,
-            refresh: accountRuntime.center.account.refreshLinuxDoLevel
-          },
-          nodeImageKey: {
-            authorize: accountRuntime.center.nodeImage.key.authorize,
-            busy: accountRuntime.center.nodeImage.key.busy,
-            clear: accountRuntime.center.nodeImage.key.clear,
-            save: accountRuntime.center.nodeImage.key.save,
-            saved: accountRuntime.center.nodeImage.key.saved
-          },
-          nodeSeek: accountRuntime.center.nodeSeek
+        command: moreAccountCommand,
+        credentials: {
+          summaries: accountRuntime.center.credentials.credentialSummaries,
+          pendingFillSite: accountRuntime.center.credentials.pendingCredentialFillSite
         },
-        surfaces: {
-          closeAll: accountRuntime.hosts.closePanels,
-          linuxdo: accountRuntime.hosts.surfaces.linuxdo,
-          nodeseek: accountRuntime.hosts.surfaces.nodeseek,
-          yaohuo: accountRuntime.hosts.surfaces.yaohuo
+        linuxDoLevel: {
+          busy: accountRuntime.center.account.linuxDoLevelBusy,
+          error: accountRuntime.center.account.linuxDoLevelError,
+          profile: accountRuntime.center.account.linuxDoLevelProfile,
+          refresh: refreshMoreLinuxDoLevel
+        },
+        nodeImageKey: {
+          authorize: accountRuntime.center.nodeImage.key.authorize,
+          busy: accountRuntime.center.nodeImage.key.busy,
+          clear: accountRuntime.center.nodeImage.key.clear,
+          save: accountRuntime.center.nodeImage.key.save,
+          saved: accountRuntime.center.nodeImage.key.saved
+        },
+        nodeSeek: {
+          busy: accountRuntime.center.nodeSeek.busy,
+          state: accountRuntime.center.nodeSeek.state,
+          checkIn: accountRuntime.center.nodeSeek.checkIn,
+          observeBoard: accountRuntime.center.nodeSeek.observeBoard
         }
       },
+      surfaces: {
+        closeAll: closeMoreAccountPanels,
+        linuxdo: accountRuntime.hosts.surfaces.linuxdo,
+        nodeseek: accountRuntime.hosts.surfaces.nodeseek,
+        yaohuo: accountRuntime.hosts.surfaces.yaohuo
+      }
+    }),
+    [
+      appActive,
+      enabledSessionSources,
+      readGateway,
+      forumSessionEpochs,
+      accountRuntime.read.accountSessionViewModels,
+      accountRuntime.read.statusBusy,
+      moreAccountCommand,
+      accountRuntime.center.credentials.credentialSummaries,
+      accountRuntime.center.credentials.pendingCredentialFillSite,
+      accountRuntime.center.account.linuxDoLevelBusy,
+      accountRuntime.center.account.linuxDoLevelError,
+      accountRuntime.center.account.linuxDoLevelProfile,
+      refreshMoreLinuxDoLevel,
+      accountRuntime.center.nodeImage.key.authorize,
+      accountRuntime.center.nodeImage.key.busy,
+      accountRuntime.center.nodeImage.key.clear,
+      accountRuntime.center.nodeImage.key.save,
+      accountRuntime.center.nodeImage.key.saved,
+      accountRuntime.center.nodeSeek.busy,
+      accountRuntime.center.nodeSeek.state,
+      accountRuntime.center.nodeSeek.checkIn,
+      accountRuntime.center.nodeSeek.observeBoard,
+      closeMoreAccountPanels,
+      accountRuntime.hosts.surfaces.linuxdo,
+      accountRuntime.hosts.surfaces.nodeseek,
+      accountRuntime.hosts.surfaces.yaohuo
+    ]
+  );
+
+  const moreLibraryRuntime = useMemo<MoreRouteRuntimeValue['library']>(
+    () => ({
+      open: () => {
+        navigateAppScreen('library');
+      }
+    }),
+    []
+  );
+
+  const moreProxyRuntime = useMemo<MoreRouteRuntimeValue['proxy']>(
+    () => ({
+      activeProfile: networkRuntime.activeProfile,
+      applyError: networkRuntime.applyError,
+      applyStatus: networkRuntime.applyStatus,
+      proxyState: networkRuntime.proxyState,
+      summary: networkRuntime.summary,
+      deleteProxyProfile: networkRuntime.deleteProxyProfile,
+      selectProxyProfile: networkRuntime.selectProxyProfile,
+      setProxyEnabled: networkRuntime.setProxyEnabled,
+      testProxyProfile: networkRuntime.testProxyProfile,
+      upsertProxyProfile: networkRuntime.upsertProxyProfile
+    }),
+    [
+      networkRuntime.activeProfile,
+      networkRuntime.applyError,
+      networkRuntime.applyStatus,
+      networkRuntime.proxyState,
+      networkRuntime.summary,
+      networkRuntime.deleteProxyProfile,
+      networkRuntime.selectProxyProfile,
+      networkRuntime.setProxyEnabled,
+      networkRuntime.testProxyProfile,
+      networkRuntime.upsertProxyProfile
+    ]
+  );
+
+  const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(
+    () => ({
+      account: moreAccountRuntime,
       diagnostics: {
         getCurrentScreen,
         metadata: diagnosticMetadata
       },
       notify,
-      library: {
-        open: () => {
-          navigateAppScreen('library');
-        }
-      },
-      proxy: {
-        activeProfile: networkRuntime.activeProfile,
-        applyError: networkRuntime.applyError,
-        applyStatus: networkRuntime.applyStatus,
-        proxyState: networkRuntime.proxyState,
-        summary: networkRuntime.summary,
-        deleteProxyProfile: networkRuntime.deleteProxyProfile,
-        selectProxyProfile: networkRuntime.selectProxyProfile,
-        setProxyEnabled: networkRuntime.setProxyEnabled,
-        testProxyProfile: networkRuntime.testProxyProfile,
-        upsertProxyProfile: networkRuntime.upsertProxyProfile
-      },
+      library: moreLibraryRuntime,
+      proxy: moreProxyRuntime,
       reader: {
         commit: commitReaderData,
         data: readerData,
@@ -550,30 +612,12 @@ export function useAppRuntime() {
       update: updateRuntime
     }),
     [
-      accountRuntime.center,
-      accountRuntime.hosts.closePanels,
-      accountRuntime.hosts.surfaces.linuxdo,
-      accountRuntime.hosts.surfaces.nodeseek,
-      accountRuntime.hosts.surfaces.yaohuo,
-      accountRuntime.read.accountSessionViewModels,
-      accountRuntime.read.statusBusy,
-      appActive,
-      forumSessionEpochs,
-      readGateway,
+      moreAccountRuntime,
+      moreLibraryRuntime,
+      moreProxyRuntime,
       commitReaderData,
       diagnosticMetadata,
-      enabledSessionSources,
       getCurrentScreen,
-      networkRuntime.activeProfile,
-      networkRuntime.applyError,
-      networkRuntime.applyStatus,
-      networkRuntime.deleteProxyProfile,
-      networkRuntime.proxyState,
-      networkRuntime.selectProxyProfile,
-      networkRuntime.setProxyEnabled,
-      networkRuntime.summary,
-      networkRuntime.testProxyProfile,
-      networkRuntime.upsertProxyProfile,
       notify,
       readerData,
       readerDataRef,

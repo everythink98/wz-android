@@ -3,7 +3,9 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { PixelRatio } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
-import { compileForumContent } from '@/domain/forum/topicContentSplit';
+import { compileForumContent, prepareReplyContent } from '@/domain/forum/topicContentSplit';
+import * as forumContentMedia from '@/domain/forum/forumContentMedia';
+import { imagePreviewDescriptorsForReplies } from '@/features/topic/model/replyListModel';
 import { useImagePreviewController as useRawImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { imagePreviewItemAt } from '@/platform/media/imagePreviewCatalog';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
@@ -349,6 +351,58 @@ describe('Image preview controller', () => {
 
     expect(hook.result.current.imagePreview?.items).toHaveLength(2_000);
     expect(hook.result.current.imagePreview?.index).toBe(1_380);
+  });
+
+  it.each<['prepend' | 'append', number]>([
+    ['prepend', 300],
+    ['prepend', 1000],
+    ['append', 300],
+    ['append', 1000]
+  ])('prepares only the thirty new reply images on %s after %i loaded replies', async (edge, count) => {
+    const makeReply = (floor: number) =>
+      prepareReplyContent(
+        {
+          author: 'reader',
+          commentId: floor,
+          floor,
+          createdAt: '',
+          contentHtml: `<img src="https://images.invalid/${floor}.webp" srcset="https://images.invalid/${floor}-small.webp 400w, https://images.invalid/${floor}.webp 1000w">`
+        },
+        'linuxdo'
+      );
+    const previous = Array.from({ length: count }, (_, index) => makeReply(index + 100));
+    const added = Array.from({ length: 30 }, (_, index) =>
+      makeReply(edge === 'prepend' ? index + 70 : index + 100 + count)
+    );
+    const next = edge === 'prepend' ? [...added, ...previous] : [...previous, ...added];
+    const hook = await renderHook(() =>
+      useRawImagePreviewController({ contentSource: 'linuxdo', contentWidth: 360, notify: jest.fn() })
+    );
+    const parse = jest.spyOn(forumContentMedia, 'parseSrcsetCandidates');
+    try {
+      await act(() =>
+        hook.result.current.registerImagePreviewDescriptors(
+          imagePreviewDescriptorsForReplies(previous, 'linuxdo', '42')
+        )
+      );
+      parse.mockClear();
+      await act(() =>
+        hook.result.current.registerImagePreviewDescriptors(imagePreviewDescriptorsForReplies(next, 'linuxdo', '42'))
+      );
+      expect(parse).toHaveBeenCalledTimes(30);
+      await act(() => hook.result.current.openImagePreview('https://images.invalid/100.webp'));
+      expect(hook.result.current.imagePreview?.items).toHaveLength(count + 30);
+      expect(hook.result.current.imagePreview?.index).toBe(edge === 'prepend' ? 30 : 0);
+      expect(imagePreviewItemAt(hook.result.current.imagePreview!, edge === 'prepend' ? 30 : 0)?.readingOrigin).toEqual(
+        {
+          topicId: '42',
+          floor: 100
+        }
+      );
+    } finally {
+      parse.mockRestore();
+      await hook.unmount();
+    }
   });
 
   it('keeps equivalent registrations and invalidates semantic catalog inputs', async () => {

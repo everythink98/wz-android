@@ -116,11 +116,14 @@ export function useAccountStatusController({
     nodeseek: nodeSeekStatus.data,
     yaohuo: yaohuoStatus.data
   };
-  const accountSessionViewModels: SiteSessionViewModels = {
-    linuxdo: createAccountSessionViewModel(snapshots.linuxdo),
-    nodeseek: createAccountSessionViewModel(snapshots.nodeseek),
-    yaohuo: createAccountSessionViewModel(snapshots.yaohuo)
-  };
+  const accountSessionViewModels = useMemo<SiteSessionViewModels>(
+    () => ({
+      linuxdo: createAccountSessionViewModel(linuxDoStatus.data),
+      nodeseek: createAccountSessionViewModel(nodeSeekStatus.data),
+      yaohuo: createAccountSessionViewModel(yaohuoStatus.data)
+    }),
+    [linuxDoStatus.data, nodeSeekStatus.data, yaohuoStatus.data]
+  );
 
   const commitAccountSnapshot = useCallback((source: StatusSource, update: SnapshotUpdater) => {
     let previous = createAccountSessionSnapshot(source);

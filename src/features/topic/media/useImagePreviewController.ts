@@ -75,9 +75,7 @@ export function useImagePreviewController({
   const catalogRegistrationRef = useRef<{
     descriptors: readonly ForumImagePreviewDescriptor[];
     mediaRevision: string;
-    pixelRatio: number;
     prepared: PreparedImagePreviewCatalog;
-    width: number;
   } | null>(null);
   const contentSourceRef = useCommittedRef(contentSource);
   const catalogMediaContextRef = useCommittedRef(catalogMediaContext);
@@ -94,21 +92,19 @@ export function useImagePreviewController({
       const canReusePrepared =
         current !== null &&
         sameDescriptorSequence(current.descriptors, descriptors) &&
-        current.pixelRatio === pixelRatio &&
-        current.width === contentWidth;
+        current.prepared.pixelRatio === pixelRatio &&
+        current.prepared.contentWidth === contentWidth;
       if (canReusePrepared && current.mediaRevision === mediaRevision) {
         return;
       }
       const prepared = canReusePrepared
         ? current.prepared
-        : prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio);
+        : prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio, current?.prepared);
       catalogRef.current = projectImagePreviewCatalog(prepared, catalogMediaContext);
       catalogRegistrationRef.current = {
         descriptors,
         mediaRevision,
-        pixelRatio,
-        prepared,
-        width: contentWidth
+        prepared
       };
     },
     [catalogMediaContext, contentWidth, mediaRevision, pixelRatio]

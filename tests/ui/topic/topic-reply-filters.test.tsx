@@ -1,9 +1,18 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { inactivePostInteractionActions } from '../topicInteractionFixture';
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
-import { PixelRatio, StyleSheet, Text, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  PixelRatio,
+  ScrollView,
+  StyleSheet,
+  Text,
+  ToastAndroid,
+  View,
+  type StyleProp,
+  type ViewStyle
+} from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import type {
   Reply,
@@ -32,7 +41,12 @@ import { decideTopicAction, type TopicActionDecisionFor } from '@/features/topic
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import type { useTopicController } from '@/features/topic/useTopicController';
-import { topicListReadingFloor, type TopicListItem } from '@/features/topic/model/topicListModel';
+import {
+  topicListItemKey,
+  topicListItemType,
+  topicListReadingFloor,
+  type TopicListItem
+} from '@/features/topic/model/topicListModel';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { QueryClient } from '@tanstack/react-query';
 import type { ToggleTopicBodyQuoteOptions } from '@/domain/forum/quotedPosts';
@@ -45,6 +59,7 @@ import { RequestCanceledError } from '@/platform/network/request';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { renderHook } from '@testing-library/react-native';
 import { useRecyclerViewController } from '@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController';
+import { RecyclerViewManager } from '@shopify/flash-list/dist/recyclerview/RecyclerViewManager';
 import { useBoundDetection } from '@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection';
 
 jest.mock('react-native-reanimated', () => ({
@@ -61,11 +76,32 @@ const mockGetLayout = jest.fn<(index: number) => { x: number; y: number; width: 
 const mockGetFirstItemOffset = jest.fn<() => number>();
 const mockCompileForumContent = jest.fn();
 const mockAvatarLifecycle = jest.fn<(event: 'mount' | 'unmount', uri: string | undefined) => void>();
+const mockAvatarComponentLifecycle = jest.fn<(event: 'mount' | 'unmount') => void>();
+const mockViewportCellRender = jest.fn<(floor: number | undefined) => void>();
+const mockViewportBodyRender = jest.fn<(uri: string | undefined) => void>();
+const mockViewportBodyCommit = jest.fn<(uri: string | undefined) => void>();
+type MockActualReplyItemProps = React.ComponentProps<
+  typeof import('@/features/topic/components/ReplyItem').MemoizedReplyItem
+>;
+type MockHolderProps = import('@shopify/flash-list/dist/recyclerview/ViewHolder').ViewHolderProps<unknown>;
+const mockViewportReplyInputs = new Map<number, MockActualReplyItemProps>();
+const mockViewportAdmissions = new Map<string, boolean>();
+const mockViewportBodyInstances = new Map<string, object>();
 const mockNodeSeekTopicReactionStats = jest.fn<(item: TopicDetail) => { label: string; value: number }[]>(() => []);
 let lastFlashListItemTypes: string[] = [];
 let lastFlashListItemKeys: string[] = [];
 let lastFlashListProps: Record<string, any> = {};
 let mockFlashListLayoutReady = true;
+let mockRecycledReplySlot = false;
+let mockRealViewportCells = false;
+beforeEach(() => {
+  mockRecycledReplySlot = false;
+  mockRealViewportCells = false;
+  mockViewportReplyInputs.clear();
+  mockViewportAdmissions.clear();
+  mockViewportBodyInstances.clear();
+  mockAvatarComponentLifecycle.mockClear();
+});
 const replyListDragEvent = {
   nativeEvent: {
     contentOffset: { x: 0, y: 0 },
@@ -73,6 +109,16 @@ const replyListDragEvent = {
     layoutMeasurement: { width: 320, height: 800 }
   }
 };
+
+function replyListScrollEvent(y: number, correction = 0) {
+  return {
+    nativeEvent: {
+      ...replyListDragEvent.nativeEvent,
+      contentOffset: { x: 0, y },
+      contentOffsetCorrection: { x: 0, y: correction }
+    }
+  };
+}
 let mockBodyMediaViewportRowKeys: readonly string[] = [];
 let mockOriginalImageUpgradeStates: { enabled: boolean; html: string }[] = [];
 
@@ -83,7 +129,18 @@ function lastReplyListIndex(floor: number) {
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
+  const { useFlashListContext } = jest.requireActual<
+    typeof import('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider')
+  >('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider');
+  const { useLayoutState } = jest.requireActual<
+    typeof import('@shopify/flash-list/dist/recyclerview/hooks/useLayoutState')
+  >('@shopify/flash-list/dist/recyclerview/hooks/useLayoutState');
+  const { ViewHolder } = jest.requireActual<typeof import('@shopify/flash-list/dist/recyclerview/ViewHolder')>(
+    '@shopify/flash-list/dist/recyclerview/ViewHolder'
+  );
   return {
+    useFlashListContext,
+    useLayoutState,
     FlashList: ReactModule.forwardRef(function FlashList(
       {
         accessibilityLabel,
@@ -96,11 +153,11 @@ jest.mock('@shopify/flash-list', () => {
         ...props
       }: {
         accessibilityLabel?: string;
-        data?: unknown[];
-        keyExtractor?: (item: unknown, index: number) => string;
+        data?: TopicListItem[];
+        keyExtractor?: (item: TopicListItem, index: number) => string;
         ListFooterComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
-        renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
+        renderItem?: (info: { item: TopicListItem; index: number }) => React.ReactNode;
         testID?: string;
         style?: React.ComponentProps<typeof View>['style'];
         importantForAccessibility?: React.ComponentProps<typeof View>['importantForAccessibility'];
@@ -109,6 +166,16 @@ jest.mock('@shopify/flash-list', () => {
       },
       ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: (options: unknown) => void }>
     ) {
+      const oracleRefs = ReactModule.useRef<MockHolderProps['refHolder']>(new Map());
+      const oracleRenderItem = ReactModule.useMemo<NonNullable<MockHolderProps['renderItem']>>(
+        () => (info) => {
+          const item = data[info.index];
+          if (item !== info.item) throw new Error('ViewHolder item does not match the supplied data');
+          if ('reply' in item) mockViewportCellRender(item.reply.floor);
+          return ReactModule.createElement(ReactModule.Fragment, null, renderItem?.({ ...info, item }));
+        },
+        [data, renderItem]
+      );
       ReactModule.useImperativeHandle(ref, () => ({
         scrollToIndex: (options: unknown) => {
           const result = mockScrollToIndex(options);
@@ -151,6 +218,16 @@ jest.mock('@shopify/flash-list', () => {
           if (typeof props.onLoad === 'function') props.onLoad({ elapsedTimeInMs: 0 });
         }
       }, [data.length, props.onLoad]);
+      const cells = data.map((item, index) => ({ item, index }));
+      const renderedCells = mockRealViewportCells
+        ? cells.filter(({ item }) => item.type === 'reply')
+        : mockRecycledReplySlot
+          ? cells
+              .filter(
+                ({ item }) => typeof item === 'object' && item !== null && 'type' in item && item.type === 'reply'
+              )
+              .slice(0, 1)
+          : cells;
       return ReactModule.createElement(
         NativeView,
         {
@@ -161,12 +238,25 @@ jest.mock('@shopify/flash-list', () => {
           accessibilityElementsHidden: props.accessibilityElementsHidden
         },
         ListHeaderComponent,
-        ...data.map((item, index) =>
-          ReactModule.createElement(
-            NativeView,
-            { key: keyExtractor?.(item, index) ?? index },
-            renderItem?.({ item, index })
-          )
+        ...renderedCells.map(({ item, index }, slot) =>
+          mockRealViewportCells
+            ? ReactModule.createElement(ViewHolder, {
+                key: `viewport-slot-${slot}`,
+                index,
+                item,
+                layout: { x: 0, y: index * 120, width: 320, height: 120 },
+                refHolder: oracleRefs.current,
+                renderItem: oracleRenderItem,
+                extraData: props.extraData,
+                target: 'Cell',
+                trailingItem: undefined,
+                hidden: false
+              })
+            : ReactModule.createElement(
+                NativeView,
+                { key: mockRecycledReplySlot ? 'physical-reply-slot' : (keyExtractor?.(item, index) ?? index) },
+                renderItem?.({ item, index })
+              )
         ),
         ListFooterComponent
       );
@@ -311,18 +401,40 @@ jest.mock('@/ui/avatar/Avatar', () => {
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   const { useTopicSelectionRowActive } =
     require('@/features/topic/selection/TopicSelectionSurface') as typeof import('@/features/topic/selection/TopicSelectionSurface');
+  function UpgradeProbe({ uri, children }: { uri?: string; children: React.ReactNode }) {
+    const enabled = (
+      require('@/platform/media/originalImageLoading') as typeof import('@/platform/media/originalImageLoading')
+    ).useOriginalImageUpgradeEnabled();
+    ReactModule.useLayoutEffect(() => {
+      if (uri) mockViewportAdmissions.set(uri, enabled);
+    }, [enabled, uri]);
+    return ReactModule.createElement(ReactModule.Fragment, null, children);
+  }
   return {
     Avatar: ({ contentSource, uri }: { contentSource?: string; uri?: string }) => {
+      if (mockRealViewportCells) mockViewportBodyRender(uri);
       const selectionActive = useTopicSelectionRowActive();
+      const instance = ReactModule.useRef({});
+      ReactModule.useLayoutEffect(() => {
+        if (mockRealViewportCells) {
+          mockViewportBodyCommit(uri);
+          if (uri) mockViewportBodyInstances.set(uri, instance.current);
+        }
+      });
+      ReactModule.useEffect(() => {
+        mockAvatarComponentLifecycle('mount');
+        return () => mockAvatarComponentLifecycle('unmount');
+      }, []);
       ReactModule.useEffect(() => {
         mockAvatarLifecycle('mount', uri);
         return () => mockAvatarLifecycle('unmount', uri);
       }, [uri]);
-      return ReactModule.createElement(NativeView, {
+      const avatar = ReactModule.createElement(NativeView, {
         accessibilityHint: uri,
         accessibilityLabel: `avatar source ${contentSource || 'missing'}`,
         accessibilityState: { selected: selectionActive }
       });
+      return mockRealViewportCells ? ReactModule.createElement(UpgradeProbe, { uri, children: avatar }) : avatar;
     }
   };
 });
@@ -545,21 +657,16 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
         { testID: `reaction-${stat.id}` },
         `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
       ),
-    MemoizedReplyItem: (props: {
-      bodyContent?: import('@/features/topic/model/replyListModel').ReplyRenderableContent;
-      isTerminal?: boolean;
-      onLocateReply: (target: { floor?: number }) => void;
-      onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
-      reply: Reply;
-      section?: {
-        contentToken?: string;
-        instanceKey?: string;
-        key: string;
-        measureForMaterialization?: boolean;
-        type?: string;
-      };
-    }) => {
+    MemoizedReplyItem: (
+      props: MockActualReplyItemProps & {
+        section?: { contentToken?: string; instanceKey?: string; measureForMaterialization?: boolean };
+      }
+    ) => {
       const { isTerminal, onQuoteContentLayout, reply, section } = props;
+      if (mockRealViewportCells) {
+        if (reply.floor) mockViewportReplyInputs.set(reply.floor, props);
+        return ReactModule.createElement(actual.MemoizedReplyItem, props);
+      }
       if (!section && props.bodyContent?.type === 'codeBlock') {
         return ReactModule.createElement(actual.ReplyItem, props as never);
       }
@@ -698,10 +805,11 @@ function TopicFilterHarness({
   mediaSessionIdentity,
   nodeSeekUserId = null,
   onLocateReply = jest.fn(async () => 'completed'),
+  onCancelReplyLocation = jest.fn(),
   onOpenTopic = jest.fn(),
   location,
-  onLoadMoreReplies = jest.fn(),
-  onLoadPreviousReplies = jest.fn(),
+  onLoadMoreReplies = jest.fn<() => void>(),
+  onLoadPreviousReplies = jest.fn<() => void>(),
   onInteract = jest.fn(),
   onImagePreviewDescriptors = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
@@ -722,6 +830,7 @@ function TopicFilterHarness({
   unreadReplyCount = 0,
   replyHasMore = false,
   replyHasPrevious = false,
+  replyPreviousCursor,
   replyEndError = null,
   replyStartError = null,
   replyCollectionComplete = true,
@@ -753,11 +862,12 @@ function TopicFilterHarness({
   loadingQuotedFloors?: Record<string, boolean>;
   mediaSessionIdentity?: string;
   nodeSeekUserId?: number | null;
-  onLoadMoreReplies?: (options?: { silent?: boolean }) => void;
-  onLoadPreviousReplies?: (options?: { silent?: boolean }) => void;
+  onLoadMoreReplies?: (options?: { silent?: boolean }) => void | Promise<void>;
+  onLoadPreviousReplies?: (options?: { silent?: boolean }) => void | Promise<void>;
   onInteract?: (type: InteractionType, commentId?: number) => void;
   onImagePreviewDescriptors?: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
   onLocateReply?: (target: { commentId?: number; floor?: number; pageHint?: number }) => Promise<string>;
+  onCancelReplyLocation?: () => void;
   onOpenTopic?: (topic: Topic, location?: TopicLocationTarget) => void;
   location?: TopicLocationTarget;
   onRefreshWholeTopic?: () => void;
@@ -778,6 +888,7 @@ function TopicFilterHarness({
   unreadReplyCount?: number;
   replyHasMore?: boolean;
   replyHasPrevious?: boolean;
+  replyPreviousCursor?: ReturnType<typeof useTopicController>['replyPreviousCursor'];
   replyEndError?: SourceErrorInfo | null;
   replyStartError?: SourceErrorInfo | null;
   replyCollectionComplete?: boolean;
@@ -869,11 +980,11 @@ function TopicFilterHarness({
     readingEntry,
     newReplyFloorStart,
     loadPreviousReplies: async (options?: { silent?: boolean }) => {
-      onLoadPreviousReplies(options);
+      await onLoadPreviousReplies(options);
       return true;
     },
     loadMoreReplies: async (options?: { silent?: boolean }) => {
-      onLoadMoreReplies(options);
+      await onLoadMoreReplies(options);
       return true;
     },
     loadedQuotedReplies: preparedLoadedQuotedReplies,
@@ -882,6 +993,7 @@ function TopicFilterHarness({
     loadingQuotedFloors,
     replyHasMore,
     replyHasPrevious,
+    replyPreviousCursor,
     replyEndError,
     replyStartError,
     replyCollectionComplete,
@@ -893,6 +1005,7 @@ function TopicFilterHarness({
       return 'completed';
     },
     locateReply: onLocateReply,
+    cancelReplyLocation: onCancelReplyLocation,
     toggleReplyQuote: jest.fn(),
     toggleTopicBodyQuote: onToggleTopicBodyQuote,
     topicReplies: preparedTopicReplies,
@@ -1006,6 +1119,214 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it('skips stable memoized reply bodies during an unrelated viewport change', async () => {
+    const names = ['X', 'A', 'B', 'C', 'D', 'Y'];
+    const replies = names.map((name, index): Reply => ({
+      author: `viewport-author-${name}`,
+      authorAvatar: `https://img.example.com/viewport-${name}.png`,
+      commentId: index + 2,
+      floor: index + 2,
+      contentHtml: `<pre><code>viewport body ${name}</code></pre>`,
+      createdAt: ''
+    }));
+    const detail: TopicDetail = { ...topic, source: 'linuxdo', contentHtml: '', replies: [], replyCount: 6 };
+    const uriA = replies[1].authorAvatar;
+    const uriB = replies[2].authorAvatar;
+    const callsFor = <T,>(calls: readonly (readonly [T])[], value: T) => calls.filter(([key]) => key === value).length;
+    mockRealViewportCells = true;
+    const view = await render(
+      <TopicFilterHarness selectedTopic={detail} topicDetail={detail} topicReplies={replies} />
+    );
+    let control: Awaited<ReturnType<typeof render>> | undefined;
+    try {
+      const data = lastFlashListProps.data as TopicListItem[];
+      const cells = data.filter((item): item is Extract<TopicListItem, { type: 'reply' }> => item.type === 'reply');
+      expect(cells).toHaveLength(6);
+      const observe = async (floors: number[]) => {
+        await act(async () => {
+          lastFlashListProps.onViewableItemsChanged({
+            viewableItems: cells
+              .filter((item) => floors.includes(item.reply.floor!))
+              .map((item) => ({ item, index: data.indexOf(item), isViewable: true }))
+          });
+        });
+      };
+      await observe([3, 4]);
+      const beforeA = mockViewportReplyInputs.get(3);
+      const beforeB = mockViewportReplyInputs.get(4);
+      if (!beforeA || !beforeB) throw new Error('Actual memoized reply inputs missing');
+      expect(mockViewportAdmissions.get(replies[0].authorAvatar!)).toBe(true);
+      expect(mockViewportAdmissions.get(replies[5].authorAvatar!)).toBe(false);
+      expect(mockViewportAdmissions.get(uriA!)).toBe(true);
+      expect(mockViewportAdmissions.get(uriB!)).toBe(true);
+      const instanceA = mockViewportBodyInstances.get(uriA!);
+      const instanceB = mockViewportBodyInstances.get(uriB!);
+      expect(instanceA).toBeDefined();
+      expect(instanceB).toBeDefined();
+      mockViewportCellRender.mockClear();
+      mockViewportBodyRender.mockClear();
+      mockViewportBodyCommit.mockClear();
+      mockAvatarComponentLifecycle.mockClear();
+      await observe([4, 5]);
+      const moved = {
+        bodyRenderA: callsFor(mockViewportBodyRender.mock.calls, uriA),
+        bodyRenderB: callsFor(mockViewportBodyRender.mock.calls, uriB),
+        bodyCommitA: callsFor(mockViewportBodyCommit.mock.calls, uriA),
+        bodyCommitB: callsFor(mockViewportBodyCommit.mock.calls, uriB)
+      };
+      expect(lastFlashListProps.data).toBe(data);
+      for (const [floor, before] of [
+        [3, beforeA],
+        [4, beforeB]
+      ] as const) {
+        const after = mockViewportReplyInputs.get(floor);
+        if (!after) throw new Error('Stable reply inputs missing after viewport move');
+        for (const key of ['reply', 'bodyContent', 'onLocateReply', 'onOpenUser', 'onReplyToFloor'] as const)
+          expect(after[key]).toBe(before[key]);
+      }
+      expect(mockViewportAdmissions.get(replies[0].authorAvatar!)).toBe(false);
+      expect(mockViewportAdmissions.get(replies[5].authorAvatar!)).toBe(true);
+      expect(mockViewportAdmissions.get(uriA!)).toBe(true);
+      expect(mockViewportAdmissions.get(uriB!)).toBe(true);
+      expect(mockAvatarComponentLifecycle).not.toHaveBeenCalled();
+      expect(mockViewportBodyInstances.get(uriA!)).toBe(instanceA);
+      expect(mockViewportBodyInstances.get(uriB!)).toBe(instanceB);
+      mockViewportCellRender.mockClear();
+      mockViewportBodyRender.mockClear();
+      mockViewportBodyCommit.mockClear();
+      await observe([4, 5]);
+      expect(mockViewportCellRender).not.toHaveBeenCalled();
+      expect(mockViewportBodyRender).not.toHaveBeenCalled();
+      expect(mockViewportBodyCommit).not.toHaveBeenCalled();
+
+      // Exercise the real memo boundary separately: the full harness rebuilds action props on rerender.
+      const { MemoizedReplyItem: ActualMemoizedReplyItem } = jest.requireActual<
+        typeof import('@/features/topic/components/ReplyItem')
+      >('@/features/topic/components/ReplyItem');
+      const controlA: MockActualReplyItemProps = {
+        ...beforeA,
+        reply: { ...beforeA.reply, authorAvatar: 'https://img.example.com/control-A.png' }
+      };
+      const controlB: MockActualReplyItemProps = {
+        ...beforeB,
+        reply: { ...beforeB.reply, authorAvatar: 'https://img.example.com/control-B.png' }
+      };
+      const controlTree = (propsA: MockActualReplyItemProps = controlA) => (
+        <>
+          <ActualMemoizedReplyItem {...propsA} />
+          <ActualMemoizedReplyItem {...controlB} />
+        </>
+      );
+      control = await render(controlTree());
+      mockViewportBodyCommit.mockClear();
+      const changed = prepareReplyContent(
+        { ...controlA.reply, contentHtml: '<pre><code>viewport changed A</code></pre>' },
+        'linuxdo'
+      );
+      const changedBody = changed.preparedContent.contentPlan.rows[0];
+      if (changedBody?.type !== 'codeBlock') throw new Error('Expected one prepared code row');
+      await control.rerender(controlTree({ ...controlA, reply: changed, bodyContent: changedBody }));
+      expect(control.getByText('viewport changed A')).toBeTruthy();
+      expect(callsFor(mockViewportBodyCommit.mock.calls, controlA.reply.authorAvatar)).toBeGreaterThan(0);
+      expect(callsFor(mockViewportBodyCommit.mock.calls, controlB.reply.authorAvatar)).toBe(0);
+      expect(moved).toEqual({
+        bodyRenderA: 0,
+        bodyRenderB: 0,
+        bodyCommitA: 0,
+        bodyCommitB: 0
+      });
+    } finally {
+      await control?.unmount();
+      await view.unmount();
+      mockRealViewportCells = false;
+    }
+  });
+
+  it('rebinds a recycled reply slot without remounting its author subtree', async () => {
+    const avatar = 'https://img.example.com/recycled-author.png';
+    const replacementAvatar = 'https://img.example.com/rebound-author.png';
+    const [firstReply, secondReply]: [Reply, Reply] = [
+      {
+        author: 'recycled-author-a',
+        authorAvatar: avatar,
+        commentId: 2,
+        floor: 2,
+        contentHtml: '<pre><code>recycled body A</code></pre>',
+        createdAt: ''
+      },
+      {
+        author: 'recycled-author-b',
+        authorAvatar: avatar,
+        commentId: 3,
+        floor: 3,
+        contentHtml: '<pre><code>recycled body B</code></pre>',
+        createdAt: ''
+      }
+    ];
+    const detail: TopicDetail = { ...topic, source: 'linuxdo', contentHtml: '', replies: [], replyCount: 2 };
+    const onLocateReply = jest.fn(async () => 'completed');
+    const tree = (reply: Reply) => (
+      <TopicFilterHarness
+        onLocateReply={onLocateReply}
+        selectedTopic={detail}
+        topicDetail={detail}
+        topicReplies={[reply]}
+      />
+    );
+    mockRecycledReplySlot = true;
+    const view = await render(tree(firstReply));
+    try {
+      expect(lastFlashListItemTypes.filter((type) => type === 'reply')).toHaveLength(1);
+      expect(view.getByText('recycled-author-a')).toBeTruthy();
+      expect(view.getByText('recycled body A')).toBeTruthy();
+      expect(mockAvatarComponentLifecycle.mock.calls).toEqual([['mount']]);
+      await fireEvent.press(view.getByText('#2'));
+      expect(onLocateReply).toHaveBeenLastCalledWith({ floor: 2 });
+      mockAvatarComponentLifecycle.mockClear();
+
+      await view.rerender(tree(secondReply));
+      expect(view.queryByText('recycled-author-a')).toBeNull();
+      expect(view.queryByText('recycled body A')).toBeNull();
+      expect(view.getByText('recycled-author-b')).toBeTruthy();
+      expect(view.getByText('recycled body B')).toBeTruthy();
+      expect(view.getByLabelText('avatar source linuxdo').props.accessibilityHint).toBe(avatar);
+      await fireEvent.press(view.getByText('#3'));
+      expect(onLocateReply).toHaveBeenLastCalledWith({ floor: 3 });
+
+      mockAvatarLifecycle.mockClear();
+      await view.rerender(tree({ ...secondReply, authorAvatar: replacementAvatar }));
+      expect(view.getByLabelText('avatar source linuxdo').props.accessibilityHint).toBe(replacementAvatar);
+      expect(mockAvatarLifecycle.mock.calls).toEqual([
+        ['unmount', avatar],
+        ['mount', replacementAvatar]
+      ]);
+      expect(mockAvatarComponentLifecycle).not.toHaveBeenCalled();
+    } finally {
+      await view.unmount();
+      mockRecycledReplySlot = false;
+    }
+  });
+
+  it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
+    'keeps %s reply filters outside horizontal scroll surfaces',
+    async (source) => {
+      const detail = { ...topic, source };
+      const view = await render(<TopicFilterHarness selectedTopic={detail} topicDetail={detail} />);
+      let ancestor = view.getByLabelText('全部，已选择').parent;
+      while (ancestor) {
+        expect(ancestor.props.horizontal).not.toBe(true);
+        ancestor = ancestor.parent;
+      }
+      expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
+      await fireEvent.press(view.getByLabelText('只看楼主'));
+      expect(view.getByTestId('active-filter').props.children).toBe('author');
+      await fireEvent.press(view.getByLabelText('只看带图'));
+      expect(view.getByTestId('active-filter').props.children).toBe('images');
+      await fireEvent.press(view.getByLabelText('全部'));
+      expect(view.getByTestId('active-filter').props.children).toBe('all');
+    }
+  );
+
   it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
     'reuses %s search text through real debounced input and releases it on route/scope changes',
     async (source) => {
@@ -1455,6 +1776,24 @@ describe('Topic reply filters', () => {
         ([options]) => (options as { html?: string }).html === quotedReply.contentHtml
       )
     ).toHaveLength(0);
+    const openingDescriptor = onImagePreviewDescriptors.mock.calls.at(-1)?.[0][0];
+    await view.rerender(
+      <TopicFilterHarness
+        {...harnessProps}
+        expandedQuotes={{ [quoteInstanceKey]: true }}
+        topicReplies={[
+          {
+            author: 'earlier',
+            contentHtml: '<img src="https://img.example/earlier.webp">',
+            createdAt: '2026-08-14T00:00:30.000Z',
+            floor: 4
+          },
+          ...replies
+        ]}
+      />
+    );
+    expect(onImagePreviewDescriptors.mock.calls.at(-1)?.[0][0]).toBe(openingDescriptor);
+    expect(openingDescriptor?.readingOrigin).toEqual({ topicId: imageTopic.id, floor: 1 });
   });
 
   it('scrolls an atomically anchored notification window without chasing pages', async () => {
@@ -1495,7 +1834,7 @@ describe('Topic reply filters', () => {
       replies: pages[0],
       replyCount: 3
     };
-    const loadMore = jest.fn();
+    const loadMore = jest.fn<() => void>();
     mockScrollToIndex.mockClear();
 
     const view = await render(
@@ -1742,6 +2081,74 @@ describe('Topic reply filters', () => {
     }
   });
 
+  it.each([false, true])('keeps a late reply location subordinate to a newer reader drag=%s', async (readerDragged) => {
+    const targetWindow = Promise.withResolvers<string>();
+    const locateReply = jest.fn(() => targetWindow.promise);
+    const cancelReplyLocation = jest.fn();
+    const replies: Reply[] = [...sourceReplies, { ...sourceReplies[0], floor: 10, replyTarget: { floor: 181 } }];
+    const lateTarget: Reply = { ...sourceReplies[0], floor: 181, contentHtml: '<p>late target</p>' };
+    const targetTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      id: 'late-location-after-drag',
+      url: 'https://www.nodeseek.com/post-101-1',
+      replies,
+      replyCount: 250
+    };
+    const tree = (items: Reply[]) => (
+      <TopicFilterHarness
+        selectedTopic={targetTopic}
+        topicDetail={targetTopic}
+        topicReplies={items}
+        onLocateReply={locateReply}
+        onCancelReplyLocation={cancelReplyLocation}
+      />
+    );
+    mockScrollToIndex.mockClear();
+    mockScrollToOffset.mockClear();
+    const view = await render(tree(replies));
+    try {
+      await fireEvent.press(view.getByRole('link', { name: '定位回复目标，第 181 楼' }));
+      expect(locateReply).toHaveBeenCalledTimes(1);
+      expect(mockScrollToIndex).not.toHaveBeenCalled();
+      expect(lastFlashListProps.pointerEvents).toBe('auto');
+      if (readerDragged) {
+        await act(() => {
+          lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(900));
+          lastFlashListProps.onScroll(replyListScrollEvent(1200));
+        });
+      }
+      expect(cancelReplyLocation).toHaveBeenCalledTimes(readerDragged ? 1 : 0);
+      await act(async () => {
+        targetWindow.resolve('completed');
+        await targetWindow.promise;
+      });
+      await view.rerender(tree([...replies, lateTarget]));
+      await act(() => {
+        lastFlashListProps.onContentSizeChange(320, 10000);
+        lastFlashListProps.onScroll(replyListScrollEvent(1400));
+      });
+      expect(mockScrollToIndex).toHaveBeenCalledTimes(readerDragged ? 0 : 1);
+      expect(mockScrollToOffset).not.toHaveBeenCalled();
+      if (!readerDragged)
+        expect(mockScrollToIndex).toHaveBeenLastCalledWith(
+          expect.objectContaining({ animated: true, index: lastReplyListIndex(181), viewPosition: 0 })
+        );
+      if (readerDragged) {
+        await fireEvent.press(view.getByRole('link', { name: '定位回复目标，第 181 楼' }));
+        expect(locateReply).toHaveBeenCalledTimes(2);
+        expect(mockScrollToIndex).toHaveBeenCalledTimes(1);
+        expect(mockScrollToIndex).toHaveBeenLastCalledWith(
+          expect.objectContaining({ animated: true, index: lastReplyListIndex(181), viewPosition: 0 })
+        );
+      }
+    } finally {
+      targetWindow.resolve('completed');
+      await targetWindow.promise;
+      await view.unmount();
+    }
+  });
+
   it.each(['opening', 'compact reply', 'split reply'])(
     'restores the same content position after leaving and reopening a tall %s',
     async (content) => {
@@ -1855,6 +2262,7 @@ describe('Topic reply filters', () => {
           getLayout: (index: number) => layouts()[index],
           getWindowSize: () => ({ width: 320, height: 800 }),
           getAbsoluteLastScrollOffset: () => nativeOffset,
+          getLastScrollOffset: () => nativeOffset - headerHeight,
           getMaxScrollOffset: () => headerHeight + layouts().at(-1)!.y + layouts().at(-1)!.height - 800,
           updateScrollOffset: () => undefined,
           setOffsetProjectionEnabled: () => undefined,
@@ -1937,6 +2345,7 @@ describe('Topic reply filters', () => {
         getLayout: (index: number) => layouts()[index],
         getWindowSize: () => ({ width: 320, height: 800 }),
         getAbsoluteLastScrollOffset: () => offset,
+        getLastScrollOffset: () => offset,
         getMaxScrollOffset: () => layouts().at(-1)!.y + layouts().at(-1)!.height - 800,
         updateScrollOffset: (value: number) => {
           offset = value;
@@ -2084,6 +2493,7 @@ describe('Topic reply filters', () => {
         getLayout: (index: number) => layouts()[index],
         getWindowSize: () => ({ width: 320, height: 800 }),
         getAbsoluteLastScrollOffset: () => logicalOffset,
+        getLastScrollOffset: () => logicalOffset,
         getMaxScrollOffset: () => layouts().at(-1)!.y + layouts().at(-1)!.height - 800,
         updateScrollOffset: (offset: number) => {
           logicalOffset = offset;
@@ -2219,120 +2629,189 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it.each(['layout then ack', 'overlapping acknowledgements', 'reader takeover', 'rounded boundary', 'zero boundary'])(
-    'preserves content through native layout commits (%s)',
-    async (eventOrder) => {
-      const data = [{ key: 'before' }, { key: 'target' }, { key: 'tail' }];
-      let beforeHeight = eventOrder === 'zero boundary' ? 200 : 1000;
-      let logicalOffset = eventOrder === 'zero boundary' ? 0 : 1000;
-      let nativeOffset = logicalOffset;
-      let viewportHeight = 1000;
-      let timestamp = 0;
-      let anchorDelta = 0;
-      let mountedAnchorDelta = 0;
-      const acknowledgements: { offset: number; timestamp: number; maxOffset: number }[] = [];
-      const nativeScroll = jest.fn();
-      const layouts = () => [
-        { x: 0, y: 0, width: 320, height: beforeHeight },
-        { x: 0, y: beforeHeight, width: 320, height: 400 },
-        { x: 0, y: beforeHeight + 400, width: 320, height: 600 }
-      ];
-      const manager = {
-        props: {
-          data,
-          horizontal: false,
-          maintainVisibleContentPosition: { shouldAnchorItem: (_: unknown, index: number) => index > 0 }
-        },
-        firstItemOffset: 0,
-        getDataLength: () => data.length,
-        getDataKey: (index: number) => data[index].key,
-        getLayout: (index: number) => layouts()[index],
-        getWindowSize: () => ({ width: 320, height: viewportHeight }),
-        getIsFirstLayoutComplete: () => true,
-        shouldMaintainVisibleContentPosition: () => true,
-        hasStableDataKeys: () => true,
-        getAbsoluteLastScrollOffset: () => logicalOffset,
-        getMaxScrollOffset: () => beforeHeight + 1000 - viewportHeight,
-        updateScrollOffset: (value: number) => {
-          logicalOffset = value;
-        },
-        setOffsetProjectionEnabled: () => undefined,
-        computeVisibleIndices: () => {
-          const visible = layouts().flatMap((layout, index) =>
-            layout.y + layout.height > logicalOffset && layout.y < logicalOffset + viewportHeight ? [index] : []
-          );
-          return { startIndex: visible[0], endIndex: visible.at(-1) };
+  it.each([
+    'layout then ack',
+    'overlapping acknowledgements',
+    'reader takeover',
+    'rounded boundary',
+    'zero boundary',
+    'command before correction acknowledgement',
+    'opening before correction acknowledgement',
+    'disable pending correction'
+  ])('preserves content through native layout commits (%s)', async (eventOrder) => {
+    const data = [{ key: 'before' }, { key: 'target' }, { key: 'tail' }];
+    let beforeHeight = eventOrder === 'zero boundary' ? 200 : 1000;
+    let logicalOffset = eventOrder === 'zero boundary' ? 0 : 1000;
+    let nativeOffset = logicalOffset;
+    let viewportHeight = 1000;
+    let maintainPosition = true;
+    let timestamp = 0;
+    let anchorDelta = 0;
+    let mountedAnchorDelta = 0;
+    const acknowledgements: { offset: number; timestamp: number; maxOffset: number }[] = [];
+    const nativeScroll = jest.fn<(options: { y: number; animated?: boolean }) => void>();
+    const layouts = () => [
+      { x: 0, y: 0, width: 320, height: beforeHeight },
+      { x: 0, y: beforeHeight, width: 320, height: 400 },
+      { x: 0, y: beforeHeight + 400, width: 320, height: 600 }
+    ];
+    const manager = {
+      props: {
+        data,
+        horizontal: false,
+        maintainVisibleContentPosition: {
+          get disabled() {
+            return !maintainPosition;
+          },
+          shouldAnchorItem: (_: unknown, index: number) => index > 0
         }
-      };
-      const hook = await renderHook(() =>
-        useRecyclerViewController(
-          manager as unknown as Parameters<typeof useRecyclerViewController>[0],
-          null,
-          { current: { scrollTo: nativeScroll } } as unknown as Parameters<typeof useRecyclerViewController>[2],
-          {
-            current: {
-              scrollBy: (delta: number) => {
-                anchorDelta += delta;
-              }
+      },
+      firstItemOffset: 0,
+      getDataLength: () => data.length,
+      getDataKey: (index: number) => data[index].key,
+      getLayout: (index: number) => layouts()[index],
+      getWindowSize: () => ({ width: 320, height: viewportHeight }),
+      getIsFirstLayoutComplete: () => true,
+      shouldMaintainVisibleContentPosition: () => maintainPosition,
+      hasStableDataKeys: () => true,
+      getAbsoluteLastScrollOffset: () => logicalOffset,
+      getLastScrollOffset: () => logicalOffset,
+      getMaxScrollOffset: () => beforeHeight + 1000 - viewportHeight,
+      updateScrollOffset: (value: number) => {
+        logicalOffset = value;
+      },
+      setOffsetProjectionEnabled: () => undefined,
+      computeVisibleIndices: () => {
+        const visible = layouts().flatMap((layout, index) =>
+          layout.y + layout.height > logicalOffset && layout.y < logicalOffset + viewportHeight ? [index] : []
+        );
+        return { startIndex: visible[0], endIndex: visible.at(-1) };
+      }
+    };
+    const hook = await renderHook(() =>
+      useRecyclerViewController(
+        manager as unknown as Parameters<typeof useRecyclerViewController>[0],
+        null,
+        { current: { scrollTo: nativeScroll } } as unknown as Parameters<typeof useRecyclerViewController>[2],
+        {
+          current: {
+            scrollBy: (delta: number) => {
+              anchorDelta += delta;
             }
           }
-        )
-      );
-      const commitLayout = (height: number) => {
-        beforeHeight = height;
-        hook.result.current.applyOffsetCorrection();
-        hook.result.current.onContentSizeChange(320, beforeHeight + 1000);
-        // ReactScrollView clamps to the mounted content bounds before MVCP runs.
-        const maxOffset = PixelRatio.roundToNearestPixel(manager.getMaxScrollOffset());
-        const commitOffset = (next: number) => {
-          if (next !== nativeOffset) {
-            nativeOffset = next;
-            acknowledgements.push({ offset: next, maxOffset, timestamp: ++timestamp });
-          }
-        };
-        commitOffset(Math.max(0, Math.min(maxOffset, nativeOffset)));
-        commitOffset(Math.max(0, Math.min(maxOffset, nativeOffset + anchorDelta - mountedAnchorDelta)));
-        mountedAnchorDelta = anchorDelta;
-      };
-      const deliverAcknowledgements = () => {
-        for (const event of acknowledgements.splice(0)) {
-          if (hook.result.current.acceptScrollOffset(event.offset, event.timestamp, event.maxOffset)) {
-            logicalOffset = event.offset;
-            hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
-          }
+        }
+      )
+    );
+    const commitLayout = (height: number) => {
+      beforeHeight = height;
+      hook.result.current.applyOffsetCorrection();
+      hook.result.current.onContentSizeChange(320, beforeHeight + 1000);
+      // ReactScrollView clamps to the mounted content bounds before MVCP runs.
+      const maxOffset = PixelRatio.roundToNearestPixel(manager.getMaxScrollOffset());
+      const commitOffset = (next: number) => {
+        if (next !== nativeOffset) {
+          nativeOffset = next;
+          acknowledgements.push({ offset: next, maxOffset, timestamp: ++timestamp });
         }
       };
-      hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
-      if (eventOrder === 'zero boundary') {
-        commitLayout(0);
-        expect(acknowledgements).toHaveLength(0);
-        expect(hook.result.current.getPendingScroll()).toBeUndefined();
-        commitLayout(1000);
-        deliverAcknowledgements();
-        expect(nativeOffset).toBe(1000);
-      } else {
-        commitLayout(2000);
-        if (eventOrder === 'reader takeover') {
-          nativeOffset = 1100;
-          hook.result.current.beginScrollInteraction('drag', ++timestamp, nativeOffset);
-          deliverAcknowledgements();
-          expect(logicalOffset).toBe(1100);
-          commitLayout(3000);
-          deliverAcknowledgements();
-          expect(beforeHeight - nativeOffset).toBe(900);
-        } else {
-          if (eventOrder !== 'overlapping acknowledgements') deliverAcknowledgements();
-          if (eventOrder === 'rounded boundary') viewportHeight = 1799.8;
-          commitLayout(3000);
-          deliverAcknowledgements();
-          expect(beforeHeight - nativeOffset).toBe(eventOrder === 'rounded boundary' ? 800 : 0);
+      commitOffset(Math.max(0, Math.min(maxOffset, nativeOffset)));
+      commitOffset(Math.max(0, Math.min(maxOffset, nativeOffset + anchorDelta - mountedAnchorDelta)));
+      mountedAnchorDelta = anchorDelta;
+    };
+    const deliverAcknowledgements = () => {
+      for (const event of acknowledgements.splice(0)) {
+        if (hook.result.current.acceptScrollOffset(event.offset, event.timestamp, event.maxOffset)) {
+          logicalOffset = event.offset;
+          hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
         }
       }
-      expect(logicalOffset).toBeCloseTo(nativeOffset);
+    };
+    hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+    if (eventOrder.endsWith('before correction acknowledgement') || eventOrder === 'disable pending correction') {
+      expect(hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset(), 0)).toBe(
+        true
+      );
+      beforeHeight += 300;
+      hook.result.current.applyOffsetCorrection();
+      expect(anchorDelta).toBe(300);
+      if (eventOrder === 'disable pending correction') {
+        maintainPosition = false;
+        await hook.rerender(undefined);
+        hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        hook.result.current.applyOffsetCorrection();
+        anchorDelta = mountedAnchorDelta = 0;
+        maintainPosition = true;
+        await hook.rerender(undefined);
+        nativeOffset -= 20;
+        expect(hook.result.current.beginScrollInteraction('drag', ++timestamp, nativeOffset, 0)).toBe(true);
+        expect(hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset(), 0)).toBe(
+          true
+        );
+        logicalOffset = nativeOffset;
+        hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        const targetScreenY = beforeHeight - nativeOffset;
+        beforeHeight += 100;
+        hook.result.current.applyOffsetCorrection();
+        expect(anchorDelta).toBe(100);
+        nativeOffset += anchorDelta;
+        expect(
+          hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset(), 100)
+        ).toBe(true);
+        logicalOffset = nativeOffset;
+        hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        expect(beforeHeight - nativeOffset).toBe(targetScreenY);
+      } else {
+        const target = eventOrder.startsWith('opening') ? 0 : 200;
+        hook.result.current.handlerMethods.scrollToOffset({ offset: target, animated: false });
+        expect(nativeScroll).toHaveBeenLastCalledWith(expect.objectContaining({ y: target, animated: false }));
+        nativeOffset = target;
+        if (hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset(), 0)) {
+          logicalOffset = nativeOffset;
+        }
+        nativeScroll.mockClear();
+        nativeOffset += anchorDelta;
+        hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset(), 300);
+        expect(nativeScroll).toHaveBeenLastCalledWith(expect.objectContaining({ y: target, animated: false }));
+        nativeOffset = nativeScroll.mock.calls.at(-1)![0].y;
+        expect(
+          hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset(), 300)
+        ).toBe(true);
+        logicalOffset = nativeOffset;
+        expect(nativeOffset).toBe(target);
+      }
+      expect(logicalOffset).toBe(nativeOffset);
       expect(hook.result.current.getPendingScroll()).toBeUndefined();
-      expect(nativeScroll).not.toHaveBeenCalled();
+      return;
     }
-  );
+    if (eventOrder === 'zero boundary') {
+      commitLayout(0);
+      expect(acknowledgements).toHaveLength(0);
+      expect(hook.result.current.getPendingScroll()).toBeUndefined();
+      commitLayout(1000);
+      deliverAcknowledgements();
+      expect(nativeOffset).toBe(1000);
+    } else {
+      commitLayout(2000);
+      if (eventOrder === 'reader takeover') {
+        nativeOffset = 1100;
+        hook.result.current.beginScrollInteraction('drag', ++timestamp, nativeOffset);
+        deliverAcknowledgements();
+        expect(logicalOffset).toBe(1100);
+        commitLayout(3000);
+        deliverAcknowledgements();
+        expect(beforeHeight - nativeOffset).toBe(900);
+      } else {
+        if (eventOrder !== 'overlapping acknowledgements') deliverAcknowledgements();
+        if (eventOrder === 'rounded boundary') viewportHeight = 1799.8;
+        commitLayout(3000);
+        deliverAcknowledgements();
+        expect(beforeHeight - nativeOffset).toBe(eventOrder === 'rounded boundary' ? 800 : 0);
+      }
+    }
+    expect(logicalOffset).toBeCloseTo(nativeOffset);
+    expect(hook.result.current.getPendingScroll()).toBeUndefined();
+    expect(nativeScroll).not.toHaveBeenCalled();
+  });
 
   it.each([undefined, 'correction', 'command'] as const)(
     'respects the active scroll owner before auto-bottom (%s)',
@@ -2405,6 +2884,7 @@ describe('Topic reply filters', () => {
       hasStableDataKeys: () => true,
       getWindowSize: () => ({ width: 320, height: 800 }),
       getAbsoluteLastScrollOffset: () => offset,
+      getLastScrollOffset: () => offset,
       getMaxScrollOffset: () => Math.max(0, data.length * 400 - 800),
       updateScrollOffset: (value: number) => {
         if (value === offset) return;
@@ -2511,10 +2991,12 @@ describe('Topic reply filters', () => {
 
     const contentItemCount = lastFlashListItemTypes.filter((type) => type === 'topicContent').length;
     expect(contentItemCount).toBeGreaterThan(1);
-    expect(lastFlashListItemTypes.slice(0, contentItemCount)).toEqual(
+    expect(lastFlashListItemTypes[0]).toBe('topicHeader');
+    expect(lastFlashListProps.ListHeaderComponent).toBeUndefined();
+    expect(lastFlashListItemTypes.slice(1, contentItemCount + 1)).toEqual(
       Array.from({ length: contentItemCount }, () => 'topicContent')
     );
-    expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(contentItemCount);
+    expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(contentItemCount + 1);
   });
 
   it('admits a newly selected terminal-tab long image without waiting for a scroll', async () => {
@@ -2951,7 +3433,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('projects a visible accepted-answer header into its reopened media row', async () => {
+  it('keeps accepted-answer media on the same visible card when reopening', async () => {
     const acceptedFloor = 42;
     const acceptedTopic: TopicDetail = {
       ...topic,
@@ -2995,9 +3477,8 @@ describe('Topic reply filters', () => {
 
     const imageItem = (lastFlashListProps.data as TopicListItem[]).find(
       (item) =>
-        item.type === 'topicAcceptedAnswerContent' &&
-        item.content.type === 'content' &&
-        item.content.row.networkMediaCount === 1
+        item.type === 'topicAcceptedAnswer' &&
+        item.content.some((content) => content.type === 'content' && content.row.networkMediaCount === 1)
     );
     if (!imageItem) throw new Error('accepted-answer image row missing');
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
@@ -3332,6 +3813,68 @@ describe('Topic reply filters', () => {
     expect(rendered.indexOf('code-line-01')).toBeLessThan(rendered.indexOf('code-line-52'));
   });
 
+  it('records sparse scroll jumps, explicit commands and reply window changes', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const events = (operation: string) =>
+      lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((event) => event.operation === operation && event.phase === 'finish');
+    try {
+      const view = await render(<TopicFilterHarness />);
+      expect(events('scroll-window')).toEqual([
+        expect.objectContaining({
+          itemCount: sourceReplies.length,
+          firstFloor: sourceReplies[0].floor,
+          lastFloor: sourceReplies.at(-1)?.floor
+        })
+      ]);
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(2000)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(1900)));
+      expect(events('scroll-position')).toHaveLength(0);
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(24)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(0)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(0)));
+      expect(events('scroll-position')).toEqual([
+        expect.objectContaining({
+          previousOffset: 1900,
+          offset: 24,
+          contentHeight: 10000,
+          viewportHeight: 800,
+          correction: 0,
+          scrollPhase: 'idle'
+        })
+      ]);
+      await view.rerender(<TopicFilterHarness />);
+      expect(events('scroll-window')).toHaveLength(1);
+      const extendedReplies = [...sourceReplies, { ...sourceReplies[0], floor: 4, contentHtml: '<p>next reply</p>' }];
+      await view.rerender(<TopicFilterHarness topicReplies={extendedReplies} />);
+      expect(events('scroll-window')).toHaveLength(2);
+      expect(events('scroll-window').at(-1)).toEqual(expect.objectContaining({ itemCount: 4, lastFloor: 4 }));
+
+      await view.rerender(
+        <TopicFilterHarness topicReplies={extendedReplies} location={{ kind: 'opening' }} targetReplyRequestId={1} />
+      );
+      await view.rerender(
+        <TopicFilterHarness
+          topicReplies={extendedReplies}
+          location={{ kind: 'reply', target: { floor: 2 } }}
+          targetReplyRequestId={2}
+        />
+      );
+      await waitFor(() =>
+        expect(events('scroll-command')).toEqual([
+          expect.objectContaining({ scrollReason: 'opening', offset: 0 }),
+          expect.objectContaining({ scrollReason: 'reply-location', targetIndex: lastReplyListIndex(2) })
+        ])
+      );
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
+
   it('emits one route aggregate with the actual bounded opening-post plan', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
@@ -3602,7 +4145,71 @@ describe('Topic reply filters', () => {
     expect(rendered).not.toContain('stale cached body');
   });
 
-  it('keeps a giant accepted answer to one preview row until explicitly expanded', async () => {
+  it.each([
+    { name: 'short answer', contentHtml: '<p>accepted preview</p>' },
+    { name: 'mixed answer', contentHtml: '<p>accepted preview</p><pre>accepted code</pre><p>accepted ending</p>' },
+    { name: 'long paragraph', contentHtml: `<p>${'accepted preview '.repeat(1000)}</p>` },
+    {
+      name: 'nested disclosure',
+      contentHtml: '<p>accepted preview</p><details><summary>Accepted details</summary><p>hidden answer</p></details>'
+    }
+  ])('keeps the accepted-answer region in one list item: $name', async ({ name, contentHtml }) => {
+    const acceptedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: 4,
+      replies: [],
+      source: 'linuxdo'
+    };
+    const acceptedReply: Reply = {
+      author: 'accepted-author',
+      contentHtml,
+      createdAt: '2026-10-16T00:00:00.000Z',
+      floor: 4
+    };
+    const view = await render(
+      <TopicFilterHarness
+        loadedQuotedReplies={{ [`linuxdo:${acceptedTopic.id}:4`]: acceptedReply }}
+        selectedTopic={acceptedTopic}
+        topicDetail={acceptedTopic}
+        topicReplies={[]}
+      />
+    );
+    const checkCard = () => {
+      expect(view.getByTestId('topic-accepted-answer')).toHaveStyle({
+        borderRadius: 8,
+        borderBottomWidth: StyleSheet.hairlineWidth
+      });
+      expect(lastFlashListItemTypes.filter((type) => type.startsWith('topicAcceptedAnswer'))).toEqual([
+        'topicAcceptedAnswer'
+      ]);
+      expect(within(view.getByTestId('topic-accepted-answer')).getByText(/accepted preview/)).toBeTruthy();
+      expect(view.root?.queryAll((node) => StyleSheet.flatten(node.props.style)?.borderLeftWidth === 3)).toHaveLength(
+        1
+      );
+    };
+    checkCard();
+    await fireEvent.press(view.getByLabelText('查看完整解决方案，第 4 楼'));
+    checkCard();
+    if (name === 'nested disclosure') {
+      expect(view.queryByText(/hidden answer/)).toBeNull();
+      await fireEvent.press(view.getByText('Accepted details'));
+      expect(within(view.getByTestId('topic-accepted-answer')).getByText(/hidden answer/)).toBeTruthy();
+      checkCard();
+      await fireEvent.press(view.getByText('Accepted details'));
+      expect(view.queryByText(/hidden answer/)).toBeNull();
+      checkCard();
+    }
+    await fireEvent.press(view.getByLabelText('收起已采纳答案'));
+    expect(view.getByTestId('topic-accepted-answer')).toHaveStyle({
+      borderRadius: 8,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    });
+    expect(view.queryByText(/accepted preview/)).toBeNull();
+    await fireEvent.press(view.getByLabelText('展开已采纳答案'));
+    checkCard();
+  });
+
+  it('keeps a giant accepted answer in one card while revealing its full content explicitly', async () => {
     const acceptedFloor = 42;
     const acceptedTopic: TopicDetail = {
       ...topic,
@@ -3634,15 +4241,16 @@ describe('Topic reply filters', () => {
       />
     );
 
-    expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswer')).toHaveLength(1);
-    expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswerContent')).toHaveLength(1);
+    expect(lastFlashListItemTypes.filter((type) => type.startsWith('topicAcceptedAnswer'))).toEqual([
+      'topicAcceptedAnswer'
+    ]);
     expect(view.getByLabelText('content-continuation-first')).toBeTruthy();
     expect(view.queryByLabelText('content-continuation-only')).toBeNull();
 
     await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
-    await waitFor(() =>
-      expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswerContent')).toHaveLength(500)
-    );
+    expect(lastFlashListItemTypes.filter((type) => type.startsWith('topicAcceptedAnswer'))).toEqual([
+      'topicAcceptedAnswer'
+    ]);
     expect(view.getByLabelText('content-continuation-first')).toBeTruthy();
     expect(view.getByLabelText('content-continuation-last')).toBeTruthy();
   });
@@ -4613,8 +5221,8 @@ describe('Topic reply filters', () => {
     expect(decorativeViews).toHaveLength(0);
     expect(view.getByTestId('terminal-reply')).toBeTruthy();
     await act(async () => {
-      lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
-      lastFlashListProps.onEndReached();
+      lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(8900));
+      lastFlashListProps.onScroll(replyListScrollEvent(9000));
     });
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
 
@@ -4760,10 +5368,122 @@ describe('Topic reply filters', () => {
   });
 
   it.each(replyWindowCases)(
+    'continues upward through successive windows only while the reader moves ($source $order)',
+    async ({ source, url, order }) => {
+      const onLoadPreviousReplies = jest.fn<() => void>();
+      const windowReplies = Array.from({ length: 10 }, (_, index) => ({
+        ...sourceReplies[0],
+        commentId: index + 101,
+        floor: order === 'oldest' ? index + 101 : 110 - index
+      }));
+      const windowTopic: TopicDetail = { ...topic, source, url, replies: windowReplies, replyCount: 1000 };
+      const harnessProps = {
+        onLoadPreviousReplies,
+        replyHasPrevious: true,
+        selectedTopic: windowTopic,
+        topicDetail: windowTopic
+      };
+      const view = await render(
+        <TopicFilterHarness
+          {...harnessProps}
+          replyPreviousCursor={{ kind: 'cursor', page: 3, offset: 60 }}
+          topicReplies={windowReplies}
+        />
+      );
+      if (order === 'newest') {
+        await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+        await fireEvent.press(view.getByLabelText('倒序'));
+      }
+      const boundaryIndex = lastFlashListItemTypes.indexOf('replyWindowStart');
+      const boundaryY = (boundaryIndex + 1) * 200;
+      mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: (index + 1) * 200, width: 320, height: 200 }));
+      const event = (y: number, correction = 0) => ({
+        nativeEvent: {
+          contentOffset: { x: 0, y },
+          contentOffsetCorrection: { x: 0, y: correction },
+          contentSize: { width: 320, height: 20000 },
+          layoutMeasurement: { width: 320, height: 800 }
+        }
+      });
+      const startItem = lastFlashListProps.data[boundaryIndex];
+      await act(() =>
+        lastFlashListProps.onViewableItemsChanged({ viewableItems: [{ isViewable: true, item: startItem }] })
+      );
+      await act(() => lastFlashListProps.onScrollBeginDrag(event(boundaryY + 600)));
+      await act(() => lastFlashListProps.onScroll(event(boundaryY + 600)));
+      await act(() => lastFlashListProps.onScroll(event(boundaryY + 610)));
+      expect(onLoadPreviousReplies).not.toHaveBeenCalled();
+
+      await act(() => lastFlashListProps.onScroll(event(boundaryY + 590)));
+      await act(() => lastFlashListProps.onScroll(event(boundaryY + 580)));
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+
+      const earlierReplies = Array.from({ length: 10 }, (_, index) => ({
+        ...sourceReplies[0],
+        commentId: index + 201,
+        floor: order === 'oldest' ? index + 91 : 120 - index
+      }));
+      await view.rerender(
+        <TopicFilterHarness
+          {...harnessProps}
+          replyPreviousCursor={{ kind: 'cursor', page: 2, offset: 30 }}
+          topicReplies={[...earlierReplies, ...windowReplies]}
+        />
+      );
+      await act(() => lastFlashListProps.onScroll(event(boundaryY + 2580, 2000)));
+      await act(() => lastFlashListProps.onViewableItemsChanged({ viewableItems: [] }));
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+
+      await act(() => lastFlashListProps.onScroll(event(boundaryY + 700, 2000)));
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(2);
+      await act(() => lastFlashListProps.onScrollEndDrag(event(boundaryY + 700, 2000)));
+      await act(() => lastFlashListProps.onScroll(event(boundaryY + 690, 2000)));
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each(replyWindowCases)(
+    'keeps an incomplete reply window separate from the opening until explicitly requested ($source $order)',
+    async ({ source, url, order }) => {
+      const onOpenTopic = jest.fn();
+      const windowTopic: TopicDetail = { ...topic, source, url, contentHtml: '<p>opening before the reply window</p>' };
+      const tree = (hasPrevious: boolean, location?: TopicLocationTarget) => (
+        <TopicFilterHarness
+          selectedTopic={windowTopic}
+          topicDetail={windowTopic}
+          topicReplies={sourceReplies}
+          replyHasPrevious={hasPrevious}
+          onOpenTopic={onOpenTopic}
+          location={location}
+        />
+      );
+      const view = await render(tree(true));
+      if (order === 'newest') {
+        await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+        await fireEvent.press(view.getByLabelText('倒序'));
+      }
+      expect(lastFlashListItemTypes).not.toContain('topicHeader');
+      expect(lastFlashListItemTypes.some((type) => type.startsWith('topicContent') || type === 'topicPostlude')).toBe(
+        false
+      );
+      expect(lastFlashListItemTypes).toContain('replyWindowStart');
+      await fireEvent.press(view.getByLabelText('更多操作'));
+      await fireEvent.press(view.getByText('回到主楼'));
+      expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ source }), { kind: 'opening' });
+      await view.rerender(tree(true, { kind: 'opening' }));
+      expect(lastFlashListItemTypes).toContain('topicHeader');
+      expect(lastFlashListItemTypes.some((type) => type.startsWith('topicContent'))).toBe(true);
+      expect(mockScrollToOffset).toHaveBeenCalledWith({ animated: true, offset: 0 });
+      await view.rerender(tree(false));
+      expect(lastFlashListItemTypes.some((type) => type.startsWith('topicContent'))).toBe(true);
+    }
+  );
+
+  it.each(replyWindowCases)(
     'loads both window edges by gesture without button presses ($source $order)',
     async ({ source, url, order }) => {
-      const onLoadMoreReplies = jest.fn();
-      const onLoadPreviousReplies = jest.fn();
+      const onLoadMoreReplies = jest.fn<() => void>();
+      const onLoadPreviousReplies = jest.fn<() => void>();
       const windowReplies = sourceReplies.map((reply, index) => ({
         ...reply,
         floor: order === 'oldest' ? index + 11 : 13 - index
@@ -4773,6 +5493,7 @@ describe('Topic reply filters', () => {
         <TopicFilterHarness
           replyHasMore
           replyHasPrevious
+          replyPreviousCursor={{ kind: 'cursor', page: 2, offset: 30 }}
           onLoadMoreReplies={onLoadMoreReplies}
           onLoadPreviousReplies={onLoadPreviousReplies}
           selectedTopic={windowTopic}
@@ -4787,6 +5508,9 @@ describe('Topic reply filters', () => {
 
       expect(lastFlashListItemTypes).toContain('replyWindowStart');
       expect(lastFlashListProps.maintainVisibleContentPosition?.disabled).not.toBe(true);
+      const boundaryIndex = lastFlashListItemTypes.indexOf('replyWindowStart');
+      const boundaryY = boundaryIndex * 200;
+      mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 200, width: 320, height: 200 }));
       const startItem = (lastFlashListProps.data as { type: string }[]).find(
         (item) => item.type === 'replyWindowStart'
       );
@@ -4795,22 +5519,150 @@ describe('Topic reply filters', () => {
       });
       expect(onLoadPreviousReplies).not.toHaveBeenCalled();
       await act(async () => {
-        lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
-        lastFlashListProps.onEndReached();
-        lastFlashListProps.onEndReached();
+        lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 400));
+        lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 350));
+        lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 340));
       });
       expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
       expect(onLoadMoreReplies).not.toHaveBeenCalled();
 
       await act(async () => {
         lastFlashListProps.onViewableItemsChanged({ viewableItems: [] });
-        lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
-        lastFlashListProps.onEndReached();
+        lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(8900));
+        lastFlashListProps.onScroll(replyListScrollEvent(9000));
+        lastFlashListProps.onScroll(replyListScrollEvent(9100));
       });
       expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
       expect(view.getByLabelText(order === 'oldest' ? '加载更早回复' : '加载更新回复')).toBeTruthy();
     }
   );
+
+  it('keeps adjacent loading single-flight until the request settles', async () => {
+    const pending = Promise.withResolvers<void>();
+    const onLoadPreviousReplies = jest.fn(() => pending.promise);
+    const onLoadMoreReplies = jest.fn<() => void>();
+    const harnessProps = { replyHasPrevious: true, replyHasMore: true, onLoadPreviousReplies, onLoadMoreReplies };
+    const view = await render(
+      <TopicFilterHarness {...harnessProps} replyPreviousCursor={{ kind: 'cursor', page: 3, offset: 60 }} />
+    );
+    const boundaryY = lastFlashListItemTypes.indexOf('replyWindowStart') * 200;
+    mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 200, width: 320, height: 200 }));
+    try {
+      await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 400)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 350)));
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+
+      await view.rerender(
+        <TopicFilterHarness {...harnessProps} replyPreviousCursor={{ kind: 'cursor', page: 2, offset: 30 }} />
+      );
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 340)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(9000)));
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+      expect(onLoadMoreReplies).not.toHaveBeenCalled();
+
+      await act(async () => pending.resolve());
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(9100)));
+      expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => pending.resolve());
+    }
+  });
+
+  it.each([-111, 111])('ignores a pure %s px offset correction at fractional density', async (correctionPixels) => {
+    const density = 2.625;
+    const pixelRatio = jest.spyOn(PixelRatio, 'get').mockReturnValue(density);
+    try {
+      const onLoadPreviousReplies = jest.fn<() => void>();
+      await render(
+        <TopicFilterHarness
+          replyHasPrevious
+          onLoadPreviousReplies={onLoadPreviousReplies}
+          replyPreviousCursor={{ kind: 'cursor', page: 3, offset: 60 }}
+        />
+      );
+      mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 300, width: 320, height: 300 }));
+      const correction = correctionPixels / density;
+      const correctedOffset = (1000 * density + correctionPixels) / density;
+      expect(correctedOffset - 1000 - correction).toBeLessThan(0);
+      await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(1000)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(correctedOffset, correction)));
+      expect(onLoadPreviousReplies).not.toHaveBeenCalled();
+
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(correctedOffset - 1 / density, correction)));
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+    } finally {
+      pixelRatio.mockRestore();
+    }
+  });
+
+  it('keeps a new drag active when the previous momentum end arrives late', async () => {
+    const onLoadPreviousReplies = jest.fn<() => void>();
+    await render(<TopicFilterHarness replyHasPrevious onLoadPreviousReplies={onLoadPreviousReplies} />);
+    const boundaryY = lastFlashListItemTypes.indexOf('replyWindowStart') * 200;
+    mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 200, width: 320, height: 200 }));
+    const oldEnd = replyListScrollEvent(boundaryY + 300);
+    await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 600)));
+    await act(() =>
+      lastFlashListProps.onScrollEndDrag({
+        nativeEvent: { ...replyListScrollEvent(boundaryY + 600).nativeEvent, velocity: { x: 0, y: -1 } }
+      })
+    );
+    await act(() => lastFlashListProps.onMomentumScrollBegin());
+    await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 500)));
+    await act(() => lastFlashListProps.onMomentumScrollEnd(oldEnd));
+    expect(onLoadPreviousReplies).not.toHaveBeenCalled();
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 490)));
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([0, -1])('admits momentum continuation only after a drag ends with velocity %s', async (velocity) => {
+    const onLoadPreviousReplies = jest.fn<() => void>();
+    const view = await render(
+      <TopicFilterHarness
+        replyHasPrevious
+        onLoadPreviousReplies={onLoadPreviousReplies}
+        replyPreviousCursor={{ kind: 'cursor', page: 3, offset: 60 }}
+      />
+    );
+    const boundaryY = lastFlashListItemTypes.indexOf('replyWindowStart') * 200;
+    mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 200, width: 320, height: 200 }));
+    await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 600)));
+    await act(() =>
+      lastFlashListProps.onScrollEndDrag({
+        nativeEvent: { ...replyListScrollEvent(boundaryY + 600).nativeEvent, velocity: { x: 0, y: velocity } }
+      })
+    );
+    await act(() => lastFlashListProps.onMomentumScrollBegin());
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 590)));
+    const expectedRequests = velocity ? 1 : 0;
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(expectedRequests);
+
+    await view.rerender(
+      <TopicFilterHarness
+        replyHasPrevious
+        onLoadPreviousReplies={onLoadPreviousReplies}
+        replyPreviousCursor={{ kind: 'cursor', page: 2, offset: 30 }}
+      />
+    );
+    await act(() => lastFlashListProps.onMomentumScrollEnd(replyListScrollEvent(boundaryY + 580)));
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 570)));
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(expectedRequests);
+  });
+
+  it('prefetches within three viewports while moving upward below a long opening', async () => {
+    const onLoadPreviousReplies = jest.fn<() => void>();
+    await render(<TopicFilterHarness replyHasPrevious onLoadPreviousReplies={onLoadPreviousReplies} />);
+    const boundaryY = lastFlashListItemTypes.indexOf('replyWindowStart') * 3000;
+    mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 3000, width: 320, height: 3000 }));
+    await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY - 1200)));
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY - 1300)));
+    expect(onLoadPreviousReplies).not.toHaveBeenCalled();
+    await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 2600)));
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 2500)));
+    expect(onLoadPreviousReplies).not.toHaveBeenCalled();
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 2390)));
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+  });
 
   it('labels the previous newest window as newer replies', async () => {
     const view = await render(<TopicFilterHarness replyHasPrevious />);
@@ -4823,9 +5675,9 @@ describe('Topic reply filters', () => {
   });
 
   it.each(replyWindowCases)(
-    'continues reading when a location already consumed the end notification ($source $order)',
+    'continues reading by gesture after a programmatic scroll reaches the end ($source $order)',
     async ({ source, url, order }) => {
-      const loadMore = jest.fn();
+      const loadMore = jest.fn<() => void>();
       const windowTopic: TopicDetail = { ...topic, source, url, replies: sourceReplies, replyCount: 30 };
       const view = await render(
         <TopicFilterHarness
@@ -4839,21 +5691,16 @@ describe('Topic reply filters', () => {
         await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
         await fireEvent.press(view.getByLabelText('倒序'));
       }
-      // FlashList reports this edge once during the programmatic location.
-      await act(() => lastFlashListProps.onEndReached());
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(9000)));
       expect(loadMore).not.toHaveBeenCalled();
-      const drag = (offset: number) => ({
-        nativeEvent: {
-          contentOffset: { x: 0, y: offset },
-          contentSize: { width: 320, height: 4000 },
-          layoutMeasurement: { width: 320, height: 800 }
-        }
-      });
-      await act(() => lastFlashListProps.onScrollBeginDrag(drag(1200)));
+      await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(1200)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(1250)));
       expect(loadMore).not.toHaveBeenCalled();
-      await act(() => lastFlashListProps.onScrollBeginDrag(drag(3000)));
+      await act(() => lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(8900)));
+      expect(loadMore).not.toHaveBeenCalled();
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(9000)));
       expect(loadMore).toHaveBeenCalledTimes(1);
-      await act(() => lastFlashListProps.onEndReached());
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(9100)));
       expect(loadMore).toHaveBeenCalledTimes(1);
     }
   );
@@ -4861,7 +5708,7 @@ describe('Topic reply filters', () => {
   it.each(replyWindowCases)(
     'prefetches before the previous button is visible ($source $order)',
     async ({ source, url, order }) => {
-      const onLoadPreviousReplies = jest.fn();
+      const onLoadPreviousReplies = jest.fn<() => void>();
       const replyForFloor = (floor: number): Reply => ({
         author: `author-${floor}`,
         contentHtml: `<p>reply-${floor}</p>`,
@@ -4878,7 +5725,13 @@ describe('Topic reply filters', () => {
         selectedTopic: windowTopic,
         topicDetail: windowTopic
       };
-      const view = await render(<TopicFilterHarness {...harnessProps} topicReplies={windowReplies} />);
+      const view = await render(
+        <TopicFilterHarness
+          {...harnessProps}
+          replyPreviousCursor={{ kind: 'cursor', page: 3, offset: 60 }}
+          topicReplies={windowReplies}
+        />
+      );
       if (order === 'newest') {
         await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
         await fireEvent.press(view.getByLabelText('倒序'));
@@ -4892,9 +5745,11 @@ describe('Topic reply filters', () => {
       expect(visibleReplies).toHaveLength(3);
       expect(windowStart).toBeDefined();
       expect(visibleReplies).not.toContain(windowStart);
+      const boundaryY = data.findIndex((item) => item.type === 'replyWindowStart') * 120;
+      mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 120, width: 320, height: 120 }));
 
       await act(async () => {
-        lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
+        lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 520));
         lastFlashListProps.onViewableItemsChanged({
           viewableItems: visibleReplies.map((item) => ({ isViewable: true, item }))
         });
@@ -4902,15 +5757,24 @@ describe('Topic reply filters', () => {
           viewableItems: visibleReplies.map((item) => ({ isViewable: true, item }))
         });
       });
-
+      expect(onLoadPreviousReplies).not.toHaveBeenCalled();
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 500)));
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 490)));
       expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
 
       const prependedReplies = Array.from({ length: 15 }, (_, index) =>
         replyForFloor(order === 'oldest' ? index + 6 : 25 - index)
       );
-      await view.rerender(<TopicFilterHarness {...harnessProps} topicReplies={prependedReplies} />);
+      await view.rerender(
+        <TopicFilterHarness
+          {...harnessProps}
+          replyPreviousCursor={{ kind: 'cursor', page: 2, offset: 30 }}
+          topicReplies={prependedReplies}
+        />
+      );
       await act(async () => {
-        lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
+        lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 1090, 600));
+        lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 1090, 600));
       });
       expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
 
@@ -4927,7 +5791,623 @@ describe('Topic reply filters', () => {
           viewableItems: nextVisibleReplies.map((item) => ({ isViewable: true, item }))
         });
       });
+      expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 500, 600)));
       expect(onLoadPreviousReplies).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each([
+    'prepend',
+    'prepend-after-controls',
+    'append',
+    'prepend-then-append-before-correction',
+    'prepend-then-refresh-before-correction',
+    'prepend-then-prepend-before-correction',
+    'insert-after-visible-zero-diff',
+    'prepend-with-reader-movement',
+    'prepend-with-new-drag',
+    'no-anchor',
+    'disabled-during-hold',
+    'excluded-anchor-during-hold',
+    'removed-anchor-during-hold',
+    'command-during-hold',
+    'viewability-timer-during-hold'
+  ] as const)('keeps visible reply objects and physical keys through every real recycler %s pass', async (change) => {
+    const delayedViewability = change === 'viewability-timer-during-hold';
+    if (delayedViewability) jest.useFakeTimers({ doNotFake: ['performance'] });
+    let disabled = false;
+    let eligible = true;
+    const viewability = jest.fn<(info: { viewableItems: { key: string }[] }) => void>();
+    const replies = Array.from({ length: 500 }, (_, index) => ({ key: `reply-${500 + index}`, height: 96 }));
+    const prefix =
+      change === 'prepend-after-controls'
+        ? Array.from({ length: 4 }, (_, index) => ({ key: `control-${index}`, height: 96 }))
+        : [];
+    let data = [...prefix, ...replies];
+    const props = () => ({
+      data,
+      keyExtractor: (item: (typeof data)[number]) => item.key,
+      getItemType: () => 'reply',
+      renderItem: () => null,
+      drawDistance: 720,
+      maxItemsInRecyclePool: 40,
+      onViewableItemsChanged: delayedViewability ? viewability : undefined,
+      viewabilityConfig: { minimumViewTime: 50 },
+      maintainVisibleContentPosition: {
+        disabled,
+        shouldAnchorItem: (item: (typeof data)[number]) => eligible && !item.key.startsWith('control-')
+      }
+    });
+    const manager = new RecyclerViewManager(props());
+    manager.updateLayoutParams({ width: 320, height: 800 }, 0);
+    manager.processDataUpdate();
+    const measure = () =>
+      manager.modifyChildrenLayout(
+        [...manager.getRenderStack().values()].map(({ index }) => ({
+          index,
+          dimensions: { width: 320, height: data[index]!.height }
+        })),
+        data.length
+      );
+    for (let pass = 0; pass < 12 && !manager.getIsFirstLayoutComplete(); pass++) measure();
+    expect(manager.getIsFirstLayoutComplete()).toBe(true);
+    manager.isFirstPaintOnUiComplete = true;
+    let nativeOffset = manager.getLayout(prefix.length + 3).y + 16;
+    let correction = 0;
+    manager.updateScrollOffset(nativeOffset);
+    measure();
+    const visible = manager
+      .computeVisibleIndices()
+      .toArray()
+      .map((index) => data[index]!);
+    const originalKeys = new Map([...manager.getRenderStack()].map(([key, metadata]) => [data[metadata.index]!, key]));
+    const snapshots: { stage: string; retained: boolean[] }[] = [];
+    let requireRetainedKeys = change !== 'no-anchor';
+    const capture = (stage: string) => {
+      if (!requireRetainedKeys) return;
+      snapshots.push({
+        stage,
+        retained: visible.map((reply) => {
+          const key = originalKeys.get(reply)!;
+          const metadata = manager.getRenderStack().get(key);
+          return metadata?.stableId === reply.key && data[metadata.index] === reply;
+        })
+      });
+    };
+    const scroller = React.createRef<ScrollView>();
+    const nativeView = await render(<ScrollView ref={scroller} />);
+    const mountedScroller = scroller.current;
+    if (!mountedScroller) throw new Error('Expected the recycler fixture scroll view to mount.');
+    const nativeScroll = jest.spyOn(mountedScroller, 'scrollTo').mockImplementation((options) => {
+      if (typeof options === 'object') nativeOffset = options.y ?? nativeOffset;
+    });
+    const hook = await renderHook(() =>
+      useRecyclerViewController(
+        manager,
+        null,
+        { current: mountedScroller },
+        {
+          current: {
+            scrollBy: (delta: number) => {
+              nativeOffset += delta;
+              correction += delta;
+            }
+          }
+        }
+      )
+    );
+    try {
+      if (change !== 'no-anchor') await act(() => hook.result.current.computeFirstVisibleIndexForOffsetCorrection());
+      if (delayedViewability) manager.computeItemViewability();
+      await act(() => {
+        const added = Array.from({ length: 30 }, (_, index) => ({ key: `new-${index}`, height: 96 }));
+        data =
+          change === 'append'
+            ? [...data, ...added]
+            : change === 'insert-after-visible-zero-diff'
+              ? [...data.slice(0, 20), ...added, ...data.slice(20)]
+              : [...prefix, ...added, ...replies];
+        manager.updateProps(props());
+        manager.processDataUpdate();
+      });
+      if (change === 'append' || change === 'no-anchor') expect(manager.pendingDataUpdate).toBeUndefined();
+      else expect(manager.pendingDataUpdate).toBeDefined();
+      capture('data-before-measure-or-correction');
+      if (change.startsWith('prepend-then-')) {
+        await act(() => {
+          data =
+            change === 'prepend-then-append-before-correction'
+              ? [...data, { key: 'later-appended', height: 96 }]
+              : change === 'prepend-then-prepend-before-correction'
+                ? [...Array.from({ length: 30 }, (_, index) => ({ key: `newer-${index}`, height: 96 })), ...data]
+                : [...data];
+          manager.updateProps(props());
+          manager.processDataUpdate();
+        });
+        expect(manager.pendingDataUpdate).toBeDefined();
+        capture('next-data-before-correction');
+      }
+      const cancelsHold = [
+        'disabled-during-hold',
+        'excluded-anchor-during-hold',
+        'removed-anchor-during-hold',
+        'command-during-hold'
+      ].includes(change);
+      if (cancelsHold) {
+        requireRetainedKeys = false;
+        await act(() => {
+          if (change === 'command-during-hold') {
+            hook.result.current.handlerMethods.scrollToOffset({ offset: 96, animated: false });
+          } else {
+            disabled = change === 'disabled-during-hold';
+            eligible = change !== 'excluded-anchor-during-hold';
+            if (change === 'removed-anchor-during-hold') data = data.filter((reply) => reply !== replies[3]);
+            manager.updateProps(props());
+            if (change === 'removed-anchor-during-hold') manager.processDataUpdate();
+          }
+        });
+        expect(manager.pendingDataUpdate).toBeUndefined();
+        if (change === 'command-during-hold') {
+          expect(nativeScroll).toHaveBeenCalled();
+          expect(manager.getAbsoluteLastScrollOffset()).toBe(96);
+        }
+      }
+      if (delayedViewability) {
+        await act(async () => {
+          manager.computeItemViewability();
+          manager.recordInteraction();
+          await jest.advanceTimersByTimeAsync(60);
+        });
+        expect(viewability).not.toHaveBeenCalled();
+        expect(manager.pendingDataUpdate).toBeDefined();
+        capture('old-viewability-timer-cancelled');
+      }
+      const movement = change === 'prepend-with-reader-movement' ? -10 : 0;
+      if (movement || change === 'prepend-with-new-drag') {
+        await act(() => {
+          expect(hook.result.current.beginScrollInteraction('drag', 1, nativeOffset, 0)).toBe(true);
+          nativeOffset += movement;
+          expect(hook.result.current.acceptScrollOffset(nativeOffset, 1, manager.getMaxScrollOffset(), 0)).toBe(true);
+          manager.updateScrollOffset(nativeOffset);
+          hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        });
+        expect(manager.getAbsoluteLastScrollOffset()).toBe(nativeOffset);
+        capture('reader-before-correction');
+      }
+      for (let pass = 1; pass <= 6; pass++) {
+        let needsLayout = false;
+        await act(() => {
+          needsLayout = measure();
+        });
+        capture(`measure-${pass}`);
+        if (needsLayout) continue;
+        await act(() => hook.result.current.applyOffsetCorrection());
+        capture(`correction-${pass}`);
+        await act(() => {
+          expect(
+            hook.result.current.acceptScrollOffset(nativeOffset, pass, manager.getMaxScrollOffset(), correction)
+          ).toBe(true);
+          manager.updateScrollOffset(nativeOffset);
+          hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        });
+        capture(`native-ack-${pass}`);
+        break;
+      }
+      expect(manager.pendingDataUpdate).toBeUndefined();
+      const newAnchorIndex = data.indexOf(replies[3]!);
+      if (requireRetainedKeys) expect(manager.getLayout(newAnchorIndex).y - nativeOffset).toBe(-16 - movement);
+      if (delayedViewability) {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(60);
+        });
+        expect(viewability).toHaveBeenCalledTimes(1);
+        expect(viewability.mock.calls[0]![0].viewableItems.map(({ key }) => key)).toEqual(
+          visible.map(({ key }) => key)
+        );
+      }
+      for (const metadata of manager.getRenderStack().values())
+        expect(data[metadata.index]!.key).toBe(metadata.stableId);
+      expect(snapshots).toEqual(snapshots.map(({ stage }) => ({ stage, retained: visible.map(() => true) })));
+    } finally {
+      await hook.unmount();
+      await nativeView.unmount();
+      manager.dispose();
+      if (delayedViewability) jest.useRealTimers();
+    }
+  });
+
+  it.each([
+    'final-page',
+    'reordered-suffix',
+    'changed-suffix-type',
+    'removed-eligible-prefix',
+    'default-anchor-policy'
+  ] as const)('keeps visible reply bindings only for an intact final-page content suffix (%s)', async (change) => {
+    const replyForFloor = (floor: number) =>
+      prepareReplyContent(
+        {
+          ...sourceReplies[0]!,
+          author: `author-${floor}`,
+          commentId: floor,
+          contentHtml: `<p>reply-${floor}</p>`,
+          floor
+        },
+        'linuxdo'
+      );
+    const oldReplies = Array.from({ length: 710 }, (_, index) => replyForFloor(index + 19));
+    const earlierReplies = Array.from({ length: 16 }, (_, index) => replyForFloor(index + 2));
+    const finalReplies = [
+      ...earlierReplies,
+      ...(change === 'reordered-suffix'
+        ? [oldReplies[1]!, oldReplies[0]!, ...oldReplies.slice(2)]
+        : change === 'changed-suffix-type'
+          ? [
+              ...oldReplies.slice(0, -1),
+              prepareReplyContent({ ...oldReplies.at(-1)!, contentHtml: '<pre>changed reply type</pre>' }, 'linuxdo')
+            ]
+          : change === 'removed-eligible-prefix'
+            ? oldReplies.slice(1)
+            : oldReplies)
+    ];
+    const openingTopic = prepareTopicContent({
+      ...topic,
+      contentHtml: '<p>opening body</p><pre>opening code</pre>',
+      id: 'final-previous-page',
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/final-previous-page',
+      replies: [],
+      replyCount: finalReplies.length
+    });
+    const tree = (hasPrevious: boolean, replies: Reply[]) => (
+      <TopicFilterHarness
+        prepareContent={false}
+        replyHasPrevious={hasPrevious}
+        selectedTopic={openingTopic}
+        topicDetail={openingTopic}
+        topicReplies={replies}
+      />
+    );
+    const projectionView = await render(tree(true, oldReplies));
+    let data = lastFlashListProps.data as TopicListItem[];
+    expect(data.slice(0, 2).map((item) => item.type)).toEqual(['replyControls', 'replyWindowStart']);
+    expect(data.some((item) => item.type === 'topicHeader')).toBe(false);
+    const heightFor = (item: TopicListItem) =>
+      item.type === 'topicHeader'
+        ? 144
+        : item.type === 'replyControls'
+          ? 192
+          : item.type === 'replyWindowStart'
+            ? 64
+            : 96;
+    const props = () => ({
+      data,
+      keyExtractor: topicListItemKey,
+      getItemType: topicListItemType,
+      renderItem: () => null,
+      drawDistance: 720,
+      maxItemsInRecyclePool: 40,
+      maintainVisibleContentPosition:
+        change === 'default-anchor-policy'
+          ? {}
+          : {
+              shouldAnchorItem: (item: TopicListItem) =>
+                item.type !== 'topicHeader' && item.type !== 'replyControls' && item.type !== 'replyWindowStart'
+            }
+    });
+    const manager = new RecyclerViewManager(props());
+    manager.updateLayoutParams({ width: 320, height: 800 }, 0);
+    manager.processDataUpdate();
+    const measure = () =>
+      manager.modifyChildrenLayout(
+        [...manager.getRenderStack().values()].map(({ index }) => ({
+          index,
+          dimensions: { width: 320, height: heightFor(data[index]!) }
+        })),
+        data.length
+      );
+    for (let pass = 0; pass < 12 && !manager.getIsFirstLayoutComplete(); pass++) measure();
+    expect(manager.getIsFirstLayoutComplete()).toBe(true);
+    manager.isFirstPaintOnUiComplete = true;
+    let nativeOffset = manager.getLayout(5).y + 16;
+    let correction = 0;
+    manager.updateScrollOffset(nativeOffset);
+    measure();
+    const visible = manager
+      .computeVisibleIndices()
+      .toArray()
+      .flatMap((index) => {
+        const item = data[index];
+        return item?.type === 'reply' ? [item] : [];
+      });
+    expect(visible.length).toBeGreaterThan(0);
+    const originalKeys = new Map([...manager.getRenderStack()].map(([key, metadata]) => [metadata.stableId, key]));
+    expect(originalKeys.has('reply-window-start')).toBe(true);
+    const anchor = visible[0]!;
+    const anchorScreenY = manager.getLayout(data.indexOf(anchor)).y - nativeOffset;
+    const snapshots: {
+      stage: string;
+      retained: boolean[];
+      bindings: { physicalKey: string; stableId: string | undefined }[];
+    }[] = [];
+    const capture = (stage: string) => {
+      const bindings = visible.map((item) => {
+        const physicalKey = originalKeys.get(item.key)!;
+        return { physicalKey, stableId: manager.getRenderStack().get(physicalKey)?.stableId };
+      });
+      snapshots.push({
+        stage,
+        bindings,
+        retained: visible.map((item) => {
+          const metadata = manager.getRenderStack().get(originalKeys.get(item.key)!);
+          const boundItem = metadata ? data[metadata.index] : undefined;
+          return metadata?.stableId === item.key && boundItem?.type === 'reply' && boundItem.reply === item.reply;
+        })
+      });
+      for (const metadata of manager.getRenderStack().values())
+        expect(data[metadata.index]?.key).toBe(metadata.stableId);
+    };
+    const scroller = React.createRef<ScrollView>();
+    const nativeView = await render(<ScrollView ref={scroller} />);
+    const mountedScroller = scroller.current;
+    if (!mountedScroller) throw new Error('Expected the recycler fixture scroll view to mount.');
+    const nativeScroll = jest.spyOn(mountedScroller, 'scrollTo').mockImplementation((options) => {
+      if (typeof options === 'object') nativeOffset = options.y ?? nativeOffset;
+    });
+    const hook = await renderHook(() =>
+      useRecyclerViewController(
+        manager,
+        null,
+        { current: mountedScroller },
+        {
+          current: {
+            scrollBy: (delta: number) => {
+              nativeOffset += delta;
+              correction += delta;
+            }
+          }
+        }
+      )
+    );
+    try {
+      await act(() => hook.result.current.computeFirstVisibleIndexForOffsetCorrection());
+      await projectionView.rerender(tree(false, finalReplies));
+      data = lastFlashListProps.data as TopicListItem[];
+      const openingItems = data.filter((item) => item.type === 'topicContent');
+      expect(openingItems.length).toBeGreaterThan(0);
+      expect(data[0]?.type).toBe('topicHeader');
+      expect(data.filter((item) => item.type === 'replyControls')).toHaveLength(1);
+      expect(data.some((item) => item.type === 'replyWindowStart')).toBe(false);
+      expect(data.filter((item) => item.type === 'reply').map((item) => item.reply)).toEqual(finalReplies);
+      await act(() => {
+        manager.updateProps(props());
+        manager.processDataUpdate();
+      });
+      if (change !== 'final-page') {
+        expect(manager.pendingDataUpdate).toBeUndefined();
+        for (const metadata of manager.getRenderStack().values())
+          expect(data[metadata.index]?.key).toBe(metadata.stableId);
+        return;
+      }
+      capture('data-before-measure-or-correction');
+      for (let pass = 1; pass <= 6; pass++) {
+        let needsLayout = false;
+        await act(() => {
+          needsLayout = measure();
+        });
+        capture(`measure-${pass}`);
+        if (needsLayout) continue;
+        await act(() => hook.result.current.applyOffsetCorrection());
+        capture(`correction-${pass}`);
+        await act(() => {
+          expect(
+            hook.result.current.acceptScrollOffset(nativeOffset, pass, manager.getMaxScrollOffset(), correction)
+          ).toBe(true);
+          manager.updateScrollOffset(nativeOffset);
+          hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        });
+        capture(`native-ack-${pass}`);
+        break;
+      }
+      expect(manager.pendingDataUpdate).toBeUndefined();
+      const anchorIndex = data.findIndex((item) => item.key === anchor.key);
+      const settledAnchorScreenY = manager.getLayout(anchorIndex).y - nativeOffset;
+      await act(() => {
+        hook.result.current.handlerMethods.scrollToOffset({ offset: 0, animated: false });
+        manager.updateScrollOffset(nativeOffset);
+        for (let pass = 0; pass < 6; pass++) {
+          if (!measure()) break;
+        }
+      });
+      const renderedKeys = [...manager.getRenderStack().values()].map(({ stableId }) => stableId);
+      expect(renderedKeys).toEqual(
+        expect.arrayContaining(['topic-header', 'reply-controls', ...openingItems.map((item) => item.key)])
+      );
+      expect(renderedKeys).not.toContain('reply-window-start');
+      expect(snapshots).toEqual(
+        snapshots.map(({ stage }) => ({
+          stage,
+          retained: visible.map(() => true),
+          bindings: visible.map((item) => ({ physicalKey: originalKeys.get(item.key)!, stableId: item.key }))
+        }))
+      );
+      expect(settledAnchorScreenY).toBe(anchorScreenY);
+    } finally {
+      await hook.unmount();
+      nativeScroll.mockRestore();
+      await nativeView.unmount();
+      await projectionView.unmount();
+      manager.dispose();
+    }
+  });
+
+  it.each([
+    { change: 'prepend', movement: 0 },
+    { change: 'prepend', movement: -10 },
+    { change: 'prepend', movement: 150 },
+    { change: 'append', movement: 150 },
+    { change: 'replace-control', movement: 0 }
+  ])(
+    'retains reached content through real recycler $change, $movement dp movement and late height changes',
+    async ({ change, movement }) => {
+      let data = Array.from({ length: 40 }, (_, index) => ({ key: `reply-${index}`, height: 64 }));
+      if (change === 'replace-control') data.splice(31, 0, { key: 'previous-control', height: 64 });
+      const props = () => ({
+        data,
+        keyExtractor: (item: (typeof data)[number]) => item.key,
+        renderItem: () => null,
+        maintainVisibleContentPosition: {
+          shouldAnchorItem: (item: (typeof data)[number]) => item.key !== 'previous-control'
+        }
+      });
+      const manager = new RecyclerViewManager(props());
+      manager.updateLayoutParams({ width: 320, height: 160 }, 0);
+      manager.processDataUpdate();
+      const measure = () =>
+        manager.modifyChildrenLayout(
+          data.map((item, index) => ({ index, dimensions: { width: 320, height: item.height } })),
+          data.length
+        );
+      measure();
+      expect(manager.getIsFirstLayoutComplete()).toBe(true);
+      manager.isFirstPaintOnUiComplete = true;
+      let screenOffset = 2016;
+      manager.updateScrollOffset(screenOffset);
+      const anchorKey =
+        change === 'replace-control' ? 'reply-31' : manager.getDataKey(manager.computeVisibleIndices().startIndex);
+      const anchorScreenY = () => manager.getLayout(data.findIndex((item) => item.key === anchorKey)).y - screenOffset;
+      const initialScreenY = anchorScreenY();
+      let correction = 0;
+      const scrollBy = jest.fn((delta: number) => {
+        screenOffset += delta;
+        correction += delta;
+      });
+      const hook = await renderHook(() =>
+        useRecyclerViewController(
+          manager,
+          null,
+          { current: null } as unknown as Parameters<typeof useRecyclerViewController>[2],
+          { current: { scrollBy } }
+        )
+      );
+      try {
+        await act(() => hook.result.current.computeFirstVisibleIndexForOffsetCorrection());
+        await act(() => {
+          data =
+            change === 'prepend'
+              ? [...Array.from({ length: 3 }, (_, index) => ({ key: `earlier-${index}`, height: 96 })), ...data]
+              : change === 'append'
+                ? [...data, ...Array.from({ length: 3 }, (_, index) => ({ key: `appended-${index}`, height: 64 }))]
+                : data.map((item) => (item.key === 'previous-control' ? { ...item, key: 'new-window-row' } : item));
+          manager.updateProps(props());
+          manager.processDataUpdate();
+          measure();
+          screenOffset += movement;
+          expect(hook.result.current.acceptScrollOffset(screenOffset, 1, manager.getMaxScrollOffset(), 0)).toBe(true);
+          manager.updateScrollOffset(screenOffset);
+          hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+          hook.result.current.applyOffsetCorrection();
+        });
+        if (change === 'prepend') expect(scrollBy).toHaveBeenCalledWith(288);
+        else expect(scrollBy).not.toHaveBeenCalled();
+        expect(anchorScreenY()).toBe(initialScreenY - movement);
+        await act(() => {
+          expect(
+            hook.result.current.acceptScrollOffset(screenOffset, 2, manager.getMaxScrollOffset(), correction)
+          ).toBe(true);
+          manager.updateScrollOffset(screenOffset);
+          hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        });
+        expect(manager.getAbsoluteLastScrollOffset()).toBe(screenOffset);
+        expect(anchorScreenY()).toBe(initialScreenY - movement);
+        const reachedKey =
+          change === 'replace-control' ? anchorKey : manager.getDataKey(manager.computeVisibleIndices().startIndex);
+        const reachedScreenY = () =>
+          manager.getLayout(data.findIndex((item) => item.key === reachedKey)).y - screenOffset;
+        const beforeGrowth = reachedScreenY();
+        data[
+          data.findIndex((item) => item.key === (change === 'replace-control' ? 'new-window-row' : 'reply-32'))
+        ].height += 80;
+        await act(() => {
+          measure();
+          hook.result.current.applyOffsetCorrection();
+        });
+        expect(reachedScreenY()).toBe(beforeGrowth);
+      } finally {
+        await hook.unmount();
+        manager.dispose();
+      }
+    }
+  );
+
+  it.each([0, 120])(
+    'retains a tall visible reply through cached prepend layouts and late measurement with %i dp first-item offset',
+    async (firstItemOffset) => {
+      let data = [
+        { key: 'opening', height: 2000 },
+        { key: 'postlude', height: 400 },
+        { key: 'controls', height: 100 },
+        { key: 'window-start', height: 100 },
+        ...Array.from({ length: 50 }, (_, index) => ({
+          key: `reply-${index + 465}`,
+          height: index === 0 ? 1000 : 64
+        }))
+      ];
+      const props = () => ({
+        data,
+        keyExtractor: (item: (typeof data)[number]) => item.key,
+        renderItem: () => null,
+        maintainVisibleContentPosition: {
+          shouldAnchorItem: (item: (typeof data)[number]) => item.key !== 'controls' && item.key !== 'window-start'
+        }
+      });
+      const manager = new RecyclerViewManager(props());
+      manager.updateLayoutParams({ width: 320, height: 800 }, firstItemOffset);
+      manager.processDataUpdate();
+      const measure = () =>
+        manager.modifyChildrenLayout(
+          data.map((item, index) => ({ index, dimensions: { width: 320, height: item.height } })),
+          data.length
+        );
+      measure();
+      manager.isFirstPaintOnUiComplete = true;
+      let screenOffset = 3400 + firstItemOffset;
+      manager.updateScrollOffset(screenOffset);
+      const screenY = () =>
+        manager.getLayout(data.findIndex((item) => item.key === 'reply-465')).y + firstItemOffset - screenOffset;
+      const before = screenY();
+      const scrollBy = jest.fn((delta: number) => {
+        screenOffset += delta;
+      });
+      const hook = await renderHook(() =>
+        useRecyclerViewController(
+          manager,
+          null,
+          { current: null } as unknown as Parameters<typeof useRecyclerViewController>[2],
+          { current: { scrollBy } }
+        )
+      );
+      try {
+        await act(() => hook.result.current.computeFirstVisibleIndexForOffsetCorrection());
+        await act(() => {
+          data = [
+            ...data.slice(0, 4),
+            ...Array.from({ length: 30 }, (_, index) => ({ key: `reply-${index + 435}`, height: 64 })),
+            ...data.slice(4)
+          ];
+          manager.updateProps(props());
+          manager.processDataUpdate();
+          hook.result.current.applyOffsetCorrection();
+        });
+        await act(() => {
+          measure();
+          hook.result.current.applyOffsetCorrection();
+        });
+        expect(screenY()).toBe(before);
+      } finally {
+        await hook.unmount();
+        manager.dispose();
+      }
     }
   );
 
@@ -4942,13 +6422,28 @@ describe('Topic reply filters', () => {
     'native-offset-rounding',
     'reader-scroll',
     'native-ack-order',
+    'drag-delayed-native-offset',
+    'momentum-delayed-native-offset',
+    'drag-delayed-native-ack',
+    'momentum-delayed-native-ack',
+    'drag-delayed-native-takeover',
+    'idle-delayed-native-offset',
     'imperative-offset',
     'animated-offset',
     'interrupted-momentum',
     'footer-padding',
     'begin-drag-native-offset',
+    'prepend-before-layout-old-offset',
+    'prepend-before-apply-old-offset',
+    'prepend-before-apply-reader-movement',
+    'prepend-before-apply-new-drag',
+    'prepend-before-apply-command',
+    'prepend-before-apply-correction-ack',
+    'append-zero-diff-settlement',
     'zero-distance'
   ])('keeps only eligible visible content through prepend and height changes (%s)', async (firstVisibleType) => {
+    const retainsWindowStart =
+      firstVisibleType.startsWith('prepend-before-') || firstVisibleType === 'append-zero-diff-settlement';
     const anchorTopic: TopicDetail = {
       ...topic,
       contentHtml:
@@ -4961,7 +6456,9 @@ describe('Topic reply filters', () => {
       createdAt: '2026-08-05T00:00:00.000Z',
       floor: 0
     };
-    const view = await render(<TopicFilterHarness replyHasPrevious topicDetail={anchorTopic} />);
+    const view = await render(
+      <TopicFilterHarness location={{ kind: 'opening' }} replyHasPrevious topicDetail={anchorTopic} />
+    );
     let prefixExpansion = 0;
     let earlierExpansion = 0;
     const measureRows = () => {
@@ -5031,6 +6528,8 @@ describe('Topic reply filters', () => {
       getLayout: (index: number) => layouts[index],
       firstItemOffset: 0,
       getAbsoluteLastScrollOffset: () => offset,
+      getLastScrollOffset: () => offset,
+      getWindowSize: () => ({ width: 320, height: viewportHeight }),
       getMaxScrollOffset: () => Math.max(0, layouts.at(-1)!.y + layouts.at(-1)!.height - viewportHeight),
       updateScrollOffset: (value: number) => {
         offset = value;
@@ -5066,6 +6565,26 @@ describe('Topic reply filters', () => {
       initialScreenY += 24;
       hook.result.current.beginScrollInteraction('drag', 1, screenOffset);
     }
+    const delayedInteraction = firstVisibleType.startsWith('drag-delayed-')
+      ? 'drag'
+      : firstVisibleType.startsWith('momentum-delayed-')
+        ? 'momentum'
+        : firstVisibleType.startsWith('idle-delayed-')
+          ? 'idle'
+          : undefined;
+    if (delayedInteraction) {
+      expect(
+        hook.result.current.beginScrollInteraction(
+          delayedInteraction === 'idle' ? 'drag' : delayedInteraction,
+          1,
+          screenOffset,
+          0
+        )
+      ).toBe(true);
+      if (delayedInteraction === 'idle') {
+        expect(hook.result.current.endScrollInteraction('drag', 2)).toBe(true);
+      }
+    }
     const settleCorrection = () => {
       layouts = measureRows();
       hook.result.current.applyOffsetCorrection();
@@ -5083,9 +6602,181 @@ describe('Topic reply filters', () => {
       if (firstVisibleType !== 'controls-only') expect(anchorScreenY()).toBe(initialScreenY);
     };
     await view.rerender(
-      <TopicFilterHarness topicDetail={anchorTopic} topicReplies={[earlierReply, ...sourceReplies]} />
+      <TopicFilterHarness
+        location={{ kind: 'opening' }}
+        replyHasPrevious={retainsWindowStart}
+        topicDetail={anchorTopic}
+        topicReplies={[earlierReply, ...sourceReplies]}
+      />
     );
+    if (firstVisibleType.startsWith('prepend-before-') || firstVisibleType === 'append-zero-diff-settlement') {
+      if (firstVisibleType !== 'prepend-before-layout-old-offset') layouts = measureRows();
+      if (firstVisibleType === 'prepend-before-apply-command') {
+        hook.result.current.handlerMethods.scrollToOffset({ offset: 0, animated: false });
+        hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        hook.result.current.applyOffsetCorrection();
+        expect(scrollBy).not.toHaveBeenCalled();
+        expect(offset).toBe(0);
+        expect(screenOffset).toBe(0);
+        return;
+      }
+      if (firstVisibleType === 'prepend-before-apply-correction-ack') {
+        hook.result.current.applyOffsetCorrection();
+        expect(nativeScrollDelta).toBe(264);
+        screenOffset += nativeScrollDelta - 10;
+        let correction = nativeScrollDelta;
+        nativeScrollDelta = 0;
+        initialScreenY += 10;
+        await view.rerender(
+          <TopicFilterHarness
+            location={{ kind: 'opening' }}
+            replyHasPrevious
+            topicDetail={anchorTopic}
+            topicReplies={[{ ...earlierReply, commentId: 998, floor: -1 }, earlierReply, ...sourceReplies]}
+          />
+        );
+        layouts = measureRows();
+        expect(hook.result.current.acceptScrollOffset(screenOffset, 1, manager.getMaxScrollOffset(), correction)).toBe(
+          true
+        );
+        offset = screenOffset;
+        hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        hook.result.current.applyOffsetCorrection();
+        screenOffset += nativeScrollDelta;
+        correction += nativeScrollDelta;
+        nativeScrollDelta = 0;
+        expect(hook.result.current.acceptScrollOffset(screenOffset, 2, manager.getMaxScrollOffset(), correction)).toBe(
+          true
+        );
+        offset = screenOffset;
+        hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        expect(anchorScreenY()).toBe(initialScreenY);
+        expect(scrollBy.mock.calls).toEqual([[264], [64]]);
+        return;
+      }
+      if (
+        firstVisibleType === 'prepend-before-apply-reader-movement' ||
+        firstVisibleType === 'prepend-before-apply-new-drag'
+      ) {
+        screenOffset -= 10;
+        initialScreenY += 10;
+      }
+      if (firstVisibleType === 'prepend-before-apply-new-drag') {
+        expect(hook.result.current.beginScrollInteraction('drag', 1, screenOffset, 0)).toBe(true);
+      } else {
+        expect(hook.result.current.acceptScrollOffset(screenOffset, 1, manager.getMaxScrollOffset(), 0)).toBe(true);
+        offset = screenOffset;
+        hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+      }
+    }
+    if (delayedInteraction) {
+      let nativeCorrectionOffset = 0;
+      let timestamp = 3;
+      const nativeScroll = (value: number, timestamp: number, correctionOffset = nativeCorrectionOffset) => {
+        const accepted = hook.result.current.acceptScrollOffset(
+          value,
+          timestamp,
+          manager.getMaxScrollOffset(),
+          correctionOffset
+        );
+        if (accepted) {
+          manager.updateScrollOffset(value);
+          hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+        }
+        return accepted;
+      };
+      layouts = measureRows();
+      hook.result.current.applyOffsetCorrection();
+      expect(nativeScrollDelta).toBe(200);
+      screenOffset -= 10;
+      initialScreenY += 10;
+      const oldNativeOffset = screenOffset;
+      if (firstVisibleType.endsWith('-ack')) {
+        screenOffset += nativeScrollDelta;
+        nativeCorrectionOffset += nativeScrollDelta;
+        nativeScrollDelta = 0;
+      }
+      if (firstVisibleType.endsWith('-takeover')) {
+        expect(hook.result.current.beginScrollInteraction('drag', 2, screenOffset, 0)).toBe(true);
+      }
+      expect(nativeScroll(oldNativeOffset, timestamp++, 0)).toBe(false);
+
+      earlierExpansion = 60;
+      layouts = measureRows();
+      hook.result.current.applyOffsetCorrection();
+      screenOffset += nativeScrollDelta;
+      nativeCorrectionOffset += nativeScrollDelta;
+      nativeScrollDelta = 0;
+      expect(nativeScroll(screenOffset, timestamp++)).toBe(true);
+      expect(anchorScreenY()).toBe(initialScreenY);
+      expect(nativeCorrectionOffset).toBe(260);
+
+      for (const expansion of [100, -40]) {
+        earlierExpansion = expansion;
+        layouts = measureRows();
+        hook.result.current.applyOffsetCorrection();
+        expect(nativeScroll(screenOffset, timestamp++)).toBe(false);
+        screenOffset += nativeScrollDelta;
+        nativeCorrectionOffset += nativeScrollDelta;
+        nativeScrollDelta = 0;
+        expect(nativeScroll(screenOffset, timestamp++)).toBe(true);
+        expect(hook.result.current.getPendingScroll()).toBeUndefined();
+        expect(anchorScreenY()).toBe(initialScreenY);
+      }
+
+      // Reader movement remains accepted when its correction ACK includes earlier movement.
+      anchorKey = 'comment:999';
+      screenOffset = layouts[lastFlashListItemKeys.indexOf(anchorKey)].y + 16;
+      expect(nativeScroll(screenOffset, timestamp++)).toBe(true);
+      initialScreenY = anchorScreenY();
+      earlierExpansion = 100;
+      layouts = measureRows();
+      hook.result.current.applyOffsetCorrection();
+      expect(nativeScrollDelta).toBe(0);
+      expect(anchorScreenY()).toBe(initialScreenY);
+
+      // A new drag can immediately take over the newly inserted comment.
+      screenOffset = layouts[lastFlashListItemKeys.indexOf(anchorKey)].y + 16;
+      expect(
+        hook.result.current.beginScrollInteraction('drag', timestamp++, screenOffset, nativeCorrectionOffset)
+      ).toBe(true);
+      expect(nativeScroll(screenOffset - 12, timestamp++)).toBe(true);
+      screenOffset -= 12;
+      initialScreenY = anchorScreenY();
+      prefixExpansion = 60;
+      layouts = measureRows();
+      hook.result.current.applyOffsetCorrection();
+      screenOffset += nativeScrollDelta;
+      nativeCorrectionOffset += nativeScrollDelta;
+      nativeScrollDelta = 0;
+      expect(nativeScroll(screenOffset, timestamp++)).toBe(true);
+      expect(anchorScreenY()).toBe(initialScreenY);
+      expect(hook.result.current.endScrollInteraction('drag', timestamp)).toBe(true);
+      return;
+    }
     settleCorrection();
+    if (firstVisibleType === 'append-zero-diff-settlement') {
+      await view.rerender(
+        <TopicFilterHarness
+          location={{ kind: 'opening' }}
+          replyHasPrevious
+          topicDetail={anchorTopic}
+          topicReplies={[earlierReply, ...sourceReplies, { ...earlierReply, commentId: 1000, floor: 4 }]}
+        />
+      );
+      layouts = measureRows();
+      hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+      hook.result.current.applyOffsetCorrection();
+      expect(nativeScrollDelta).toBe(0);
+      anchorKey = 'comment:999';
+      offset = screenOffset = layouts[lastFlashListItemKeys.indexOf(anchorKey)].y + 16;
+      initialScreenY = -16;
+      hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+      earlierExpansion = 60;
+      settleCorrection();
+      expect(scrollBy.mock.calls).toEqual([[264]]);
+      return;
+    }
     if (firstVisibleType === 'imperative-offset' || firstVisibleType === 'animated-offset') {
       hook.result.current.handlerMethods.scrollToOffset({
         offset: 0,
@@ -5176,7 +6867,12 @@ describe('Topic reply filters', () => {
       return;
     }
     await view.rerender(
-      <TopicFilterHarness topicDetail={anchorTopic} topicReplies={[earlierReply, ...sourceReplies]} />
+      <TopicFilterHarness
+        location={{ kind: 'opening' }}
+        replyHasPrevious={retainsWindowStart}
+        topicDetail={anchorTopic}
+        topicReplies={[earlierReply, ...sourceReplies]}
+      />
     );
     prefixExpansion = 60;
     settleCorrection();
@@ -5184,11 +6880,11 @@ describe('Topic reply filters', () => {
     settleCorrection();
     expect(lastFlashListItemKeys).toContain(anchorKey);
     expect(scrollBy.mock.calls).toEqual(
-      firstVisibleType === 'controls-only' || firstVisibleType === 'default-policy'
+      firstVisibleType === 'controls-only'
         ? []
-        : firstVisibleType === 'topicContent'
+        : firstVisibleType === 'topicContent' || firstVisibleType === 'default-policy'
           ? [[60], [40]]
-          : [[200], [60], [40]]
+          : [[retainsWindowStart ? 264 : 200], [60], [40]]
     );
   });
 
@@ -5431,8 +7127,8 @@ describe('Topic reply filters', () => {
   });
 
   it('keeps an adjacent-window failure visible at its exact retry edge', async () => {
-    const onLoadMoreReplies = jest.fn();
-    const onLoadPreviousReplies = jest.fn();
+    const onLoadMoreReplies = jest.fn<() => void>();
+    const onLoadPreviousReplies = jest.fn<() => void>();
     const onRetryReplies = jest.fn();
     const startError = { kind: 'ordinary' as const, message: '无法确认更早回复窗口', retryable: true };
     const endError = { kind: 'ordinary' as const, message: '无法确认更多回复窗口', retryable: true };
@@ -5450,14 +7146,17 @@ describe('Topic reply filters', () => {
     expect(view.getByText('无法确认更早回复窗口')).toBeTruthy();
     expect(view.queryByLabelText('加载更早回复')).toBeNull();
     const startItem = (lastFlashListProps.data as { type: string }[]).find((item) => item.type === 'replyWindowStart');
+    const boundaryY = lastFlashListItemTypes.indexOf('replyWindowStart') * 200;
+    mockGetLayout.mockImplementation((index: number) => ({ x: 0, y: index * 200, width: 320, height: 200 }));
     await act(async () => {
-      lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
+      lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(boundaryY + 400));
       lastFlashListProps.onViewableItemsChanged({ viewableItems: [{ isViewable: true, item: startItem }] });
+      lastFlashListProps.onScroll(replyListScrollEvent(boundaryY + 350));
     });
     expect(onLoadPreviousReplies).not.toHaveBeenCalled();
     await act(async () => {
-      lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
-      lastFlashListProps.onEndReached();
+      lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(8900));
+      lastFlashListProps.onScroll(replyListScrollEvent(9000));
     });
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByText('重试评论'));
@@ -5477,8 +7176,8 @@ describe('Topic reply filters', () => {
     expect(view.queryByLabelText('加载更多回复')).toBeNull();
     await act(async () => {
       lastFlashListProps.onViewableItemsChanged({ viewableItems: [] });
-      lastFlashListProps.onScrollBeginDrag(replyListDragEvent);
-      lastFlashListProps.onEndReached();
+      lastFlashListProps.onScrollBeginDrag(replyListScrollEvent(8900));
+      lastFlashListProps.onScroll(replyListScrollEvent(9000));
     });
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByText('重试评论'));

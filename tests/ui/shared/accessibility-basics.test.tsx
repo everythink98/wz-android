@@ -72,6 +72,38 @@ describe('shared accessibility basics', () => {
 
     expect(style.minWidth).toBeGreaterThanOrEqual(48);
     expect(style.minHeight).toBeGreaterThanOrEqual(48);
+    expect(view.root?.queryAll((node) => node.props.horizontal === true).length).toBeGreaterThan(0);
+  });
+
+  it('wraps large filter labels without a horizontal scroll surface', async () => {
+    const settings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
+    const onChange = jest.fn();
+    const view = await render(
+      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+        <PillRail
+          layout="wrap"
+          variant="subtabs"
+          testIDPrefix="filter"
+          items={[
+            { value: 'all', label: '全部' },
+            { value: 'author', label: '只看楼主' },
+            { value: 'images', label: '只看带图' }
+          ]}
+          value="all"
+          onChange={onChange}
+        />
+      </ReaderStyleProvider>
+    );
+
+    expect(view.root?.queryAll((node) => node.props.horizontal === true)).toHaveLength(0);
+    let rail = view.getByTestId('filter-all').parent;
+    while (rail && StyleSheet.flatten(rail.props.style)?.flexWrap !== 'wrap') rail = rail.parent;
+    expect(StyleSheet.flatten(rail?.props.style)).toMatchObject({ flexDirection: 'row', flexWrap: 'wrap' });
+    expect(StyleSheet.flatten(view.getByText('只看带图').props.style).fontSize).toBe(Math.round(12 * 1.3));
+    expect(view.getByLabelText('全部，已选择').props.accessibilityState.selected).toBe(true);
+    await fireEvent.press(view.getByTestId('filter-author'));
+    await fireEvent.press(view.getByTestId('filter-images'));
+    expect(onChange.mock.calls).toEqual([['author'], ['images']]);
   });
 
   it('centers source labels within their tab indicators', async () => {

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ImagePreviewItem } from '@/platform/media/imagePreviewCatalog';
-import { Linking, Share, type NativeScrollEvent, type NativeSyntheticEvent, View } from 'react-native';
+import {
+  AppState,
+  Linking,
+  Platform,
+  Share,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  View
+} from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
@@ -44,6 +52,38 @@ type TopicShareState = ({ kind: 'options'; topic: Topic } | { kind: 'image'; top
 
 async function copyTopicLink(url: string) {
   if (!(await Clipboard.setStringAsync(url))) throw new Error('无法复制链接，请重试。');
+}
+
+async function shareTopicLink(topic: Topic, signal: AbortSignal) {
+  let finish = () => {};
+  const returnedToApp =
+    Platform.OS === 'android'
+      ? new Promise<void>((resolve) => {
+          let backgrounded = false;
+          const subscription = AppState.addEventListener('change', (state) => {
+            if (state !== 'active') backgrounded = true;
+            else if (backgrounded) finish();
+          });
+          const release = () => {
+            finish = () => {};
+            subscription.remove();
+            signal.removeEventListener('abort', release);
+            resolve();
+          };
+          finish = release;
+          signal.addEventListener('abort', release, { once: true });
+        })
+      : undefined;
+  try {
+    if (signal.aborted) return;
+    const result = await Share.share({ title: topic.title, message: `${topic.title}\n${topic.url}`, url: topic.url });
+    // Android resolves at launch, before the chooser's Activity returns to this screen.
+    if (result.action === Share.sharedAction) await returnedToApp;
+  } catch (cause) {
+    if (!signal.aborted) throw cause;
+  } finally {
+    finish();
+  }
 }
 
 export function TopicRoute({ navigation, route }: TopicRouteProps) {
@@ -259,13 +299,11 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     });
   }, [isReadRecoveryCurrent, refreshWholeTopic, runtime, topic.source, topicError?.message, topicQueryKey]);
   const shareTopic = useCallback(
-    async (current: Topic) => {
+    async (current: Topic, signal: AbortSignal) => {
       await shareTopicWithClipboardFallback({
         copy: () => copyTopicLink(current.url),
         notify: runtime.notify,
-        share: async () => {
-          await Share.share({ title: current.title, message: `${current.title}\n${current.url}`, url: current.url });
-        }
+        share: () => shareTopicLink(current, signal)
       });
     },
     [runtime.notify]
@@ -372,7 +410,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             <TopicShareOptions
               topic={sharingTopic.topic}
               onClose={closeTopicShare}
-              onShareLink={() => shareTopic(sharingTopic.topic)}
+              onShareLink={(signal) => shareTopic(sharingTopic.topic, signal)}
               onCopyLink={() => copyTopicLink(sharingTopic.topic.url)}
               onShareImage={
                 shareableDetail

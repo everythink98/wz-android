@@ -11,7 +11,7 @@ interface NativeTopicShareCapture {
 export async function captureLongTopicImage(view: ScrollView | null, signal: AbortSignal) {
   if (signal.aborted) throw new Error('图片生成已取消');
   const native = requireOptionalNativeModule<NativeTopicShareCapture>('TopicShareCapture');
-  if (!native) throw new Error('当前安装包不支持生成超长图片，请更新后重试。');
+  if (!native) throw new Error('当前安装包不支持生成高清图片，请更新后重试。');
   const tag = findNodeHandle(view);
   if (!tag || tag <= 0) throw new Error('正文尚未完成排版，请重试。');
   const id = native.createCapture();

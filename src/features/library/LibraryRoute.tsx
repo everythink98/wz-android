@@ -17,6 +17,7 @@ import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useLibraryRouteRuntime } from './LibraryRouteRuntime';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 
 export { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from './LibraryRouteRuntime';
 
@@ -120,13 +121,13 @@ export function LibraryRoute() {
     () => users.records.filter((record): record is FollowedUserRecord => 'user' in record),
     [users.records]
   );
-  const loadMore = useCallback(
-    (tab: LibraryTab) => {
-      if (tab !== libraryTab || currentTabRef.current !== tab) return;
-      if (pages.hasNextPage && !pages.isFetching) void pages.fetchNextPage();
-    },
-    [currentTabRef, libraryTab, pages]
-  );
+  const loadMore = useLatestCallback((tab: LibraryTab) => {
+    if (tab !== libraryTab || currentTabRef.current !== tab) return;
+    if (pages.hasNextPage && !pages.isFetching) void pages.fetchNextPage();
+  });
+  const retry = useLatestCallback(() => {
+    void pages.refetch();
+  });
   const openTopic = useCallback(
     (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
     [navigation]
@@ -163,9 +164,7 @@ export function LibraryRoute() {
       total={pages.data?.pages[0]?.total ?? 0}
       visibleTotal={pages.data?.pages[0]?.visibleTotal ?? 0}
       error={pages.isError}
-      onRetry={() => {
-        void pages.refetch();
-      }}
+      onRetry={retry}
       onLoadMore={loadMore}
       scrollRef={listRef}
       topicStateIndex={runtime.topicStateIndex}

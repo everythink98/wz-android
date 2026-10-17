@@ -5,7 +5,13 @@ import type { FlashListRef } from '@shopify/flash-list';
 import { Platform, StyleSheet, Text, View, type MeasureOnSuccessCallback } from 'react-native';
 import type { PanGestureHandlerEventPayload } from 'react-native-gesture-handler';
 import { createGestureController, getByGestureTestId } from 'react-native-gesture-handler/jest-utils';
-import RenderHTML, { RenderHTMLConfigProvider, TRenderEngineProvider, useContentWidth } from 'react-native-render-html';
+import RenderHTML, {
+  RenderHTMLConfigProvider,
+  TRenderEngineProvider,
+  useContentWidth,
+  useSharedProps,
+  type CustomTextualRenderer
+} from 'react-native-render-html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { compileForumContent, prepareTopicContent, prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
@@ -36,13 +42,20 @@ let mockReadingList: {
 };
 
 let mockPreventRemove = false;
+let mockRecycledGallerySlot = false;
 const mockCancelNativeSelection = jest.fn<() => Promise<void>>(() => Promise.resolve());
-const mockReadingImages = new Map<string, { onDisplay?: () => void; onLoad?: (event: unknown) => void }>();
+const mockReadingImages = new Map<
+  string,
+  { onDisplay?: () => void; onLoad?: (event: unknown) => void; originalUpgradeEnabled: boolean }
+>();
 const mockReadingImageMounts = new Map<string, number>();
 jest.mock('expo-image', () => ({
   ...jest.requireActual<typeof import('expo-image')>('expo-image'),
   Image: (props: { source?: { uri?: string }; onDisplay?: () => void; onLoad?: (event: unknown) => void }) => {
-    if (props.source?.uri) mockReadingImages.set(props.source.uri, props);
+    const { useOriginalImageUpgradeEnabled } =
+      require('@/platform/media/originalImageLoading') as typeof import('@/platform/media/originalImageLoading');
+    const originalUpgradeEnabled = useOriginalImageUpgradeEnabled();
+    if (props.source?.uri) mockReadingImages.set(props.source.uri, { ...props, originalUpgradeEnabled });
     const uri = props.source?.uri;
     require('react').useEffect(() => {
       if (uri) mockReadingImageMounts.set(uri, (mockReadingImageMounts.get(uri) || 0) + 1);
@@ -96,6 +109,8 @@ jest.mock('react-native-reanimated', () => {
   const actual = jest.requireActual('react-native-reanimated/mock') as typeof import('react-native-reanimated');
   return {
     ...actual,
+    useReducedMotion:
+      jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated').useReducedMotion,
     isSharedValue: (value: unknown) => Boolean(value && typeof value === 'object' && 'value' in value),
     useSharedValue: <T,>(value: T) => ReactModule.useRef(actual.useSharedValue(value)).current,
     useEvent: (handler: (event: unknown) => void) => (event: { nativeEvent: unknown }) => handler(event.nativeEvent)
@@ -104,7 +119,15 @@ jest.mock('react-native-reanimated', () => {
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
+  const { useFlashListContext } = jest.requireActual<
+    typeof import('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider')
+  >('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider');
+  const { useLayoutState } = jest.requireActual<
+    typeof import('@shopify/flash-list/dist/recyclerview/hooks/useLayoutState')
+  >('@shopify/flash-list/dist/recyclerview/hooks/useLayoutState');
   return {
+    useFlashListContext,
+    useLayoutState,
     FlashList: (props: Omit<typeof mockReadingList, 'showCells'> & { renderItem: (info: unknown) => ReactNode }) => {
       const [visible, showCells] = ReactModule.useState(true);
       mockReadingList = { ...props, showCells };
@@ -116,7 +139,14 @@ jest.mock('@shopify/flash-list', () => {
           data.map((item, index) =>
             ReactModule.createElement(
               ReactModule.Fragment,
-              { key: item.key },
+              {
+                key:
+                  mockRecycledGallerySlot &&
+                  ((item.type === 'reply' && item.bodyContent?.type === 'imageGallery') ||
+                    (item.type === 'replyContent' && item.content.type === 'imageGallery'))
+                    ? 'recycled-gallery-slot'
+                    : item.key
+              },
               renderItem({ item, index, target: 'Cell' })
             )
           )
@@ -493,6 +523,7 @@ function ProductionContentList({
   topic,
   quotedReplies,
   onOpenImagePreview = () => undefined,
+  renderers,
   readingRuntime,
   readingPaused = false,
   scrollRef
@@ -504,6 +535,7 @@ function ProductionContentList({
   topic: ReturnType<typeof prepareTopicContent>;
   quotedReplies: Record<string, Reply>;
   onOpenImagePreview?: Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview'];
+  renderers?: React.ComponentProps<typeof RenderHTMLConfigProvider>['renderers'];
   readingRuntime?: DiscourseReadingRuntime;
   readingPaused?: boolean;
   scrollRef?: RefObject<FlashListRef<TopicListItem> | null>;
@@ -559,7 +591,12 @@ function ProductionContentList({
       currentNodeSeekUser={undefined}
       discourseEmojiUrls={{}}
       headerState={null}
-      html={{ ...controller, contentWidth, mediaSessionIdentity: 'selection-test' }}
+      html={{
+        ...controller,
+        ...(renderers ? { htmlRenderers: { ...controller.htmlRenderers, ...renderers } } : {}),
+        contentWidth,
+        mediaSessionIdentity: 'selection-test'
+      }}
       nodeSeekUserId={null}
       onImagePreviewDescriptors={() => undefined}
       onOpenTopic={unexpected}
@@ -587,8 +624,10 @@ function ProductionContentList({
         currentTopic: topic,
         currentTopicKey: `${topic.source}:${topic.id}`,
         loadPreviousReplies: unexpected,
+        replyPreviousCursor: undefined,
         loadMoreReplies: unexpected,
         locateReply: unexpected,
+        cancelReplyLocation: jest.fn(),
         loadedQuotedReplies: quotedReplies,
         loadingMoreReplies: false,
         loadingPreviousReplies: false,
@@ -629,6 +668,58 @@ function ProductionContentList({
 }
 
 describe('topic rich-text selection', () => {
+  it('keeps unchanged reply text context stable as the visible window moves', async () => {
+    const textCommits = jest.fn<(selectable: boolean | undefined) => void>();
+    const Strong: CustomTextualRenderer = (props) => {
+      const { defaultTextProps } = useSharedProps();
+      React.useEffect(() => textCommits(defaultTextProps.selectable));
+      const { InternalRenderer, ...rest } = props;
+      return <InternalRenderer {...rest} />;
+    };
+    const topic = prepareTopicContent({
+      ...selectionTopic,
+      source: 'linuxdo',
+      contentHtml: '',
+      replies: [2, 3, 4].map((floor) =>
+        prepareReplyContent(
+          {
+            author: 'reader',
+            floor,
+            commentId: floor,
+            contentHtml: `<p><strong>reply ${floor}</strong></p>`,
+            createdAt: ''
+          },
+          'linuxdo'
+        )
+      ),
+      replyCount: 3
+    });
+    const view = await render(
+      <QueryTestWrapper>
+        <ProductionContentList topic={topic} quotedReplies={{}} renderers={{ strong: Strong }} />
+      </QueryTestWrapper>
+    );
+    try {
+      expect(view.getByText('reply 2')).toBeTruthy();
+      expect(textCommits.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(textCommits).toHaveBeenCalledWith(false);
+      textCommits.mockClear();
+      for (const floor of [2, 3, 4, 3]) {
+        await act(async () => {
+          mockReadingList.onViewableItemsChanged({
+            viewableItems: mockReadingList.data.flatMap((item, index) =>
+              topicListReadingFloor(item) === floor ? [{ item, index, isViewable: true }] : []
+            )
+          });
+        });
+      }
+      expect(textCommits).not.toHaveBeenCalled();
+      expect(view.getByText('reply 4')).toBeTruthy();
+    } finally {
+      await view.unmount();
+    }
+  });
+
   it.each(['block', 'phrasing'] as const)(
     'rejects a two-finger drag owned by a %s image link and preserves the next single-finger image tap',
     async (kind) => {
@@ -716,6 +807,114 @@ describe('topic rich-text selection', () => {
         expect(onOpenImagePreview).toHaveBeenLastCalledWith(imageUrl);
       } finally {
         await view.unmount();
+      }
+    }
+  );
+
+  it.each([false, true])(
+    'keeps recycled galleries in their own reply scope when their HTML is identical: %s',
+    async (sameHtml) => {
+      const onOpenImagePreview = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>();
+      const galleryHtml = (name: string) =>
+        sanitizeContentHtml(
+          '<div class="d-image-grid" data-mode="carousel">' +
+            Array.from(
+              { length: 10 },
+              (_, index) =>
+                `<img src="https://images.invalid/${name}-${index}.png" alt="${name} slide ${index}" width="230" height="500">`
+            ).join('') +
+            '</div>',
+          'https://linux.do/'
+        );
+      const firstName = 'recycled-gallery-a';
+      const secondName = sameHtml ? firstName : 'recycled-gallery-b';
+      const topicForReply = (floor: number, name: string) =>
+        prepareTopicContent({
+          ...selectionTopic,
+          id: 'recycled-gallery-topic',
+          source: 'linuxdo',
+          url: 'https://linux.do/t/42',
+          contentHtml: '<p>opening</p>',
+          replyCount: 2,
+          replies: [
+            prepareReplyContent(
+              { author: `reader-${floor}`, floor, contentHtml: galleryHtml(name), createdAt: '' },
+              'linuxdo'
+            )
+          ]
+        });
+      const firstTopic = topicForReply(2, firstName);
+      const secondTopic = topicForReply(3, secondName);
+      const tree = (topic: typeof firstTopic, contentWidth = 320) => (
+        <QueryTestWrapper>
+          <ProductionContentList
+            topic={topic}
+            quotedReplies={{}}
+            contentWidth={contentWidth}
+            onOpenImagePreview={onOpenImagePreview}
+          />
+        </QueryTestWrapper>
+      );
+      mockRecycledGallerySlot = true;
+      const view = await render(tree(firstTopic));
+      try {
+        const reportCurrentCells = () =>
+          act(async () => {
+            mockReadingList.onViewableItemsChanged({
+              viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+            });
+          });
+        await reportCurrentCells();
+        await act(async () => mockReadingList.onLoad());
+        const firstImageUri = `https://images.invalid/${firstName}-0.png`;
+        const firstImageMounts = mockReadingImageMounts.get(firstImageUri);
+        expect(firstImageMounts).toBeGreaterThan(0);
+        await view.rerender(tree(firstTopic));
+        expect(mockReadingImageMounts.get(firstImageUri)).toBe(firstImageMounts);
+        await view.rerender(tree(firstTopic, 280.4));
+        const carouselStyle = StyleSheet.flatten(view.getByTestId('topic-image-gallery-carousel').props.style);
+        await fireEvent(view.getByTestId('topic-image-gallery-carousel'), 'layout', {
+          nativeEvent: { layout: { x: 0, y: 0, width: carouselStyle.width, height: carouselStyle.height } }
+        });
+        expect(mockReadingImageMounts.get(firstImageUri)).toBe(firstImageMounts);
+        for (let page = 0; page < 4; page++) await fireEvent.press(view.getByLabelText('下一张图片'));
+        expect(view.getByText('5 / 10')).toBeTruthy();
+
+        await view.rerender(tree(secondTopic, 280.4));
+        await reportCurrentCells();
+        expect(view.getByText('1 / 10')).toBeTruthy();
+        expect(mockReadingImages.get(`https://images.invalid/${secondName}-0.png`)?.originalUpgradeEnabled).toBe(true);
+        expect(mockReadingImages.get(`https://images.invalid/${secondName}-1.png`)?.originalUpgradeEnabled).toBe(false);
+        await fireEvent.press(view.getByLabelText(`${secondName} slide 0`));
+        expect(onOpenImagePreview).toHaveBeenLastCalledWith(
+          `https://images.invalid/${secondName}-0.png`,
+          undefined,
+          undefined
+        );
+        await fireEvent.press(view.getByLabelText('下一张图片'));
+        expect(view.getByText('2 / 10')).toBeTruthy();
+
+        await view.rerender(tree(firstTopic, 280.4));
+        await reportCurrentCells();
+        expect(view.getByText('5 / 10')).toBeTruthy();
+        await fireEvent.press(view.getByLabelText(`${firstName} slide 4`));
+        expect(onOpenImagePreview).toHaveBeenLastCalledWith(
+          `https://images.invalid/${firstName}-4.png`,
+          undefined,
+          undefined
+        );
+        await view.rerender(tree(secondTopic, 280.4));
+        await reportCurrentCells();
+        expect(view.getByText('2 / 10')).toBeTruthy();
+        await fireEvent.press(view.getByLabelText(`${secondName} slide 1`));
+        expect(onOpenImagePreview).toHaveBeenLastCalledWith(
+          `https://images.invalid/${secondName}-1.png`,
+          undefined,
+          undefined
+        );
+      } finally {
+        await view.unmount();
+        mockRecycledGallerySlot = false;
       }
     }
   );

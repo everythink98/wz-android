@@ -263,7 +263,10 @@ class ForumContentSelectionView(
         val pointerIndex = event.findPointerIndex(activePointerId)
         if (pointerIndex < 0) {
           cancelSelectionOnTap = false
-          return finishOwnedGesture(cancelled = true)
+          if (coordinatorOwnsGesture) return finishOwnedGesture(cancelled = true)
+          removeCallbacks(longPressRunnable)
+          selectionGestureRoot = null
+          return super.dispatchTouchEvent(event)
         }
         val x = event.getX(pointerIndex)
         val y = event.getY(pointerIndex)

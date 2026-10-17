@@ -32,6 +32,8 @@ type TopicScene =
   | 'replies-loading-more'
   | 'replies-partial'
   | 'replies-populated'
+  | 'replies-boosts-inline'
+  | 'replies-boosts-wrap'
   | 'replies-long'
   | 'entities'
   | 'structured-content';
@@ -161,6 +163,26 @@ function createTopic(source: Source, state: ActionState, scene: TopicScene) {
   const selected = state === 'selected' || state === 'success';
   const replies =
     scene.startsWith('replies-') && scene !== 'replies-empty' && scene !== 'replies-loading' ? createReplies() : [];
+  if (scene === 'replies-boosts-inline' || scene === 'replies-boosts-wrap') {
+    const text = scene === 'replies-boosts-inline' ? '这条加电用来检查评论展开位置' : '评论加电布局验证';
+    replies[0].siteExtension = {
+      canBoost: true,
+      boostCount: 10,
+      boosts: Array.from({ length: 10 }, (_, index) => ({
+        id: 301 + index,
+        user: {
+          source: 'linuxdo',
+          username: `reader${index + 1}`,
+          url: `https://visual.invalid/u/reader${index + 1}`
+        },
+        content: [{ text: `${text}${String(index + 1).padStart(2, '0')}` }],
+        canDelete: false
+      }))
+    };
+    replies[1].contentHtml =
+      '<p>展开位置锚点：这条评论应随上方加电连续下移。</p>' +
+      Array.from({ length: 16 }, (_, index) => `<p>后续阅读内容${index + 1}</p>`).join('');
+  }
   if (scene === 'replies-long') {
     const sample = replies[0];
     replies.splice(
@@ -226,13 +248,19 @@ function decisionForScenario(
   scene: TopicScene,
   pendingTarget?: PendingTarget
 ): TopicActionDecisionFor {
-  return ({ action, interaction, reply }) => {
+  return ({ action, interaction, reply, target }) => {
     if (scene === 'entities') {
       return action === 'vote' ? { allowed: true, reason: 'allowed' } : { allowed: false, reason: 'unsupported' };
     }
-    if (scene === 'replies-populated' || scene === 'replies-long') {
+    if (
+      scene === 'replies-populated' ||
+      scene === 'replies-long' ||
+      scene === 'replies-boosts-inline' ||
+      scene === 'replies-boosts-wrap'
+    ) {
       const allowed =
         action === 'reply' ||
+        (action === 'boost' && target?.siteExtension?.canBoost === true) ||
         (action === 'edit' && reply?.canEdit === true) ||
         (action === 'delete' && reply?.canDelete === true) ||
         (action === 'like' && reply?.canLike !== false);
@@ -321,9 +349,12 @@ function TopicScenarioScreen({
         loadingPreviousReplies: false,
         loadingQuotedFloors: {},
         locateReply: async () => 'completed' as const,
+        cancelReplyLocation: () => undefined,
         replyCollectionComplete:
           scene === 'replies-empty' ||
           scene === 'replies-populated' ||
+          scene === 'replies-boosts-inline' ||
+          scene === 'replies-boosts-wrap' ||
           scene === 'replies-long' ||
           scene === 'entities',
         replyEndError,
@@ -516,6 +547,22 @@ export const topicVisualScenarios: readonly VisualScenarioDefinition[] = [
     tags: ['topic', 'replies', 'data', 'reply-actions'],
     title: '回复列表·有数据与操作',
     render: () => <TopicScenarioScreen scene="replies-populated" source="linuxdo" />
+  },
+  {
+    capabilityIds: ['TOPIC-03', 'WRITE-03'],
+    id: 'topic.replies.boosts-inline',
+    kind: 'rendered',
+    tags: ['topic', 'replies', 'boosts', 'expand', 'inline'],
+    title: '评论加电·展开箭头同排',
+    render: () => <TopicScenarioScreen scene="replies-boosts-inline" source="linuxdo" />
+  },
+  {
+    capabilityIds: ['TOPIC-03', 'WRITE-03'],
+    id: 'topic.replies.boosts-wrap',
+    kind: 'rendered',
+    tags: ['topic', 'replies', 'boosts', 'expand', 'wrap'],
+    title: '评论加电·展开箭头换行',
+    render: () => <TopicScenarioScreen scene="replies-boosts-wrap" source="linuxdo" />
   },
   {
     capabilityIds: ['TOPIC-03'],

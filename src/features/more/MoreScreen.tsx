@@ -1,5 +1,5 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
-import { memo, type RefObject } from 'react';
+import { memo, useCallback, type ComponentProps, type RefObject } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createMoreScreenStyles } from './styles';
@@ -7,6 +7,10 @@ import { MoreAccountPanel, type MoreAccountCapabilities } from './components/Mor
 import { MoreUpdatePanel, type MoreUpdateCapabilities } from './components/MoreUpdatePanel';
 import { MoreUtilityPanels, type MoreUtilityCapabilities } from './components/MoreUtilityPanels';
 import { ContentSourcesPanel } from './components/ContentSourcesPanel';
+
+const MemoizedMoreAccountPanel = memo(MoreAccountPanel);
+const MemoizedMoreUtilityPanels = memo(MoreUtilityPanels);
+const MemoizedContentSourcesPanel = memo(ContentSourcesPanel);
 
 export const MoreScreen = memo(function MoreScreen({
   account,
@@ -25,6 +29,15 @@ export const MoreScreen = memo(function MoreScreen({
 }) {
   const { styles } = useReaderThemeStyles(createMoreScreenStyles);
   const onPageLayout = useStartupPageLayout();
+  const updateSettings = utilities.settings.update;
+  const changeRecoveryThreshold = useCallback(
+    (value: number) => updateSettings({ nodeSeekRecoveryThreshold: value }),
+    [updateSettings]
+  );
+  const changeContentSources = useCallback<ComponentProps<typeof ContentSourcesPanel>['onChange']>(
+    (contentSources) => updateSettings({ contentSources }),
+    [updateSettings]
+  );
   return (
     <ScrollView
       overScrollMode="never"
@@ -36,18 +49,18 @@ export const MoreScreen = memo(function MoreScreen({
     >
       <View>
         <Text style={styles.sectionTitle}>更多</Text>
-        <MoreAccountPanel
+        <MemoizedMoreAccountPanel
           nodeSeekRecoveryThreshold={utilities.settings.value.nodeSeekRecoveryThreshold}
           runtime={account}
-          onNodeSeekRecoveryThresholdChange={(value) => utilities.settings.update({ nodeSeekRecoveryThreshold: value })}
+          onNodeSeekRecoveryThresholdChange={changeRecoveryThreshold}
         />
-        <ContentSourcesPanel
+        <MemoizedContentSourcesPanel
           expanded={contentSourcesExpanded}
           preferences={utilities.settings.value.contentSources}
-          onChange={(contentSources) => utilities.settings.update({ contentSources })}
+          onChange={changeContentSources}
           onExpandedChange={onContentSourcesExpandedChange}
         />
-        <MoreUtilityPanels runtime={utilities} />
+        <MemoizedMoreUtilityPanels runtime={utilities} />
         <MoreUpdatePanel runtime={update} />
       </View>
     </ScrollView>

@@ -139,6 +139,18 @@ async function fetchJson(path: string, options: NotificationAdapterAccess) {
   }
   if (!response.ok) {
     const message = isRecord(data) ? text(data, 'message', 'error') : '';
+    const ownUserRequest =
+      path === '/api/notification/unread-count' ||
+      /^\/api\/notification\/(?:at-me|reply-to-me|message)\/list\?page=\d+$/.test(path);
+    // A missing conversation counterpart must not invalidate the current account.
+    if (response.status === 500 && ownUserRequest && message === 'USER NOT FOUND') {
+      throw Object.assign(new Error('NodeSeek 登录状态需要重新确认，请重新检测登录'), {
+        source: 'nodeseek',
+        kind: 'login-required',
+        reason: 'account-recheck-required',
+        status: response.status
+      });
+    }
     const error = new Error(message || `NodeSeek 消息请求失败：HTTP ${response.status}`);
     if (response.status === 401 || response.status === 403) {
       Object.assign(error, { source: 'nodeseek', loginRequired: true });

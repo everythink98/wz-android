@@ -29,7 +29,6 @@ type ViewportItemMetadata = {
 function contentScope(item: TopicListItem) {
   if (item.type === 'topicQuoteSummary') return `topic-quote:${item.content.instanceKey}`;
   if (item.type === 'topicQuoteContent') return `topic-quote:${item.instanceKey}`;
-  if (item.type === 'topicAcceptedAnswerContent') return item.key.split(':', 1)[0];
   if (item.type === 'topicContent') return 'opening';
   if (item.type === 'replyQuoteSummary' || item.type === 'replyQuoteContent')
     return `reply-quote:${item.key.split(':body:', 1)[0]}`;
@@ -46,8 +45,8 @@ function dynamicRegionIdentities(item: TopicListItem) {
   if (item.type === 'replyQuoteSummary' || item.type === 'replyQuoteContent') {
     identities.push(`quote:${item.type === 'replyQuoteSummary' ? item.key : item.instanceKey}`);
   }
-  if (item.type === 'topicAcceptedAnswer' || item.type === 'topicAcceptedAnswerContent') {
-    identities.push(`accepted:${item.key.split(':', 1)[0]}`);
+  if (item.type === 'topicAcceptedAnswer') {
+    identities.push(`accepted:${item.key}`);
   }
 
   const row = topicListCompiledRow(item);
@@ -197,7 +196,7 @@ export function useTopicBodyMediaViewport({
 }) {
   const [snapshot, setSnapshot] = useState<ViewportSnapshot>(() => emptySnapshot(sessionIdentity));
   const snapshotRef = useRef(snapshot);
-  const previousVisibleRef = useRef({ firstIndex: -1, scrollingForward: true, sessionIdentity });
+  const previousVisibleRef = useRef({ firstKey: '', firstIndex: -1, scrollingForward: true, sessionIdentity });
   const itemMetadata = useMemo(() => createViewportItemMetadata(items), [items]);
   const reconciledSnapshot = useMemo(
     () => reconcileSnapshot(snapshot, items, itemMetadata, sessionIdentity),
@@ -224,13 +223,19 @@ export function useTopicBodyMediaViewport({
       ].sort((left, right) => left - right);
       const firstVisibleIndex = visibleIndexes[0];
       const previous = previousVisibleRef.current;
+      const previousFirstIndex = indexByKey.get(previous.firstKey) ?? previous.firstIndex;
       const scrollingForward =
-        previous.sessionIdentity !== sessionIdentity || previous.firstIndex < 0
+        previous.sessionIdentity !== sessionIdentity || previousFirstIndex < 0
           ? true
-          : firstVisibleIndex === undefined || firstVisibleIndex === previous.firstIndex
+          : firstVisibleIndex === undefined || firstVisibleIndex === previousFirstIndex
             ? previous.scrollingForward
-            : firstVisibleIndex > previous.firstIndex;
-      previousVisibleRef.current = { firstIndex: firstVisibleIndex ?? -1, scrollingForward, sessionIdentity };
+            : firstVisibleIndex > previousFirstIndex;
+      previousVisibleRef.current = {
+        firstKey: firstVisibleIndex === undefined ? '' : items[firstVisibleIndex].key,
+        firstIndex: firstVisibleIndex ?? -1,
+        scrollingForward,
+        sessionIdentity
+      };
 
       const visibleRowKeys = visibleIndexes
         .map((index) => items[index]?.key)

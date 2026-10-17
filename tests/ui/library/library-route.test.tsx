@@ -16,6 +16,7 @@ import type { Source } from '@/domain/forum/sourceCatalog';
 let mockScreen: ComponentProps<typeof LibraryScreen>;
 let mockFocused = true;
 const mockListFrames: { testID?: string; data: unknown[]; onEndReached?: () => void }[] = [];
+const mockNavigation = { dispatch: jest.fn() };
 jest.mock('react-native-gesture-handler', () => ({
   ...jest.requireActual<typeof import('react-native-gesture-handler')>('react-native-gesture-handler'),
   ScrollView: (require('react-native') as typeof import('react-native')).ScrollView
@@ -50,7 +51,7 @@ jest.mock('@/platform/storage/readerDataStore', () => ({
 jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native'),
   useIsFocused: () => mockFocused,
-  useNavigation: () => ({ dispatch: jest.fn() }),
+  useNavigation: () => mockNavigation,
   useScrollToTop: jest.fn(),
   StackActions: { push: jest.fn() }
 }));
@@ -102,6 +103,7 @@ beforeEach(() => {
   categoryQuery.mockReset().mockResolvedValue(localCategories);
   mockFocused = true;
   mockListFrames.length = 0;
+  mockNavigation.dispatch.mockClear();
 });
 afterEach(() => {
   jest.restoreAllMocks();
@@ -319,6 +321,59 @@ describe('Library route database query lifecycle', () => {
     expect(query).toHaveBeenCalledTimes(calls);
     await view.unmount();
     view.client.clear();
+  });
+  it('keeps populated collection viewports idle across an unrelated route render', async () => {
+    query.mockImplementation(async ({ collection }) =>
+      collection === 'followedUsers'
+        ? {
+            records: [
+              {
+                user: {
+                  source: 'nodeseek',
+                  id: '7',
+                  username: 'fixture',
+                  url: 'https://www.nodeseek.com/space/7',
+                  topics: []
+                },
+                followedAt: '2026-09-10T00:00:00Z'
+              }
+            ],
+            total: 1,
+            visibleTotal: 1
+          }
+        : page(collection)
+    );
+    const view = await mount();
+    try {
+      await waitFor(() => expect(mockScreen.favoriteRecords).toHaveLength(1));
+      await fireEvent.press(view.getByTestId('library-tab-history'));
+      await waitFor(() => expect(mockScreen.historyRecords).toHaveLength(1));
+      await fireEvent.press(view.getByTestId('library-tab-users'));
+      await waitFor(() => expect(mockScreen.followedUsers).toHaveLength(1));
+      await fireEvent.press(view.getByTestId('library-tab-favorites'));
+      await waitFor(() => expect(mockScreen.libraryTab).toBe('favorites'));
+      await waitFor(() => expect(mockScreen.categoriesReady).toBe(true));
+      const datasets = [mockScreen.favoriteRecords, mockScreen.historyRecords, mockScreen.followedUsers];
+      const requestCount = query.mock.calls.length;
+      mockListFrames.length = 0;
+
+      await view.rerender(
+        <QueryClientProvider client={view.client}>
+          <LibraryRouteRuntimeProvider value={view.runtime}>
+            <LibraryRoute />
+          </LibraryRouteRuntimeProvider>
+        </QueryClientProvider>
+      );
+
+      expect(mockScreen.favoriteRecords).toBe(datasets[0]);
+      expect(mockScreen.historyRecords).toBe(datasets[1]);
+      expect(mockScreen.followedUsers).toBe(datasets[2]);
+      expect(query).toHaveBeenCalledTimes(requestCount);
+      expect(mockListFrames).toHaveLength(0);
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
   });
   it('loads only the selected collection and appends the returned cursor page', async () => {
     const cursor = { time: 123, ordinal: 50 };

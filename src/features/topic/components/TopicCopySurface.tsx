@@ -10,13 +10,14 @@ export function TopicCopySurface({
   onCopy: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
-  const start = useRef<{ x: number; y: number } | null>(null);
+  const start = useRef<{ x: number; y: number; onCopy: () => void } | null>(null);
   return (
     <Pressable
       delayLongPress={450}
       style={style}
       onTouchStart={({ nativeEvent }) => {
-        start.current = nativeEvent.touches.length === 1 ? { x: nativeEvent.pageX, y: nativeEvent.pageY } : null;
+        start.current =
+          nativeEvent.touches.length === 1 ? { x: nativeEvent.pageX, y: nativeEvent.pageY, onCopy } : null;
       }}
       onTouchMove={({ nativeEvent }) => {
         const origin = start.current;
@@ -35,7 +36,7 @@ export function TopicCopySurface({
         start.current = null;
       }}
       onLongPress={() => {
-        if (start.current) onCopy();
+        if (start.current?.onCopy === onCopy) onCopy();
       }}
     >
       {children}

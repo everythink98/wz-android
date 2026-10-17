@@ -1,6 +1,7 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
+import { act, render, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
+import { memo, useLayoutEffect, useMemo } from 'react';
 
 jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
 
@@ -25,6 +26,13 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
+import {
+  SearchRouteRuntimeProvider,
+  useSearchRouteRuntime,
+  type SearchRouteRuntimeValue
+} from '@/features/search/SearchRouteRuntime';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
 const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);
 const mockGetCurrentUser = jest.mocked(getCurrentUserIdentity);
@@ -170,6 +178,103 @@ describe('account status queries', () => {
       reason: 'expired'
     });
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? (null as never) : linuxUser));
+  });
+
+  it('keeps account consumers idle on unrelated root updates and publishes real identity changes', async () => {
+    const fetcher = jest.fn(async () => new Response('{}'));
+    const { createReadGateway } = jest.requireActual<typeof import('@/sources/readGateway')>('@/sources/readGateway');
+    const readerData = createEmptyReaderData();
+    const baseRuntime: SearchRouteRuntimeValue = {
+      enabledSources: [...sessionSources],
+      account: {
+        linuxDoVerificationVisible: false,
+        readGateway: createReadGateway({
+          anonymousFetcher: fetcher,
+          fetcher,
+          nodeSeekUserAgent: () => 'safe-agent',
+          readSessionRuntimeSnapshot: (source) => ({
+            source,
+            authenticated: false,
+            authSurfaceOpen: false,
+            identityKey: `${source}:anonymous`,
+            identityTrust: 'none',
+            sessionEpoch: 0
+          })
+        }),
+        reconcileAccountStatus: async () => ({ status: 'stale' }),
+        requestNodeSeekVerification: () => undefined,
+        sessionEpochs: initialForumSessionEpochs,
+        sessionViewModels: projectTestAccountSessions(createSiteSessionStates()),
+        showLinuxDoVerification: () => undefined,
+        showYaohuoLogin: () => undefined
+      },
+      catalogCategories: [],
+      notify: () => undefined,
+      readerData,
+      topicStateIndex: createTopicListItemStateIndex(readerData)
+    };
+    const options: Parameters<typeof useAccountStatusController>[0] = {
+      enabledSourcesReady: false,
+      fetcher,
+      linuxDoUserAgentRef: { current: 'safe-agent' },
+      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      notify: baseRuntime.notify,
+      onAccountStatusChanged: () => undefined
+    };
+    let controller!: ReturnType<typeof useAccountStatusController>;
+    const consumerCommits: SiteSessionViewModels[] = [];
+    const Consumer = memo(function Consumer() {
+      const models = useSearchRouteRuntime().account.sessionViewModels;
+      useLayoutEffect(() => {
+        consumerCommits.push(models);
+      });
+      return null;
+    });
+    function Harness({ revision }: { revision: number }) {
+      void revision;
+      controller = useAccountStatusController(options);
+      const models = controller.accountSessionViewModels;
+      const runtime = useMemo(
+        () => ({ ...baseRuntime, account: { ...baseRuntime.account, sessionViewModels: models } }),
+        [models]
+      );
+      return (
+        <SearchRouteRuntimeProvider value={runtime}>
+          <Consumer />
+        </SearchRouteRuntimeProvider>
+      );
+    }
+    const view = await render(<Harness revision={0} />, { wrapper: QueryTestWrapper });
+    const models = controller.accountSessionViewModels;
+    const snapshots = sessionSources.map((source) => appQueryClient.getQueryData(accountQueryKeys.snapshot(source)));
+    const commits = consumerCommits.length;
+
+    await view.rerender(<Harness revision={1} />);
+
+    sessionSources.forEach((source, index) => {
+      expect(appQueryClient.getQueryData(accountQueryKeys.snapshot(source))).toBe(snapshots[index]);
+    });
+    expect({
+      sameModels: controller.accountSessionViewModels === models,
+      addedConsumerCommits: consumerCommits.length - commits
+    }).toEqual({ sameModels: true, addedConsumerCommits: 0 });
+
+    await act(async () => {
+      controller.applyAccountSessionEvent({
+        site: 'nodeseek',
+        type: 'session-updated',
+        loggedIn: true,
+        currentUser: nodeSeekUser
+      });
+    });
+
+    await waitFor(() => expect(controller.accountSessionViewModels).not.toBe(models));
+    expect(consumerCommits).toHaveLength(commits + 1);
+    expect(consumerCommits.at(-1)?.nodeseek).toMatchObject({
+      identityTrust: 'confirmed',
+      currentUser: nodeSeekUser
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('reads account records before settings settle but publishes identity only after settings are ready', async () => {

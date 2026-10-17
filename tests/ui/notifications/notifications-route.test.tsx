@@ -46,6 +46,22 @@ import { act, fireEvent, render, waitFor } from '../render';
 
 afterEach(() => setDiagnosticWriter(null));
 
+const mockHistoricalHtmlRender = jest.fn<(html: string) => void>();
+jest.mock('react-native-render-html', () => {
+  const ReactModule = require('react') as typeof React;
+  const actual = jest.requireActual<typeof import('react-native-render-html')>('react-native-render-html/src');
+  return {
+    __esModule: true,
+    ...actual,
+    default: (props: React.ComponentProps<typeof actual.default>) => {
+      if ('html' in props.source && props.source.html.includes('历史消息')) {
+        mockHistoricalHtmlRender(props.source.html);
+      }
+      return ReactModule.createElement(actual.default, props);
+    }
+  };
+});
+
 jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn()
 }));
@@ -534,7 +550,7 @@ describe('notification routes', () => {
     let pendingRead: Promise<void> | undefined;
     let malformedCursor: 'repeat' | 'empty-advance' | undefined;
     let runtime: NotificationRouteRuntimeValue;
-    const requests: { url: URL; signal?: AbortSignal | null }[] = [];
+    const requests: { url: URL; method: string; signal?: AbortSignal | null }[] = [];
     const item: ForumNotification = {
       source: 'linuxdo',
       id: 'pm:201',
@@ -547,7 +563,7 @@ describe('notification routes', () => {
     };
     const fetcher: Fetcher = async (input, init) => {
       const url = new URL(input);
-      requests.push({ url, signal: init?.signal });
+      requests.push({ url, method: init?.method || 'GET', signal: init?.signal });
       const pending = pendingRead;
       pendingRead = undefined;
       await pending;
@@ -663,6 +679,42 @@ describe('notification routes', () => {
       }
     };
   }
+
+  it('keeps loaded conversation HTML idle through separately committed draft edits', async () => {
+    mockHistoricalHtmlRender.mockClear();
+    const owner = await renderLinuxDoHistory();
+    try {
+      await fireEvent.press(owner.view.getByLabelText('加载更早消息'));
+      await waitFor(() => expect(owner.view.getByText('历史消息 6')).toBeTruthy());
+      await fireEvent.press(owner.view.getByLabelText('加载更早消息'));
+      await waitFor(() => expect(owner.view.getByText('历史消息 1')).toBeTruthy());
+      expect(new Set(mockHistoricalHtmlRender.mock.calls.map(([html]) => html)).size).toBe(65);
+      await fireEvent.press(owner.view.getByLabelText('回复私信'));
+      await waitFor(() => expect(owner.view.getByLabelText('私信回复内容')).toBeTruthy());
+      const requestCount = owner.requests.length;
+      mockHistoricalHtmlRender.mockClear();
+
+      for (let index = 1; index <= 3; index += 1) {
+        await fireEvent.changeText(owner.view.getByLabelText('私信回复内容'), `本机草稿 ${index}`);
+      }
+
+      expect(owner.view.getByLabelText('私信回复内容').props.value).toBe('本机草稿 3');
+      expect(owner.requests).toHaveLength(requestCount);
+      expect(owner.requests.every(({ method }) => method === 'GET')).toBe(true);
+      expect(mockHistoricalHtmlRender).not.toHaveBeenCalled();
+
+      owner.setSize(66);
+      await owner.refresh();
+      await waitFor(() => expect(owner.view.getByText('历史消息 66')).toBeTruthy());
+      expect(mockHistoricalHtmlRender.mock.calls.some(([html]) => html.includes('历史消息 66'))).toBe(true);
+      expect(owner.view.getByLabelText('私信回复内容').props.value).toBe('本机草稿 3');
+      expect(owner.requests.every(({ method }) => method === 'GET')).toBe(true);
+    } finally {
+      await owner.view.unmount();
+      appQueryClient.clear();
+      mockHistoricalHtmlRender.mockClear();
+    }
+  });
 
   it('loads private history only on demand and retains its messages across latest-window refreshes', async () => {
     const owner = await renderLinuxDoHistory();

@@ -18,7 +18,7 @@ import { resolveForumReadPlan } from '@/domain/forum/readPlan';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from '../QueryTestWrapper';
-import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
+import { prepareReplyContent, requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { getNodeSeekReplies } from '@/sources/nodeseek/reader';
 import { readHistoryReplyBaseline } from '@/platform/storage/readerDataStore';
@@ -2530,6 +2530,7 @@ describe('topic query controller', () => {
     });
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
 
+    expect(hook.result.current.controller.replyPreviousCursor).toEqual({ kind: 'cursor', page: 15, offset: 140 });
     await act(async () => {
       await hook.result.current.controller.loadPreviousReplies({ silent: true });
     });
@@ -2551,6 +2552,7 @@ describe('topic query controller', () => {
     );
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([previous, target, next]));
     expect(hook.result.current.controller.replyHasPrevious).toBe(false);
+    expect(hook.result.current.controller.replyPreviousCursor).toBeUndefined();
     expect(hook.result.current.controller.replyHasMore).toBe(false);
 
     await act(async () => {
@@ -2586,6 +2588,127 @@ describe('topic query controller', () => {
     });
     expect(getReplies.mock.calls.filter(([request]) => replyRequestTarget(request)?.floor === 155)).toHaveLength(1);
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+  });
+
+  it.each([false, true])('keeps a late target window subordinate to reader cancellation=%s', async (cancelled) => {
+    const target = { ...firstReply, floor: 50, commentId: 150, author: 'late-target' };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      replyCount: 50,
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: 10
+    };
+    const targetPage: RepliesResponse = {
+      items: [target],
+      currentPage: 5,
+      currentOffset: 40,
+      previousPage: 4,
+      previousOffset: 30,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null
+    };
+    const pending = Promise.withResolvers<RepliesResponse>();
+    const getReplies = jest.fn<TestGetReplies>(async (request) => {
+      if (replyRequestTarget(request)?.floor === 50) return pending.promise;
+      return { items: [firstReply], currentPage: 1, hasMore: true, nextPage: 2, nextOffset: 10 };
+    });
+    const hook = await renderTopicController({
+      readGateway: { getTopic: jest.fn<TestGetTopic>(async () => detail), getReplies }
+    });
+    let request: Promise<LinuxDoReadResumeOutcome> | undefined;
+    try {
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+      const originalReplies = hook.result.current.controller.topicReplies;
+      await act(async () => {
+        request = hook.result.current.controller.locateReply({ floor: 50 }, { silent: true });
+        await Promise.resolve();
+      });
+      await waitFor(() =>
+        expect(getReplies.mock.calls.some(([value]) => replyRequestTarget(value)?.floor === 50)).toBe(true)
+      );
+      await waitFor(() => expect(hook.result.current.controller.loadingMoreReplies).toBe(true));
+      if (cancelled) hook.result.current.controller.cancelReplyLocation();
+      if (cancelled) await waitFor(() => expect(hook.result.current.controller.loadingMoreReplies).toBe(false));
+      await act(async () => {
+        pending.resolve(targetPage);
+        await request;
+      });
+      if (cancelled) expect(hook.result.current.controller.topicReplies).toBe(originalReplies);
+      else await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
+      await expect(request).resolves.toBe(cancelled ? 'stale' : 'completed');
+    } finally {
+      await act(async () => {
+        pending.resolve(targetPage);
+        await request;
+      });
+      await hook.unmount();
+    }
+  });
+
+  it('preserves a newer ordinary refresh when the reader cancels an older location', async () => {
+    const target = { ...firstReply, floor: 50, commentId: 150, author: 'old-target' };
+    const refreshed = { ...firstReply, author: 'current-refresh' };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      replyCount: 50,
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: 10
+    };
+    const refreshedDetail: TopicDetail = {
+      ...firstDetail,
+      replies: [refreshed],
+      replyCount: 1,
+      replyHasMore: false,
+      replyNextPage: null,
+      replyNextOffset: null
+    };
+    const pendingTarget = Promise.withResolvers<RepliesResponse>();
+    const pendingDetail = Promise.withResolvers<TopicDetail>();
+    const getTopic = jest
+      .fn<TestGetTopic>()
+      .mockResolvedValueOnce(detail)
+      .mockImplementationOnce(async () => pendingDetail.promise);
+    const getReplies = jest.fn<TestGetReplies>(async (request) => {
+      if (replyRequestTarget(request)?.floor === 50) return pendingTarget.promise;
+      return { items: [refreshed], currentPage: 1, hasMore: false, nextPage: null };
+    });
+    const targetPage: RepliesResponse = { items: [target], currentPage: 5, hasMore: false, nextPage: null };
+    const hook = await renderTopicController({ readGateway: { getTopic, getReplies } });
+    let locationRequest: Promise<LinuxDoReadResumeOutcome> | undefined;
+    let refreshRequest: Promise<LinuxDoReadResumeOutcome> | undefined;
+    try {
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+      await act(async () => {
+        locationRequest = hook.result.current.controller.locateReply({ floor: 50 });
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        refreshRequest = hook.result.current.controller.refreshWholeTopic();
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(2));
+      hook.result.current.controller.cancelReplyLocation();
+      await waitFor(() => expect(hook.result.current.controller.loadingMoreReplies).toBe(false));
+      await act(async () => {
+        pendingTarget.resolve(targetPage);
+        pendingDetail.resolve(refreshedDetail);
+        await Promise.all([locationRequest, refreshRequest]);
+      });
+      await expect(locationRequest).resolves.toBe('stale');
+      await expect(refreshRequest).resolves.toBe('completed');
+      expect(hook.result.current.controller.topicReplies).toEqual([refreshed]);
+    } finally {
+      await act(async () => {
+        pendingTarget.resolve(targetPage);
+        pendingDetail.resolve(refreshedDetail);
+        await Promise.all([locationRequest, refreshRequest]);
+      });
+      await hook.unmount();
+    }
   });
 
   it('keeps a later target authoritative over an earlier whole-topic refresh', async () => {
@@ -3218,7 +3341,7 @@ describe('topic query controller', () => {
   });
 
   it.each(['oldest', 'newest'] as const)(
-    'anchors the created NodeSeek reply and reads adjacent pages in %s order',
+    'anchors the created NodeSeek reply and retains loaded content through adjacent pages in %s order',
     async (order) => {
       const topic = { ...firstTopic, replyCount: undefined };
       const initial = Array.from({ length: 10 }, (_, i) => ({ ...firstReply, floor: i + 1, commentId: 100 + i + 1 }));
@@ -3247,7 +3370,7 @@ describe('topic query controller', () => {
                 commentId: 100 + floor,
                 floorIndex: floor,
                 poster: { name: floor === 33 ? 'other' : 'alice', uid: floor === 33 ? 8 : 7 },
-                markdown: '测试',
+                markdown: `测试 ${floor}`,
                 time: { createdDate: '2026-09-18T10:00:00Z' }
               }))
             }
@@ -3300,6 +3423,10 @@ describe('topic query controller', () => {
       );
       expect(hook.result.current.session.state.replyOrder).toBe(order);
       for (const page of [3, 2, 1]) {
+        const retainedReplies = hook.result.current.controller.topicReplies;
+        const retainedContent = retainedReplies.map((reply) =>
+          requirePreparedForumContent(reply.preparedContent, reply.contentHtml)
+        );
         await act(async () => {
           await (order === 'oldest'
             ? hook.result.current.controller.loadPreviousReplies()
@@ -3309,6 +3436,17 @@ describe('topic query controller', () => {
         expect(hook.result.current.controller.topicReplies.map((r) => r.floor)).toEqual(
           order === 'oldest' ? expected : expected.reverse()
         );
+        const currentReplies = new Map(
+          hook.result.current.controller.topicReplies.map((reply) => [reply.commentId, reply])
+        );
+        retainedReplies.forEach((reply, index) => {
+          const current = currentReplies.get(reply.commentId);
+          expect(current).toBe(reply);
+          expect(current?.preparedContent).toBe(reply.preparedContent);
+          expect(requirePreparedForumContent(current?.preparedContent, current?.contentHtml).rows).toBe(
+            retainedContent[index]?.rows
+          );
+        });
       }
       expect(requestedPages).toEqual([4, 3, 2, 1]);
       expect(onReplyLocationResolved).toHaveBeenCalledTimes(1);

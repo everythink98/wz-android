@@ -119,6 +119,8 @@ npm run visual:gallery -- --port 8081
 
 交付前运行 `npm run test:architecture` 和视觉 catalog 测试，确认全部 App capability 已分类、场景可双主题挂载，并且生产入口不含视觉工具。截图和人工走查报告只写入任务专用的 ignored evidence 目录，不提交账号、凭据、日志或真实内容。
 
+加电评论展开使用 `dev/visual-gallery/boost-expansion.ad`，只在隔离 API 35、1080×2400、420 dpi 的匹配 Gallery APK 上运行。以 `agent-device test` 的 `--serial`、实际设备显示名 `--device`、唯一 `--session`、`--retries 0`、`--record-video` 和 ignored `--artifacts-dir` 绑定本次设备与产物；设备显示名中的空格不能替换成下划线。脚本参数 `SCENE=topic.replies.boosts-inline` 配 `LAST=这条加电用来检查评论展开位置10`，`SCENE=topic.replies.boosts-wrap` 配 `LAST=评论加电布局验证10`；`BEFORE`、`AFTER` 为本次证据目录中的绝对 PNG 路径。每例固定 10 条合成加电，使用完整生产详情页、普通评论和 FlashList；先核对实际四排及箭头同排／换行，再逐帧核对展开、下方评论连续位移和终点稳定。两例脚本通过与画面复核共同形成此范围的 `DEVICE_REPLAY_PASS`，不能代替真实来源数据或实机。结束后同签名覆盖恢复隔离设备原 APK，并复核 SHA、uid、firstInstallTime 及原状态；不要在主登录设备安装 Gallery。
+
 详情列表首尾反向拖动在 `WZ_ForumSelection_Test_API35` 独立 AVD 验证。用显式 agent-device session 打开 Gallery，搜索 `topic.replies.populated`，选择字号并进入「全屏预览」，再运行：
 
 ```powershell
@@ -187,6 +189,8 @@ proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出�
 
 四场景还必须核对故障前未 finish 的 startup intent/apply 在重启后仍存在，JS 事件属于原 appSessionId，且同一异常从 JS journal、Native journal 与 crash 合并去重后恰好一份；不能只验证最后的异常行。Java 结果必须由该 proof APK 的真实 mapping 经 SDK Retrace 还原，未混淆 Java 栈加独立 Retrace fixture 不代替这条设备证据。
 
+原生卡顿归因可在 Perfetto 的 `linux.ftrace` 配置中启用 `atrace_apps: "com.wz.reader"`，结合 `sched`、`gfx`、`view`、`input` 与 FrameTimeline 检查固定区段：`WZ.WebView.CookieRead.pageFinished`、`WZ.WebView.CookieFlush.pageFinished`、`WZ.WebView.CookieFlush.destroy`、`WZ.Svg.Poster.Capture`、`WZ.Svg.Poster.Draw`、`WZ.Diagnostics.Install` 和 `WZ.Diagnostics.Fsync`。CookieRead 观察原同步读取，CookieFlush 区分页面完成和销毁时的同步持久化；SVG 区段只包冷海报取帧及其绘制，压缩仍在 worker；诊断安装每进程一次，fsync 的线程以实际 trace 为准。区段以 `try/finally` 配对，只使用固定标签，不记录 Cookie、URL、正文或草稿，也不新增轮询或逐帧文件日志。区段耗时包含调度和等待，不能直接当 CPU 时间；没有捕获到区段不证明该路径耗时为零。追踪轮次单列归因证据，正式流畅度仍按性能章节用普通 Release 独立测量。
+
 ### 图片运行时 Native 验证
 
 排查图片失败时导出「更多 → 问题诊断」的现有日志。按 `appSessionId + traceId` 关联 JS `image-load` 与 Native request，以 `mediaRef` 找同图的后续重试；多个原生请求再以 `callId` 区分。`imageConsumer=svg-probe` 表示显示失败后的兼容探测，其 200 不能证明 Fresco/Glide 成功。JS `finish/success` 表示显示，`imageFailure` 为闭集错误分类，`unknown` 表示现有原生回调没有足够信息；Native `response-headers`、`response-body-end`、`image-call-failed` 和 `image-lease-released` 分别表示响应头、读取、失败与资源释放。缓存命中可能只有 JS 显示终态，没有网络 Call；不凭缺少 Call 单独断言缓存命中。Native 事件已进入跨进程 journal，512 条 ring 仅为旧桥接兼容窗口；先按上节 coverage 判断可用时间范围。
@@ -205,7 +209,7 @@ HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 
 
 ### 备份、诊断分享与图片保存验证
 
-长图分享的原生验证使用 `node scripts/run-network-image-instrumented-tests.mjs --topic-share`，同样只接受独立 `WZ_ImageRuntime_Test_API35`。三项指定方法必须各自成功结算：生成单张 1080×40,001 PNG 并按区域解码检查首尾和条带接缝，另验 1440 px 宽正文缩至 1080 px 及非整数输出高度；实际位图分配不超过 1080×256，原预览尺寸与滚动位置不变；取消、磁盘写入失败和布局变化必须删除本次临时文件。隔离入口 `dev/topic-share-capture-proof/index.tsx` 通过生产 JS helper、Fabric ScrollView 和 ExpoImage 生成 PNG，核对头部、实际图片、尾部像素及 release 后文件删除，不启动 Feed 或账号请求。JVM 编码与失败清理由 `:forum-platform:testDebugUnitTest --tests '*TopicShareCaptureTest'` 验证。原生像素证据不替代真实帖子、相册及接收 App 的完整流程验收；旧安装包缺少新模块时，长图页提示更新，必须重新编译 APK 后验证。
+长图分享的原生验证使用 `node scripts/run-network-image-instrumented-tests.mjs --topic-share`，同样只接受独立 `WZ_ImageRuntime_Test_API35`。四项指定方法必须各自成功结算：以 360/720/1080/1440/1920 px 源宽生成统一 1440 px 宽、约 40,000 px 高的完整 PNG，按区域解码检查首尾、条带接缝和非整数输出高度，并比较实际文字重绘与低分辨率位图放大后的灰色过渡边缘，确认输出保留抗锯齿且减少模糊边缘；实际位图分配不超过 1440×256，原预览尺寸与滚动位置不变；取消、磁盘写入失败和布局变化必须删除本次临时文件。隔离入口 `dev/topic-share-capture-proof/index.tsx` 通过生产 JS helper、Fabric ScrollView 和 ExpoImage 生成 PNG，核对头部、实际图片、尾部像素及 release 后文件删除；另从真实分享页导出，验证 1440 px 原图的条纹细节仍在 PNG 中，打开系统分享后取消，不启动 Feed 或账号请求。JVM 编码与失败清理由 `:forum-platform:testDebugUnitTest --tests '*TopicShareCaptureTest'` 验证。原生像素证据不替代真实帖子、相册及接收 App 的完整流程验收；旧安装包缺少新模块时，长图页提示更新，必须重新编译 APK 后验证。
 
 同一隔离 AVD 上执行 `node scripts/run-network-image-instrumented-tests.mjs --platform-exports`，运行大文件流式下载和系统文件联合 owner；只重放系统保存、延迟接收和相册流程使用 `--platform-export-ui`。系统文件联合 owner 包含主动销毁备份模块，必须在独立 instrumentation 进程运行，避免已销毁的 Expo 模块污染其他 owner；两个选项都由 runner 自动分批并在批次前仅停止隔离 App。runner 恢复本次临时图片权限，owner 只删除本次创建的 provider、相册、诊断和缓存文件。
 
@@ -667,9 +671,30 @@ Search 空态固定执行三批、每批 10 次 Feed → Search → Feed：每�
 
 重图 Topic 只使用主登录态 AVD `WZ_Pixel_API_35` 和 NodeSeek `https://www.nodeseek.com/post-863650-1`，不换未登录模拟器，也不再用其他图片帖代替或扩样。基线与新版必须使用相同构建类型、AVD、滚动动作和采样点：每次独立运行先在 Feed 静置并记录 PID/PSS，再以 deep link 打开目标，同一 PID 连续两轮各 40 次向下、40 次向上，返回 Feed 后再记录 0/30/60 秒 PSS；同时报告 FrameTimeline/gfxinfo、warm/running/original、重复 identity、cancel、Fatal、ANR、OOM 和模拟器响应。历史 `+150MB/+80MB/p95 50ms` 仅作为观察值，不再作为中止或撤销正确性修复的固定门槛；以基线三轮中位数及最大自然偏差判断非回退，首次同方向超出后补一轮复测，仍变差才定位并重做对应层。新增崩溃、空白、比例变化、较早卡死或 PID 退出直接记为回退；新旧都触发独立 `system_server` 故障时记 `BLOCKED_BY_ENV`。
 
+2026-10-17 的旧 90b 硬件渲染 NS160 观察，经「更多 → 收藏 → 历史 → NodeSeek → 整活帖」进入，仅打开分享链接 chooser 核对规范 URL 后取消，未选择外部接收者。该运行是正常 UI 入口的历史观察，未覆盖本节 deep link，且缺少三轮匹配基线、精确 Native 注入时序及部分计数轴，不能记为完整性能非回退或 deep-link 通过。2026-10-18 的 c094 候选已从 Library 后栈使用 `exp+wz-android://open-topic?url=<encoded canonical URL>` 直达同一目标，后续正文与 chooser URL 核对成功；证据为 ignored `.codex-tmp/project-fluidity-20261017/auth-ns-deep-link*.json`、`.codex-tmp/project-fluidity-20261017/auth-ns-topic-state.json` 与 `.codex-tmp/project-fluidity-20261017/auth-ns-link-proof.json`。该轮保留 104 次完整动作记录，第 105 次 pan 成功后的 AX snapshot 失败；随后切到 Android 桌面，SurfaceFlinger 查询和截屏仍超时。160 动作与返回 PSS 未完成，记为 `BLOCKED_BY_ENV`，不判断 App 性能非回退。原结果保留在 `auth-hardware-nodeseek-160/result.json`，系统显示探测见 `.codex-tmp/project-fluidity-20261017/amd-freeze-home-probes.json`。以上操作差异不改变原目标、流程与门槛；deep link 失败继续按「直接打开主题链接」取证，不能将 UI 历史入口改写为 deep-link 成功。
+
 Glide 5.0.5 与详情 FlashList 回收池 40 是当前固定基线，不再循环测试 5.0.9 或 32/24。已确认的 viewport、稳定 lease、尺寸元数据和 Native resize 竞争分别按自己的行为 oracle 修复；整体 PSS 改善不明显但行为正确且性能中性的修复继续保留。只有 Perfetto/heapprofd 证明同一 identity 重复解码、base 回滚解码或正文原图目标尺寸过大时，才分别增加有界 viewport 滞后、正文 base `memory-disk` 或受限 `useImage(maxWidth/maxHeight)` 原型；不提交清全局图片缓存、低色深、`largeHeap`、页面特判或新图片库。
 
 每个正式候选完成构建并覆盖安装后，先核对包名、版本、签名、APK SHA 和未变化的 `firstInstallTime`，再等待 `cmd package wait-for-handler --timeout 60000`、执行 `adb shell sync` 并静置，随后关闭同一 `WZ_Pixel_API_35`，确认原 emulator/qemu 进程已退出，再用 `-no-snapshot-load -no-snapshot-save` 冷启动并等待系统稳定；禁止 Quick Boot/快照恢复、切换其他 AVD、wipe data、卸载或清 App 数据。恢复后重新核对 AVD 名称、包版本、APK SHA、`firstInstallTime` 与登录态，身份不一致就停止设备变更。模拟器卡死也只执行这一流程。
+
+### 本机模拟器日常配置
+
+`WZ_Pixel_API_35` 日常使用 `hw.gpu.mode=auto`，当前宿主冷启动实际选择 AMD Radeon RX 7900 XTX。启动时不再覆盖为 SwiftShader；保留 6 vCPU、8192 MiB RAM、1080×2400、420 dpi、90 Hz、1.0 字号及下节 native EGL 配置。后续性能收据仍记录实际 renderer，不能仅凭 `auto` 判定已使用硬件，也不能把模拟器改善算作 App 修复。
+
+2026-10-18，用户自行将 AMD 驱动从 Adrenalin 24.5.1 更新为 26.8.1，Windows Driver Store 为 `32.0.31041.1004`，实际启动 GLES 为 `26.8.1.260810`，版本映射见 [AMD 官方说明](https://www.amd.com/en/resources/support-articles/release-notes/RN-RAD-WIN-26-8-1.html)。当前按用户要求保持 Vulkan 开启，使用原默认硬件启动参数，不传 `-feature -Vulkan`；实际选择 AMD Vulkan device，guest Vulkan 可用，WHPX 生效。默认 `useVulkanComposition=false` 与 `useVulkanNativeSwapchain=false` 不表示禁用了 Vulkan，也不能据此声称所有界面都由 Vulkan 合成。此前临时关闭 Vulkan 仅核对过启动响应，保留为历史排障候选，不作为当前配置或持续负载通过证据。AVD `config.ini` 未变化，测试后按用户要求保持模拟器开启。
+
+同一 c094 普通包、PID `2974`、startTicks `2107` 已完成 NodeSeek 指定重图帖两轮各 40 次向下、40 次向上，共 160 个完整动作，随后记录返回 Feed 后 0/30/60 秒 PSS。该轮未重现原系统显示冻结，负载后 SurfaceFlinger 与截屏分别在约 39/163 ms 响应；60 秒 PSS 仍比本轮 Feed 基线高 85539 KiB，不能称无泄漏或回到基线。原 104 动作后冻结的失败记录保持不变，本轮结果见 ignored `.codex-tmp/project-fluidity-20261017/amd-vulkan-nodeseek-160-from-opening/result.json`，不能拼接为旧失败已通过。
+
+随后完成首页 All、V2EX 原电台帖各 16 次向下滚动，以及 LinuxDo `https://linux.do/t/topic/482293` 在实际加载 530 条评论后连续两轮共 32 次向上滚动，评论增至 620 条。普通采样不录屏或 trace：首页/V2EX 的 p95 为 23.34/23.09 ms，worst 为 41.21/42.76 ms；LinuxDo 两轮 p95 为 22.77/22.82 ms，worst 为 34.09/25.63 ms，仍有 missed deadline，完整帧覆盖未获证明。以上只记录本轮观察，不能证明长期零冻结、无手势抢占、零回顶或完整性能非回退；三轮匹配基线、120 Hz 真机、BlueStacks 与全功能最终验收仍未验证。结束时首页 All、账号已登录 3/3、Gboard 自动显示和 native EGL 配置保持，系统输入未冻结，SurfaceFlinger 与截屏约 41/167 ms 响应。四组普通采样、安装身份和原始引用 hash 汇总在 `.codex-tmp/project-fluidity-20261017/amd-vulkan-final-observation.json`，最终健康探测见 `.codex-tmp/project-fluidity-20261017/amd-vulkan-final-health.json`。
+
+默认使用系统 Gboard，并在输入框获得焦点时显示软键盘：
+
+```powershell
+adb -s emulator-5554 shell ime set com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+adb -s emulator-5554 shell settings put secure show_ime_with_hard_keyboard 1
+```
+
+日常 `agent-device open` 使用 `--no-test-ime`，避免切到无界面的测试输入法。专项 runner 如需临时切换 IME，结束后恢复进入前的系统 IME；验收时核对 `keyboard status`、实际输入及关闭后的布局。2026-10-17 已在主 AVD 冷启动后核对 IME 设置保留，并在真实回复框验证自动弹出、点键输入和清除本次测试字符，未发送回复。
 
 ### 本机 WebView 图形配置
 

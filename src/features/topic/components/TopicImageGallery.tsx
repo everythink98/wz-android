@@ -9,7 +9,7 @@ import { IconButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { alphaColor, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
-import { useTopicImageGallery } from '../rendering/TopicSplitDisclosure';
+import { useTopicImageGallery, useTopicSplitDisclosureScopeKey } from '../rendering/TopicSplitDisclosure';
 import { useTopicSelectionCancel } from '../selection/TopicSelectionSurface';
 
 export function TopicImageGallery({
@@ -21,6 +21,7 @@ export function TopicImageGallery({
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
   const { index, select } = useTopicImageGallery(row.semanticId);
+  const scopeKey = useTopicSplitDisclosureScopeKey();
   const current = Math.min(index, row.slides.length - 1);
   const height = Math.min(400, contentWidth * 1.25);
   const sources = useMemo(() => row.slides.map((html) => ({ html })), [row.slides]);
@@ -30,6 +31,7 @@ export function TopicImageGallery({
     <View style={styles.gallery} testID="topic-image-gallery">
       <View style={[styles.viewport, { height, width: contentWidth }]}>
         <Carousel
+          key={`${scopeKey}\u0000${row.semanticId}`}
           defaultIndex={current}
           ref={carousel}
           data={sources}

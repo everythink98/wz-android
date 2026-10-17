@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ComponentProps, ReactNode } from 'react';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Linking, Share } from 'react-native';
+import { AppState, Linking, Share } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
 import type { Topic, TopicDetail } from '@/domain/forum/models';
@@ -281,6 +281,105 @@ describe('Topic Route local favorites', () => {
 });
 
 describe('Topic Route sharing', () => {
+  it('keeps one Android link chooser until returning to the app and releases its listener on close', async () => {
+    const { element } = setup(detail);
+    const share = jest.spyOn(Share, 'share').mockResolvedValue({ action: Share.sharedAction });
+    const subscribe = jest.spyOn(AppState, 'addEventListener');
+    const view = await render(element());
+    await act(() => latestScreen().chrome.share());
+
+    await fireEvent.press(view.getByRole('button', { name: '分享链接' }));
+    const button = view.getByRole('button', { name: '分享链接' });
+    expect(button).toBeDisabled();
+    for (let press = 0; press < 3; press += 1) await fireEvent.press(button);
+    expect(share).toHaveBeenCalledTimes(1);
+
+    const subscriptionIndex = subscribe.mock.calls.findLastIndex(([event]) => event === 'change');
+    const listener = subscribe.mock.calls[subscriptionIndex]?.[1];
+    if (!listener) throw new Error('Missing chooser lifecycle listener');
+    const subscription = subscribe.mock.results[subscriptionIndex];
+    if (subscription.type !== 'return') throw new Error('Missing chooser lifecycle subscription');
+    const remove = jest.spyOn(subscription.value, 'remove');
+    await act(() => listener('active'));
+    expect(button).toBeDisabled();
+    await act(() => listener('background'));
+    expect(button).toBeDisabled();
+    await act(() => listener('active'));
+    expect(button).toBeEnabled();
+    expect(remove).toHaveBeenCalledTimes(1);
+
+    await fireEvent.press(button);
+    expect(share).toHaveBeenCalledTimes(2);
+    expect(button).toBeDisabled();
+    const secondSubscription = subscribe.mock.results.at(-1);
+    if (secondSubscription?.type !== 'return') throw new Error('Missing second chooser subscription');
+    const removeSecond = jest.spyOn(secondSubscription.value, 'remove');
+    await fireEvent.press(view.getAllByRole('button', { name: '关闭分享' })[0]);
+    expect(removeSecond).toHaveBeenCalledTimes(1);
+    expect(view.queryByRole('header', { name: '分享帖子' })).toBeNull();
+    await act(() => latestScreen().chrome.share());
+    expect(view.getByRole('button', { name: '分享链接' })).toBeEnabled();
+    await fireEvent.press(view.getByRole('button', { name: '分享链接' }));
+    const thirdSubscription = subscribe.mock.results.at(-1);
+    if (thirdSubscription?.type !== 'return') throw new Error('Missing third chooser subscription');
+    const removeThird = jest.spyOn(thirdSubscription.value, 'remove');
+    await view.unmount();
+    expect(removeThird).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the Android chooser listener when sharing cannot launch and keeps the clipboard fallback retryable', async () => {
+    const { element, notify } = setup(detail);
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof Share.share>>>();
+    const share = jest
+      .spyOn(Share, 'share')
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ action: Share.dismissedAction });
+    const copy = jest.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
+    const subscribe = jest.spyOn(AppState, 'addEventListener');
+    const view = await render(element());
+    await act(() => latestScreen().chrome.share());
+
+    await fireEvent.press(view.getByRole('button', { name: '分享链接' }));
+    const subscription = subscribe.mock.results.at(-1);
+    if (subscription?.type !== 'return') throw new Error('Missing failed chooser subscription');
+    const remove = jest.spyOn(subscription.value, 'remove');
+    await act(async () => {
+      pending.reject(new Error('share unavailable'));
+      await pending.promise.catch(() => undefined);
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(copy).toHaveBeenCalledWith(detail.url);
+    expect(notify).toHaveBeenCalledWith('链接已复制');
+    expect(view.getByRole('button', { name: '分享链接' })).toBeEnabled();
+    await fireEvent.press(view.getByRole('button', { name: '分享链接' }));
+    expect(share).toHaveBeenCalledTimes(2);
+    expect(view.getByRole('button', { name: '分享链接' })).toBeEnabled();
+  });
+
+  it('cancels the chooser listener on unmount without a late clipboard fallback', async () => {
+    const { element, notify } = setup(detail);
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof Share.share>>>();
+    jest.spyOn(Share, 'share').mockReturnValue(pending.promise);
+    const copy = jest.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
+    const subscribe = jest.spyOn(AppState, 'addEventListener');
+    const view = await render(element());
+    await act(() => latestScreen().chrome.share());
+    await fireEvent.press(view.getByRole('button', { name: '分享链接' }));
+    const subscription = subscribe.mock.results.at(-1);
+    if (subscription?.type !== 'return') throw new Error('Missing pending chooser subscription');
+    const remove = jest.spyOn(subscription.value, 'remove');
+
+    await view.unmount();
+    expect(remove).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.reject(new Error('late chooser failure'));
+      await pending.promise.catch(() => undefined);
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(copy).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('opens sharing choices, copies and shares the current link, and returns from or closes the image preview', async () => {
     const { element } = setup(detail);
     const copy = jest.spyOn(Clipboard, 'setStringAsync').mockResolvedValueOnce(false).mockResolvedValue(true);

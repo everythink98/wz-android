@@ -27,6 +27,7 @@ import android.text.style.ClickableSpan
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
 import android.view.ActionMode
+import android.view.InputDevice
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
@@ -1265,6 +1266,130 @@ class ForumContentSelectionViewTest {
         assertNull(fixture.surface.selectionSnapshotForTest())
         assertFalse(fixture.surface.interactionStateForTest().active)
         fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun ordinaryChildReceivesRemainingPointerMovesAfterTheFirstPointerLifts() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      val received = mutableListOf<Pair<Int, List<Int>>>()
+      val selectionChanges = mutableListOf<Map<String, Any>>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.mountOnly(fixture.reply)
+        fixture.reply.text.setTextIsSelectable(false)
+        fixture.reply.text.setOnTouchListener { _, event ->
+          received += event.actionMasked to List(event.pointerCount, event::getPointerId)
+          true
+        }
+        fixture.surface.selectionChangeObserverForTest = { selectionChanges += it }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        try {
+          val (x, y) = fixture.pointInText(fixture.reply.text, utf16Offset = 2)
+          val step = 12f * fixture.activity.resources.displayMetrics.density
+          val first = PointF(x, y)
+          val remaining = PointF(x + 2f, y)
+          val downTime = SystemClock.uptimeMillis()
+          fixture.send(MotionEvent.ACTION_DOWN, downTime, 0 to first)
+          fixture.send(
+            MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            downTime, 0 to first, 1 to remaining
+          )
+          remaining.offset(0f, -step)
+          fixture.send(MotionEvent.ACTION_MOVE, downTime, 0 to first, 1 to remaining)
+          fixture.send(MotionEvent.ACTION_POINTER_UP, downTime, 0 to first, 1 to remaining)
+          remaining.offset(0f, -step)
+          fixture.send(MotionEvent.ACTION_MOVE, downTime, 1 to remaining)
+          remaining.offset(0f, -step)
+          fixture.send(MotionEvent.ACTION_MOVE, downTime, 1 to remaining)
+          fixture.send(MotionEvent.ACTION_UP, downTime, 1 to remaining)
+          val handoff = received.toList()
+          received.clear()
+
+          val nextDownTime = SystemClock.uptimeMillis()
+          fixture.send(MotionEvent.ACTION_DOWN, x, y, nextDownTime)
+          fixture.send(MotionEvent.ACTION_MOVE, x, y - step, nextDownTime)
+          fixture.send(MotionEvent.ACTION_UP, x, y - step, nextDownTime)
+          assertEquals(
+            listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP),
+            received.map { it.first }
+          )
+          assertNull(fixture.surface.selectionSnapshotForTest())
+          assertFalse(fixture.surface.interactionStateForTest().active)
+          assertFalse(fixture.surface.interactionStateForTest().ownsGesture)
+          assertTrue(selectionChanges.isEmpty())
+          assertEquals(
+            listOf(
+              MotionEvent.ACTION_DOWN to listOf(0),
+              MotionEvent.ACTION_POINTER_DOWN to listOf(0, 1),
+              MotionEvent.ACTION_MOVE to listOf(0, 1),
+              MotionEvent.ACTION_POINTER_UP to listOf(0, 1),
+              MotionEvent.ACTION_MOVE to listOf(1),
+              MotionEvent.ACTION_MOVE to listOf(1),
+              MotionEvent.ACTION_UP to listOf(1)
+            ),
+            handoff
+          )
+        } finally {
+          fixture.close()
+        }
+      }
+    }
+  }
+
+  @Test
+  fun ordinaryChildKeepsReceivingMovesWhenSelectionBecomesEnabledDuringItsGesture() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      val received = mutableListOf<Int>()
+      val selectionChanges = mutableListOf<Map<String, Any>>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.mountOnly(fixture.reply)
+        fixture.reply.text.setTextIsSelectable(false)
+        fixture.reply.text.setOnTouchListener { _, event ->
+          received += event.actionMasked
+          true
+        }
+        fixture.surface.pendingEnabled = false
+        fixture.surface.commitProps()
+        fixture.surface.selectionChangeObserverForTest = { selectionChanges += it }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        try {
+          val (x, y) = fixture.pointInText(fixture.reply.text, utf16Offset = 2)
+          val step = 12f * fixture.activity.resources.displayMetrics.density
+          val downTime = SystemClock.uptimeMillis()
+          fixture.send(MotionEvent.ACTION_DOWN, x, y, downTime)
+          fixture.surface.pendingEnabled = true
+          fixture.surface.commitProps()
+          fixture.send(MotionEvent.ACTION_MOVE, x, y - step, downTime)
+          fixture.send(MotionEvent.ACTION_MOVE, x, y - step * 2f, downTime)
+          fixture.send(MotionEvent.ACTION_UP, x, y - step * 2f, downTime)
+          val enabledDuringGesture = received.toList()
+          received.clear()
+
+          val nextDownTime = SystemClock.uptimeMillis()
+          fixture.send(MotionEvent.ACTION_DOWN, x, y, nextDownTime)
+          fixture.send(MotionEvent.ACTION_MOVE, x, y - step, nextDownTime)
+          fixture.send(MotionEvent.ACTION_UP, x, y - step, nextDownTime)
+          assertEquals(listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP), received)
+          assertNull(fixture.surface.selectionSnapshotForTest())
+          assertFalse(fixture.surface.interactionStateForTest().active)
+          assertFalse(fixture.surface.interactionStateForTest().ownsGesture)
+          assertTrue(selectionChanges.isEmpty())
+          assertEquals(
+            listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP),
+            enabledDuringGesture
+          )
+        } finally {
+          fixture.close()
+        }
       }
     }
   }
@@ -2619,6 +2744,32 @@ class ForumContentSelectionViewTest {
 
     fun send(action: Int, x: Float, y: Float, downTime: Long) {
       val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0)
+      try {
+        surface.dispatchTouchEvent(event)
+      } finally {
+        event.recycle()
+      }
+    }
+
+    fun send(action: Int, downTime: Long, vararg pointers: Pair<Int, PointF>) {
+      val properties = pointers.map { (pointerId, _) ->
+        MotionEvent.PointerProperties().apply {
+          id = pointerId
+          toolType = MotionEvent.TOOL_TYPE_FINGER
+        }
+      }.toTypedArray()
+      val coordinates = pointers.map { (_, point) ->
+        MotionEvent.PointerCoords().apply {
+          x = point.x
+          y = point.y
+          pressure = 1f
+          size = 1f
+        }
+      }.toTypedArray()
+      val event = MotionEvent.obtain(
+        downTime, SystemClock.uptimeMillis(), action, pointers.size, properties, coordinates,
+        0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+      )
       try {
         surface.dispatchTouchEvent(event)
       } finally {

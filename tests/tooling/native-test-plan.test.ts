@@ -134,7 +134,8 @@ describe('image instrumentation runner mode isolation', () => {
   const topicShareOwners = [
     'singleLongPngIncludesAllRowsAndKeepsEveryBitmapUnder256Rows',
     'cancellationDiskFailureAndChangingLayoutDiscardThePartialPng',
-    'realFabricScrollViewAndExpoImageCaptureThroughTheJsBridge'
+    'realFabricScrollViewAndExpoImageCaptureThroughTheJsBridge',
+    'realShareSheetPreservesOriginalImageDetailAndExportsOnePng'
   ].map((method) => `com.wz.reader.TopicShareCaptureInstrumentedTest#${method}`);
   it.each([
     ['--hardware-pressure', ['NetworkImageHardwarePressureInstrumentedTest'], 300_000],
@@ -157,12 +158,10 @@ describe('image instrumentation runner mode isolation', () => {
       300_000
     ],
     ['--platform-file-faults', [fileFaultOwners.join(',')], 300_000],
-    ...['missing', 'started', 'skipped', 'duplicate', 'wrong-owner', 'failed', 'summary-only'].map(
-      (failure): [string, string[], number, string] => [
-        '--platform-file-faults',
-        [fileFaultOwners.join(',')],
-        300_000,
-        failure
+    ...['missing', 'started', 'skipped', 'duplicate', 'wrong-owner', 'failed', 'summary-only'].flatMap(
+      (failure): [string, string[], number, string][] => [
+        ['--platform-file-faults', [fileFaultOwners.join(',')], 300_000, failure],
+        ['--topic-share', [topicShareOwners.join(',')], 300_000, failure]
       ]
     ),
     [

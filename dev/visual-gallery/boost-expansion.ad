@@ -1,0 +1,21 @@
+context platform=android
+context timeout=90000
+context retries=0
+
+open com.wz.reader --relaunch
+wait id="visual-gallery-search" 30000
+fill id="visual-gallery-search" "${SCENE}"
+press label="浅色"
+press label="100%"
+press label="标准"
+press label="全屏预览"
+wait id="visual-frame-${SCENE}-light-1-full" 10000
+# API 35 / 1080x2400: place the comment and its following header inside the viewport.
+gesture pan 540 1800 0 -1100 1200
+wait "label=\"查看全部 10 条加电\"" 10000
+wait 1000
+screenshot "${BEFORE}"
+press "label=\"查看全部 10 条加电\""
+wait "label=\"加电 ${LAST}\"" 10000
+wait 1000
+screenshot "${AFTER}"

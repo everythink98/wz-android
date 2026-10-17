@@ -141,6 +141,54 @@ it('preserves bounded verification evidence while rejecting private probe payloa
 });
 
 describe('diagnostic traces', () => {
+  it('preserves bounded topic scroll evidence without private payloads', () => {
+    const events = captureEvents();
+    const fields = {
+      source: 'linuxdo',
+      topicRef: diagnosticRef('topic', 'private-topic-scroll'),
+      cursorRef: diagnosticRef('cursor', 'private-cursor-scroll'),
+      scrollReason: 'reply-location',
+      scrollPhase: 'momentum',
+      targetIndex: 12,
+      previousOffset: 3200,
+      offset: 0,
+      contentHeight: 18000,
+      viewportHeight: 800,
+      correction: 2500,
+      itemCount: 90,
+      firstFloor: 31,
+      lastFloor: 120
+    } as const satisfies DiagnosticFields;
+    for (const operation of ['scroll-command', 'scroll-window', 'scroll-position'] as const) {
+      expect(safeDiagnosticOperation(operation)).toBe(operation);
+      const trace = beginDiagnosticTrace('topic', operation);
+      finishDiagnosticTrace(trace, 'success', fields);
+      expect(events().at(-1)).toMatchObject({ operation, ...fields });
+    }
+    expectTypeOf<string>().not.toExtend<DiagnosticFields['scrollReason']>();
+    expectTypeOf<string>().not.toExtend<DiagnosticFields['scrollPhase']>();
+    expect(
+      safeFields({
+        scrollReason: 'https://private.example/?token=PRIVATE',
+        scrollPhase: 'PRIVATE_BODY',
+        targetIndex: 'PRIVATE_BODY',
+        offset: Infinity,
+        previousOffset: NaN,
+        contentHeight: 'PRIVATE_BODY',
+        viewportHeight: -Infinity,
+        correction: 'PRIVATE_COOKIE',
+        firstFloor: 'PRIVATE_ACCOUNT',
+        lastFloor: 'PRIVATE_ACCOUNT',
+        cursorRef: 'PRIVATE_CURSOR',
+        url: 'https://private.example/',
+        body: 'PRIVATE_BODY',
+        cookie: 'PRIVATE_COOKIE',
+        account: 'PRIVATE_ACCOUNT'
+      })
+    ).toEqual({ scrollReason: 'redacted', scrollPhase: 'redacted', cursorRef: 'redacted' });
+    expect(JSON.stringify(events())).not.toContain('private-');
+  });
+
   it('keeps production operations, stages and typed reasons after sanitization', () => {
     expectTypeOf<string>().not.toExtend<DiagnosticOperation>();
     expectTypeOf<string>().not.toExtend<DiagnosticFields['state']>();

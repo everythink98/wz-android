@@ -14,6 +14,8 @@ import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { readManagedCookieHeader, setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { createNotificationGateway } from '@/sources/notificationGateway';
+import { readForegroundNotificationAccess } from '@/sources/notificationForegroundAccess';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { Source } from '@/domain/forum/models';
@@ -64,7 +66,7 @@ function seedAccount(username = 'alice') {
   return snapshot;
 }
 
-async function renderRuntime(fetcher: Fetcher, ready = true) {
+async function renderRuntime(fetcher: Fetcher, ready = true, enabledSources: readonly Source[] = ['linuxdo']) {
   await saveAccountSessionSnapshot(seedAccount());
   const notify = jest.fn();
   const openUser = async () => undefined;
@@ -83,7 +85,7 @@ async function renderRuntime(fetcher: Fetcher, ready = true) {
         screen: 'search',
         webViewBlockMessage: ''
       }),
-    { initialProps: { enabledSources: ['linuxdo'] }, wrapper: QueryTestWrapper }
+    { initialProps: { enabledSources }, wrapper: QueryTestWrapper }
   );
   if (ready) await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
   return hook;
@@ -2386,59 +2388,203 @@ it.each([
   }
 );
 
-it('ignores stale, disabled, anonymous and login-surface recheck requests', async () => {
-  const fetcher = jest.fn(async () => new Response('{}'));
-  const hook = await renderRuntime(fetcher);
-  const epoch = hook.result.current.read.forumSessionEpochs.linuxdo;
-  const request = hook.result.current.write.requestAccountRecheck;
-  await act(async () => {
-    request('linuxdo', epoch - 1);
-  });
-  await hook.rerender({ enabledSources: [] });
-  await act(async () => {
-    request('linuxdo', epoch);
-  });
-  await hook.rerender({ enabledSources: ['linuxdo'] });
-  await act(async () => {
-    appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), createAccountSessionSnapshot('linuxdo'));
-    hook.result.current.write.requestAccountRecheck('linuxdo', epoch);
-    appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), {
-      ...createAccountSessionSnapshot('linuxdo'),
-      identityTrust: 'none'
+it.each(['anonymous', 'same', 'unknown'] as const)(
+  'reconciles concurrent NodeSeek notification USER NOT FOUND responses without replaying writes: %s',
+  async (outcome) => {
+    const { response } = accountClearFixture('nodeseek');
+    const linuxDo = seedAccount();
+    accountClearFixture('yaohuo');
+    const yaohuo = appQueryClient.getQueryData(accountQueryKeys.snapshot('yaohuo'));
+    const probe = Promise.withResolvers<Response>();
+    let restored = false;
+    const json = (value: unknown, status = 200) =>
+      new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+    const fetcher = jest.fn<ReturnType<Fetcher>, Parameters<Fetcher>>(async (input) => {
+      const path = new URL(input).pathname;
+      if (path === '/') return restored ? response() : probe.promise;
+      if (path === '/api/notification/reply-to-me/list')
+        return restored ? json({ replyList: [] }) : json({ error: 'USER NOT FOUND' }, 500);
+      if (path === '/api/notification/unread-count')
+        return restored ? json({ atMe: 0, reply: 0, message: 0 }) : json({ error: 'USER NOT FOUND' }, 500);
+      throw new Error(`Unexpected notification account request: ${input}`);
     });
-    hook.result.current.write.requestAccountRecheck('linuxdo', epoch);
-    seedAccount();
-    hook.result.current.hosts.showLinuxDoVerification('需要验证');
-    hook.result.current.write.requestAccountRecheck('linuxdo', epoch);
-  });
-  expect(fetcher).not.toHaveBeenCalled();
-});
+    const { view, runtime } = await renderSiteRuntime('nodeseek', fetcher);
+    const epoch = runtime().read.forumSessionEpochs.nodeseek;
+    const otherEpochs = {
+      linuxdo: runtime().read.forumSessionEpochs.linuxdo,
+      yaohuo: runtime().read.forumSessionEpochs.yaohuo
+    };
+    const gateway = createNotificationGateway({
+      sourceAllowed: (source) => source === 'nodeseek',
+      privateAccessAllowed: (source, identity) => runtime().read.notificationPrivateAccessAllowed(source, identity),
+      requestSessionEpoch: (source) => runtime().read.forumSessionEpochs[source],
+      onSessionExpired: (source, requestEpoch) => runtime().write.onSessionExpired(source, requestEpoch),
+      requestAccountRecheck: (source, requestEpoch, trace) =>
+        runtime().write.requestAccountRecheck(source, requestEpoch, trace),
+      readAccess: (source) =>
+        readForegroundNotificationAccess({
+          source,
+          session: runtime().read.accountSessionViewModels[source],
+          fetcher: runtime().read.notificationFetcher,
+          userAgent: runtime().read.getNodeSeekUserAgent()
+        })
+    });
+    const probes = () => fetcher.mock.calls.filter(([url]) => new URL(url).pathname === '/');
+    const list = () => gateway.listPage('nodeseek', { categoryId: 'replies', expectedIdentityKey: 'nodeseek:42' });
+    try {
+      await act(async () => {
+        await Promise.all([
+          expect(list()).rejects.toMatchObject({ reason: 'account-recheck-required' }),
+          expect(gateway.readUnreadSnapshot('nodeseek')).rejects.toMatchObject({ reason: 'account-recheck-required' })
+        ]);
+      });
+      await waitFor(() => expect(probes()).toHaveLength(1));
+      await waitFor(() =>
+        expect(runtime().read.accountSessionViewModels.nodeseek).toMatchObject({
+          isLoggedIn: true,
+          identityTrust: 'confirmed',
+          isVerifying: true,
+          currentUser: { id: '42' }
+        })
+      );
+      expect(runtime().read.forumSessionEpochs.nodeseek).toBe(epoch);
+      expect(mockWebViewLoads).toEqual([]);
+      await act(async () => {
+        probe.resolve(
+          outcome === 'anonymous'
+            ? new Response('<html><head><meta name="nodeseekAccountState" content="anonymous"></head></html>')
+            : outcome === 'unknown'
+              ? json({ error: 'TEMPORARY_ERROR' }, 500)
+              : response()
+        );
+      });
+      await waitFor(() => expect(runtime().read.accountSessionViewModels.nodeseek.isVerifying).toBe(false));
+      expect(runtime().read.accountSessionViewModels.nodeseek).toMatchObject(
+        outcome === 'anonymous'
+          ? { status: 'verified', isLoggedIn: false, isVerified: true, canWrite: false, identityTrust: 'none' }
+          : { status: 'logged-in', isLoggedIn: true, identityTrust: 'confirmed', currentUser: { id: '42' } }
+      );
+      if (outcome === 'anonymous') expect(runtime().read.accountSessionViewModels.nodeseek.currentUser).toBeUndefined();
+      if (outcome === 'unknown') expect(runtime().read.accountSessionViewModels.nodeseek.lastError).toBeTruthy();
+      expect(runtime().read.forumSessionEpochs.nodeseek).toBe(epoch + Number(outcome === 'anonymous'));
+      expect(appQueryClient.getQueryData(accountQueryKeys.snapshot('linuxdo'))).toBe(linuxDo);
+      expect(appQueryClient.getQueryData(accountQueryKeys.snapshot('yaohuo'))).toBe(yaohuo);
+      expect(runtime().read.forumSessionEpochs).toMatchObject(otherEpochs);
+      expect(events.filter((event) => event.operation === 'account-reconcile' && event.phase === 'intent')).toEqual([
+        expect.objectContaining({
+          source: 'nodeseek',
+          accountCheckTrigger: 'read-failure',
+          parentTraceId: expect.any(String)
+        })
+      ]);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: 'nodeseek',
+            operation: 'account-reconcile',
+            phase: 'guard',
+            reason: 'duplicate'
+          })
+        ])
+      );
+      expect(fetcher.mock.calls.filter(([url]) => new URL(url).pathname !== '/')).toHaveLength(2);
+      if (outcome === 'anonymous') {
+        await expect(list()).rejects.toThrow('账号状态已变化');
+        expect(fetcher).toHaveBeenCalledTimes(3);
+        await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'nodeseek' }));
+        expect(probes()).toHaveLength(1);
+        restored = true;
+        await fireEvent.press(view.getByText('检测登录'));
+        await waitFor(() => expect(view.queryByTestId('login-webview')).toBeNull());
+        expect(runtime().read.accountSessionViewModels.nodeseek).toMatchObject({
+          isLoggedIn: true,
+          identityTrust: 'confirmed',
+          currentUser: { id: '42' }
+        });
+        expect(runtime().read.forumSessionEpochs.nodeseek).toBe(epoch + 2);
+        expect(fetcher.mock.calls.filter(([url]) => new URL(url).pathname !== '/')).toHaveLength(2);
+        await act(async () => {
+          await expect(list()).resolves.toMatchObject({ items: [], hasMore: false });
+          await expect(gateway.readUnreadSnapshot('nodeseek')).resolves.toMatchObject({ total: 0 });
+        });
+        expect(probes()).toHaveLength(2);
+      }
+      expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+    } finally {
+      await act(async () => probe.resolve(response()));
+      await view.unmount();
+    }
+  }
+);
 
-it('discards a recheck result when its source is disabled while the probe is in flight', async () => {
-  let complete!: (response: Response) => void;
-  const fetcher = jest.fn(
-    () =>
-      new Promise<Response>((resolve) => {
-        complete = resolve;
-      })
-  );
-  const hook = await renderRuntime(fetcher);
-  const epoch = hook.result.current.read.forumSessionEpochs.linuxdo;
-  await act(async () => {
-    hook.result.current.write.requestAccountRecheck('linuxdo', epoch);
-  });
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-  await hook.rerender({ enabledSources: [] });
-  expect(setLinuxDoCookieResponseBarrier).toHaveBeenLastCalledWith(true, 'source-change');
-  await act(async () => {
-    complete(new Response(JSON.stringify({ current_user: null })));
-  });
-  expect(appQueryClient.getQueryData(accountQueryKeys.snapshot('linuxdo'))).toMatchObject({
-    status: 'logged-in',
-    currentUser: { username: 'alice' }
-  });
-  expect(hook.result.current.read.forumSessionEpochs.linuxdo).toBe(epoch);
-});
+it.each(['linuxdo', 'nodeseek'] as const)(
+  'ignores stale, disabled, anonymous and login-surface %s recheck requests',
+  async (source) => {
+    accountClearFixture(source);
+    const fetcher = jest.fn(async () => new Response('{}'));
+    const hook = await renderRuntime(fetcher, true, [source]);
+    const epoch = hook.result.current.read.forumSessionEpochs[source];
+    const request = hook.result.current.write.requestAccountRecheck;
+    await act(async () => {
+      request(source, epoch - 1);
+    });
+    await hook.rerender({ enabledSources: [] });
+    await act(async () => {
+      request(source, epoch);
+    });
+    await hook.rerender({ enabledSources: [source] });
+    await act(async () => {
+      appQueryClient.setQueryData(accountQueryKeys.snapshot(source), createAccountSessionSnapshot(source));
+      hook.result.current.write.requestAccountRecheck(source, epoch);
+      appQueryClient.setQueryData(accountQueryKeys.snapshot(source), {
+        ...createAccountSessionSnapshot(source),
+        identityTrust: 'none'
+      });
+      hook.result.current.write.requestAccountRecheck(source, epoch);
+      accountClearFixture(source);
+      if (source === 'linuxdo') await hook.result.current.hosts.showLinuxDoVerification('需要验证');
+      else await hook.result.current.center.handleAccountCenterCommand({ type: 'open-login', site: source });
+      hook.result.current.write.requestAccountRecheck(source, epoch);
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  }
+);
+
+it.each(['linuxdo', 'nodeseek'] as const)(
+  'discards a %s recheck result when its source is disabled while the probe is in flight',
+  async (source) => {
+    accountClearFixture(source);
+    let complete!: (response: Response) => void;
+    const fetcher = jest.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          complete = resolve;
+        })
+    );
+    const hook = await renderRuntime(fetcher, true, [source]);
+    const epoch = hook.result.current.read.forumSessionEpochs[source];
+    await act(async () => {
+      hook.result.current.write.requestAccountRecheck(source, epoch);
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    await hook.rerender({ enabledSources: [] });
+    if (source === 'linuxdo') expect(setLinuxDoCookieResponseBarrier).toHaveBeenLastCalledWith(true, 'source-change');
+    await act(async () => {
+      complete(
+        new Response(
+          source === 'linuxdo'
+            ? JSON.stringify({ current_user: null })
+            : '<meta name="nodeseekAccountState" content="anonymous">'
+        )
+      );
+    });
+    expect(appQueryClient.getQueryData(accountQueryKeys.snapshot(source))).toMatchObject({
+      status: 'logged-in',
+      currentUser: { username: 'alice' }
+    });
+    expect(hook.result.current.read.forumSessionEpochs[source]).toBe(epoch);
+  }
+);
 
 it('awaits the native cookie handoff before probing after login closes', async () => {
   const fetcher = jest.fn(

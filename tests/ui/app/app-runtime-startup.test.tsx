@@ -9,6 +9,13 @@ import { useFeedController } from '@/features/feed/useFeedController';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import React from 'react';
+import { View } from 'react-native';
+import { defaultScheduler, notifyManager } from '@tanstack/react-query';
+import type { Topic } from '@/domain/forum/models';
+import type { DiscourseReadingState } from '@/domain/forum/discourseReading';
+import { getTopicListItemStateFromIndex } from '@/domain/forum/topicListItemState';
+import { createDiscourseReadingRuntime, discourseReadingQueryKey } from '@/platform/query/discourseReadingRuntime';
+import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -16,7 +23,9 @@ import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@
 import { saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
 import type { Fetcher } from '@/platform/network/request';
 import { notificationPermissionGranted } from '@/platform/notifications/notificationSystem';
-import { render, fireEvent } from '../render';
+import { render, fireEvent, within } from '../render';
+import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
+import { formatAppUpdateDownloadProgress, type AppUpdateDownloadProgress } from '@/platform/update/appUpdate';
 
 const mockUseAccountRuntime = jest.fn();
 const mockShowLinuxDoVerification = jest.fn<(_message?: string, _recovery?: LinuxDoReadRecovery) => Promise<boolean>>(
@@ -32,6 +41,8 @@ const mockUseNotificationsRuntime =
 let mockActualReader = false;
 let mockActualAccount = false;
 let mockActualNotifications = false;
+let mockStableBoundaries = false;
+let mockUpdateProgress: AppUpdateDownloadProgress | null = null;
 let mockNetworkReady = false;
 const mockNetworkFetcher = jest.fn<Fetcher>();
 const mockLoadReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
@@ -54,6 +65,7 @@ let mockSessionsReady = true;
 let mockInitialForegroundReady = false;
 let mockFeedContentReady = false;
 let mockScreen = 'feed';
+let mockDiscourseReading: ReadGateway['reading'];
 const mockReadGateway = {
   getEmojiUrls: jest.fn(),
   getReadPlan: () => ({ state: 'ready', cacheScope: 'public:fixture' }),
@@ -67,23 +79,28 @@ const mockOnFeedInitialContentReady = jest.fn(() => {
 });
 
 jest.mock('@/app/useAppLifecycleRuntime', () => ({
-  useAppLifecycleRuntime: () => ({
-    appActive: true,
-    changeScreen: jest.fn(),
-    getCurrentScreen: jest.fn(() => 'feed'),
-    height: 800,
-    initialForegroundReady: mockInitialForegroundReady,
-    feedContentReady: mockFeedContentReady,
-    loginNavigation: {},
-    notify: mockNotify,
-    onCatalogSettled: jest.fn(),
-    onFeedInitialContentReady: mockOnFeedInitialContentReady,
-    onReady: mockHandleNavigationReady,
-    onScreenChange: jest.fn(),
-    openUserRoute: jest.fn(),
-    screen: mockScreen,
-    width: 400
-  })
+  useAppLifecycleRuntime: () => {
+    const ReactModule = require('react') as typeof React;
+    const value = {
+      appActive: true,
+      changeScreen: jest.fn(),
+      getCurrentScreen: jest.fn(() => 'feed'),
+      height: 800,
+      initialForegroundReady: mockInitialForegroundReady,
+      feedContentReady: mockFeedContentReady,
+      loginNavigation: {},
+      notify: mockNotify,
+      onCatalogSettled: jest.fn(),
+      onFeedInitialContentReady: mockOnFeedInitialContentReady,
+      onReady: mockHandleNavigationReady,
+      onScreenChange: jest.fn(),
+      openUserRoute: jest.fn(),
+      screen: mockScreen,
+      width: 400
+    };
+    const stable = ReactModule.useRef(value);
+    return mockStableBoundaries ? stable.current : value;
+  }
 }));
 
 jest.mock('@/app/useReaderRuntime', () => ({
@@ -108,24 +125,29 @@ jest.mock('@/app/useReaderRuntime', () => ({
 }));
 
 jest.mock('@/platform/network/useNetworkProxyRuntime', () => ({
-  useNetworkProxyRuntime: () => ({
-    activeProfile: null,
-    applyError: '',
-    applyStatus: 'loading',
-    deleteProxyProfile: jest.fn(),
-    ensureNetworkProxyReady: jest.fn(async () => {
-      throw new Error('代理状态读取中。');
-    }),
-    loaded: mockNetworkReady,
-    networkProxyFetcher: mockNetworkFetcher,
-    proxyState: { enabled: false, activeId: null, profiles: [] },
-    selectProxyProfile: jest.fn(),
-    setProxyEnabled: jest.fn(),
-    summary: '代理状态读取中',
-    testProxyProfile: jest.fn(),
-    upsertProxyProfile: jest.fn(),
-    webViewBlockMessage: mockNetworkReady ? '' : '代理状态读取中。'
-  })
+  useNetworkProxyRuntime: () => {
+    const ReactModule = require('react') as typeof React;
+    const value = {
+      activeProfile: null,
+      applyError: '',
+      applyStatus: 'loading',
+      deleteProxyProfile: jest.fn(),
+      ensureNetworkProxyReady: jest.fn(async () => {
+        throw new Error('代理状态读取中。');
+      }),
+      loaded: mockNetworkReady,
+      networkProxyFetcher: mockNetworkFetcher,
+      proxyState: { enabled: false, activeId: null, profiles: [] },
+      selectProxyProfile: jest.fn(),
+      setProxyEnabled: jest.fn(),
+      summary: '代理状态读取中',
+      testProxyProfile: jest.fn(),
+      upsertProxyProfile: jest.fn(),
+      webViewBlockMessage: mockNetworkReady ? '' : '代理状态读取中。'
+    };
+    const stable = ReactModule.useRef(value);
+    return mockStableBoundaries ? stable.current : value;
+  }
 }));
 
 jest.mock('@/features/account/useAccountRuntime', () => ({
@@ -146,6 +168,7 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
           refreshLinuxDoLevel: jest.fn()
         },
         checkIn: {},
+        nodeSeek: { busy: false, state: { kind: 'idle' }, checkIn: jest.fn(), observeBoard: jest.fn() },
         credentials: { credentialSummaries: [], pendingCredentialFillSite: null },
         handleAccountCenterCommand: jest.fn(),
         nodeImage: {
@@ -176,7 +199,7 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
         getNodeSeekUserAgent: jest.fn(),
         notificationFetcher: mockNetworkFetcher,
         identityBarriers: {},
-        readGateway: mockReadGateway,
+        readGateway: mockDiscourseReading ? { ...mockReadGateway, reading: mockDiscourseReading } : mockReadGateway,
         reconcileAccountStatus: jest.fn(),
         sessionsReady: mockSessionsReady,
         statusBusy: false
@@ -194,7 +217,12 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
 jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
   useAppUpdateRuntime: (options: unknown) => {
     mockUseAppUpdateRuntime(options);
-    return { appUpdateBusy: false, appUpdateDownloading: false, appUpdateInfo: null };
+    return {
+      appUpdateBusy: false,
+      appUpdateDownloading: false,
+      appUpdateInfo: null,
+      appUpdateDownloadProgress: mockUpdateProgress
+    };
   }
 }));
 
@@ -268,6 +296,8 @@ describe('app runtime startup', () => {
     mockActualReader = false;
     mockActualAccount = false;
     mockActualNotifications = false;
+    mockStableBoundaries = false;
+    mockUpdateProgress = null;
     mockNetworkReady = false;
     mockNetworkFetcher.mockReset().mockRejectedValue(new Error('代理状态读取中。'));
     mockReaderData = undefined;
@@ -276,6 +306,7 @@ describe('app runtime startup', () => {
     mockInitialForegroundReady = false;
     mockFeedContentReady = false;
     mockScreen = 'feed';
+    mockDiscourseReading = undefined;
     mockOnFeedInitialContentReady.mockClear();
     mockHandleNavigationReady.mockClear();
     mockNotificationNavigationReady.mockClear();
@@ -284,6 +315,42 @@ describe('app runtime startup', () => {
     mockUseAppUpdateRuntime.mockClear();
     mockUseForumCatalogRuntime.mockClear();
     mockCommitReader.mockReset();
+  });
+
+  it('preserves More account and utility inputs through real account runtime progress renders', async () => {
+    mockStableBoundaries = true;
+    mockActualAccount = true;
+    mockActualReader = true;
+    const state = createEmptyReaderState();
+    state.settings.contentSources = state.settings.contentSources.map((entry) => ({ ...entry, enabled: false }));
+    mockLoadReader.mockResolvedValue(state);
+    const hook = await renderHook(
+      ({ revision }: { revision: number }) => {
+        void revision;
+        return useAppRuntime();
+      },
+      { initialProps: { revision: 0 } }
+    );
+    await waitFor(() => expect(hook.result.current.routes).not.toBeNull());
+    const original = hook.result.current.routes!.moreRouteRuntime;
+    for (let percent = 10; percent <= 100; percent += 10) {
+      mockUpdateProgress = formatAppUpdateDownloadProgress('2.0.0', percent, 100);
+      await act(async () => hook.rerender({ revision: percent }));
+      const current = hook.result.current.routes!.moreRouteRuntime;
+      expect(current.update.appUpdateDownloadProgress?.percent).toBe(percent);
+      expect(current.account).toBe(original.account);
+      expect(current.proxy).toBe(original.proxy);
+      expect(current.library).toBe(original.library);
+    }
+    await act(async () => {
+      appQueryClient.setQueryData(
+        accountQueryKeys.snapshot('linuxdo'),
+        accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), { type: 'login-expired' })
+      );
+    });
+    await waitFor(() => expect(hook.result.current.routes!.moreRouteRuntime.account).not.toBe(original.account));
+    expect(hook.result.current.routes!.moreRouteRuntime.account.read.sessions.linuxdo.status).toBe('expired');
+    await hook.unmount();
   });
 
   it('loads foreground NodeSeek unread counts and notifications after native security responses recover in the shared browser', async () => {
@@ -491,6 +558,185 @@ describe('app runtime startup', () => {
       expect(hook.result.current.routes!.libraryRouteRuntime.reader.data.counts.history).toBe(2);
     }
   );
+
+  it('keeps background card inputs and commits stable for reading anchors and floors, then updates visited and new replies', async () => {
+    mockStableBoundaries = true;
+    mockActualReader = true;
+    const reader = createEmptyReaderState();
+    reader.settings.contentSources = reader.settings.contentSources.map((entry) => ({ ...entry, enabled: false }));
+    mockLoadReader.mockResolvedValue(reader);
+    const scope = 'linuxdo:background-reading-oracle';
+    const key = discourseReadingQueryKey(scope);
+    const send = jest.fn(async () => undefined);
+    const reading = createDiscourseReadingRuntime({ queryClient: appQueryClient, scope: () => scope, send });
+    mockDiscourseReading = reading;
+    const initial: DiscourseReadingState = {
+      '482293': {
+        server: { topicId: '482293', highestPostNumber: 500, lastReadPostNumber: 500 },
+        visited: true,
+        highestKnown: 500,
+        localVersion: 0,
+        requestSequence: 1,
+        readPosts: { 500: true },
+        anchor: { floor: 500, rowKey: 'reply:500', offset: 0 }
+      },
+      '482294': {
+        server: { topicId: '482294', highestPostNumber: 1, lastReadPostNumber: 0 },
+        visited: false,
+        highestKnown: 0,
+        localVersion: 0,
+        requestSequence: 1,
+        readPosts: {}
+      }
+    };
+    appQueryClient.setQueryData(key, initial);
+    const topics: Topic[] = ['482293', '482294'].map((id) => ({
+      source: 'linuxdo',
+      id,
+      title: 'Reading ' + id,
+      author: 'alice',
+      url: 'https://linux.do/t/topic/' + id,
+      createdAt: '2026-10-17T00:00:00Z'
+    }));
+    const feedCommits = jest.fn<React.ProfilerOnRenderCallback>();
+    const searchCommits = jest.fn<React.ProfilerOnRenderCallback>();
+    const openTopic = () => undefined;
+    type Routes = NonNullable<ReturnType<typeof useAppRuntime>['routes']>;
+    const cards = (
+      runtime: Routes['feedRouteRuntime' | 'searchRouteRuntime'],
+      id: string,
+      onCommit: React.ProfilerOnRenderCallback
+    ) => (
+      <React.Profiler id={id} onRender={onCommit}>
+        <View testID={id}>
+          {topics.map((topic) => (
+            <MemoizedTopicCard
+              key={topic.id}
+              topic={topic}
+              readerState={getTopicListItemStateFromIndex(runtime.topicStateIndex, topic)}
+              onOpenTopic={openTopic}
+            />
+          ))}
+        </View>
+      </React.Profiler>
+    );
+    const BackgroundFeedCards = React.memo(function BackgroundFeedCards({
+      runtime
+    }: {
+      runtime: Routes['feedRouteRuntime'];
+    }) {
+      useFeedController({
+        active: false,
+        enabledSources: runtime.enabledSources,
+        enabledSourcesKey: runtime.enabledSourcesKey,
+        catalogCategories: runtime.catalogCategories,
+        sessionEpochs: runtime.account.sessionEpochs,
+        linuxDoVerificationActive: false,
+        notify: runtime.notify,
+        readerData: runtime.reader.data,
+        readerDataLoaded: runtime.reader.loaded,
+        showLinuxDoVerification: runtime.account.showLinuxDoVerification,
+        showNodeSeekVerification: (message) =>
+          runtime.account.requestNodeSeekVerification(message || 'NodeSeek 需要完成 Cloudflare 验证'),
+        showYaohuoLogin: runtime.account.showYaohuoLogin,
+        readGateway: runtime.account.readGateway
+      });
+      return cards(runtime, 'background-feed', feedCommits);
+    });
+    const BackgroundSearchCards = React.memo(function BackgroundSearchCards({
+      runtime
+    }: {
+      runtime: Routes['searchRouteRuntime'];
+    }) {
+      return cards(runtime, 'background-search', searchCommits);
+    });
+    let runtime!: ReturnType<typeof useAppRuntime>;
+    function Harness() {
+      runtime = useAppRuntime();
+      return runtime.routes ? (
+        <>
+          <BackgroundFeedCards runtime={runtime.routes.feedRouteRuntime} />
+          <BackgroundSearchCards runtime={runtime.routes.searchRouteRuntime} />
+        </>
+      ) : null;
+    }
+    const inputs = () => {
+      const routes = runtime.routes!;
+      return [routes.feedRouteRuntime, routes.searchRouteRuntime] as const;
+    };
+    const update = async (change: (previous: DiscourseReadingState) => DiscourseReadingState) => {
+      await act(async () => {
+        appQueryClient.setQueryData<DiscourseReadingState>(key, (previous) => change(previous!));
+      });
+    };
+    notifyManager.setScheduler((callback) => callback());
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    try {
+      view = await render(<Harness />, { wrapper: QueryTestWrapper });
+      await waitFor(() => expect(runtime.routes).not.toBeNull());
+      expect(feedCommits).toHaveBeenCalled();
+      expect(searchCommits).toHaveBeenCalled();
+      const before = inputs();
+      const selected = before[0].topicStateIndex.reading;
+      expect(selected?.['482293']).toEqual({ visited: true, hasNewReplies: false });
+      expect(selected?.['482294']).toEqual({ visited: false, hasNewReplies: false });
+      const commitsBefore = [feedCommits.mock.calls.length, searchCommits.mock.calls.length] as const;
+      const initialEntry = reading.state()['482293'];
+      await update((previous) => ({
+        ...previous,
+        '482293': { ...previous['482293'], anchor: { floor: 501, rowKey: 'reply:501', offset: 12 } }
+      }));
+      expect(reading.state()['482293']).not.toBe(initialEntry);
+      expect(reading.state()['482293'].anchor).toEqual({ floor: 501, rowKey: 'reply:501', offset: 12 });
+      expect(inputs().map((input, index) => input === before[index])).toEqual([true, true]);
+      expect(inputs().map((input) => input.topicStateIndex.reading === selected)).toEqual([true, true]);
+      expect([feedCommits.mock.calls.length, searchCommits.mock.calls.length]).toEqual(commitsBefore);
+      const entryBeforeFloor = reading.state()['482293'];
+      await update((previous) => ({
+        ...previous,
+        '482293': {
+          ...previous['482293'],
+          highestKnown: 501,
+          localVersion: 1,
+          readPosts: { ...previous['482293'].readPosts, 501: true }
+        }
+      }));
+      expect(reading.state()['482293'].readPosts).not.toBe(entryBeforeFloor.readPosts);
+      expect(reading.state()['482293'].readPosts[501]).toBe(true);
+      expect(inputs().map((input, index) => input === before[index])).toEqual([true, true]);
+      expect(inputs().map((input) => input.topicStateIndex.reading === selected)).toEqual([true, true]);
+      expect([feedCommits.mock.calls.length, searchCommits.mock.calls.length]).toEqual(commitsBefore);
+      await update((previous) => ({
+        ...previous,
+        '482294': { ...previous['482294'], visited: true, localVersion: 1 }
+      }));
+      expect(inputs().map((input) => getTopicListItemStateFromIndex(input.topicStateIndex, topics[1]!).read)).toEqual([
+        true,
+        true
+      ]);
+      expect(inputs().map((input, index) => input === before[index])).toEqual([false, false]);
+      expect(feedCommits.mock.calls.length).toBeGreaterThan(commitsBefore[0]);
+      expect(searchCommits.mock.calls.length).toBeGreaterThan(commitsBefore[1]);
+      const commitsAfterVisit = [feedCommits.mock.calls.length, searchCommits.mock.calls.length] as const;
+      await update((previous) => ({
+        ...previous,
+        '482293': { ...previous['482293'], server: { ...previous['482293'].server, highestPostNumber: 502 } }
+      }));
+      expect(
+        inputs().map((input) => getTopicListItemStateFromIndex(input.topicStateIndex, topics[0]!).hasNewReplies)
+      ).toEqual([true, true]);
+      expect(feedCommits.mock.calls.length).toBeGreaterThan(commitsAfterVisit[0]);
+      expect(searchCommits.mock.calls.length).toBeGreaterThan(commitsAfterVisit[1]);
+      expect(within(view.getByTestId('background-feed')).getByText('有新回复')).toBeTruthy();
+      expect(within(view.getByTestId('background-search')).getByText('有新回复')).toBeTruthy();
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      await view?.unmount();
+      reading.dispose();
+      mockDiscourseReading = undefined;
+      notifyManager.setScheduler(defaultScheduler);
+    }
+  });
 
   it('forwards the exact create-topic read recovery to the existing linux.do verification host', async () => {
     const hook = await renderHook(() => useAppRuntime());

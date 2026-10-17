@@ -96,6 +96,7 @@ type PlannedReplyContentEntry = {
   bodyRows: QuotedPostContentRow[];
   canMaterializeInOneCell: boolean;
   previewImages: readonly ForumImagePreviewDescriptor[];
+  previewWithReadingOrigin?: { topicId: string; floor: number; descriptors: readonly ForumImagePreviewDescriptor[] };
   signatureRows: { content: ReplyRenderableContent; key: string }[];
 };
 const plannedReplyContentCache = new WeakMap<Reply, Map<Source, PlannedReplyContentEntry>>();
@@ -171,13 +172,19 @@ function plannedReplyContent(reply: Reply, source: Source): PlannedReplyContentE
 }
 
 export function imagePreviewDescriptorsForReplies(replies: readonly Reply[], source: Source, topicId?: string) {
-  return replies.flatMap((reply) =>
-    plannedReplyContent(reply, source).previewImages.map((descriptor) =>
-      source === 'linuxdo' && topicId && reply.floor
-        ? { ...descriptor, readingOrigin: { topicId, floor: reply.floor } }
-        : descriptor
-    )
-  );
+  return replies.flatMap((reply) => {
+    const content = plannedReplyContent(reply, source);
+    const floor = reply.floor;
+    if (source !== 'linuxdo' || !topicId || !floor) return content.previewImages;
+    const cached = content.previewWithReadingOrigin;
+    if (cached?.topicId === topicId && cached.floor === floor) return cached.descriptors;
+    const descriptors = content.previewImages.map((descriptor) => ({
+      ...descriptor,
+      readingOrigin: { topicId, floor }
+    }));
+    content.previewWithReadingOrigin = { topicId, floor, descriptors };
+    return descriptors;
+  });
 }
 
 function quotedPostContent(reply: Reply, source: Source): QuotedPostContentEntry {

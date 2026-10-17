@@ -237,7 +237,7 @@ export function createNotificationGateway({
     } catch (error) {
       assertPrivateAccessCurrent(source, access.identityKey, signal);
       if ((requestSessionEpoch?.(source) ?? 0) === requestEpoch) {
-        if (source === 'linuxdo' && errorRequiresAccountRecheck(error)) {
+        if ((source === 'linuxdo' || source === 'nodeseek') && errorRequiresAccountRecheck(error)) {
           requestAccountRecheck?.(source, requestEpoch, trace.traceId);
         } else if (sourceErrorFromUnknown(source, error).reason === 'http-401') {
           onSessionExpired?.(source, requestEpoch);

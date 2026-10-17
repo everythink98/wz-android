@@ -266,7 +266,7 @@ export const TopicScreen = memo(function TopicScreen({
       ) : null}
       <TopicMenu
         onEditTopic={chrome.editTopic}
-        onOpenOpening={item.source === 'linuxdo' ? () => chrome.openTopic(item, { kind: 'opening' }) : undefined}
+        onOpenOpening={() => chrome.openTopic(item, { kind: 'opening' })}
         onOpenOriginal={chrome.openOriginal}
         onOpenReadingSettings={chrome.openReadingSettings}
         onRefreshTopic={chrome.refreshReplies}

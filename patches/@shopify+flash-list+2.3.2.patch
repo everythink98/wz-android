@@ -1,5 +1,5 @@
 diff --git a/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts b/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts
-index 5e90a5c..182d54d 100644
+index 5e90a5c..c423c18 100644
 --- a/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts
 +++ b/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts
 @@ -294,6 +294,8 @@ export interface FlashListProps<TItem> extends Omit<ScrollViewProps, "maintainVi
@@ -12,7 +12,7 @@ index 5e90a5c..182d54d 100644
           * When content is added at the top, automatically scroll to maintain position if the user is within this threshold of the top
           */
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js
-index 6799c8a..b710834 100644
+index 6799c8a..3c210c5 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js
 @@ -59,13 +59,13 @@ const RecyclerViewComponent = (props, ref) => {
@@ -31,7 +31,7 @@ index 6799c8a..b710834 100644
      const isHorizontalRTL = I18nManager.isRTL && horizontal;
      /**
       * Initialize the RecyclerView by measuring and setting up the window size
-@@ -146,36 +146,46 @@ const RecyclerViewComponent = (props, ref) => {
+@@ -146,36 +146,47 @@ const RecyclerViewComponent = (props, ref) => {
      /**
       * Scroll event handler that manages scroll position, velocity, and RTL support
       */
@@ -63,7 +63,8 @@ index 6799c8a..b710834 100644
 +                event.nativeEvent.layoutMeasurement.width
 +            : event.nativeEvent.contentSize.height -
 +                event.nativeEvent.layoutMeasurement.height);
-+        if (!acceptScrollOffset(scrollOffset, timestamp, nativeMaxOffset))
++        const correction = event.nativeEvent.contentOffsetCorrection;
++        if (!acceptScrollOffset(scrollOffset, timestamp, nativeMaxOffset, correction === null || correction === void 0 ? void 0 : correction[horizontal ? "x" : "y"]))
 +            return;
          velocityTracker.computeVelocity(scrollOffset, recyclerViewManager.getAbsoluteLastScrollOffset(), Boolean(horizontal), (velocity, isMomentumEnd) => {
 -            if (recyclerViewManager.ignoreScrollEvents) {
@@ -94,7 +95,7 @@ index 6799c8a..b710834 100644
          checkBounds();
          // Record interaction and compute item visibility
          // Skip recording interaction during programmatic initial scroll
-@@ -185,12 +195,13 @@ const RecyclerViewComponent = (props, ref) => {
+@@ -185,12 +196,13 @@ const RecyclerViewComponent = (props, ref) => {
          }
          recyclerViewManager.computeItemViewability();
          // Call user-provided onScroll handler
@@ -110,7 +111,7 @@ index 6799c8a..b710834 100644
          recyclerViewManager,
          velocityTracker,
      ]);
-@@ -309,8 +320,9 @@ const RecyclerViewComponent = (props, ref) => {
+@@ -309,8 +321,9 @@ const RecyclerViewComponent = (props, ref) => {
      const shouldMaintainVisibleContentPosition = recyclerViewManager.shouldMaintainVisibleContentPosition();
      const maintainVisibleContentPositionInternal = useMemo(() => {
          if (shouldMaintainVisibleContentPosition) {
@@ -121,7 +122,7 @@ index 6799c8a..b710834 100644
                  minIndexForVisible: 0,
              };
          }
-@@ -354,7 +366,33 @@ const RecyclerViewComponent = (props, ref) => {
+@@ -354,7 +367,33 @@ const RecyclerViewComponent = (props, ref) => {
                      recyclerViewContext.layout();
                  }
              } },
@@ -131,15 +132,15 @@ index 6799c8a..b710834 100644
 +                    onContentSizeChange(width, height);
 +                    (_a = props.onContentSizeChange) === null || _a === void 0 ? void 0 : _a.call(props, width, height);
 +                }, onScrollBeginDrag: (event) => {
-+                    var _a, _b;
++                    var _a, _b, _c;
 +                    beginScrollInteraction("drag", (_a = event.nativeEvent
-+                        .timestamp) !== null && _a !== void 0 ? _a : event.timeStamp, getScrollOffset(event));
-+                    (_b = props.onScrollBeginDrag) === null || _b === void 0 ? void 0 : _b.call(props, event);
++                        .timestamp) !== null && _a !== void 0 ? _a : event.timeStamp, getScrollOffset(event), (_b = event.nativeEvent.contentOffsetCorrection) === null || _b === void 0 ? void 0 : _b[horizontal ? "x" : "y"]);
++                    (_c = props.onScrollBeginDrag) === null || _c === void 0 ? void 0 : _c.call(props, event);
 +                }, onMomentumScrollBegin: (event) => {
-+                    var _a, _b;
++                    var _a, _b, _c;
 +                    beginScrollInteraction("momentum", (_a = event.nativeEvent
-+                        .timestamp) !== null && _a !== void 0 ? _a : event.timeStamp, getScrollOffset(event));
-+                    (_b = props.onMomentumScrollBegin) === null || _b === void 0 ? void 0 : _b.call(props, event);
++                        .timestamp) !== null && _a !== void 0 ? _a : event.timeStamp, getScrollOffset(event), (_b = event.nativeEvent.contentOffsetCorrection) === null || _b === void 0 ? void 0 : _b[horizontal ? "x" : "y"]);
++                    (_c = props.onMomentumScrollBegin) === null || _c === void 0 ? void 0 : _c.call(props, event);
 +                }, onScrollEndDrag: (event) => {
 +                    var _a, _b;
 +                    if (endScrollInteraction("drag", (_a = event.nativeEvent.timestamp) !== null && _a !== void 0 ? _a : event.timeStamp)) {
@@ -156,29 +157,56 @@ index 6799c8a..b710834 100644
                  scrollAnchor,
                  isHorizontalRTL && viewToMeasureBoundedSize,
                  renderHeader,
-@@ -398,4 +436,3 @@ RecyclerViewComponent.displayName = "FlashList";
+@@ -398,4 +437,3 @@ RecyclerViewComponent.displayName = "FlashList";
  // Create and export the memoized, forwarded ref component
  const RecyclerView = React.memo(forwardRef(RecyclerViewComponent));
  export { RecyclerView };
 -//# sourceMappingURL=RecyclerView.js.map
 \ No newline at end of file
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts
-index b5c9fae..90e90c0 100644
+index b5c9fae..e70d492 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts
-@@ -16,7 +16,6 @@ export declare class RecyclerViewManager<T> {
+@@ -11,14 +11,24 @@ export declare class RecyclerViewManager<T> {
+     private hasRenderedProgressively;
+     private progressiveRenderCount;
+     private propsRef;
++    private processedProps;
+     private itemViewabilityManager;
+     private _isDisposed;
      private _isLayoutManagerDirty;
      private _animationOptimizationsEnabled;
      firstItemOffset: number;
 -    ignoreScrollEvents: boolean;
      isFirstPaintOnUiComplete: boolean;
      isInitialScrollComplete: boolean;
++    getDataUpdateAnchor?: () => {
++        key: string;
++        index: number;
++        data: RecyclerViewProps<T>["data"];
++    } | undefined;
++    pendingDataUpdate?: {
++        anchorKey: string;
++        anchorIndex: number;
++        finish: () => void;
++    };
      get animationOptimizationsEnabled(): boolean;
+     set animationOptimizationsEnabled(value: boolean);
+     get isOffsetProjectionEnabled(): boolean;
+@@ -29,6 +39,8 @@ export declare class RecyclerViewManager<T> {
+     get props(): RecyclerViewProps<T>;
+     setOffsetProjectionEnabled(value: boolean): void;
+     updateProps(props: RecyclerViewProps<T>): void;
++    private canKeepDataUpdate;
++    private preserveDataUpdate;
+     /**
+      * Updates the scroll offset and returns the engaged indices if any
+      * @param offset
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
-index 1aa651d..285d15a 100644
+index 1aa651d..b9a6ab3 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
-@@ -35,7 +35,6 @@ export class RecyclerViewManager {
+@@ -35,17 +35,19 @@ export class RecyclerViewManager {
          this._isLayoutManagerDirty = false;
          this._animationOptimizationsEnabled = false;
          this.firstItemOffset = 0;
@@ -186,6 +214,249 @@ index 1aa651d..285d15a 100644
          this.isFirstPaintOnUiComplete = false;
          this.isInitialScrollComplete = false;
          // updates render stack based on the engaged indices which are sorted. Recycles unused keys.
+         this.updateRenderStack = (engagedIndices) => {
++            if (this.pendingDataUpdate)
++                return;
+             this.renderStackManager.sync(this.getDataKey, this.getItemType, engagedIndices, this.getDataLength());
+         };
+         this.getDataKey = this.getDataKey.bind(this);
+         this.getItemType = this.getItemType.bind(this);
+         this.overrideItemLayout = this.overrideItemLayout.bind(this);
+         this.propsRef = props;
++        this.processedProps = props;
+         this.engagedIndicesTracker = new RVEngagedIndicesTrackerImpl();
+         this.renderStackManager = new RenderStackManager(props.maxItemsInRecyclePool);
+         this.itemViewabilityManager = new ViewabilityManager(this);
+@@ -65,6 +67,156 @@ export class RecyclerViewManager {
+             (_a = props.drawDistance) !== null && _a !== void 0 ? _a : this.engagedIndicesTracker.drawDistance;
+         this.initialDrawBatchSize =
+             (_c = (_b = this.propsRef.overrideProps) === null || _b === void 0 ? void 0 : _b.initialDrawBatchSize) !== null && _c !== void 0 ? _c : this.initialDrawBatchSize;
++        if (this.pendingDataUpdate &&
++            props.data === this.processedProps.data &&
++            !this.canKeepDataUpdate()) {
++            this.pendingDataUpdate = undefined;
++            this.updateRenderStack(this.getEngagedIndices());
++        }
++    }
++    canKeepDataUpdate() {
++        var _a, _b;
++        const pending = this.pendingDataUpdate;
++        const anchor = (_a = this.getDataUpdateAnchor) === null || _a === void 0 ? void 0 : _a.call(this);
++        return Boolean(pending &&
++            (anchor === null || anchor === void 0 ? void 0 : anchor.key) === pending.anchorKey &&
++            this.shouldMaintainVisibleContentPosition() &&
++            !this.animationOptimizationsEnabled &&
++            pending.anchorIndex < this.getDataLength() &&
++            this.getDataKey(pending.anchorIndex) === pending.anchorKey &&
++            (!((_b = this.propsRef.maintainVisibleContentPosition) === null || _b === void 0 ? void 0 : _b.shouldAnchorItem) ||
++                this.propsRef.maintainVisibleContentPosition.shouldAnchorItem(this.propsRef.data[pending.anchorIndex], pending.anchorIndex)));
++    }
++    preserveDataUpdate(previous) {
++        var _a, _b, _c, _d, _e, _f;
++        const oldData = previous.data;
++        const data = this.propsRef.data;
++        const anchor = (_a = this.getDataUpdateAnchor) === null || _a === void 0 ? void 0 : _a.call(this);
++        if (!oldData ||
++            !data ||
++            !previous.keyExtractor ||
++            !this.hasStableDataKeys() ||
++            !this.isFirstLayoutComplete ||
++            !this.shouldMaintainVisibleContentPosition() ||
++            this.animationOptimizationsEnabled ||
++            !anchor ||
++            (!this.pendingDataUpdate && anchor.data !== oldData))
++            return false;
++        const insertedCount = data.length - oldData.length;
++        if (insertedCount < 0)
++            return false;
++        let insertionIndex = 0;
++        while (insertionIndex < oldData.length &&
++            previous.keyExtractor(oldData[insertionIndex], insertionIndex) ===
++                this.getDataKey(insertionIndex))
++            insertionIndex++;
++        // An append or same-key refresh may arrive before the pending prepend settles.
++        if (insertionIndex === oldData.length) {
++            if (!this.pendingDataUpdate || !this.canKeepDataUpdate())
++                return false;
++            for (const metadata of this.getRenderStack().values()) {
++                if (this.getDataKey(metadata.index) !== metadata.stableId ||
++                    this.getItemType(metadata.index) !== metadata.itemType)
++                    return false;
++            }
++            return true;
++        }
++        if (insertedCount === 0)
++            return false;
++        let anchorIndex = -1;
++        let pureInsertion = true;
++        for (let index = 0; index < oldData.length; index++) {
++            const key = previous.keyExtractor(oldData[index], index);
++            const nextIndex = index < insertionIndex ? index : index + insertedCount;
++            if (key !== this.getDataKey(nextIndex)) {
++                pureInsertion = false;
++                break;
++            }
++            if (key === anchor.key)
++                anchorIndex = nextIndex;
++        }
++        let retainedStart = insertionIndex;
++        let retainedOffset = insertedCount;
++        let excludedPrefixIndices;
++        if (!pureInsertion) {
++            const previousShouldAnchor = (_b = previous.maintainVisibleContentPosition) === null || _b === void 0 ? void 0 : _b.shouldAnchorItem;
++            const shouldAnchor = (_c = this.propsRef.maintainVisibleContentPosition) === null || _c === void 0 ? void 0 : _c.shouldAnchorItem;
++            if (!previousShouldAnchor || !shouldAnchor)
++                return false;
++            let contentStart = 0;
++            while (contentStart < oldData.length &&
++                !previousShouldAnchor(oldData[contentStart], contentStart))
++                contentStart++;
++            if (contentStart === 0 || contentStart === oldData.length)
++                return false;
++            const nextContentStart = data.length - (oldData.length - contentStart);
++            // Only excluded controls may move or disappear before an unchanged content suffix.
++            const prefixKeys = new Set();
++            for (let index = 0; index < contentStart; index++)
++                prefixKeys.add(previous.keyExtractor(oldData[index], index));
++            excludedPrefixIndices = new Map();
++            for (let index = 0; index < nextContentStart; index++) {
++                const key = this.getDataKey(index);
++                if (!prefixKeys.has(key))
++                    continue;
++                if (shouldAnchor(data[index], index) || excludedPrefixIndices.has(key))
++                    return false;
++                excludedPrefixIndices.set(key, index);
++            }
++            anchorIndex = -1;
++            for (let index = contentStart; index < oldData.length; index++) {
++                const key = previous.keyExtractor(oldData[index], index);
++                const nextIndex = nextContentStart + index - contentStart;
++                const oldType = ((_e = (_d = previous.getItemType) === null || _d === void 0 ? void 0 : _d.call(previous, oldData[index], index)) !== null && _e !== void 0 ? _e : "default").toString();
++                if (key !== this.getDataKey(nextIndex) ||
++                    !previousShouldAnchor(oldData[index], index) ||
++                    !shouldAnchor(data[nextIndex], nextIndex) ||
++                    oldType !== this.getItemType(nextIndex))
++                    return false;
++                if (key === anchor.key)
++                    anchorIndex = nextIndex;
++            }
++            retainedStart = contentStart;
++            retainedOffset = nextContentStart - contentStart;
++        }
++        if (anchorIndex < 0 ||
++            (((_f = this.propsRef.maintainVisibleContentPosition) === null || _f === void 0 ? void 0 : _f.shouldAnchorItem) &&
++                !this.propsRef.maintainVisibleContentPosition.shouldAnchorItem(data[anchorIndex], anchorIndex)))
++            return false;
++        const stack = this.getRenderStack();
++        const nextIndices = new Map();
++        for (const [physicalKey, metadata] of stack) {
++            const nextIndex = excludedPrefixIndices && metadata.index < retainedStart
++                ? excludedPrefixIndices.get(metadata.stableId)
++                : metadata.index < retainedStart
++                    ? metadata.index
++                    : metadata.index + retainedOffset;
++            if ((excludedPrefixIndices &&
++                previous.keyExtractor(oldData[metadata.index], metadata.index) !==
++                    metadata.stableId) ||
++                (nextIndex !== undefined &&
++                    (this.getDataKey(nextIndex) !== metadata.stableId ||
++                        this.getItemType(nextIndex) !== metadata.itemType)))
++                return false;
++            nextIndices.set(physicalKey, nextIndex);
++        }
++        this.renderStackManager.remapIndices(nextIndices);
++        const pending = {
++            anchorKey: anchor.key,
++            anchorIndex,
++            finish: () => {
++                if (this.pendingDataUpdate !== pending)
++                    return;
++                this.pendingDataUpdate = undefined;
++                this.updateRenderStack(this.getEngagedIndices());
++                this.computeItemViewability();
++            },
++        };
++        this.pendingDataUpdate = pending;
++        // Old delayed viewability callbacks still contain indices from oldData.
++        this.itemViewabilityManager.dispose();
++        this.itemViewabilityManager.clearLastReportedViewableIndices();
++        return true;
+     }
+     /**
+      * Updates the scroll offset and returns the engaged indices if any
+@@ -73,10 +225,14 @@ export class RecyclerViewManager {
+      */
+     updateScrollOffset(offset, velocity) {
+         if (this.layoutManager && !this._isDisposed) {
++            const cancelledDataUpdate = this.pendingDataUpdate && !this.canKeepDataUpdate();
++            if (cancelledDataUpdate)
++                this.pendingDataUpdate = undefined;
+             const engagedIndices = this.engagedIndicesTracker.updateScrollOffset(offset - this.firstItemOffset, velocity, this.layoutManager);
+-            if (engagedIndices) {
+-                this.updateRenderStack(engagedIndices);
+-                return engagedIndices;
++            if (engagedIndices || cancelledDataUpdate) {
++                const nextIndices = engagedIndices !== null && engagedIndices !== void 0 ? engagedIndices : this.getEngagedIndices();
++                this.updateRenderStack(nextIndices);
++                return nextIndices;
+             }
+         }
+         return undefined;
+@@ -223,6 +379,10 @@ export class RecyclerViewManager {
+     }
+     processDataUpdate() {
+         var _a, _b;
++        const previous = this.processedProps;
++        this.processedProps = this.propsRef;
++        if (!this.preserveDataUpdate(previous))
++            this.pendingDataUpdate = undefined;
+         if (this.hasLayout()) {
+             this.modifyChildrenLayout([], (_b = (_a = this.propsRef.data) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0);
+             if (this.hasRenderedProgressively && !this.recomputeEngagedIndices()) {
+@@ -242,6 +402,7 @@ export class RecyclerViewManager {
+     }
+     dispose() {
+         this._isDisposed = true;
++        this.pendingDataUpdate = undefined;
+         this.itemViewabilityManager.dispose();
+     }
+     markLayoutManagerDirty() {
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.d.ts b/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.d.ts
+index b8bab59..8aadd18 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.d.ts
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.d.ts
+@@ -52,6 +52,7 @@ export declare class RenderStackManager {
+         index: number;
+         stableId: string;
+     }>;
++    remapIndices(indices: ReadonlyMap<string, number | undefined>): void;
+     /**
+      * Syncs an individual item by assigning it an appropriate key.
+      * Will use an existing key if available, or generate a new one.
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.js b/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.js
+index 9cd6cd7..6904708 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/RenderStackManager.js
+@@ -167,6 +167,19 @@ export class RenderStackManager {
+     getRenderStack() {
+         return this.keyMap;
+     }
++    remapIndices(indices) {
++        for (const [key, index] of indices) {
++            const item = this.keyMap.get(key);
++            if (index === undefined) {
++                this.deleteKeyFromRecyclePool(item.itemType, key);
++                this.stableIdMap.delete(item.stableId);
++                this.keyMap.delete(key);
++            }
++            else {
++                item.index = index;
++            }
++        }
++    }
+     /**
+      * Syncs an individual item by assigning it an appropriate key.
+      * Will use an existing key if available, or generate a new one.
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.d.ts b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.d.ts
 index 7717e3b..e488b41 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.d.ts
@@ -255,23 +526,23 @@ index 034920b..302edcd 100644
 -//# sourceMappingURL=useBoundDetection.js.map
 \ No newline at end of file
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts
-index 62d55cd..ccb2d02 100644
+index 62d55cd..35652dc 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts
 @@ -20,6 +20,11 @@ import { ScrollAnchorRef } from "../components/ScrollAnchor";
   * @param props - The RecyclerViewProps containing configuration
   */
  export declare function useRecyclerViewController<T>(recyclerViewManager: RecyclerViewManager<T>, ref: React.Ref<FlashListRef<T>>, scrollViewRef: RefObject<CompatScroller>, scrollAnchorRef: React.RefObject<ScrollAnchorRef>): {
-+    acceptScrollOffset: (offset: number, timestamp: number, nativeMaxOffset?: number) => boolean;
++    acceptScrollOffset: (offset: number, timestamp: number, nativeMaxOffset?: number, correction?: number) => boolean;
 +    onContentSizeChange: (width: number, height: number) => void;
 +    getPendingScroll: () => "command" | "correction" | undefined;
-+    beginScrollInteraction: (phase: "drag" | "momentum", timestamp: number, offset?: number) => boolean;
++    beginScrollInteraction: (phase: "drag" | "momentum", timestamp: number, offset?: number, correction?: number) => boolean;
 +    endScrollInteraction: (phase: "drag" | "momentum", timestamp: number) => boolean;
      applyOffsetCorrection: () => void;
      computeFirstVisibleIndexForOffsetCorrection: () => void;
      applyInitialScrollIndex: () => void;
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
-index 08724d1..a176b1e 100644
+index 08724d1..ef80e72 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
 @@ -1,10 +1,11 @@
@@ -287,18 +558,33 @@ index 08724d1..a176b1e 100644
  /**
   * Comprehensive hook that manages RecyclerView scrolling behavior and provides
   * imperative methods for controlling the RecyclerView.
-@@ -25,11 +26,159 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -25,11 +26,194 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
      const isUnmounted = useUnmountFlag();
      const [_, setRenderId] = useState(0);
      const pauseOffsetCorrection = useRef(false);
 -    const lastDataLengthRef = useRef(recyclerViewManager.getDataLength());
 +    const scrollCommandId = useRef(0);
++    const requestedCorrection = useRef(0);
++    const nativeCorrection = useRef(undefined);
      const { setTimeout } = useUnmountAwareTimeout();
++    const acceptsCorrection = useCallback((correction) => {
++        if (correction === undefined)
++            return true;
++        if (!recyclerViewManager.shouldMaintainVisibleContentPosition())
++            return true;
++        nativeCorrection.current = correction;
++        return sameScrollOffset(correction, requestedCorrection.current);
++    }, [recyclerViewManager]);
      // Track the first visible item for maintaining scroll position
 -    const firstVisibleItemKey = useRef(undefined);
 -    const firstVisibleItemLayout = useRef(undefined);
 +    const firstVisibleItem = useRef(undefined);
 +    const scrollInteraction = useRef({ phase: "idle", startedAt: 0 });
++    // Keep eligibility owned by the scroll controller, including command takeover.
++    recyclerViewManager.getDataUpdateAnchor = useCallback(() => pauseOffsetCorrection.current ||
++        scrollInteraction.current.phase === "command"
++        ? undefined
++        : firstVisibleItem.current, []);
 +    // Native bounds include footer and content padding; data-only bounds do not.
 +    const nativeScrollBounds = useRef(undefined);
 +    const retryClampedScroll = useCallback((maxOffset) => {
@@ -333,9 +619,11 @@ index 08724d1..a176b1e 100644
 +        scrollInteraction.current = { phase: "idle", startedAt: timestamp };
 +        return true;
 +    }, []);
-+    const acceptScrollOffset = useCallback((offset, timestamp, nativeMaxOffset = Infinity) => {
++    const acceptScrollOffset = useCallback((offset, timestamp, nativeMaxOffset = Infinity, correction) => {
 +        var _a, _b, _c;
 +        if (timestamp < scrollInteraction.current.startedAt)
++            return false;
++        if (!acceptsCorrection(correction))
 +            return false;
 +        if (!recyclerViewManager.shouldMaintainVisibleContentPosition() ||
 +            recyclerViewManager.getDataLength() === 0) {
@@ -394,16 +682,32 @@ index 08724d1..a176b1e 100644
 +                (_c = interaction.onReached) === null || _c === void 0 ? void 0 : _c.call(interaction, offset);
 +                return true;
 +            }
++            if (correction !== undefined && interaction.retryAfterCorrection) {
++                interaction.retryAfterCorrection = false;
++                retryClampedScroll(nativeMaxOffset);
++                return false;
++            }
 +            return Boolean(interaction.animated);
 +        }
 +        const anchor = firstVisibleItem.current;
++        // The native layout generation confirms the coordinate system, even when
++        // the reader moved during the correction and never reaches its old target.
++        if (correction !== undefined && (anchor === null || anchor === void 0 ? void 0 : anchor.pendingOffset) !== undefined) {
++            anchor.pendingOffset = undefined;
++            scrollInteraction.current.startedAt = timestamp;
++            if (!sameScrollOffset(offset, anchor.scrollOffset) &&
++                anchor.data === recyclerViewManager.props.data) {
++                firstVisibleItem.current = undefined;
++            }
++        }
 +        if (interaction.phase === "idle" && (anchor === null || anchor === void 0 ? void 0 : anchor.pendingOffset) !== undefined) {
 +            // Native acknowledges integer-pixel corrections asynchronously. Old or
 +            // intermediate offsets must not overwrite the projected logical offset.
 +            if (sameScrollOffset(offset, Math.max(0, Math.min(nativeMaxOffset, anchor.pendingOffset)))) {
 +                anchor.pendingOffset = undefined;
 +                scrollInteraction.current.startedAt = timestamp;
-+                if (!sameScrollOffset(offset, anchor.scrollOffset)) {
++                if (!sameScrollOffset(offset, anchor.scrollOffset) &&
++                    anchor.data === recyclerViewManager.props.data) {
 +                    firstVisibleItem.current = undefined;
 +                    return true;
 +                }
@@ -411,7 +715,7 @@ index 08724d1..a176b1e 100644
 +            return false;
 +        }
 +        return true;
-+    }, [recyclerViewManager, retryClampedScroll]);
++    }, [acceptsCorrection, recyclerViewManager, retryClampedScroll]);
 +    const onContentSizeChange = useCallback((width, height) => {
 +        var _a;
 +        if (!recyclerViewManager.getIsFirstLayoutComplete() ||
@@ -443,14 +747,16 @@ index 08724d1..a176b1e 100644
 +        var _a;
 +        return scrollInteraction.current.phase === "command"
 +            ? "command"
-+            : ((_a = firstVisibleItem.current) === null || _a === void 0 ? void 0 : _a.pendingOffset) !== undefined
++            : (nativeCorrection.current !== undefined &&
++                !sameScrollOffset(nativeCorrection.current, requestedCorrection.current)) ||
++                ((_a = firstVisibleItem.current) === null || _a === void 0 ? void 0 : _a.pendingOffset) !== undefined
 +                ? "correction"
 +                : undefined;
 +    }, []);
      // Queue to store callbacks that should be executed after scroll offset updates
      const pendingScrollCallbacks = useRef([]);
      // Handle initial scroll position when the list first loads
-@@ -57,108 +206,161 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -57,108 +241,198 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
          }
      }, [recyclerViewManager]);
      const computeFirstVisibleIndexForOffsetCorrection = useCallback(() => {
@@ -470,6 +776,11 @@ index 08724d1..a176b1e 100644
 +            const scrollOffset = recyclerViewManager.getAbsoluteLastScrollOffset();
 +            const { data, maintainVisibleContentPosition } = recyclerViewManager.props;
 +            const shouldAnchorItem = maintainVisibleContentPosition === null || maintainVisibleContentPosition === void 0 ? void 0 : maintainVisibleContentPosition.shouldAnchorItem;
++            // New data can precede its layout correction while native scroll events keep arriving.
++            if (anchor && anchor.data !== data) {
++                anchor.scrollOffset = scrollOffset;
++                return;
++            }
 +            // Layout corrections are not reader navigation. Keep the same content
 +            // while newly inserted rows finish measuring, even if they become visible.
 +            if (anchor &&
@@ -501,6 +812,7 @@ index 08724d1..a176b1e 100644
 -                    ...recyclerViewManager.getLayout(firstVisibleIndex),
 +                firstVisibleItem.current = {
 +                    key: recyclerViewManager.getDataKey(firstVisibleIndex),
++                    data,
 +                    index: firstVisibleIndex,
 +                    layout: { ...recyclerViewManager.getLayout(firstVisibleIndex) },
 +                    scrollOffset,
@@ -511,7 +823,8 @@ index 08724d1..a176b1e 100644
 +            firstVisibleItem.current = undefined;
 +        }
      }, [recyclerViewManager]);
-+    const beginScrollInteraction = useCallback((phase, timestamp, offset = recyclerViewManager.getAbsoluteLastScrollOffset()) => {
++    const beginScrollInteraction = useCallback((phase, timestamp, offset = recyclerViewManager.getAbsoluteLastScrollOffset(), correction) => {
++        var _a;
 +        const current = scrollInteraction.current;
 +        if (timestamp < current.startedAt ||
 +            (phase === "momentum" &&
@@ -523,13 +836,19 @@ index 08724d1..a176b1e 100644
 +        scrollCommandId.current++;
 +        pauseOffsetCorrection.current = false;
 +        recyclerViewManager.setOffsetProjectionEnabled(true);
-+        firstVisibleItem.current = undefined;
++        // A new gesture can start before the previous layout correction mounts.
++        if (!acceptsCorrection(correction))
++            return true;
++        if (((_a = firstVisibleItem.current) === null || _a === void 0 ? void 0 : _a.data) === recyclerViewManager.props.data) {
++            firstVisibleItem.current = undefined;
++        }
 +        // Cached pages can arrive before the first onScroll event of this gesture.
 +        updateScrollOffsetWithCallback(offset, () => { });
 +        computeFirstVisibleIndexForOffsetCorrection();
 +        return true;
 +    }, [
 +        recyclerViewManager,
++        acceptsCorrection,
 +        updateScrollOffsetWithCallback,
 +        computeFirstVisibleIndexForOffsetCorrection,
 +    ]);
@@ -596,10 +915,21 @@ index 08724d1..a176b1e 100644
 -                            firstVisibleItemLayout.current.y;
 -                    firstVisibleItemLayout.current = {
 +                            anchor.layout.y;
++                    const dataChanged = anchor.data !== data;
++                    const oldOffset = recyclerViewManager.getLastScrollOffset();
++                    const oldStart = horizontal ? anchor.layout.x : anchor.layout.y;
++                    const oldSize = horizontal ? anchor.layout.width : anchor.layout.height;
++                    const viewportSize = horizontal
++                        ? recyclerViewManager.getWindowSize().width
++                        : recyclerViewManager.getWindowSize().height;
++                    // The new index may still carry another row's cached height.
++                    const wasOutsideViewport = oldStart + oldSize <= oldOffset ||
++                        oldStart >= oldOffset + viewportSize;
 +                    anchor.index = currentIndexOfFirstVisibleItem;
 +                    anchor.layout = {
                          ...recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem),
                      };
++                    anchor.data = data;
                      if (diff !== 0 &&
                          !pauseOffsetCorrection.current &&
                          !recyclerViewManager.animationOptimizationsEnabled) {
@@ -619,6 +949,7 @@ index 08724d1..a176b1e 100644
                          if (PlatformConfig.supportsOffsetCorrection) {
 -                            // console.log("scrollBy", diff);
 -                            (_b = scrollAnchorRef.current) === null || _b === void 0 ? void 0 : _b.scrollBy(diff);
++                            requestedCorrection.current += diff;
 +                            (_c = scrollAnchorRef.current) === null || _c === void 0 ? void 0 : _c.scrollBy(diff);
                          }
                          else {
@@ -644,16 +975,28 @@ index 08724d1..a176b1e 100644
 +                                : { y: correctedOffset, animated: false });
                          }
                      }
-                 }
++                    if (dataChanged && wasOutsideViewport) {
++                        firstVisibleItem.current = undefined;
++                    }
++                }
 +                else {
 +                    firstVisibleItem.current = undefined;
-+                }
+                 }
              }
              computeFirstVisibleIndexForOffsetCorrection();
          }
 -        lastDataLengthRef.current = recyclerViewManager.getDataLength();
 +        else {
 +            firstVisibleItem.current = undefined;
++            if (!recyclerViewManager.shouldMaintainVisibleContentPosition()) {
++                requestedCorrection.current = 0;
++                nativeCorrection.current = undefined;
++            }
++        }
++        const pendingDataUpdate = recyclerViewManager.pendingDataUpdate;
++        if (pendingDataUpdate) {
++            pendingDataUpdate.finish();
++            setRenderId((prev) => prev + 1);
 +        }
      }, [
          recyclerViewManager,
@@ -663,7 +1006,7 @@ index 08724d1..a176b1e 100644
          updateScrollOffsetWithCallback,
          computeFirstVisibleIndexForOffsetCorrection,
      ]);
-@@ -172,8 +374,36 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -172,8 +446,40 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
               * Handles RTL layouts and first item offset adjustments.
               */
              scrollToOffset: ({ offset, animated, skipFirstItemOffset = true, }) => {
@@ -682,16 +1025,20 @@ index 08724d1..a176b1e 100644
 +                            bounds.dataMaxOffset === recyclerViewManager.getMaxScrollOffset()
 +                            ? Math.min(targetOffset, bounds.maxOffset)
 +                            : targetOffset;
++                        const retryAfterCorrection = nativeCorrection.current !== undefined &&
++                            !sameScrollOffset(nativeCorrection.current, requestedCorrection.current);
 +                        // A no-op native command emits no acknowledgement. Other commands
 +                        // own the viewport until their final offset or a new reader gesture.
 +                        const alreadyThere = sameScrollOffset(knownTarget, recyclerViewManager.getAbsoluteLastScrollOffset()) &&
 +                            scrollInteraction.current.phase !== "command" &&
-+                            ((_a = firstVisibleItem.current) === null || _a === void 0 ? void 0 : _a.pendingOffset) === undefined;
++                            ((_a = firstVisibleItem.current) === null || _a === void 0 ? void 0 : _a.pendingOffset) === undefined &&
++                            !retryAfterCorrection;
 +                        scrollInteraction.current = {
 +                            phase: alreadyThere ? "idle" : "command",
 +                            startedAt: scrollInteraction.current.startedAt,
 +                            targetOffset,
 +                            animated: Boolean(animated),
++                            retryAfterCorrection,
 +                        };
 +                        if (!animated)
 +                            updateScrollOffsetWithCallback(knownTarget, () => { });
@@ -700,7 +1047,7 @@ index 08724d1..a176b1e 100644
                      // Adjust offset for RTL layouts in horizontal mode
                      if (I18nManager.isRTL && horizontal) {
                          // eslint-disable-next-line no-param-reassign
-@@ -250,6 +480,23 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -250,6 +556,23 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
                      if (scrollViewRef.current &&
                          index >= 0 &&
                          index < recyclerViewManager.getDataLength()) {
@@ -724,7 +1071,7 @@ index 08724d1..a176b1e 100644
                          // Pause the scroll offset adjustments
                          pauseOffsetCorrection.current = true;
                          recyclerViewManager.setOffsetProjectionEnabled(false);
-@@ -305,7 +552,8 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -305,7 +628,8 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
                           */
                          const performScrollStep = (currentStep) => {
                              // Check if component is unmounted or we've completed all steps
@@ -734,7 +1081,7 @@ index 08724d1..a176b1e 100644
                                  resolve();
                                  return;
                              }
-@@ -326,11 +574,18 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -326,11 +650,18 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
                                          (currentStep / (steps - 1));
                              // Update scroll offset with a callback to continue to the next step
                              updateScrollOffsetWithCallback(nextOffset, () => {
@@ -758,7 +1105,7 @@ index 08724d1..a176b1e 100644
                                      return;
                                  }
                                  // Check if the target position has changed significantly
-@@ -353,8 +608,8 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -353,8 +684,8 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
                              });
                          };
                          /**
@@ -769,7 +1116,7 @@ index 08724d1..a176b1e 100644
                           */
                          const finishScrollToIndex = () => {
                              finalOffset = getFinalOffset();
-@@ -371,19 +626,49 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -371,19 +702,50 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
                                      skipFirstItemOffset: true,
                                  });
                              }
@@ -791,6 +1138,7 @@ index 08724d1..a176b1e 100644
 +                                    return;
 +                                firstVisibleItem.current = {
 +                                    key: targetKey,
++                                    data: recyclerViewManager.props.data,
 +                                    index,
 +                                    layout: { ...recyclerViewManager.getLayout(index) },
 +                                    scrollOffset,
@@ -832,7 +1180,7 @@ index 08724d1..a176b1e 100644
                          };
                          // Start the scroll animation process
                          performScrollStep(0);
-@@ -457,6 +742,7 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -457,6 +819,7 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
          setTimeout,
          isUnmounted,
          updateScrollOffsetWithCallback,
@@ -840,7 +1188,7 @@ index 08724d1..a176b1e 100644
      ]);
      const applyInitialScrollIndex = useCallback(() => {
          var _a, _b, _c;
-@@ -507,10 +793,14 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+@@ -507,10 +870,14 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
          return imperativeApi;
      }, [handlerMethods, scrollViewRef, recyclerViewManager]);
      return {
@@ -857,6 +1205,31 @@ index 08724d1..a176b1e 100644
  }
 -//# sourceMappingURL=useRecyclerViewController.js.map
 \ No newline at end of file
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityHelper.js b/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityHelper.js
+index 607a90e..e3ac8bf 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityHelper.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityHelper.js
+@@ -19,6 +19,7 @@ class ViewabilityHelper {
+     dispose() {
+         // Clean up on dismount
+         this.timers.forEach(clearTimeout);
++        this.timers.clear();
+     }
+     updateViewableItems(horizontal, scrollOffset, listSize, getLayout, viewableIndices) {
+         var _a, _b, _c, _d, _e, _f, _g, _h;
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityManager.js b/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityManager.js
+index 67e342b..5a31429 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityManager.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/viewability/ViewabilityManager.js
+@@ -25,6 +25,8 @@ export default class ViewabilityManager {
+         };
+         this.updateViewableItems = (newViewableIndices) => {
+             var _a;
++            if (this.rvManager.pendingDataUpdate)
++                return;
+             const listSize = this.rvManager.getWindowSize();
+             if (listSize === undefined || !this.shouldListenToVisibleIndices) {
+                 return;
 diff --git a/node_modules/@shopify/flash-list/src/FlashListProps.ts b/node_modules/@shopify/flash-list/src/FlashListProps.ts
 index 1dba06c..881dfcb 100644
 --- a/node_modules/@shopify/flash-list/src/FlashListProps.ts
@@ -871,7 +1244,7 @@ index 1dba06c..881dfcb 100644
       * When content is added at the top, automatically scroll to maintain position if the user is within this threshold of the top
       */
 diff --git a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx
-index 3c25e7e..449ae1c 100644
+index 3c25e7e..2b451a5 100644
 --- a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx
 +++ b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx
 @@ -137,6 +137,11 @@ const RecyclerViewComponent = <T,>(
@@ -899,7 +1272,7 @@ index 3c25e7e..449ae1c 100644
  
    const isHorizontalRTL = I18nManager.isRTL && horizontal;
  
-@@ -260,43 +269,59 @@ const RecyclerViewComponent = <T,>(
+@@ -260,43 +269,63 @@ const RecyclerViewComponent = <T,>(
    /**
     * Scroll event handler that manages scroll position, velocity, and RTL support
     */
@@ -947,7 +1320,11 @@ index 3c25e7e..449ae1c 100644
 +          : event.nativeEvent.contentSize.height -
 +              event.nativeEvent.layoutMeasurement.height
 +      );
-+      if (!acceptScrollOffset(scrollOffset, timestamp, nativeMaxOffset)) return;
++      const correction = (event.nativeEvent as NativeScrollEvent & {
++        contentOffsetCorrection?: { x: number; y: number };
++      }).contentOffsetCorrection;
++      if (!acceptScrollOffset(scrollOffset, timestamp, nativeMaxOffset,
++        correction?.[horizontal ? "x" : "y"])) return;
  
        velocityTracker.computeVelocity(
          scrollOffset,
@@ -980,7 +1357,7 @@ index 3c25e7e..449ae1c 100644
              setRenderId((prev) => prev + 1);
            }
          }
-@@ -318,10 +343,11 @@ const RecyclerViewComponent = <T,>(
+@@ -318,10 +347,11 @@ const RecyclerViewComponent = <T,>(
        recyclerViewManager.props.onScroll?.(event);
      },
      [
@@ -993,7 +1370,7 @@ index 3c25e7e..449ae1c 100644
        recyclerViewManager,
        velocityTracker,
      ]
-@@ -488,8 +514,10 @@ const RecyclerViewComponent = <T,>(
+@@ -488,8 +518,10 @@ const RecyclerViewComponent = <T,>(
  
    const maintainVisibleContentPositionInternal = useMemo(() => {
      if (shouldMaintainVisibleContentPosition) {
@@ -1005,7 +1382,7 @@ index 3c25e7e..449ae1c 100644
          minIndexForVisible: 0,
        };
      }
-@@ -568,6 +596,58 @@ const RecyclerViewComponent = <T,>(
+@@ -568,6 +600,64 @@ const RecyclerViewComponent = <T,>(
            horizontal={horizontal}
            ref={scrollViewRef}
            onScroll={animatedEvent}
@@ -1018,7 +1395,10 @@ index 3c25e7e..449ae1c 100644
 +              "drag",
 +              (event.nativeEvent as NativeScrollEvent & { timestamp?: number })
 +                .timestamp ?? event.timeStamp,
-+              getScrollOffset(event)
++              getScrollOffset(event),
++              (event.nativeEvent as NativeScrollEvent & {
++                contentOffsetCorrection?: { x: number; y: number };
++              }).contentOffsetCorrection?.[horizontal ? "x" : "y"]
 +            );
 +            props.onScrollBeginDrag?.(event);
 +          }}
@@ -1027,7 +1407,10 @@ index 3c25e7e..449ae1c 100644
 +              "momentum",
 +              (event.nativeEvent as NativeScrollEvent & { timestamp?: number })
 +                .timestamp ?? event.timeStamp,
-+              getScrollOffset(event)
++              getScrollOffset(event),
++              (event.nativeEvent as NativeScrollEvent & {
++                contentOffsetCorrection?: { x: number; y: number };
++              }).contentOffsetCorrection?.[horizontal ? "x" : "y"]
 +            );
 +            props.onMomentumScrollBegin?.(event);
 +          }}
@@ -1065,17 +1448,293 @@ index 3c25e7e..449ae1c 100644
              maintainVisibleContentPositionInternal
            }
 diff --git a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
-index 41704d0..c54b703 100644
+index 41704d0..26101c7 100644
 --- a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
 +++ b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
-@@ -37,7 +37,6 @@ export class RecyclerViewManager<T> {
+@@ -31,15 +31,23 @@ export class RecyclerViewManager<T> {
+   private hasRenderedProgressively = false;
+   private progressiveRenderCount = 0;
+   private propsRef: RecyclerViewProps<T>;
++  private processedProps: RecyclerViewProps<T>;
+   private itemViewabilityManager: ViewabilityManager<T>;
+   private _isDisposed = false;
+   private _isLayoutManagerDirty = false;
    private _animationOptimizationsEnabled = false;
  
    public firstItemOffset = 0;
 -  public ignoreScrollEvents = false;
    public isFirstPaintOnUiComplete = false;
    public isInitialScrollComplete = false;
++  public getDataUpdateAnchor?: () =>
++    | { key: string; index: number; data: RecyclerViewProps<T>["data"] }
++    | undefined;
++  public pendingDataUpdate?: {
++    anchorKey: string;
++    anchorIndex: number;
++    finish: () => void;
++  };
  
+   public get animationOptimizationsEnabled() {
+     return this._animationOptimizationsEnabled;
+@@ -67,6 +75,7 @@ export class RecyclerViewManager<T> {
+     this.getItemType = this.getItemType.bind(this);
+     this.overrideItemLayout = this.overrideItemLayout.bind(this);
+     this.propsRef = props;
++    this.processedProps = props;
+     this.engagedIndicesTracker = new RVEngagedIndicesTrackerImpl();
+     this.renderStackManager = new RenderStackManager(
+       props.maxItemsInRecyclePool
+@@ -78,6 +87,7 @@ export class RecyclerViewManager<T> {
+ 
+   // updates render stack based on the engaged indices which are sorted. Recycles unused keys.
+   private updateRenderStack = (engagedIndices: ConsecutiveNumbers): void => {
++    if (this.pendingDataUpdate) return;
+     this.renderStackManager.sync(
+       this.getDataKey,
+       this.getItemType,
+@@ -101,6 +111,178 @@ export class RecyclerViewManager<T> {
+     this.initialDrawBatchSize =
+       this.propsRef.overrideProps?.initialDrawBatchSize ??
+       this.initialDrawBatchSize;
++    if (
++      this.pendingDataUpdate &&
++      props.data === this.processedProps.data &&
++      !this.canKeepDataUpdate()
++    ) {
++      this.pendingDataUpdate = undefined;
++      this.updateRenderStack(this.getEngagedIndices());
++    }
++  }
++
++  private canKeepDataUpdate() {
++    const pending = this.pendingDataUpdate;
++    const anchor = this.getDataUpdateAnchor?.();
++    return Boolean(
++      pending &&
++      anchor?.key === pending.anchorKey &&
++      this.shouldMaintainVisibleContentPosition() &&
++      !this.animationOptimizationsEnabled &&
++      pending.anchorIndex < this.getDataLength() &&
++      this.getDataKey(pending.anchorIndex) === pending.anchorKey &&
++      (!this.propsRef.maintainVisibleContentPosition?.shouldAnchorItem ||
++        this.propsRef.maintainVisibleContentPosition.shouldAnchorItem(
++          this.propsRef.data![pending.anchorIndex],
++          pending.anchorIndex,
++        )),
++    );
++  }
++
++  private preserveDataUpdate(previous: RecyclerViewProps<T>) {
++    const oldData = previous.data;
++    const data = this.propsRef.data;
++    const anchor = this.getDataUpdateAnchor?.();
++    if (
++      !oldData ||
++      !data ||
++      !previous.keyExtractor ||
++      !this.hasStableDataKeys() ||
++      !this.isFirstLayoutComplete ||
++      !this.shouldMaintainVisibleContentPosition() ||
++      this.animationOptimizationsEnabled ||
++      !anchor ||
++      (!this.pendingDataUpdate && anchor.data !== oldData)
++    )
++      return false;
++
++    const insertedCount = data.length - oldData.length;
++    if (insertedCount < 0) return false;
++    let insertionIndex = 0;
++    while (
++      insertionIndex < oldData.length &&
++      previous.keyExtractor(oldData[insertionIndex], insertionIndex) ===
++        this.getDataKey(insertionIndex)
++    )
++      insertionIndex++;
++    // An append or same-key refresh may arrive before the pending prepend settles.
++    if (insertionIndex === oldData.length) {
++      if (!this.pendingDataUpdate || !this.canKeepDataUpdate()) return false;
++      for (const metadata of this.getRenderStack().values()) {
++        if (
++          this.getDataKey(metadata.index) !== metadata.stableId ||
++          this.getItemType(metadata.index) !== metadata.itemType
++        )
++          return false;
++      }
++      return true;
++    }
++    if (insertedCount === 0) return false;
++    let anchorIndex = -1;
++    let pureInsertion = true;
++    for (let index = 0; index < oldData.length; index++) {
++      const key = previous.keyExtractor(oldData[index], index);
++      const nextIndex = index < insertionIndex ? index : index + insertedCount;
++      if (key !== this.getDataKey(nextIndex)) {
++        pureInsertion = false;
++        break;
++      }
++      if (key === anchor.key) anchorIndex = nextIndex;
++    }
++    let retainedStart = insertionIndex;
++    let retainedOffset = insertedCount;
++    let excludedPrefixIndices: Map<string, number> | undefined;
++    if (!pureInsertion) {
++      const previousShouldAnchor =
++        previous.maintainVisibleContentPosition?.shouldAnchorItem;
++      const shouldAnchor =
++        this.propsRef.maintainVisibleContentPosition?.shouldAnchorItem;
++      if (!previousShouldAnchor || !shouldAnchor) return false;
++      let contentStart = 0;
++      while (
++        contentStart < oldData.length &&
++        !previousShouldAnchor(oldData[contentStart], contentStart)
++      )
++        contentStart++;
++      if (contentStart === 0 || contentStart === oldData.length) return false;
++      const nextContentStart = data.length - (oldData.length - contentStart);
++      // Only excluded controls may move or disappear before an unchanged content suffix.
++      const prefixKeys = new Set<string>();
++      for (let index = 0; index < contentStart; index++)
++        prefixKeys.add(previous.keyExtractor(oldData[index], index));
++      excludedPrefixIndices = new Map();
++      for (let index = 0; index < nextContentStart; index++) {
++        const key = this.getDataKey(index);
++        if (!prefixKeys.has(key)) continue;
++        if (shouldAnchor(data[index], index) || excludedPrefixIndices.has(key))
++          return false;
++        excludedPrefixIndices.set(key, index);
++      }
++      anchorIndex = -1;
++      for (let index = contentStart; index < oldData.length; index++) {
++        const key = previous.keyExtractor(oldData[index], index);
++        const nextIndex = nextContentStart + index - contentStart;
++        const oldType = (
++          previous.getItemType?.(oldData[index], index) ?? "default"
++        ).toString();
++        if (
++          key !== this.getDataKey(nextIndex) ||
++          !previousShouldAnchor(oldData[index], index) ||
++          !shouldAnchor(data[nextIndex], nextIndex) ||
++          oldType !== this.getItemType(nextIndex)
++        )
++          return false;
++        if (key === anchor.key) anchorIndex = nextIndex;
++      }
++      retainedStart = contentStart;
++      retainedOffset = nextContentStart - contentStart;
++    }
++    if (
++      anchorIndex < 0 ||
++      (this.propsRef.maintainVisibleContentPosition?.shouldAnchorItem &&
++        !this.propsRef.maintainVisibleContentPosition.shouldAnchorItem(
++          data[anchorIndex],
++          anchorIndex,
++        ))
++    )
++      return false;
++
++    const stack = this.getRenderStack();
++    const nextIndices = new Map<string, number | undefined>();
++    for (const [physicalKey, metadata] of stack) {
++      const nextIndex =
++        excludedPrefixIndices && metadata.index < retainedStart
++          ? excludedPrefixIndices.get(metadata.stableId)
++          : metadata.index < retainedStart
++            ? metadata.index
++            : metadata.index + retainedOffset;
++      if (
++        (excludedPrefixIndices &&
++          previous.keyExtractor(oldData[metadata.index], metadata.index) !==
++            metadata.stableId) ||
++        (nextIndex !== undefined &&
++          (this.getDataKey(nextIndex) !== metadata.stableId ||
++            this.getItemType(nextIndex) !== metadata.itemType))
++      )
++        return false;
++      nextIndices.set(physicalKey, nextIndex);
++    }
++    this.renderStackManager.remapIndices(nextIndices);
++    const pending: NonNullable<RecyclerViewManager<T>["pendingDataUpdate"]> = {
++      anchorKey: anchor.key,
++      anchorIndex,
++      finish: () => {
++        if (this.pendingDataUpdate !== pending) return;
++        this.pendingDataUpdate = undefined;
++        this.updateRenderStack(this.getEngagedIndices());
++        this.computeItemViewability();
++      },
++    };
++    this.pendingDataUpdate = pending;
++    // Old delayed viewability callbacks still contain indices from oldData.
++    this.itemViewabilityManager.dispose();
++    this.itemViewabilityManager.clearLastReportedViewableIndices();
++    return true;
+   }
+ 
+   /**
+@@ -113,15 +295,18 @@ export class RecyclerViewManager<T> {
+     velocity?: Velocity
+   ): ConsecutiveNumbers | undefined {
+     if (this.layoutManager && !this._isDisposed) {
++      const cancelledDataUpdate = this.pendingDataUpdate && !this.canKeepDataUpdate();
++      if (cancelledDataUpdate) this.pendingDataUpdate = undefined;
+       const engagedIndices = this.engagedIndicesTracker.updateScrollOffset(
+         offset - this.firstItemOffset,
+         velocity,
+         this.layoutManager
+       );
+ 
+-      if (engagedIndices) {
+-        this.updateRenderStack(engagedIndices);
+-        return engagedIndices;
++      if (engagedIndices || cancelledDataUpdate) {
++        const nextIndices = engagedIndices ?? this.getEngagedIndices();
++        this.updateRenderStack(nextIndices);
++        return nextIndices;
+       }
+     }
+     return undefined;
+@@ -300,6 +485,9 @@ export class RecyclerViewManager<T> {
+   }
+ 
+   processDataUpdate() {
++    const previous = this.processedProps;
++    this.processedProps = this.propsRef;
++    if (!this.preserveDataUpdate(previous)) this.pendingDataUpdate = undefined;
+     if (this.hasLayout()) {
+       this.modifyChildrenLayout([], this.propsRef.data?.length ?? 0);
+       if (this.hasRenderedProgressively && !this.recomputeEngagedIndices()) {
+@@ -322,6 +510,7 @@ export class RecyclerViewManager<T> {
+ 
+   dispose() {
+     this._isDisposed = true;
++    this.pendingDataUpdate = undefined;
+     this.itemViewabilityManager.dispose();
+   }
+ 
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/RenderStackManager.ts b/node_modules/@shopify/flash-list/src/recyclerview/RenderStackManager.ts
+index a2ccc53..74e8a7c 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/RenderStackManager.ts
++++ b/node_modules/@shopify/flash-list/src/recyclerview/RenderStackManager.ts
+@@ -226,6 +226,19 @@ export class RenderStackManager {
+     return this.keyMap;
+   }
+ 
++  public remapIndices(indices: ReadonlyMap<string, number | undefined>) {
++    for (const [key, index] of indices) {
++      const item = this.keyMap.get(key)!;
++      if (index === undefined) {
++        this.deleteKeyFromRecyclePool(item.itemType, key);
++        this.stableIdMap.delete(item.stableId);
++        this.keyMap.delete(key);
++      } else {
++        item.index = index;
++      }
++    }
++  }
++
+   /**
+    * Syncs an individual item by assigning it an appropriate key.
+    * Will use an existing key if available, or generate a new one.
 diff --git a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
 index dd0f21f..9ad9232 100644
 --- a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
@@ -1128,7 +1787,7 @@ index dd0f21f..9ad9232 100644
    // Reset end reached state when data changes
    useMemo(() => {
 diff --git a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
-index 3689830..f948605 100644
+index 3689830..52d114c 100644
 --- a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
 +++ b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
 @@ -6,7 +6,7 @@ import {
@@ -1150,20 +1809,30 @@ index 3689830..f948605 100644
  /**
   * Comprehensive hook that manages RecyclerView scrolling behavior and provides
   * imperative methods for controlling the RecyclerView.
-@@ -51,12 +54,223 @@ export function useRecyclerViewController<T>(
+@@ -51,12 +54,266 @@ export function useRecyclerViewController<T>(
    const isUnmounted = useUnmountFlag();
    const [_, setRenderId] = useState(0);
    const pauseOffsetCorrection = useRef(false);
 -  const lastDataLengthRef = useRef(recyclerViewManager.getDataLength());
 +  const scrollCommandId = useRef(0);
++  const requestedCorrection = useRef(0);
++  const nativeCorrection = useRef<number | undefined>(undefined);
    const { setTimeout } = useUnmountAwareTimeout();
  
++  const acceptsCorrection = useCallback((correction?: number) => {
++    if (correction === undefined) return true;
++    if (!recyclerViewManager.shouldMaintainVisibleContentPosition()) return true;
++    nativeCorrection.current = correction;
++    return sameScrollOffset(correction, requestedCorrection.current);
++  }, [recyclerViewManager]);
++
    // Track the first visible item for maintaining scroll position
 -  const firstVisibleItemKey = useRef<string | undefined>(undefined);
 -  const firstVisibleItemLayout = useRef<RVLayout | undefined>(undefined);
 +  const firstVisibleItem = useRef<
 +    | {
 +        key: string;
++        data: RecyclerViewManager<T>["props"]["data"];
 +        index: number;
 +        layout: RVLayout;
 +        scrollOffset: number;
@@ -1176,9 +1845,19 @@ index 3689830..f948605 100644
 +    startedAt: number;
 +    targetOffset?: number;
 +    animated?: boolean;
++    retryAfterCorrection?: boolean;
 +    retarget?: () => void;
 +    onReached?: (offset: number) => void;
 +  }>({ phase: "idle", startedAt: 0 });
++  // Keep eligibility owned by the scroll controller, including command takeover.
++  recyclerViewManager.getDataUpdateAnchor = useCallback(
++    () =>
++      pauseOffsetCorrection.current ||
++      scrollInteraction.current.phase === "command"
++        ? undefined
++        : firstVisibleItem.current,
++    [],
++  );
 +  // Native bounds include footer and content padding; data-only bounds do not.
 +  const nativeScrollBounds = useRef<
 +    { maxOffset: number; dataMaxOffset: number } | undefined
@@ -1224,8 +1903,9 @@ index 3689830..f948605 100644
 +    []
 +  );
 +  const acceptScrollOffset = useCallback(
-+    (offset: number, timestamp: number, nativeMaxOffset = Infinity) => {
++    (offset: number, timestamp: number, nativeMaxOffset = Infinity, correction?: number) => {
 +      if (timestamp < scrollInteraction.current.startedAt) return false;
++      if (!acceptsCorrection(correction)) return false;
 +      if (
 +        !recyclerViewManager.shouldMaintainVisibleContentPosition() ||
 +        recyclerViewManager.getDataLength() === 0
@@ -1299,9 +1979,26 @@ index 3689830..f948605 100644
 +          interaction.onReached?.(offset);
 +          return true;
 +        }
++        if (correction !== undefined && interaction.retryAfterCorrection) {
++          interaction.retryAfterCorrection = false;
++          retryClampedScroll(nativeMaxOffset);
++          return false;
++        }
 +        return Boolean(interaction.animated);
 +      }
 +      const anchor = firstVisibleItem.current;
++      // The native layout generation confirms the coordinate system, even when
++      // the reader moved during the correction and never reaches its old target.
++      if (correction !== undefined && anchor?.pendingOffset !== undefined) {
++        anchor.pendingOffset = undefined;
++        scrollInteraction.current.startedAt = timestamp;
++        if (
++          !sameScrollOffset(offset, anchor.scrollOffset) &&
++          anchor.data === recyclerViewManager.props.data
++        ) {
++          firstVisibleItem.current = undefined;
++        }
++      }
 +      if (interaction.phase === "idle" && anchor?.pendingOffset !== undefined) {
 +        // Native acknowledges integer-pixel corrections asynchronously. Old or
 +        // intermediate offsets must not overwrite the projected logical offset.
@@ -1313,7 +2010,10 @@ index 3689830..f948605 100644
 +        ) {
 +          anchor.pendingOffset = undefined;
 +          scrollInteraction.current.startedAt = timestamp;
-+          if (!sameScrollOffset(offset, anchor.scrollOffset)) {
++          if (
++            !sameScrollOffset(offset, anchor.scrollOffset) &&
++            anchor.data === recyclerViewManager.props.data
++          ) {
 +            firstVisibleItem.current = undefined;
 +            return true;
 +          }
@@ -1322,7 +2022,7 @@ index 3689830..f948605 100644
 +      }
 +      return true;
 +    },
-+    [recyclerViewManager, retryClampedScroll]
++    [acceptsCorrection, recyclerViewManager, retryClampedScroll]
 +  );
 +
 +  const onContentSizeChange = useCallback(
@@ -1369,7 +2069,9 @@ index 3689830..f948605 100644
 +    (): "command" | "correction" | undefined =>
 +      scrollInteraction.current.phase === "command"
 +        ? "command"
-+        : firstVisibleItem.current?.pendingOffset !== undefined
++        : (nativeCorrection.current !== undefined &&
++            !sameScrollOffset(nativeCorrection.current, requestedCorrection.current)) ||
++            firstVisibleItem.current?.pendingOffset !== undefined
 +          ? "correction"
 +          : undefined,
 +    []
@@ -1377,7 +2079,7 @@ index 3689830..f948605 100644
  
    // Queue to store callbacks that should be executed after scroll offset updates
    const pendingScrollCallbacks = useRef<(() => void)[]>([]);
-@@ -90,27 +304,100 @@ export function useRecyclerViewController<T>(
+@@ -90,27 +347,112 @@ export function useRecyclerViewController<T>(
    );
  
    const computeFirstVisibleIndexForOffsetCorrection = useCallback(() => {
@@ -1404,6 +2106,11 @@ index 3689830..f948605 100644
 +      const { data, maintainVisibleContentPosition } =
 +        recyclerViewManager.props;
 +      const shouldAnchorItem = maintainVisibleContentPosition?.shouldAnchorItem;
++      // New data can precede its layout correction while native scroll events keep arriving.
++      if (anchor && anchor.data !== data) {
++        anchor.scrollOffset = scrollOffset;
++        return;
++      }
 +      // Layout corrections are not reader navigation. Keep the same content
 +      // while newly inserted rows finish measuring, even if they become visible.
 +      if (
@@ -1442,6 +2149,7 @@ index 3689830..f948605 100644
 -          ...recyclerViewManager.getLayout(firstVisibleIndex),
 +        firstVisibleItem.current = {
 +          key: recyclerViewManager.getDataKey(firstVisibleIndex),
++          data,
 +          index: firstVisibleIndex,
 +          layout: { ...recyclerViewManager.getLayout(firstVisibleIndex) },
 +          scrollOffset,
@@ -1456,7 +2164,8 @@ index 3689830..f948605 100644
 +    (
 +      phase: "drag" | "momentum",
 +      timestamp: number,
-+      offset = recyclerViewManager.getAbsoluteLastScrollOffset()
++      offset = recyclerViewManager.getAbsoluteLastScrollOffset(),
++      correction?: number
 +    ) => {
 +      const current = scrollInteraction.current;
 +      if (
@@ -1471,7 +2180,11 @@ index 3689830..f948605 100644
 +      scrollCommandId.current++;
 +      pauseOffsetCorrection.current = false;
 +      recyclerViewManager.setOffsetProjectionEnabled(true);
-+      firstVisibleItem.current = undefined;
++      // A new gesture can start before the previous layout correction mounts.
++      if (!acceptsCorrection(correction)) return true;
++      if (firstVisibleItem.current?.data === recyclerViewManager.props.data) {
++        firstVisibleItem.current = undefined;
++      }
 +      // Cached pages can arrive before the first onScroll event of this gesture.
 +      updateScrollOffsetWithCallback(offset, () => {});
 +      computeFirstVisibleIndexForOffsetCorrection();
@@ -1479,6 +2192,7 @@ index 3689830..f948605 100644
 +    },
 +    [
 +      recyclerViewManager,
++      acceptsCorrection,
 +      updateScrollOffsetWithCallback,
 +      computeFirstVisibleIndexForOffsetCorrection,
 +    ]
@@ -1487,7 +2201,7 @@ index 3689830..f948605 100644
    /**
     * Maintains the visible content position when the list updates.
     * This is particularly useful for chat applications where we want to keep
-@@ -124,6 +411,7 @@ export function useRecyclerViewController<T>(
+@@ -124,6 +466,7 @@ export function useRecyclerViewController<T>(
      const callbacks = pendingScrollCallbacks.current;
      pendingScrollCallbacks.current = [];
      callbacks.forEach((callback) => callback());
@@ -1495,7 +2209,7 @@ index 3689830..f948605 100644
  
      const currentDataLength = recyclerViewManager.getDataLength();
  
-@@ -133,34 +421,28 @@ export function useRecyclerViewController<T>(
+@@ -133,34 +476,28 @@ export function useRecyclerViewController<T>(
        currentDataLength > 0 &&
        recyclerViewManager.shouldMaintainVisibleContentPosition()
      ) {
@@ -1550,7 +2264,7 @@ index 3689830..f948605 100644
  
          if (
            currentIndexOfFirstVisibleItem !== undefined &&
-@@ -169,10 +451,11 @@ export function useRecyclerViewController<T>(
+@@ -169,55 +506,79 @@ export function useRecyclerViewController<T>(
            // Calculate the difference in position and apply the offset
            const diff = horizontal
              ? recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem).x -
@@ -1560,12 +2274,24 @@ index 3689830..f948605 100644
 -              firstVisibleItemLayout.current!.y;
 -          firstVisibleItemLayout.current = {
 +              anchor.layout.y;
++          const dataChanged = anchor.data !== data;
++          const oldOffset = recyclerViewManager.getLastScrollOffset();
++          const oldStart = horizontal ? anchor.layout.x : anchor.layout.y;
++          const oldSize = horizontal ? anchor.layout.width : anchor.layout.height;
++          const viewportSize = horizontal
++            ? recyclerViewManager.getWindowSize().width
++            : recyclerViewManager.getWindowSize().height;
++          // The new index may still carry another row's cached height.
++          const wasOutsideViewport =
++            oldStart + oldSize <= oldOffset ||
++            oldStart >= oldOffset + viewportSize;
 +          anchor.index = currentIndexOfFirstVisibleItem;
 +          anchor.layout = {
              ...recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem),
            };
++          anchor.data = data;
            if (
-@@ -180,44 +463,42 @@ export function useRecyclerViewController<T>(
+             diff !== 0 &&
              !pauseOffsetCorrection.current &&
              !recyclerViewManager.animationOptimizationsEnabled
            ) {
@@ -1585,6 +2311,7 @@ index 3689830..f948605 100644
 +              recyclerViewManager.getAbsoluteLastScrollOffset();
              if (PlatformConfig.supportsOffsetCorrection) {
 -              // console.log("scrollBy", diff);
++              requestedCorrection.current += diff;
                scrollAnchorRef.current?.scrollBy(diff);
              } else {
 -              const scrollToParams = horizontal
@@ -1613,6 +2340,9 @@ index 3689830..f948605 100644
 -              }, 100);
              }
            }
++          if (dataChanged && wasOutsideViewport) {
++            firstVisibleItem.current = undefined;
++          }
 +        } else {
 +          firstVisibleItem.current = undefined;
          }
@@ -1621,6 +2351,15 @@ index 3689830..f948605 100644
        computeFirstVisibleIndexForOffsetCorrection();
 +    } else {
 +      firstVisibleItem.current = undefined;
++      if (!recyclerViewManager.shouldMaintainVisibleContentPosition()) {
++        requestedCorrection.current = 0;
++        nativeCorrection.current = undefined;
++      }
++    }
++    const pendingDataUpdate = recyclerViewManager.pendingDataUpdate;
++    if (pendingDataUpdate) {
++      pendingDataUpdate.finish();
++      setRenderId((prev) => prev + 1);
      }
 -    lastDataLengthRef.current = recyclerViewManager.getDataLength();
    }, [
@@ -1631,7 +2370,7 @@ index 3689830..f948605 100644
      updateScrollOffsetWithCallback,
      computeFirstVisibleIndexForOffsetCorrection,
    ]);
-@@ -236,8 +517,45 @@ export function useRecyclerViewController<T>(
+@@ -236,8 +597,49 @@ export function useRecyclerViewController<T>(
          animated,
          skipFirstItemOffset = true,
        }: ScrollToOffsetParams) => {
@@ -1655,6 +2394,8 @@ index 3689830..f948605 100644
 +              bounds.dataMaxOffset === recyclerViewManager.getMaxScrollOffset()
 +                ? Math.min(targetOffset, bounds.maxOffset)
 +                : targetOffset;
++            const retryAfterCorrection = nativeCorrection.current !== undefined &&
++              !sameScrollOffset(nativeCorrection.current, requestedCorrection.current);
 +            // A no-op native command emits no acknowledgement. Other commands
 +            // own the viewport until their final offset or a new reader gesture.
 +            const alreadyThere =
@@ -1663,12 +2404,14 @@ index 3689830..f948605 100644
 +                recyclerViewManager.getAbsoluteLastScrollOffset()
 +              ) &&
 +              scrollInteraction.current.phase !== "command" &&
-+              firstVisibleItem.current?.pendingOffset === undefined;
++              firstVisibleItem.current?.pendingOffset === undefined &&
++              !retryAfterCorrection;
 +            scrollInteraction.current = {
 +              phase: alreadyThere ? "idle" : "command",
 +              startedAt: scrollInteraction.current.startedAt,
 +              targetOffset,
 +              animated: Boolean(animated),
++              retryAfterCorrection,
 +            };
 +            if (!animated)
 +              updateScrollOffsetWithCallback(knownTarget, () => {});
@@ -1677,7 +2420,7 @@ index 3689830..f948605 100644
            // Adjust offset for RTL layouts in horizontal mode
            if (I18nManager.isRTL && horizontal) {
              // eslint-disable-next-line no-param-reassign
-@@ -330,6 +648,27 @@ export function useRecyclerViewController<T>(
+@@ -330,6 +732,27 @@ export function useRecyclerViewController<T>(
              index >= 0 &&
              index < recyclerViewManager.getDataLength()
            ) {
@@ -1705,7 +2448,7 @@ index 3689830..f948605 100644
              // Pause the scroll offset adjustments
              pauseOffsetCorrection.current = true;
              recyclerViewManager.setOffsetProjectionEnabled(false);
-@@ -400,7 +739,10 @@ export function useRecyclerViewController<T>(
+@@ -400,7 +823,10 @@ export function useRecyclerViewController<T>(
               */
              const performScrollStep = (currentStep: number) => {
                // Check if component is unmounted or we've completed all steps
@@ -1717,7 +2460,7 @@ index 3689830..f948605 100644
                  resolve();
                  return;
                } else if (currentStep >= steps) {
-@@ -422,11 +764,20 @@ export function useRecyclerViewController<T>(
+@@ -422,11 +848,20 @@ export function useRecyclerViewController<T>(
  
                // Update scroll offset with a callback to continue to the next step
                updateScrollOffsetWithCallback(nextOffset, () => {
@@ -1743,7 +2486,7 @@ index 3689830..f948605 100644
                    return;
                  }
  
-@@ -452,8 +803,8 @@ export function useRecyclerViewController<T>(
+@@ -452,8 +887,8 @@ export function useRecyclerViewController<T>(
              };
  
              /**
@@ -1754,7 +2497,7 @@ index 3689830..f948605 100644
               */
              const finishScrollToIndex = () => {
                finalOffset = getFinalOffset();
-@@ -473,23 +824,60 @@ export function useRecyclerViewController<T>(
+@@ -473,23 +908,61 @@ export function useRecyclerViewController<T>(
                  });
                }
  
@@ -1779,6 +2522,7 @@ index 3689830..f948605 100644
 +                if (!resolveTargetIndex()) return;
 +                firstVisibleItem.current = {
 +                  key: targetKey,
++                  data: recyclerViewManager.props.data,
 +                  index,
 +                  layout: { ...recyclerViewManager.getLayout(index) },
 +                  scrollOffset,
@@ -1832,7 +2576,7 @@ index 3689830..f948605 100644
              };
  
              // Start the scroll animation process
-@@ -570,6 +958,7 @@ export function useRecyclerViewController<T>(
+@@ -570,6 +1043,7 @@ export function useRecyclerViewController<T>(
      setTimeout,
      isUnmounted,
      updateScrollOffsetWithCallback,
@@ -1840,7 +2584,7 @@ index 3689830..f948605 100644
    ]);
  
    const applyInitialScrollIndex = useCallback(() => {
-@@ -615,25 +1004,26 @@ export function useRecyclerViewController<T>(
+@@ -615,25 +1089,26 @@ export function useRecyclerViewController<T>(
    }, [handlerMethods, recyclerViewManager, setTimeout]);
  
    // Expose imperative methods through the ref
@@ -1884,3 +2628,27 @@ index 3689830..f948605 100644
      applyOffsetCorrection,
      computeFirstVisibleIndexForOffsetCorrection,
      applyInitialScrollIndex,
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityHelper.ts b/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityHelper.ts
+index 16ec1a8..cf0a088 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityHelper.ts
++++ b/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityHelper.ts
+@@ -42,6 +42,7 @@ class ViewabilityHelper {
+   public dispose() {
+     // Clean up on dismount
+     this.timers.forEach(clearTimeout);
++    this.timers.clear();
+   }
+ 
+   public updateViewableItems(
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityManager.ts b/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityManager.ts
+index 972c20f..704db4b 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityManager.ts
++++ b/node_modules/@shopify/flash-list/src/recyclerview/viewability/ViewabilityManager.ts
+@@ -71,6 +71,7 @@ export default class ViewabilityManager<T> {
+   };
+ 
+   public updateViewableItems = (newViewableIndices?: number[]) => {
++    if (this.rvManager.pendingDataUpdate) return;
+     const listSize = this.rvManager.getWindowSize();
+     if (listSize === undefined || !this.shouldListenToVisibleIndices) {
+       return;

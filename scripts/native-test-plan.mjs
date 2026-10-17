@@ -17,6 +17,7 @@ const appClasses = [
   'DocumentPickerThreadingTest'
 ].map((name) => `com.wz.reader.${name}`);
 const reactClasses = [
+  'com.facebook.react.views.scroll.MaintainVisibleScrollPositionHelperTest',
   'com.facebook.react.modules.fresco.ReactOkHttpNetworkFetcherTest',
   'com.facebook.react.views.swiperefresh.ReactSwipeRefreshLayoutTest',
   'com.facebook.react.views.image.ReactImageViewEventTest',

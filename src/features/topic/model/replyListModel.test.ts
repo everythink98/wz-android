@@ -3,6 +3,7 @@ import {
   buildReplyListItems,
   buildVirtualizedReplyItems as buildVirtualizedReplyItemsFromPlan,
   getReplyKey,
+  imagePreviewDescriptorsForReplies,
   topicListItemSpacing,
   type TopicReplyListItem
 } from './replyListModel';
@@ -61,6 +62,26 @@ const listCases: [string, boolean, TopicReplyListItem[], boolean, TopicReplyList
 ];
 
 describe('topic reply list model', () => {
+  it('keeps reply image descriptors stable for the same reading origin', () => {
+    const reply = preparedReply(
+      { author: 'reader', contentHtml: '<img src="https://images.invalid/photo.webp">', createdAt: '', floor: 2 },
+      'linuxdo'
+    );
+    const first = imagePreviewDescriptorsForReplies([reply], 'linuxdo', '42');
+    expect(imagePreviewDescriptorsForReplies([reply], 'linuxdo', '42')[0]).toBe(first[0]);
+    expect(first[0].readingOrigin).toEqual({ topicId: '42', floor: 2 });
+    expect(imagePreviewDescriptorsForReplies([reply], 'linuxdo', '43')[0].readingOrigin).toEqual({
+      topicId: '43',
+      floor: 2
+    });
+    reply.floor = 3;
+    expect(imagePreviewDescriptorsForReplies([reply], 'linuxdo', '43')[0].readingOrigin).toEqual({
+      topicId: '43',
+      floor: 3
+    });
+    expect(imagePreviewDescriptorsForReplies([reply], 'linuxdo')[0].readingOrigin).toBeUndefined();
+  });
+
   it('rejects non-empty reply content without a gateway content plan', () => {
     const unprepared = { ...reply, preparedContent: undefined };
     expect(() =>

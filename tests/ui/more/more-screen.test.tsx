@@ -16,6 +16,16 @@ import { createAppQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { NodeSeekAccountOverview } from '@/domain/forum/accountData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
+import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
+import {
+  CURRENT_APP_VERSION,
+  CURRENT_ANDROID_VERSION_CODE,
+  formatAppUpdateDownloadProgress
+} from '@/platform/update/appUpdate';
 
 let mockDragRunsOnJS = false;
 let mockDeferScheduleOnRN = false;
@@ -361,6 +371,95 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
 }
 
 describe('More screen state and actions', () => {
+  it('updates download progress without rerunning unrelated account and proxy layout consumers', async () => {
+    const props = moreProps();
+    const reader = createEmptyReaderState();
+    const queryClient = createAppQueryClient();
+    const runtime: MoreRouteRuntimeValue = {
+      account: props.account,
+      diagnostics: {
+        getCurrentScreen: () => 'more',
+        metadata: { appVersion: CURRENT_APP_VERSION, versionCode: CURRENT_ANDROID_VERSION_CODE }
+      },
+      notify: jest.fn(),
+      library: props.utilities.library,
+      proxy: {
+        activeProfile: null,
+        applyError: '',
+        applyStatus: 'disabled',
+        proxyState: props.utilities.proxy.state,
+        summary: props.utilities.proxy.summary,
+        deleteProxyProfile: props.utilities.proxy.deleteProfile,
+        selectProxyProfile: props.utilities.proxy.selectProfile,
+        setProxyEnabled: props.utilities.proxy.setEnabled,
+        testProxyProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
+        upsertProxyProfile: jest.fn(async () => undefined)
+      },
+      reader: {
+        status: 'ready',
+        commit: jest.fn(),
+        data: reader,
+        dataRef: { current: reader },
+        importBackup: jest.fn(async () => undefined),
+        exportBackup: jest.fn(async () => '')
+      },
+      update: {
+        phase: 'downloading',
+        artifact: null,
+        appUpdateBusy: true,
+        appUpdateDownloading: true,
+        appUpdateDownloadProgress: formatAppUpdateDownloadProgress('2.0.0', 0, 100),
+        appUpdateInfo: null,
+        appUpdateMessage: '正在下载',
+        checkAppUpdate: jest.fn(async () => undefined),
+        startAppUpdateDownload: jest.fn(async () => undefined),
+        pauseAppUpdateDownload: jest.fn(async () => undefined),
+        resumeAppUpdateDownload: jest.fn(async () => undefined),
+        installAppUpdate: jest.fn(async () => undefined)
+      }
+    };
+    const Tab = createBottomTabNavigator<MainTabParamList>();
+    const navigator = (
+      <NavigationContainer>
+        <Tab.Navigator screenOptions={{ headerShown: false }}>
+          <Tab.Screen name="more" component={MoreRoute} />
+        </Tab.Navigator>
+      </NavigationContainer>
+    );
+    const screen = (value: MoreRouteRuntimeValue) => (
+      <QueryClientProvider client={queryClient}>
+        <MoreRouteRuntimeProvider value={value}>{navigator}</MoreRouteRuntimeProvider>
+      </QueryClientProvider>
+    );
+    const view = await render(screen(runtime));
+    await fireEvent.press(view.getByLabelText('展开外观'));
+    expect(view.getByText('字号 100%')).toBeTruthy();
+    expect(mockWindowDimensionsCalls).toBeGreaterThanOrEqual(2);
+    const beforeProgress = mockWindowDimensionsCalls;
+
+    for (let percent = 10; percent <= 100; percent += 10) {
+      await view.rerender(
+        screen({
+          ...runtime,
+          update: {
+            ...runtime.update,
+            appUpdateDownloadProgress: formatAppUpdateDownloadProgress('2.0.0', percent, 100)
+          }
+        })
+      );
+      expect(view.getByRole('progressbar').props.accessibilityValue.now).toBe(percent);
+    }
+    expect(mockWindowDimensionsCalls - beforeProgress).toBe(0);
+
+    await view.rerender(
+      screen({
+        ...runtime,
+        reader: { ...runtime.reader, data: { ...reader, settings: { ...reader.settings, fontScale: 1.15 } } }
+      })
+    );
+    expect(view.getByText('字号 115%')).toBeTruthy();
+  });
+
   it('keeps appearance content measurable while collapsed and discards unfinished font-size previews', async () => {
     const updateSettings = jest.fn();
     const props = moreProps();

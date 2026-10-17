@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useRecyclingState } from '@shopify/flash-list';
 import { StyleSheet, Text, View } from 'react-native';
 import { normalizeNodeSeekStardustRefId, type NodeSeekStardustReceive } from '@/domain/forum/structuredComposer';
 import type { NodeSeekStardustStatus } from '@/sources/nodeseek/stardust';
@@ -9,6 +10,7 @@ import { topicActionDecisionMessage } from '../actions/topicActionDecision';
 import type { TopicActionsController } from '../actions/useTopicActionsController';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { NODESEEK_BASE_URL } from '@/sources/nodeseek/protocol';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
@@ -68,17 +70,18 @@ export function NodeSeekStardustCard({
     () => ({ receiverMemberId, amount, refId, description, oneTime }),
     [amount, description, oneTime, receiverMemberId, refId]
   );
+  const currentReceive = useCommittedRef(stableReceive);
   const requestRef = useRef(0);
-  const [status, setStatus] = useState<NodeSeekStardustStatus | null>(null);
-  const [paying, setPaying] = useState(false);
-  const [paymentNotice, setPaymentNotice] = useState('');
-  const [paymentUnknown, setPaymentUnknown] = useState(false);
-  const [oneTimePaid, setOneTimePaid] = useState(false);
+  const [status, setStatus] = useRecyclingState<NodeSeekStardustStatus | null>(null, [stableReceive]);
+  const [paying, setPaying] = useRecyclingState(false, [stableReceive]);
+  const [paymentNotice, setPaymentNotice] = useRecyclingState('', [stableReceive]);
+  const [paymentUnknown, setPaymentUnknown] = useRecyclingState(false, [stableReceive]);
+  const [oneTimePaid, setOneTimePaid] = useRecyclingState(false, [stableReceive]);
   const loadStatus = useCallback(async () => {
     const request = ++requestRef.current;
     const nextStatus = await loadNodeSeekStardustStatus(stableReceive).catch(() => null);
-    if (request === requestRef.current && nextStatus) setStatus(nextStatus);
-  }, [loadNodeSeekStardustStatus, stableReceive]);
+    if (currentReceive.current === stableReceive && request === requestRef.current && nextStatus) setStatus(nextStatus);
+  }, [currentReceive, loadNodeSeekStardustStatus, setStatus, stableReceive]);
 
   useEffect(() => {
     void loadStatus();
@@ -86,13 +89,6 @@ export function NodeSeekStardustCard({
       requestRef.current += 1;
     };
   }, [loadStatus]);
-
-  useEffect(() => {
-    setStatus(null);
-    setPaymentNotice('');
-    setPaymentUnknown(false);
-    setOneTimePaid(false);
-  }, [stableReceive]);
 
   const validRef = normalizeNodeSeekStardustRefId(refId) !== null;
   const oneTimeClosed = oneTime && Boolean(oneTimePaid || status?.closed);
@@ -107,6 +103,7 @@ export function NodeSeekStardustCard({
     setPaymentNotice('');
     try {
       const outcome = await payNodeSeekStardust(stableReceive);
+      if (currentReceive.current !== stableReceive) return;
       if (outcome === 'unknown') {
         setPaymentUnknown(true);
         setPaymentNotice('付款结果未知，请先在原站确认，切勿直接重复付款。');
@@ -121,15 +118,21 @@ export function NodeSeekStardustCard({
       }
       if (outcome !== 'canceled') void loadStatus();
     } finally {
-      setPaying(false);
+      if (currentReceive.current === stableReceive) setPaying(false);
     }
   }, [
+    currentReceive,
     decision.allowed,
     loadStatus,
     oneTime,
     oneTimeClosed,
     payNodeSeekStardust,
     paymentUnknown,
+    setOneTimePaid,
+    setPaying,
+    setPaymentNotice,
+    setPaymentUnknown,
+    setStatus,
     stableReceive,
     validRef
   ]);

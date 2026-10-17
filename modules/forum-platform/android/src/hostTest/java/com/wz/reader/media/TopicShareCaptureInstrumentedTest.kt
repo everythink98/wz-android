@@ -3,6 +3,7 @@ package com.wz.reader
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapRegionDecoder
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
@@ -54,10 +55,22 @@ class TopicShareCaptureInstrumentedTest {
     while (SystemClock.elapsedRealtime() < deadline) {
       var node = find(instrumentation.uiAutomation.rootInActiveWindow)
       while (node != null && !node.isClickable) node = node.parent
-      if (node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) == true) return
+      if (node?.isEnabled == true && node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)) return
       SystemClock.sleep(25)
     }
     error("Cannot click $label")
+  }
+
+  private fun awaitText(label: String) {
+    fun contains(node: android.view.accessibility.AccessibilityNodeInfo?): Boolean =
+      node != null && (node.text?.toString()?.contains(label) == true ||
+        (0 until node.childCount).any { contains(node.getChild(it)) })
+    val deadline = SystemClock.elapsedRealtime() + 40_000
+    while (SystemClock.elapsedRealtime() < deadline) {
+      if (contains(instrumentation.uiAutomation.rootInActiveWindow)) return
+      SystemClock.sleep(25)
+    }
+    error("Missing text $label")
   }
 
   @Suppress("DEPRECATION")
@@ -95,8 +108,8 @@ class TopicShareCaptureInstrumentedTest {
       assertEquals(File(context.cacheDir, "topic-share-captures").canonicalFile, captured.parentFile!!.canonicalFile)
       val decoder = checkNotNull(BitmapRegionDecoder.newInstance(captured.absolutePath, false))
       try {
-        val scale = minOf(sourceWidth, 1080).toDouble() / sourceWidth
-        assertEquals(minOf(sourceWidth, 1080), decoder.width)
+        val scale = 1440.0 / sourceWidth
+        assertEquals(1440, decoder.width)
         assertEquals(ceil(sourceHeight * scale).toInt(), decoder.height)
         for ((rect, color) in markers) {
           val x = (rect.centerX() * scale).toInt()
@@ -128,11 +141,12 @@ class TopicShareCaptureInstrumentedTest {
     val context = instrumentation.targetContext
     val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     val directory = File(context.cacheDir, "topic-share-pixels-proof-${System.nanoTime()}")
-    fun color(y: Int): Int = (0xff000000L or ((y - y % 4).toLong() shl 8) or 0x31L).toInt()
+    fun color(y: Int): Int = (0xff000000L or ((y - y % 12).toLong() shl 8) or 0x31L).toInt()
     try {
-      for ((sourceWidth, sourceHeight) in listOf(1080 to 40_001, 1440 to 40_000, 1440 to 40_001)) {
+      for ((sourceWidth, sourceHeight) in listOf(360 to 10_001, 720 to 20_001,
+        1080 to 30_002, 1440 to 40_000, 1440 to 40_001, 1920 to 53_333)) {
         lateinit var scroll: ScrollView
-        val width = 1080
+        val width = 1440
         val scale = width.toDouble() / sourceWidth
         val height = ceil(sourceHeight * scale).toInt()
         val draws = AtomicInteger()
@@ -145,10 +159,10 @@ class TopicShareCaptureInstrumentedTest {
             override fun onDraw(canvas: Canvas) {
               if (!canvas.isHardwareAccelerated) draws.incrementAndGet()
               val clip = canvas.clipBounds
-              // Four source rows have integer edges after the 0.75x scale.
-              for (y in maxOf(0, clip.top / 4 * 4) until minOf(sourceHeight, clip.bottom) step 4) {
+              // Twelve source rows have integer edges at every tested output scale.
+              for (y in maxOf(0, clip.top / 12 * 12) until minOf(sourceHeight, clip.bottom) step 12) {
                 paint.color = color(y)
-                canvas.drawRect(0f, y.toFloat(), sourceWidth.toFloat(), minOf(y + 4, sourceHeight).toFloat(), paint)
+                canvas.drawRect(0f, y.toFloat(), sourceWidth.toFloat(), minOf(y + 12, sourceHeight).toFloat(), paint)
               }
             }
           }
@@ -195,8 +209,112 @@ class TopicShareCaptureInstrumentedTest {
         assertEquals(listOf(result.file), directory.listFiles()!!.toList())
         assertTrue(result.file.delete())
       }
+
+      lateinit var textScroll: ScrollView
+      val text = "Clear text 0123456789"
+      instrumentation.runOnMainSync {
+        val content = object : View(context) {
+          private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 18f }
+          override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) { setMeasuredDimension(360, 60) }
+          override fun onDraw(canvas: Canvas) { canvas.drawText(text, 8f, 30f, paint) }
+        }
+        textScroll = ScrollView(context).apply { addView(content, FrameLayout.LayoutParams(360, 60)) }
+        activity.setContentView(textScroll, ViewGroup.LayoutParams(360, 60))
+        textScroll.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
+          View.MeasureSpec.makeMeasureSpec(60, View.MeasureSpec.EXACTLY))
+        textScroll.layout(0, 0, 360, 60)
+        assertEquals("text fixture width", 360, content.width)
+        assertEquals("text fixture height", 60, content.height)
+      }
+      val result = captureTopicShareContent(textScroll, directory, {})
+      val captured = checkNotNull(BitmapFactory.decodeFile(result.file.absolutePath))
+      val lowResolution = Bitmap.createBitmap(360, 60, Bitmap.Config.ARGB_8888)
+      try {
+        lowResolution.eraseColor(android.graphics.Color.WHITE)
+        Canvas(lowResolution).drawText(text, 8f, 30f,
+          Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 18f })
+        assertEquals(1440, captured.width)
+        assertEquals(240, captured.height)
+        val enlarged = Bitmap.createScaledBitmap(lowResolution, 1440, 240, true)
+        try {
+          val capturedPixels = IntArray(1440 * 240)
+          val enlargedPixels = IntArray(1440 * 240)
+          captured.getPixels(capturedPixels, 0, 1440, 0, 0, 1440, 240)
+          enlarged.getPixels(enlargedPixels, 0, 1440, 0, 0, 1440, 240)
+          val capturedEdges = capturedPixels.count { android.graphics.Color.red(it) in 1..254 }
+          val enlargedEdges = enlargedPixels.count { android.graphics.Color.red(it) in 1..254 }
+          instrumentation.sendStatus(0, android.os.Bundle().apply {
+            putString("stream", "\nLONG_CAPTURE_TEXT_EDGES captured=$capturedEdges bitmapEnlargement=$enlargedEdges\n")
+          })
+          assertTrue("text must contain opaque glyph strokes", capturedPixels.any { it == android.graphics.Color.BLACK })
+          assertTrue("text must retain antialiasing", capturedEdges > 0)
+          assertTrue("native text must have fewer blurred edge pixels than bitmap enlargement", capturedEdges < enlargedEdges)
+        } finally { enlarged.recycle() }
+      } finally { captured.recycle(); lowResolution.recycle(); result.file.delete() }
     } finally {
       directory.deleteRecursively()
+      instrumentation.runOnMainSync { activity.finish() }
+    }
+  }
+
+  @Test fun realShareSheetPreservesOriginalImageDetailAndExportsOnePng() {
+    val context = instrumentation.targetContext
+    val directory = File(context.cacheDir, "topic-share")
+    val existing = directory.listFiles()?.toSet() ?: emptySet()
+    val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+    var file: File? = null
+    try {
+      awaitView(activity, "long-capture-ready")
+      click("Open share sheet")
+      awaitText("上下滑动预览")
+      click("分享图片")
+      val deadline = SystemClock.elapsedRealtime() + 40_000
+      while (SystemClock.elapsedRealtime() < deadline) {
+        file = directory.listFiles()?.singleOrNull { it !in existing && it.extension == "png" }
+        if (file != null) break
+        SystemClock.sleep(25)
+      }
+      val captured = checkNotNull(file) { "Share sheet did not export its PNG" }
+      val bitmap = checkNotNull(BitmapFactory.decodeFile(captured.absolutePath))
+      try {
+        assertEquals(1440, bitmap.width)
+        var maximumTransitions = 0
+        for (y in 0 until bitmap.height step 8) {
+          var previous = 0
+          var transitions = 0
+          for (x in 0 until bitmap.width) {
+            val color = bitmap.getPixel(x, y)
+            val stripe = when {
+              android.graphics.Color.red(color) > 220 && android.graphics.Color.blue(color) < 35 -> 1
+              android.graphics.Color.blue(color) > 220 && android.graphics.Color.red(color) < 35 -> 2
+              else -> 0
+            }
+            if (stripe != 0) {
+              if (previous != 0 && previous != stripe) transitions++
+              previous = stripe
+            }
+          }
+          maximumTransitions = maxOf(maximumTransitions, transitions)
+        }
+        assertTrue("original image stripe detail must survive preview and export", maximumTransitions >= 170)
+        instrumentation.sendStatus(0, android.os.Bundle().apply {
+          putString("stream", "\nSHARE_SHEET_PNG size=${bitmap.width}x${bitmap.height} bytes=${captured.length()} stripeTransitions=$maximumTransitions\n")
+        })
+      } finally { bitmap.recycle() }
+      val chooserPackage = checkNotNull(context.packageManager.resolveActivity(
+        Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/png"), ""), 0)?.activityInfo?.packageName)
+      val chooserDeadline = SystemClock.elapsedRealtime() + 20_000
+      while (SystemClock.elapsedRealtime() < chooserDeadline &&
+        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != chooserPackage) {
+        SystemClock.sleep(25)
+      }
+      assertEquals("system share chooser must appear", chooserPackage,
+        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString())
+      instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+      awaitText("上下滑动预览")
+    } finally {
+      file?.delete()
       instrumentation.runOnMainSync { activity.finish() }
     }
   }

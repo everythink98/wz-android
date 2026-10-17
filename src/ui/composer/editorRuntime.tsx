@@ -2,6 +2,7 @@ import {
   Extension,
   Node as TiptapNode,
   findParentNodeClosestToPos,
+  getChangedRanges,
   mergeAttributes,
   type JSONContent,
   type Editor as TiptapEditor
@@ -12,6 +13,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { createParagraphNear } from '@tiptap/pm/commands';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { selectedRect } from '@tiptap/pm/tables';
+import { Mapping } from '@tiptap/pm/transform';
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import { StarterKit } from '@tiptap/starter-kit';
@@ -805,13 +807,33 @@ const StrictGfmTableHeaders = Extension.create({
         appendTransaction(transactions, _oldState, newState) {
           if (!headerType || !transactions.some((transaction) => transaction.docChanged)) return null;
           const transaction = newState.tr;
-          newState.doc.descendants((node, position) => {
-            if (node.type.name !== 'table') return;
-            node.firstChild?.forEach((cell, offset) => {
-              if (cell.type !== headerType) transaction.setNodeMarkup(position + 2 + offset, headerType, cell.attrs);
-            });
-            return false;
-          });
+          const mapping = new Mapping();
+          for (const change of transactions) mapping.appendMapping(change.mapping);
+          const checked = new Set<number>();
+          let mapOffset = 0;
+          for (const change of transactions) {
+            mapOffset += change.mapping.maps.length;
+            const remaining = mapping.slice(mapOffset);
+            for (const { newRange } of getChangedRanges(change)) {
+              const from = remaining.map(newRange.from, -1);
+              const to = remaining.map(newRange.to, 1);
+              // Include both sides of a deletion or a replaced row boundary.
+              newState.doc.nodesBetween(
+                Math.max(0, from - 1),
+                Math.min(newState.doc.content.size, to + 1),
+                (node, position) => {
+                  if (node.type.name !== 'table') return;
+                  if (checked.has(position)) return false;
+                  checked.add(position);
+                  node.firstChild?.forEach((cell, offset) => {
+                    if (cell.type !== headerType)
+                      transaction.setNodeMarkup(position + 2 + offset, headerType, cell.attrs);
+                  });
+                  return false;
+                }
+              );
+            }
+          }
           return transaction.steps.length ? transaction : null;
         }
       })
@@ -1045,6 +1067,65 @@ class SourceUploadWidget extends WidgetType {
 }
 const sourceUploadEffect = StateEffect.define<UploadRange | null>();
 const sourceKeyboardPolicyEffect = StateEffect.define<string | null>();
+type SourcePollRange = { from: number; to: number };
+type SourcePollProtection = { ranges: readonly SourcePollRange[]; requiresFullScan: boolean };
+const SOURCE_POLL_PREFIXES = ['<!-- wz:nodeseek-poll:', 'nsapp://vote?id='] as const;
+const SOURCE_POLL_PREFIX_LOOKAROUND = Math.max(...SOURCE_POLL_PREFIXES.map((prefix) => prefix.length)) - 1;
+
+function sourcePollProtection(source: string): SourcePollProtection {
+  const local = nodeSeekPendingPollTokenRanges(source);
+  const ranges = [...local, ...nodeSeekRemotePollMarkerRanges(source)];
+  let from = source.indexOf(SOURCE_POLL_PREFIXES[0]);
+  let index = 0;
+  while (from >= 0) {
+    const range = local[index++];
+    // An unfinished prefix can consume a later token, and trimmed IDs may span lines.
+    if (!range || range.from !== from || /[\r\n]/.test(source.slice(range.from, range.to))) {
+      return { ranges, requiresFullScan: true };
+    }
+    from = source.indexOf(SOURCE_POLL_PREFIXES[0], range.to);
+  }
+  return { ranges, requiresFullScan: false };
+}
+
+const sourcePollProtectionField = StateField.define<SourcePollProtection>({
+  create: (state) => sourcePollProtection(state.doc.toString()),
+  update(current, transaction) {
+    if (!transaction.docChanged) return current;
+    const document = transaction.newDoc;
+    if (current.requiresFullScan) return sourcePollProtection(document.toString());
+    const changedLines: SourcePollRange[] = [];
+    transaction.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+      const nearby = document.sliceString(
+        Math.max(0, fromB - SOURCE_POLL_PREFIX_LOOKAROUND),
+        Math.min(document.length, toB + SOURCE_POLL_PREFIX_LOOKAROUND)
+      );
+      if (
+        !current.ranges.some((range) => fromA <= range.to && toA >= range.from) &&
+        !SOURCE_POLL_PREFIXES.some((prefix) => nearby.includes(prefix))
+      )
+        return;
+      const from = document.lineAt(fromB).from;
+      const to = document.lineAt(toB).to;
+      const previous = changedLines.at(-1);
+      if (previous && from <= previous.to + 1) previous.to = Math.max(previous.to, to);
+      else changedLines.push({ from, to });
+    });
+    const ranges: SourcePollRange[] = [];
+    for (const range of current.ranges) {
+      const from = transaction.changes.mapPos(range.from, 1);
+      const to = transaction.changes.mapPos(range.to, -1);
+      if (from < to && !changedLines.some((line) => from <= line.to && to >= line.from)) ranges.push({ from, to });
+    }
+    for (const line of changedLines) {
+      const next = sourcePollProtection(document.sliceString(line.from, line.to));
+      if (next.requiresFullScan) return sourcePollProtection(document.toString());
+      for (const range of next.ranges) ranges.push({ from: line.from + range.from, to: line.from + range.to });
+    }
+    return { ranges, requiresFullScan: false };
+  }
+});
+
 const sourceKeyboardPolicyField = StateField.define<string | null>({
   create: () => null,
   update(current, transaction) {
@@ -2669,6 +2750,7 @@ export function ComposerEditorRuntime() {
         extensions: [
           markdownLanguage(),
           history(),
+          sourcePollProtectionField,
           sourceUploadField,
           sourceKeyboardPolicyField,
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
@@ -2683,8 +2765,7 @@ export function ComposerEditorRuntime() {
           EditorState.changeFilter.of((transaction) => {
             if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
             if (configRef.current?.readOnly || submissionLockedRef.current) return false;
-            const source = transaction.startState.doc.toString();
-            const ranges = [...nodeSeekPendingPollTokenRanges(source), ...nodeSeekRemotePollMarkerRanges(source)];
+            const { ranges } = transaction.startState.field(sourcePollProtectionField);
             let allowed = true;
             transaction.changes.iterChangedRanges((fromA, toA) => {
               ranges.forEach((range) => {

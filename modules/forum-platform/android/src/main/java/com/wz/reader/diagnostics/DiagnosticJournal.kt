@@ -158,6 +158,7 @@ object DiagnosticJournal {
     this.buildId = buildId
     this.appVersion = appVersion
     this.versionCode = versionCode
+    android.os.Trace.beginSection("WZ.Diagnostics.Install")
     try {
       recordStartupPhase("diagnostics-start")
       val directory = File(application.noBackupFilesDir, "diagnostics")
@@ -199,11 +200,16 @@ object DiagnosticJournal {
         override fun onActivityDestroyed(activity: Activity) = Unit
       })
     } catch (_: Exception) { crashWriteFailureCount++ }
+    finally { android.os.Trace.endSection() }
   }
 
   private fun atomicWrite(file: File, text: String) {
     val temporary = File(file.parentFile, file.name + ".pending")
-    FileOutputStream(temporary).use { stream -> stream.write(text.toByteArray()); stream.fd.sync() }
+    FileOutputStream(temporary).use { stream ->
+      stream.write(text.toByteArray())
+      android.os.Trace.beginSection("WZ.Diagnostics.Fsync")
+      try { stream.fd.sync() } finally { android.os.Trace.endSection() }
+    }
     check(temporary.renameTo(file))
   }
 

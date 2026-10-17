@@ -748,6 +748,8 @@ describe('Library presentation', () => {
         getLayout: (index: number) => layouts[index],
         firstItemOffset: 0,
         getAbsoluteLastScrollOffset: () => offset,
+        getLastScrollOffset: () => offset,
+        getWindowSize: () => ({ width: 320, height: 1000 }),
         getMaxScrollOffset: () => layouts.at(-1)!.y + layouts.at(-1)!.height - 1000,
         updateScrollOffset: (value: number) => {
           offset = value;

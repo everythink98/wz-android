@@ -1574,3 +1574,383 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
  
    override fun redBoxV2Android(): Boolean = false
  
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelper.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelper.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelper.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelper.kt
+@@ -34,6 +34,10 @@
+ ) : UIManagerListener where ScrollViewT : HasSmoothScroll?, ScrollViewT : ViewGroup? {
+ 
+   var config: Config? = null
++    set(value) {
++      field = value
++      if (value == null) resetAnchor()
++    }
+   private var firstVisibleViewRef: WeakReference<View>? = null
+   private var prevFirstVisibleFrame: Rect? = null
+   private var isListening = false
+@@ -75,6 +79,7 @@
+ 
+   /** Stop listening to view hierarchy updates. Should be called before this is destroyed. */
+   fun stop() {
++    config = null
+     if (!isListening) {
+       return
+     }
+@@ -82,12 +87,24 @@
+     uIManager.removeUIManagerEventListener(this)
+   }
+ 
++  private fun resetAnchor() {
++    firstVisibleViewRef = null
++    prevFirstVisibleFrame = null
++    (scrollView as? ReactScrollViewHelper.HasScrollState)
++        ?.reactScrollViewScrollState?.contentOffsetCorrection?.set(0, 0)
++  }
++
+   private fun updateScrollPositionInternal() {
+     val config = config ?: return
+     val firstVisibleViewRef = firstVisibleViewRef ?: return
+     val prevFirstVisibleFrame = prevFirstVisibleFrame ?: return
+-    val firstVisibleView = firstVisibleViewRef.get() ?: return
++    val firstVisibleView = firstVisibleViewRef.get()
+     val scrollView = scrollView ?: return
++    if (firstVisibleView == null || firstVisibleView.parent !== contentView) {
++      // Fabric can mount a new anchor while skipping an intermediate disabled revision.
++      resetAnchor()
++      return
++    }
+ 
+     val newFrame = Rect()
+     firstVisibleView.getHitRect(newFrame)
+@@ -96,6 +113,9 @@
+       val deltaX = newFrame.left - prevFirstVisibleFrame.left
+       if (deltaX != 0) {
+         val scrollX = scrollView.scrollX
++        // scrollTo can synchronously emit an event; tag its coordinate system first.
++        (scrollView as? ReactScrollViewHelper.HasScrollState)
++            ?.reactScrollViewScrollState?.contentOffsetCorrection?.offset(deltaX, 0)
+         scrollView.scrollToPreservingMomentum(scrollX + deltaX, scrollView.scrollY)
+         this.prevFirstVisibleFrame = newFrame
+         if (config.autoScrollToTopThreshold != null && scrollX <= config.autoScrollToTopThreshold) {
+@@ -106,6 +126,8 @@
+       val deltaY = newFrame.top - prevFirstVisibleFrame.top
+       if (deltaY != 0) {
+         val scrollY = scrollView.scrollY
++        (scrollView as? ReactScrollViewHelper.HasScrollState)
++            ?.reactScrollViewScrollState?.contentOffsetCorrection?.offset(0, deltaY)
+         scrollView.scrollToPreservingMomentum(scrollView.scrollX, scrollY + deltaY)
+         this.prevFirstVisibleFrame = newFrame
+         if (config.autoScrollToTopThreshold != null && scrollY <= config.autoScrollToTopThreshold) {
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollViewHelper.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollViewHelper.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollViewHelper.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollViewHelper.kt
+@@ -135,6 +135,8 @@
+     // this since the crash is usually a red herring.
+     val eventDispatcher = UIManagerHelper.getEventDispatcher(reactContext)
+     if (eventDispatcher != null) {
++      val correction =
++          (scrollView as? HasScrollState)?.reactScrollViewScrollState?.contentOffsetCorrection
+       eventDispatcher.dispatchEvent(
+           ScrollEvent.obtain(
+               surfaceId,
+@@ -149,6 +151,7 @@
+               scrollView.width,
+               scrollView.height,
+           )
++              .withContentOffsetCorrection(correction?.x ?: 0, correction?.y ?: 0)
+       )
+       if (scrollEventType == ScrollEventType.SCROLL) {
+         scrollView.lastScrollDispatchTime = now
+@@ -633,6 +636,8 @@
+       var scrollAwayPaddingBottom: Int = 0,
+       /** Get the Fabric state of last scroll position */
+       val lastStateUpdateScroll: Point = Point(-1, -1),
++      /** Cumulative MVCP layout correction, before native clamping or reader movement. */
++      val contentOffsetCorrection: Point = Point(),
+       /** Get true if the previous animation was canceled */
+       var isCanceled: Boolean = false,
+       /** Get true if previous animation was finished */
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ScrollEvent.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ScrollEvent.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ScrollEvent.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ScrollEvent.kt
+@@ -31,6 +31,8 @@
+   private var scrollViewHeight = 0
+   private var scrollEventType: ScrollEventType? = null
+   private var timestamp: Long = 0
++  private var contentOffsetCorrectionX = 0
++  private var contentOffsetCorrectionY = 0
+ 
+   override fun onDispose() {
+     try {
+@@ -68,8 +70,16 @@
+     this.scrollViewWidth = scrollViewWidth
+     this.scrollViewHeight = scrollViewHeight
+     this.timestamp = timestampMs
++    contentOffsetCorrectionX = 0
++    contentOffsetCorrectionY = 0
+   }
+ 
++  public fun withContentOffsetCorrection(x: Int, y: Int): ScrollEvent {
++    contentOffsetCorrectionX = x
++    contentOffsetCorrectionY = y
++    return this
++  }
++
+   override fun getEventName(): String =
+       ScrollEventType.getJSEventName(Assertions.assertNotNull(scrollEventType))
+ 
+@@ -93,6 +103,11 @@
+       put("height", toDIPFromPixel(contentHeight.toFloat()).toDouble())
+     }
+ 
++    val contentOffsetCorrection = buildReadableMap {
++      put("x", toDIPFromPixel(contentOffsetCorrectionX.toFloat()).toDouble())
++      put("y", toDIPFromPixel(contentOffsetCorrectionY.toFloat()).toDouble())
++    }
++
+     val layoutMeasurement = buildReadableMap {
+       put("width", toDIPFromPixel(scrollViewWidth.toFloat()).toDouble())
+       put("height", toDIPFromPixel(scrollViewHeight.toFloat()).toDouble())
+@@ -106,6 +121,7 @@
+     val event = Arguments.createMap()
+     event.putMap("contentInset", contentInset)
+     event.putMap("contentOffset", contentOffset)
++    event.putMap("contentOffsetCorrection", contentOffsetCorrection)
+     event.putMap("contentSize", contentSize)
+     event.putMap("layoutMeasurement", layoutMeasurement)
+     event.putMap("velocity", velocity)
+diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelperTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelperTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelperTest.kt
+@@ -0,0 +1,230 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++@file:Suppress("DEPRECATION")
++
++package com.facebook.react.views.scroll
++
++import android.content.Context
++import android.graphics.Point
++import android.util.DisplayMetrics
++import android.view.View
++import android.widget.FrameLayout
++import com.facebook.react.bridge.Arguments
++import com.facebook.react.bridge.BridgeReactContext
++import com.facebook.react.bridge.JavaOnlyMap
++import com.facebook.react.bridge.UIManager
++import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags
++import com.facebook.react.uimanager.DisplayMetricsHolder
++import com.facebook.react.uimanager.events.EventDispatcher
++import com.facebook.react.uimanager.events.EventDispatcherProvider
++import com.facebook.react.views.view.ReactViewGroup
++import org.junit.After
++import org.junit.Assert.*
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.mockito.MockedStatic
++import org.mockito.Mockito
++import org.mockito.kotlin.any
++import org.mockito.kotlin.doAnswer
++import org.mockito.kotlin.mock
++import org.mockito.kotlin.whenever
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [33])
++class MaintainVisibleScrollPositionHelperTest {
++  private val events = mutableListOf<ScrollEvent>()
++  private lateinit var context: TestContext
++  private lateinit var maps: MockedStatic<Arguments>
++  private lateinit var flags: MockedStatic<ReactNativeFeatureFlags>
++
++  @Before
++  fun setUp() {
++    maps = Mockito.mockStatic(Arguments::class.java)
++    maps.`when`<Any> { Arguments.createMap() }.thenAnswer { JavaOnlyMap() }
++    flags = Mockito.mockStatic(ReactNativeFeatureFlags::class.java)
++    val dispatcher = mock<EventDispatcher>()
++    doAnswer { events.add(it.getArgument(0)); null }
++        .whenever(dispatcher).dispatchEvent(any<ScrollEvent>())
++    context = TestContext(RuntimeEnvironment.getApplication(), dispatcher)
++    val metrics = DisplayMetrics().apply { density = 2f; scaledDensity = 2f }
++    DisplayMetricsHolder.setWindowDisplayMetrics(metrics)
++    DisplayMetricsHolder.setScreenDisplayMetrics(metrics)
++  }
++
++  @After
++  fun tearDown() {
++    events.distinct().filter { it.isInitialized }.forEach { it.dispose() }
++    flags.close()
++    maps.close()
++    DisplayMetricsHolder.setWindowDisplayMetrics(null)
++    DisplayMetricsHolder.setScreenDisplayMetrics(null)
++  }
++
++  @Test
++  fun layoutCorrectionsTagSynchronousScrollEventsBeforeMovingEitherAxis() {
++    for (horizontal in listOf(false, true)) {
++      val (scrollView, anchor) = scrollView()
++      val helper = MaintainVisibleScrollPositionHelper(scrollView, horizontal)
++      helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++      val uiManager = mock<UIManager>()
++      var cumulative = 0
++      for (delta in listOf(600, -120, 80)) {
++        helper.willMountItems(uiManager)
++        anchor.offsetLeftAndRight(if (horizontal) delta else 0)
++        anchor.offsetTopAndBottom(if (horizontal) 0 else delta)
++        helper.didMountItems(uiManager)
++        cumulative += delta
++
++        val expected = if (horizontal) Point(cumulative, 0) else Point(0, cumulative)
++        assertEquals(expected, scrollView.correctionsBeforeScroll.last())
++        assertCorrection(events.last(), expected.x / 2.0, expected.y / 2.0)
++        assertEquals(if (horizontal) cumulative else 0, scrollView.scrollX)
++        assertEquals(if (horizontal) 0 else cumulative, scrollView.scrollY)
++      }
++    }
++  }
++
++  @Test
++  fun queuedEventsKeepTheirCorrectionSnapshotAndPooledEventsResetIt() {
++    val (scrollView, anchor) = scrollView()
++    val helper = MaintainVisibleScrollPositionHelper(scrollView, false)
++    helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++    val uiManager = mock<UIManager>()
++    helper.willMountItems(uiManager)
++    anchor.offsetTopAndBottom(600)
++    helper.didMountItems(uiManager)
++    val first = events.last()
++
++    helper.willMountItems(uiManager)
++    anchor.offsetTopAndBottom(120)
++    helper.didMountItems(uiManager)
++    assertCorrection(first, 0.0, 300.0)
++    assertCorrection(events.last(), 0.0, 360.0)
++
++    first.dispose()
++    val reused = ScrollEvent.obtain(1, 42, ScrollEventType.SCROLL, 0f, 0f, 0f, 0f, 100, 100, 40, 40)
++    try {
++      assertSame(first, reused)
++      assertCorrection(reused, 0.0, 0.0)
++    } finally {
++      reused.dispose()
++    }
++  }
++
++  @Test
++  fun gestureLifecycleEventsCarryTheSameCorrectionSnapshot() {
++    val (scrollView, _) = scrollView()
++    scrollView.reactScrollViewScrollState.contentOffsetCorrection.set(120, -80)
++    ReactScrollViewHelper.emitScrollBeginDragEvent(scrollView)
++    ReactScrollViewHelper.emitScrollEndDragEvent(scrollView, 0f, 0f)
++    ReactScrollViewHelper.emitScrollMomentumBeginEvent(scrollView, 0, 0)
++    ReactScrollViewHelper.emitScrollMomentumEndEvent(scrollView)
++    scrollView.reactScrollViewScrollState.contentOffsetCorrection.set(200, 400)
++
++    assertEquals(
++        listOf("topScrollBeginDrag", "topScrollEndDrag", "topMomentumScrollBegin", "topMomentumScrollEnd"),
++        events.map { it.eventName },
++    )
++    events.forEach { assertCorrection(it, 60.0, -40.0) }
++  }
++
++  @Test
++  fun disablingClearsTheAnchorAndStartsANewCorrectionCycle() {
++    for (stop in listOf(false, true)) {
++      val (scrollView, anchor) = scrollView()
++      val helper = MaintainVisibleScrollPositionHelper(scrollView, false)
++      val uiManager = mock<UIManager>()
++      helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++      helper.willMountItems(uiManager)
++      anchor.offsetTopAndBottom(600)
++      helper.didMountItems(uiManager)
++      val previousCycle = events.last()
++
++      if (stop) helper.stop() else helper.config = null
++      anchor.offsetTopAndBottom(120)
++      helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++      helper.didMountItems(uiManager)
++      assertEquals(Point(), scrollView.reactScrollViewScrollState.contentOffsetCorrection)
++      assertEquals(600, scrollView.scrollY)
++      assertCorrection(previousCycle, 0.0, 300.0)
++
++      helper.willMountItems(uiManager)
++      anchor.offsetTopAndBottom(-80)
++      helper.didMountItems(uiManager)
++      assertCorrection(events.last(), 0.0, -40.0)
++    }
++  }
++
++  @Test
++  fun replacingTheAnchorStartsANewCycleWhenIntermediateMountsAreSkipped() {
++    val (scrollView, anchor) = scrollView()
++    val helper = MaintainVisibleScrollPositionHelper(scrollView, false)
++    val uiManager = mock<UIManager>()
++    helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++    helper.willMountItems(uiManager)
++    anchor.offsetTopAndBottom(600)
++    helper.didMountItems(uiManager)
++
++    helper.willMountItems(uiManager)
++    val content = scrollView.getChildAt(0) as ReactViewGroup
++    content.removeView(anchor)
++    val replacement = View(context).apply { layout(1000, 1000, 1010, 1010) }
++    content.addView(replacement)
++    helper.didMountItems(uiManager)
++    ReactScrollViewHelper.emitScrollBeginDragEvent(scrollView)
++    assertCorrection(events.last(), 0.0, 0.0)
++
++    helper.willMountItems(uiManager)
++    replacement.offsetTopAndBottom(80)
++    helper.didMountItems(uiManager)
++    assertCorrection(events.last(), 0.0, 40.0)
++  }
++
++  private fun scrollView(): Pair<TestScrollView, View> {
++    val scrollView = TestScrollView(context).apply { id = 42; layout(0, 0, 400, 400) }
++    val content = ReactViewGroup(context).apply { layout(0, 0, 2000, 2000) }
++    val anchor = View(context).apply { layout(1000, 1000, 1010, 1010) }
++    content.addView(anchor)
++    scrollView.addView(content)
++    return scrollView to anchor
++  }
++
++  private fun assertCorrection(event: ScrollEvent, x: Double, y: Double) {
++    val correction = event.internal_getEventData()!!.getMap("contentOffsetCorrection")!!
++    assertEquals(x, correction.getDouble("x"), 0.0)
++    assertEquals(y, correction.getDouble("y"), 0.0)
++  }
++
++  private class TestScrollView(context: Context) :
++      FrameLayout(context), ReactScrollViewHelper.HasSmoothScroll,
++      ReactScrollViewHelper.HasScrollState, ReactScrollViewHelper.HasScrollEventThrottle {
++    override var reactScrollViewScrollState = ReactScrollViewHelper.ReactScrollViewScrollState()
++    override var scrollEventThrottle = 0
++    override var lastScrollDispatchTime = 0L
++    val correctionsBeforeScroll = mutableListOf<Point>()
++
++    override fun scrollToPreservingMomentum(x: Int, y: Int) {
++      correctionsBeforeScroll.add(Point(reactScrollViewScrollState.contentOffsetCorrection))
++      scrollTo(x, y)
++      ReactScrollViewHelper.emitScrollEvent(this, 0f, 0f)
++    }
++
++    override fun reactSmoothScrollTo(x: Int, y: Int) {
++      throw AssertionError("Unexpected smooth scroll")
++    }
++  }
++
++  private class TestContext(context: Context, private val dispatcher: EventDispatcher) :
++      BridgeReactContext(context), EventDispatcherProvider {
++    override fun getEventDispatcher() = dispatcher
++  }
++}

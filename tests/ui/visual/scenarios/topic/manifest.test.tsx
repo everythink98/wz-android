@@ -64,6 +64,8 @@ jest.mock('@shopify/flash-list', () => {
         optional(ListFooterComponent)
       );
     }),
+    useFlashListContext: () => null,
+    useLayoutState: (initialValue: unknown) => ReactModule.useState(initialValue),
     useMappingHelper: () => ({ getMappingKey: (value: string) => value }),
     useRecyclingState: (initialValue: unknown) => ReactModule.useState(initialValue)
   };

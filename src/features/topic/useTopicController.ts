@@ -194,6 +194,7 @@ export function useTopicController({
   const targetWindowCacheOwnedRef = useRef(new Map<ReplyOrder, readonly unknown[]>());
   const handledRouteTargetRef = useRef<{ key: string; queryIdentity: string; pending: boolean } | null>(null);
   const replyWindowGenerationRef = useRef(0);
+  const replyLocationOwnerRef = useRef<{ generation: number; queryKey: readonly unknown[] } | null>(null);
   const selectedSource = selectedTopic?.source || 'v2ex';
   const selectedTopicId = selectedTopic?.id || '';
   const selectedTopicKey = selectedTopic ? topicKey(selectedTopic) : '';
@@ -491,6 +492,8 @@ export function useTopicController({
   }, [needsOpeningWindow, queryClient, repliesQueryKey]);
   const repliesQuery = useInfiniteQuery({
     queryKey: repliesQueryKey,
+    // InfiniteQuery retains old pages; index-based deep sharing clones them when a page is prepended.
+    structuralSharing: false,
     enabled:
       enabled &&
       readingEntry.ready &&
@@ -564,6 +567,8 @@ export function useTopicController({
     () => mergedReplyPages(repliesQuery.data as InfiniteData<ReplyPage, ReplyPageParam> | undefined),
     [repliesQuery.data]
   );
+  const firstReplyPage = repliesQuery.data?.pages[0];
+  const replyPreviousCursor = firstReplyPage ? previousReplyPage(firstReplyPage, repliesQuery.data?.pages) : undefined;
   const lastReplyPage = repliesQuery.data?.pages.at(-1);
   const replyHasPrevious = Boolean(repliesQuery.hasPreviousPage);
   const replyHasMore = Boolean(repliesQuery.hasNextPage);
@@ -1397,6 +1402,16 @@ export function useTopicController({
     topicCommands
   ]);
 
+  const cancelReplyLocation = useCallback(() => {
+    const owner = replyLocationOwnerRef.current;
+    if (!owner) return;
+    replyLocationOwnerRef.current = null;
+    if (owner.generation === replyWindowGenerationRef.current) {
+      replyWindowGenerationRef.current += 1;
+    }
+    void queryClient.cancelQueries({ queryKey: owner.queryKey });
+  }, [queryClient]);
+
   const locateReply = useCallback(
     async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
       if (!active || !selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
@@ -1442,6 +1457,7 @@ export function useTopicController({
         expectedAuthorUsername ?? null
       ] as const;
       const generation = ++replyWindowGenerationRef.current;
+      replyLocationOwnerRef.current = { generation, queryKey: targetReplyQueryRoot };
       const loadTargetWindow = async () => {
         if (
           activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
@@ -1783,6 +1799,7 @@ export function useTopicController({
     currentTopicKey,
     loadPreviousReplies,
     loadMoreReplies,
+    cancelReplyLocation,
     locateReply,
     loadedQuotedReplies,
     loadingMoreReplies: loadingTargetReply || repliesQuery.isFetchingNextPage,
@@ -1814,6 +1831,7 @@ export function useTopicController({
     replyCollectionComplete,
     replyHasPrevious,
     replyHasMore,
+    replyPreviousCursor,
     replyNextOffset,
     replyNextPage,
     toggleReplyQuote,

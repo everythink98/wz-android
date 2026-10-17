@@ -1,14 +1,23 @@
+import type { HTMLElement } from 'node-html-parser';
 import { accessRequirementFromNoticeText } from '@/domain/forum/accessRequirements';
 import { sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
 import {
+  FORUM_INLINE_MEDIA_LINE_TAG,
+  FORUM_STICKER_ROW_TAG,
+  FORUM_STICKER_TAG,
+  INLINE_FORUM_IMAGE_TAG,
   isInlineForumImage,
   knownForumStickerSourceDimensions,
-  normalizeForumContentMediaNodes
+  normalizeForumContentMediaNodes,
+  ORIGINAL_IMAGE_SOURCE_ATTR
 } from '@/domain/forum/forumContentMedia';
 import { absoluteUrl, escapeHtmlAttribute, escapeHtmlText, textContentFromHtml } from '@/domain/forum/html';
 import type { TopicDetail, TopicPoll } from '@/domain/forum/models';
+import { selectImageOriginalSource } from '@/platform/media/imagePreviewCatalog';
 
 const MAX_CONTENT_LENGTH = 150_000;
+const IMAGE_TAGS = new Set(['img', INLINE_FORUM_IMAGE_TAG, FORUM_STICKER_TAG]);
+const MEDIA_LAYOUT_TAGS = new Set([FORUM_STICKER_ROW_TAG, FORUM_INLINE_MEDIA_LINE_TAG]);
 
 function assertContentSize(html: string) {
   if (html.length > MAX_CONTENT_LENGTH) throw new Error('正文过长，无法生成完整分享图片，请分享链接。');
@@ -62,31 +71,31 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
     }
     for (const image of content.querySelectorAll('img, forum-inline-image, forum-sticker')) {
       if (image.rawTagName.toLowerCase() !== 'img') {
-        image.tagName = 'img';
+        if (!image.getAttribute('alt') && image.textContent) image.setAttribute('alt', image.textContent);
         image.set_content('');
       }
-      image.removeAttribute('data-forum-original-src');
-      for (const name of ['data-src', 'data-original']) {
+      for (const name of ['data-src', 'data-original', 'data-forum-original-src']) {
         const value = absoluteUrl(image.getAttribute(name), topic.url);
         if (value) image.setAttribute(name, value);
       }
     }
+    for (const font of content.querySelectorAll('font[color]')) {
+      font.setAttribute('style', `color: ${font.getAttribute('color')}; ${font.getAttribute('style') || ''}`);
+    }
   });
+  const canonicalImageSources = new Map<HTMLElement, string>();
+  for (const image of root.querySelectorAll('img, forum-inline-image, forum-sticker')) {
+    const source = selectImageOriginalSource({
+      [ORIGINAL_IMAGE_SOURCE_ATTR]: image.getAttribute(ORIGINAL_IMAGE_SOURCE_ATTR)
+    });
+    if (source) canonicalImageSources.set(image, source);
+  }
   normalizeForumContentMediaNodes(root);
   const includedPolls = new Set<TopicPoll>();
   for (const node of root.querySelectorAll('*').reverse()) {
     const tag = node.rawTagName.toLowerCase();
     const attribute = (name: string) => node.getAttribute(name) || '';
-    if (tag === 'forum-inline-image' || tag === 'forum-sticker') {
-      node.replaceWith(
-        imageHtml(
-          attribute('src') || attribute('data-forum-original-src'),
-          attribute('alt') || node.textContent,
-          attribute('referrerpolicy'),
-          smallImageDimensions(node.attributes)
-        )
-      );
-    } else if (tag === 'forum-link-card') {
+    if (tag === 'forum-link-card') {
       node.replaceWith(
         `<section><p><strong>${escapeHtmlText(attribute('title') || attribute('site'))}</strong></p>` +
           `<p>${escapeHtmlText(attribute('description'))}</p>` +
@@ -139,8 +148,8 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
       );
     } else if (tag === 'summary') {
       node.tagName = 'p';
-    } else if (tag === 'details' || tag.startsWith('forum-')) {
-      node.tagName = tag === 'forum-inline-media-line' ? 'span' : 'div';
+    } else if (tag === 'details' || (tag.startsWith('forum-') && !IMAGE_TAGS.has(tag) && !MEDIA_LAYOUT_TAGS.has(tag))) {
+      node.tagName = 'div';
     }
   }
   for (const poll of topic.polls || []) {
@@ -150,13 +159,21 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
   let imageCount = 0;
   for (const node of root.querySelectorAll('*')) {
     const tag = node.rawTagName.toLowerCase();
-    const dimensions = tag === 'img' ? smallImageDimensions(node.attributes) : undefined;
-    const originalImageSource = node.getAttribute('data-forum-original-src');
-    if (tag === 'img' && !node.getAttribute('src') && originalImageSource) {
-      node.setAttribute('src', originalImageSource);
+    const isImage = IMAGE_TAGS.has(tag);
+    const dimensions = isImage ? smallImageDimensions(node.attributes) : undefined;
+    if (isImage) {
+      const canonicalSource = canonicalImageSources.get(node);
+      if (canonicalSource) node.setAttribute(ORIGINAL_IMAGE_SOURCE_ATTR, canonicalSource);
+      const source = selectImageOriginalSource(node.attributes);
+      if (source) node.setAttribute('src', source);
+      if (!node.getAttribute('alt') && node.textContent) node.setAttribute('alt', node.textContent);
+      node.set_content('');
+      if (tag === 'img' && isInlineForumImage(node.attributes)) node.tagName = INLINE_FORUM_IMAGE_TAG;
     }
-    const allowedAttributes =
-      tag === 'img'
+    const allowedAttributes = [
+      'style',
+      'class',
+      ...(isImage
         ? ['src', 'alt', 'referrerpolicy']
         : tag === 'a'
           ? ['href']
@@ -166,11 +183,14 @@ export function prepareTopicShareContent(topic: TopicDetail): { html: string; im
               ? ['start', 'reversed', 'type']
               : tag === 'li'
                 ? ['value']
-                : [];
+                : tag === 'font' && /^[1-7]$/.test(node.getAttribute('size') || '')
+                  ? ['size']
+                  : [])
+    ];
     for (const name of Object.keys(node.attributes)) {
       if (!allowedAttributes.includes(name.toLowerCase())) node.removeAttribute(name);
     }
-    if (tag === 'img') {
+    if (isImage) {
       if (node.getAttribute('src')) {
         node.setAttribute('data-share-image-index', String(imageCount++));
         if (dimensions?.width) node.setAttribute('data-share-width', String(dimensions.width));
