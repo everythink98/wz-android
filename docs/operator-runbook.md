@@ -760,6 +760,8 @@ fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/b
 
 发布前准备 Node 22（`>=22.22.2 <23`）、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
 
+Windows 的 Hermes 宿主构建还需要 Visual C++ 开发环境。先在 Visual Studio 的 x64 Native Tools 环境中确认 `nmake`、`cl` 和 `rc` 可解析，再执行发布；普通终端找不到 `nmake` 时，CMake 配置会在原生测试前失败。仅有 Android SDK/NDK 不足以完成此步骤。
+
 ```text
 WZ_ANDROID_KEYSTORE_PATH
 WZ_ANDROID_KEYSTORE_PASSWORD
