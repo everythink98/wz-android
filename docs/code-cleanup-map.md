@@ -4,7 +4,7 @@
 
 本文按剩余工作列出待处理项。事故状态、当前结论、根因和关闭条件统一维护在[回归语料库](regression-corpus.md)。`OPEN` 表示事故尚未结案，不等于代码没有修复；`EVIDENCE_GAP` 表示证据缺口，不能据此判定当前版本仍有缺陷。
 
-测试方法见[测试标准](testing-standard.md)，设备操作见[维护手册](operator-runbook.md)。本清单不授予产品修复或设备变更权限。
+测试方法见[测试标准](testing-standard.md)，设备操作见[维护手册](operator-runbook.md)。重开性能排查前先查[性能与回归踩坑手册](performance/README.md)，复用已做实验、否决原因和未验证边界。本清单不授予产品修复或设备变更权限。
 
 ## 待处理入口
 

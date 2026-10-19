@@ -424,6 +424,7 @@ function nodeSeekElementIndex(root: HTMLElement) {
   }
   let hiddenIds: HTMLElement[] | undefined;
   return {
+    nodes,
     first(selector: string, form: HTMLElement) {
       return first(selected(selector), form);
     },
@@ -1105,9 +1106,8 @@ function nodeSeekRenderedTitle(root: ReturnType<typeof parseHtml>, restrictedNot
   return restrictedNotice ? '受限帖子' : title;
 }
 
-function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>) {
+function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>, nodes: readonly HTMLElement[]) {
   const textIndex = createForumTextIndex(root, new Set(root.querySelectorAll('script, style')));
-  const nodes = [root, ...root.querySelectorAll('*')];
   const facts = new Map<Node, { start: number; end: number; media: boolean }>();
   const mediaTags = new Set(['img', 'video', 'pre', 'code']);
   for (let index = nodes.length - 1; index >= 0; index--) {
@@ -1227,7 +1227,7 @@ export function parseRenderedNodeSeekTopicHtml(
     const floor = sourceFloor(row);
     return floor === undefined ? undefined : markdownByFloor.get(floor);
   };
-  const restrictedNotice = nodeSeekRestrictedNotice(root);
+  const restrictedNotice = nodeSeekRestrictedNotice(root, elements.nodes);
   let contentElement =
     firstContentItem?.querySelector('.post-content') || firstContentItem?.querySelector('.content') || null;
   if (!contentElement) {
@@ -1262,7 +1262,9 @@ export function parseRenderedNodeSeekTopicHtml(
       null;
   }
   const title = nodeSeekRenderedTitle(root, restrictedNotice);
-  const renderedContentOuterHtml = contentElement ? html.slice(contentElement.range[0], contentElement.range[1]) : '';
+  const renderedContentHasForm = Boolean(contentElement?.querySelector('form'));
+  const renderedContentOuterHtml =
+    contentElement && renderedContentHasForm ? html.slice(contentElement.range[0], contentElement.range[1]) : '';
   const renderedContentOpeningEnd = renderedContentOuterHtml.indexOf('>');
   const renderedContentClosingStart = renderedContentOuterHtml
     .toLowerCase()
@@ -1271,7 +1273,6 @@ export function parseRenderedNodeSeekTopicHtml(
     renderedContentOpeningEnd >= 0 && renderedContentClosingStart > renderedContentOpeningEnd
       ? renderedContentOuterHtml.slice(renderedContentOpeningEnd + 1, renderedContentClosingStart)
       : '';
-  const renderedContentHasForm = Boolean(contentElement?.querySelector('form'));
   const renderedContentSource = String(
     renderedContentHasForm && rawRenderedContentHtml ? rawRenderedContentHtml : contentElement?.innerHTML || ''
   );

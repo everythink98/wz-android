@@ -8,6 +8,7 @@
 2. 用下方命令记录 Git 修订号、未提交状态和版本配置；不要直接沿用历史交接结论。
 3. 阅读 `docs/product-charter.md` 与 `docs/product-map.md`。产品行为或运行时改动选择直接影响的能力 ID，并检查共用实现的其他入口；纯测试、文档或治理改动记录证据归属。
 4. 按能力或归属模块检索 `docs/regression-corpus.md`，确认历史回归事故的状态、根因与当前归属。
+   性能排查或恢复旧候选前，再查[性能与回归踩坑手册](performance/README.md)，复用已验证机制和否决理由，不从临时快照重新探索同一路线。
 5. 按任务读取 `docs/code-standards.md`、`docs/architecture.md`、`docs/testing-standard.md` 与 `docs/operator-runbook.md`；不要把它们全部复制进任务说明。
 6. 本机存在 `memory/MEMORY.md` 时，只按索引读取相关补充事实；需要模拟器证据时，只采用与当前 revision、App 版本和 APK 身份同时匹配的 `docs/emulator-baseline.md` 记录。
 7. 按维护手册准备依赖，再按测试标准选择验证强度；首次建立开发基线运行 `npm run verify`，纯文档整理只运行文档门禁。涉及真实页面或设备行为时再扩大验证。
@@ -20,6 +21,7 @@
 | 产品取舍与功能准入 | [产品章程](product-charter.md) |
 | 现有能力、入口、能力 ID 与共享实现边界 | [产品地图](product-map.md) |
 | 历史回归事故的状态、根因与当前归属 | [回归语料库](regression-corpus.md) |
+| 性能实验做法、验证边界、踩坑原因及重开条件 | [性能与回归踩坑手册](performance/README.md) |
 | 职责归属、模块导入、测试归属与质量门禁 | [代码规范](code-standards.md) |
 | 模块、接口、数据与原生配置边界 | [架构说明](architecture.md) |
 | 测试方法、证据层与授权边界 | [测试标准](testing-standard.md) |

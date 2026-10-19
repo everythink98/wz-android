@@ -1,10 +1,12 @@
 # 2026-10-19 性能迭代回退记录
 
+本文件保留本轮回退、后续修复与验收的历史时间线。可复用的实验结论、踩坑原因和重开条件已整理到[性能与回归踩坑手册](docs/performance/README.md)，使用手册不需要保留本机快照。下文临时路径仅记录历史原件位置，清理后不再作为未来接手的前提。
+
 ## 本次决定
 
 按用户要求，所有未提交代码恢复到 `a460a914786615d0ba4d9243797412c7e24636c0`。这次不是挑选部分优化保留；该提交已经包含的性能修复继续保留。未提交的产品、测试、工具、配置、文档改动以及新增文件均已先做本地快照，再统一恢复。依赖目录同步恢复到该提交的补丁状态，随后重新生成 Android 工程。
 
-快照保存在本机 ignored 目录 `.codex-tmp/rollback-20261019/`，不包含在交付包中。`snapshot.json`、`before.patch` 与逐文件副本供后续查证；`restored.json` 记录恢复了 51 个 tracked 文件、归档了 13 个新增文件，并检查了 33 个依赖文件。文档之外的后续修复须独立记录，不得混称为纯回退版本。
+快照保存在本机 ignored 目录 `.codex-tmp/rollback-20261019/`，不包含在交付包中。`.codex-tmp/rollback-20261019/snapshot.json`、补丁与逐文件副本供后续查证；`.codex-tmp/rollback-20261019/restored.json` 记录恢复了 51 个 tracked 文件、归档了 13 个新增文件，并检查了 33 个依赖文件。文档之外的后续修复须独立记录，不得混称为纯回退版本。
 
 ## 本轮尝试及证据边界
 
@@ -55,7 +57,7 @@
 - `APK_SANITY`：模拟器覆盖安装前后 UID `10214`、`firstInstallTime=2026-07-26 16:51:37` 不变，APK SHA 与本次 x86_64 构建一致；首页和消息正常打开，有界运行日志未发现崩溃模式。保留数据和登录态，没有卸载或清理状态。
 - `LIVE_PASS` 的范围仅为已观察到的首页/消息导航、NodeSeek 分类读取，以及「@我」「私信」本次末页完成提示。持续加载与格式错误按上述失败事实记录，不能合称整个 `NOTIFY-01` 通过。大片空白与真实批量已读后的红点仍为 `NOT_VERIFIED`。
 - 发布签名包位于本机 `.codex-tmp/rollback-20261019/release-signed-head/wz-android-1.3.156-a460a914-release-signed.apk`，版本 `1.3.156` / `160`，arm64-v8a，48,696,370 bytes。APK SHA-256 为 `09fa22a3d8ef540e50ec0684b31b5e17f5745e2f4fe1d532d7da1d77f16c11a3`，发布证书 SHA-256 为 `6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66`；签名前后 1,533 个非签名条目一致。该发布签名包没有在真机安装，功能设备证据来自同 bundle 的模拟器开发签名包。
-- 取证索引位于本机 `.codex-tmp/rollback-20261019/` 的 `head-device-timeline.json`、`head-category-results.json`、`install-receipt.json`、`gates-head.json`、两 ABI 构建身份和 `release-signed-head/verification.json`。截图、日志和 APK 都留在 ignored scratch，不进入版本控制。
+- 取证索引为本机 `.codex-tmp/rollback-20261019/head-device-timeline.json`、`.codex-tmp/rollback-20261019/head-category-results.json`、`.codex-tmp/rollback-20261019/install-receipt.json`、`.codex-tmp/rollback-20261019/gates-head.json`、两 ABI 构建身份和 `.codex-tmp/rollback-20261019/release-signed-head/verification.json`。截图、日志和 APK 都留在 ignored scratch，不进入版本控制。
 
 ## 后续单独修复
 
@@ -73,3 +75,13 @@
 | `NOT_VERIFIED` | 特定真机大量空白现场的完整因果、真机长评论手势、原站真实批量已读后的红点消失及其他站真实分页。本次不能据有限模拟器样本宣称偶发问题全部消失。 |
 
 新包与本轮脱敏验收记录保存在 ignored `.codex-tmp/message-fixes-20261019/`；前文的纯回退包仍单独保留，不混用。
+
+## 四项局部优化的重新实施
+
+用户随后授权以本地提交 `fa491fa1` 为基线，只恢复有明确重复工作证据的四项：Topic 草稿更新后的回复重复渲染、清理属性名时的无用解码、NS 同次 DOM 枚举与无表单切片、编辑器相同文档与状态的重复计算。编辑器只保留最近结果并复用原订阅，没有新增状态机、生命周期或线程。
+
+导航保活/透明隐藏、滚动条策略、Worker、全局缓存、网关与 UserRoute 改动均不恢复。本轮修改范围与证据归属见 `docs/product-map.md`；具体红绿对照见 `REG-PERF-033/034/037/039/041`，本机证据位于 ignored `.codex-tmp/focused-performance-20261019/`。此前大包测试和性能记录仍保持历史范围，不作为当前源码的验收结果。
+
+本轮全量 `UNIT_PASS` 为 4008 项，seed `1792382389009`；`UI_PASS` 为 98 个文件、2931 项，seed `-101512441`。lint、format、架构与文档测试通过；新增测试的 props 类型注解修正后 typecheck 通过。已提交的本经验文档首次纳入引用门禁时发现旧证据文件名缺少目录，修成完整路径后续跑 check:docs、unused 与版本检查通过，原失败日志保留，不因文档修正重复全量测试。
+
+匹配普通 x86_64 Release/Hermes 包 buildId `c26b01c724a3481caf445e97d52317a9` 的 425 个实际编译模块与源码一致。模拟器覆盖安装保留 UID 与首次安装时间；NS 公开主题正常读取，本地空稿输入、undo/redo、source/rich 往返、关闭重开保稿及清除本次测试文字后重开为空，形成该范围的 `LIVE_PASS` 与 `APK_SANITY`。没有真实发送、上传或其他写操作，结束恢复首页全部来源与原输入法。其他来源和入口只按自动 owner 结算，真机触感、中文 IME 与帧时仍为 `NOT_VERIFIED`，不将计算次数下降换算为 FPS 收益。

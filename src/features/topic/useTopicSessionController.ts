@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { createReplySearchCache, filterRepliesByQuery } from './model/replySearch';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
@@ -196,6 +196,49 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
     topicScrollYRef.current = Math.max(0, value);
   }, []);
 
+  const composerCommands = useMemo(
+    () => ({
+      appendMarkup: appendReplyMarkup,
+      changeContent: changeReplyContent,
+      changeSnapshot: changeReplySnapshot,
+      changeFace: changeReplyFace,
+      completeSubmission: completeReplySubmission,
+      getDraftRevision: () => replyDraftRevisionRef.current,
+      detachEdit: detachReplyEdit,
+      editReply,
+      replyToFloor,
+      toggle: toggleReplyComposer
+    }),
+    [
+      appendReplyMarkup,
+      changeReplyContent,
+      changeReplySnapshot,
+      changeReplyFace,
+      completeReplySubmission,
+      detachReplyEdit,
+      editReply,
+      replyToFloor,
+      toggleReplyComposer
+    ]
+  );
+  const quoteCommands = useMemo(
+    () => ({
+      changeExpanded: changeQuoteExpanded,
+      isExpanded: (key: string) => Boolean(expandedQuotes[key])
+    }),
+    [changeQuoteExpanded, expandedQuotes]
+  );
+  const topicCommands = useMemo(() => ({ getCurrentKey: () => currentTopicKey.current }), [currentTopicKey]);
+  const viewCommands = useMemo(
+    () => ({
+      changeCommentQuery: setCommentQuery,
+      changeReplyFilter: setReplyFilter,
+      changeReplyOrder: setReplyOrder,
+      rememberScrollY
+    }),
+    [rememberScrollY]
+  );
+
   return {
     state: {
       commentQuery,
@@ -211,31 +254,10 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
       selectedTopic: topic
     },
     commands: {
-      composer: {
-        appendMarkup: appendReplyMarkup,
-        changeContent: changeReplyContent,
-        changeSnapshot: changeReplySnapshot,
-        changeFace: changeReplyFace,
-        completeSubmission: completeReplySubmission,
-        getDraftRevision: () => replyDraftRevisionRef.current,
-        detachEdit: detachReplyEdit,
-        editReply,
-        replyToFloor,
-        toggle: toggleReplyComposer
-      },
-      quotes: {
-        changeExpanded: changeQuoteExpanded,
-        isExpanded: (key: string) => Boolean(expandedQuotes[key])
-      },
-      topic: {
-        getCurrentKey: () => currentTopicKey.current
-      },
-      view: {
-        changeCommentQuery: setCommentQuery,
-        changeReplyFilter: setReplyFilter,
-        changeReplyOrder: setReplyOrder,
-        rememberScrollY
-      }
+      composer: composerCommands,
+      quotes: quoteCommands,
+      topic: topicCommands,
+      view: viewCommands
     }
   };
 }

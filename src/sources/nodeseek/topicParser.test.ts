@@ -1,5 +1,5 @@
 import { HTMLElement } from 'node-html-parser';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseForumContentHtml } from '@/domain/forum/html';
 import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '@/domain/forum/accessRequirements';
 import { parseNodeSeekPageDocument } from './protocol';
@@ -236,7 +236,16 @@ describe('NodeSeek rendered restricted notices', () => {
 
     const { result: topic, reads } = withHtmlWorkBudget(
       depth * 224,
-      () => parseRenderedNodeSeekTopicHtml(document, '42'),
+      () => {
+        const queries = vi.spyOn(document.root, 'querySelectorAll');
+        try {
+          const topic = parseRenderedNodeSeekTopicHtml(document, '42');
+          expect(queries.mock.calls.filter(([selector]) => selector === '*')).toHaveLength(1);
+          return topic;
+        } finally {
+          queries.mockRestore();
+        }
+      },
       document.root
     );
 
@@ -372,8 +381,33 @@ describe('NodeSeek rendered restricted notices', () => {
     ],
     ['<div class="post-content">generic</div><section class="post-detail post-content">own</section>', 'generic']
   ])('retains body context priority without treating the content node as its own ancestor', (content, expected) => {
-    const topic = parseRenderedNodeSeekTopicHtml(parseNodeSeekPageDocument('<h1>Body priority</h1>' + content), '42');
-    expect(topic?.contentHtml).toBe(expected);
+    const document = parseNodeSeekPageDocument('<h1>Body priority</h1>' + content);
+    const body = document.root
+      .querySelectorAll('.post-content, .content')
+      .find((element) => element.innerHTML === expected);
+    if (!body) throw new Error('Expected the selected opening body in the source document');
+    const descriptor = Object.getOwnPropertyDescriptor(String.prototype, 'slice');
+    if (!descriptor?.value) throw new Error('Expected the real string slice method');
+    const slice = String.prototype.slice;
+    let rawBodyRangeCopies = 0;
+    // eslint-disable-next-line no-extend-native -- Count only the unused original-page body range and restore in finally.
+    Object.defineProperty(String.prototype, 'slice', {
+      ...descriptor,
+      value(this: string, ...args: Parameters<typeof slice>) {
+        if (this === document.html && args[0] === body.range[0] && args[1] === body.range[1]) {
+          rawBodyRangeCopies += 1;
+        }
+        return Reflect.apply(slice, this, args);
+      }
+    });
+    try {
+      const topic = parseRenderedNodeSeekTopicHtml(document, '42');
+      expect(topic?.contentHtml).toBe(expected);
+      expect(rawBodyRangeCopies).toBe(0);
+    } finally {
+      // eslint-disable-next-line no-extend-native -- Restore the exact descriptor after the production parser finishes.
+      Object.defineProperty(String.prototype, 'slice', descriptor);
+    }
   });
 });
 

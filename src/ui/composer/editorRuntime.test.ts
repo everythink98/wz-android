@@ -151,6 +151,81 @@ function activateToolbarUpload(
 }
 
 describe('Composer editor runtime codec', () => {
+  it.each(['linuxdo', 'nodeseek'] as const)(
+    'serializes each unchanged %s rich document once while keeping snapshots current',
+    async (site) => {
+      const { host, send, postMessage } = await mountRuntime({
+        site,
+        markdown: '**保留正文**\n\n![图](https://example.com/image.png)',
+        documentEpoch: 7,
+        waitForFrame: false
+      });
+      const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
+      const serialize = vi.spyOn(editor, 'getMarkdown');
+      const counts: number[] = [];
+      const snapshot = async (requestId: string, documentEpoch = 7) => {
+        await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId } });
+        const message = postMessage.mock.calls
+          .map(([raw]) => JSON.parse(String(raw)))
+          .findLast((entry) => entry.payload?.requestId === requestId);
+        expect(message).toMatchObject({ type: 'SNAPSHOT', payload: { requestId, documentEpoch } });
+        return message.payload.snapshot;
+      };
+      const initial = await snapshot('initial');
+      expect(initial).toMatchObject({ revision: 0, mode: 'rich', validationIssues: [] });
+      expect(await snapshot('repeated')).toEqual(initial);
+      const document = editor.state.doc;
+      await act(async () => editor.commands.setTextSelection({ from: 1, to: 3 }));
+      await send({ type: 'COMMAND', payload: { name: 'begin-image-upload', documentEpoch: 7, uploadId: 'cached' } });
+      expect(await snapshot('upload-anchor')).toEqual(initial);
+      await send({ type: 'COMMAND', payload: { name: 'finish-image-upload', documentEpoch: 7, uploadId: 'cached' } });
+      expect(await snapshot('upload-canceled')).toEqual(initial);
+      expect(editor.state.doc).toBe(document);
+      counts.push(serialize.mock.calls.length);
+
+      await act(async () => editor.view.dispatch(editor.state.tr.insertText('新增', 1)));
+      const edited = await snapshot('edited');
+      expect(edited).toMatchObject({ revision: 1, markdown: expect.stringContaining('新增') });
+      expect(await snapshot('edited-repeated')).toEqual(edited);
+      counts.push(serialize.mock.calls.length);
+      await send({ type: 'COMMAND', payload: { name: 'undo' } });
+      expect((await snapshot('undo')).markdown).toBe(initial.markdown);
+      counts.push(serialize.mock.calls.length);
+      await send({ type: 'COMMAND', payload: { name: 'redo' } });
+      expect((await snapshot('redo')).markdown).toBe(edited.markdown);
+      counts.push(serialize.mock.calls.length);
+
+      await send({
+        type: 'INIT',
+        payload: {
+          documentEpoch: 8,
+          site,
+          intentKind: 'reply',
+          markdown: '替换文档',
+          pendingNodeSeekPolls: [],
+          mode: 'rich',
+          theme: TEST_THEME
+        }
+      });
+      expect(await snapshot('initialized', 8)).toMatchObject({ revision: 0, markdown: '替换文档' });
+      counts.push(serialize.mock.calls.length);
+      await act(async () => editor.commands.setContent('同修订替换', { contentType: 'markdown', emitUpdate: false }));
+      expect(await snapshot('programmatic', 8)).toMatchObject({ revision: 0, markdown: '同修订替换' });
+      counts.push(serialize.mock.calls.length);
+      await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '源码新增' } }));
+      expect(await snapshot('source', 8)).toMatchObject({ revision: 1, markdown: '同修订替换源码新增' });
+      await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+      expect(await snapshot('rich', 8)).toMatchObject({ revision: 1, markdown: '同修订替换源码新增' });
+      counts.push(serialize.mock.calls.length);
+      await send({ type: 'DESTROY' });
+      expect(editor.isDestroyed).toBe(true);
+      console.info(JSON.stringify({ benchmark: 'rich-document-serializations', site, counts }));
+      expect(counts).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    }
+  );
+
   it('edits a rich paragraph without scanning the whole document for unchanged table headers and keeps undo intact', async () => {
     const headerExtension = composerEditorExtensions().find((extension) => extension.name === 'strictGfmTableHeaders');
     if (!headerExtension?.config.addProseMirrorPlugins)
@@ -865,6 +940,8 @@ describe('Composer editor runtime codec', () => {
     await action('bold');
     expect(editor.getMarkdown()).toBe('甲**乙**丙');
     expect(states().at(-1)?.payload).toMatchObject({ documentEpoch: 7, state: { bold: true, mode: 'rich' } });
+    await action('heading-2');
+    expect(states().at(-1)?.payload.state.heading).toBe(2);
     await action('heading-3');
     expect(editor.getMarkdown().trim()).toBe('### 甲**乙**丙');
     expect(states().at(-1)?.payload.state.heading).toBe(3);
@@ -876,6 +953,51 @@ describe('Composer editor runtime codec', () => {
     await act(async () => editor.commands.insertContent('丁'));
     await new Promise(requestAnimationFrame);
     expect(states()).toHaveLength(0);
+  });
+
+  it('derives each toolbar state once and keeps both surfaces current for selection and stored marks', async () => {
+    const { host, toolbarAction, toolbarState } = await mountRuntime({
+      documentEpoch: 7,
+      intentKind: 'create-topic',
+      markdown: '**甲**乙\n\n后段',
+      waitForFrame: false
+    });
+    const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
+    const document = editor.state.doc;
+    const active = vi.spyOn(editor, 'isActive');
+    const counts: Record<string, number>[] = [];
+    const change = async (command: () => unknown, bold: boolean, panel: boolean) => {
+      active.mockClear();
+      await act(async () => {
+        command();
+      });
+      const calls: Record<string, number> = {};
+      for (const [name] of active.mock.calls) {
+        const key = typeof name === 'string' ? name : 'attributes';
+        calls[key] = (calls[key] || 0) + 1;
+      }
+      counts.push(calls);
+      expect(editor.state.doc).toBe(document);
+      expect(toolbarState()).toMatchObject({ bold, mode: 'rich' });
+      if (panel)
+        expect(
+          host.querySelector('[aria-label="文字格式"] button[aria-label="粗体"]')?.getAttribute('aria-pressed')
+        ).toBe(String(bold));
+    };
+    await change(() => editor.commands.setTextSelection({ from: 1, to: 2 }), true, false);
+    await toolbarAction('format');
+    await change(() => editor.commands.setTextSelection({ from: 2, to: 3 }), false, true);
+    await change(() => editor.commands.setTextSelection(3), false, true);
+    const selection = editor.state.selection;
+    await change(() => editor.commands.toggleBold(), true, true);
+    expect(editor.state.selection.eq(selection)).toBe(true);
+    await change(() => editor.commands.toggleBold(), false, true);
+    expect(editor.getMarkdown()).toBe('**甲**乙\n\n后段');
+    console.info(JSON.stringify({ benchmark: 'toolbar-state-derivations', counts }));
+    for (const calls of counts) {
+      expect(calls.bold).toBe(1);
+      for (const count of Object.values(calls)) expect(count).toBe(1);
+    }
   });
 
   it('uses existing source format and form handlers for native toolbar commands', async () => {
@@ -2633,50 +2755,53 @@ describe('Composer editor runtime codec', () => {
     document.querySelectorAll('[data-editor-runtime-test-style]').forEach((node) => node.remove());
   });
 
-  it('revalidates identical Markdown after account and pending-poll state changes', async () => {
-    const markdown =
-      '`literal`\n\n<!-- wz:nodeseek-poll:local1234 -->\n\nnsapp://stardust-receive?member_id=123&ref_id=100&diff=5&description=test&onetime=true';
-    const { send, postMessage } = await mountRuntime({
-      markdown,
-      mode: 'source',
-      site: 'nodeseek',
-      nodeSeekMemberId: '123'
-    });
-    const snapshot = async (requestId: string) => {
-      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId } });
-      return postMessage.mock.calls
-        .map(([raw]) => JSON.parse(String(raw)))
-        .findLast((entry) => entry.payload?.requestId === requestId).payload.snapshot.validationIssues;
-    };
-    expect(await snapshot('missing-sidecar')).toEqual([expect.objectContaining({ code: 'missing-poll-sidecar' })]);
-    await send({
-      type: 'INIT',
-      payload: {
-        site: 'nodeseek',
-        intentKind: 'reply',
+  it.each(['rich', 'source'] as const)(
+    'revalidates identical %s Markdown after account and pending-poll state changes',
+    async (mode) => {
+      const markdown =
+        '`literal`\n\n<!-- wz:nodeseek-poll:local1234 -->\n\nnsapp://stardust-receive?member_id=123&ref_id=100&diff=5&description=test&onetime=true';
+      const { send, postMessage } = await mountRuntime({
         markdown,
-        mode: 'source',
-        theme: TEST_THEME,
-        nodeSeekMemberId: '456',
-        pendingNodeSeekPolls: [
-          {
-            localId: 'local1234',
-            fingerprint: '0123456789abcdef',
-            title: '投票',
-            multiple: false,
-            isPublic: false,
-            options: ['A', 'B']
-          }
-        ]
-      }
-    });
-    expect(await snapshot('changed-account')).toEqual([
-      expect.objectContaining({ code: 'stardust-receiver-mismatch' })
-    ]);
-    expect(await snapshot('repeated-account')).toEqual([
-      expect.objectContaining({ code: 'stardust-receiver-mismatch' })
-    ]);
-  });
+        mode,
+        site: 'nodeseek',
+        nodeSeekMemberId: '123'
+      });
+      const snapshot = async (requestId: string) => {
+        await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId } });
+        return postMessage.mock.calls
+          .map(([raw]) => JSON.parse(String(raw)))
+          .findLast((entry) => entry.payload?.requestId === requestId).payload.snapshot.validationIssues;
+      };
+      expect(await snapshot('missing-sidecar')).toEqual([expect.objectContaining({ code: 'missing-poll-sidecar' })]);
+      await send({
+        type: 'INIT',
+        payload: {
+          site: 'nodeseek',
+          intentKind: 'reply',
+          markdown,
+          mode,
+          theme: TEST_THEME,
+          nodeSeekMemberId: '456',
+          pendingNodeSeekPolls: [
+            {
+              localId: 'local1234',
+              fingerprint: '0123456789abcdef',
+              title: '投票',
+              multiple: false,
+              isPublic: false,
+              options: ['A', 'B']
+            }
+          ]
+        }
+      });
+      expect(await snapshot('changed-account')).toEqual([
+        expect.objectContaining({ code: 'stardust-receiver-mismatch' })
+      ]);
+      expect(await snapshot('repeated-account')).toEqual([
+        expect.objectContaining({ code: 'stardust-receiver-mismatch' })
+      ]);
+    }
+  );
 
   it.each([
     ['[poll', 0, 'linuxdo-poll'],

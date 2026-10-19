@@ -345,6 +345,10 @@ FlashList 前插补页时，布局和逻辑 offset 继续更新，旧可见内�
 
 ## 回复写操作
 
+Topic session 的 composer、quote、topic 与 view 命令分别按实际依赖使用既有 React memo；草稿变化不重建未变的命令组，引用展开、正文变化和最新通知回调继续正常传播，不另建 session 或导航生命周期。
+
+共享 Editor 只保留当前 Editor 最近一个不可变文档的 Markdown 序列化结果，现有 INIT/DESTROY 清理该结果；程序换文档即使 revision 相同也重新序列化。工具栏两份局部订阅按 Editor 最近一个 EditorState 复用派生值，选区、storedMarks 和文档变化都会重新计算。快照的 request、epoch、revision、权限、投票 sidecar 与业务校验每次照常读取，不缓存整个快照或发送许可。
+
 linux.do 的表情反应与 Boost 归 `Topic` 写事务所有。`discoursePostFields` 保留当前反应及撤销权限，`linuxdo/boosts.ts` 将加电正文解析为安全文字和表情图片，并保留作者与逐条删除权限；主帖、分页评论和定位补取共用这些解析边界。互动配置经 `ReadGateway.getLinuxDoInteractionConfig` 读取原站 bootstrap，仅保留站点设置，并按账号 epoch 使用 `forumQueryKeys.interactionConfig` 缓存。`LinuxDoPostInteractionsProvider` 管理当前 route 的表情弹层；短文字草稿与发送归 `useTopicActionsController`，关闭保稿，换号清除本 route 的加电草稿。表情与加电在同一帖子上共用提交占用，等待期间不允许第二次互动提交。写后只更新票据所属主帖及两个顺序的评论缓存，不改变回复数量、楼层或正文。结果不明时在同一缓存对象标记 `siteExtension.interactionUnconfirmed`，重开详情仍先回读核对；新的权威读取替换此标记，不自动重发 toggle 或 create。原生气泡、头像和表情图片沿已有媒体身份加载；加电输入复用 `ModalSheetFrame` 与原生 `ComposerKeyboardHost`，`autoShowIme` 只在所属窗口及已聚焦输入框就绪后请求一次键盘，关闭或脱离窗口会取消等待。功能组件不创建认证 WebView 或清理进程共享状态。
 
 互动核对在 controller 内按 postId 合并在途请求，并沿用 route、身份票据与 AbortSignal 检查。写事务开始取消该帖旧核对；现有提交占用期间不新建外部手动核对请求，但允许 Boost 写后持票据回读，外部调用可加入已有核对。忽略取消的迟到结果不得回写，旧请求结算只释放自己的记录，不能删除重入后的新核对。主帖与评论共用该机制，不依赖 Query 取消来终止直接调用的 `readGateway.getReply`。

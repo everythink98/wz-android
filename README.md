@@ -110,6 +110,7 @@ npm run android
 | [代码与项目结构规范](docs/code-standards.md) | 职责归属、命名、结构和静态门禁 |
 | [维护手册](docs/operator-runbook.md) | 构建、覆盖安装、Replay、Smoke 和发布步骤 |
 | [回归语料库](docs/regression-corpus.md) | 已确认历史事故、根因与当前归属 |
+| [性能与回归踩坑手册](docs/performance/README.md) | 已做实验、验证结论、失败原因、否决方案与继续入口；不依赖本机快照 |
 | [技术债务与待验收项](docs/code-cleanup-map.md) | 待解决问题、证据缺口与后续入口 |
 | [Agent Live 验收](tests/live/agent-live.md) | App 内真实来源和系统能力的验收场景 |
 

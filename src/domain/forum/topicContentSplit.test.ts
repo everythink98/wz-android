@@ -570,6 +570,36 @@ function parsedBalancedTable(html: string) {
 }
 
 describe('Android topic content splitting', () => {
+  it('strips compiler-owned keys without decoding unrelated attribute values again', () => {
+    let paragraph: ReturnType<typeof parseHtml> | undefined;
+    let attributes: ReturnType<typeof vi.spyOn> | undefined;
+    let attributeReads: number;
+    try {
+      const prepared = prepareSanitizedForumContent(
+        '<p title="A &amp; B" data-extra="&lt;keep&gt;" data-wz-node="forged">text</p>',
+        {
+          baseUrl: 'https://www.nodeseek.com/',
+          source: 'nodeseek',
+          role: 'opening',
+          afterSanitizeRoot: (root) => {
+            paragraph = root.querySelector('p')!;
+            attributes = vi.spyOn(paragraph, 'attributes', 'get');
+          }
+        }
+      );
+      expect(prepared.contentPlan.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text))).toEqual(
+        ['text']
+      );
+      expect(paragraph?.getAttribute('title')).toBe('A & B');
+      expect(paragraph?.getAttribute('data-extra')).toBe('<keep>');
+      expect(paragraph?.getAttribute('data-wz-node')).toBeUndefined();
+    } finally {
+      attributeReads = attributes?.mock.calls.length ?? -1;
+      attributes?.mockRestore();
+    }
+    expect(attributeReads).toBe(0);
+  });
+
   it.each(['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const)(
     'preserves sanitized text, media and safety for every %s content role',
     (source) => {

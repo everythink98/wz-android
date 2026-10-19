@@ -988,7 +988,7 @@ function stripCompilerOwnedAttributes(html: string, preserveNavigation = false) 
 
 function stripCompilerOwnedNodeAttributes(root: HTMLElement) {
   root.querySelectorAll('*').forEach((node) => {
-    Object.keys(node.attributes).forEach((name) => {
+    Object.keys(node.rawAttributes).forEach((name) => {
       if (/^data-(?:wz|forum-reply)-/i.test(name)) node.removeAttribute(name);
     });
   });

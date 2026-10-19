@@ -2,6 +2,7 @@ jest.mock('@/platform/storage/readerDataStore', () => ({
   readHistoryReplyBaseline: jest.fn(async () => undefined)
 }));
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { type ComponentProps, useMemo } from 'react';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -23,6 +24,11 @@ import { createDiscourseReadingRuntime } from '@/platform/query/discourseReading
 import { getNodeSeekReplies } from '@/sources/nodeseek/reader';
 import { readHistoryReplyBaseline } from '@/platform/storage/readerDataStore';
 import { withAbortableTimeout } from '@/platform/network/request';
+import { MemoizedReplyItem } from '@/features/topic/components/ReplyItem';
+import { createTopicStyles } from '@/features/topic/styles';
+import { createTheme } from '@/ui/theme/tokens';
+import * as avatarComponents from '@/ui/avatar/Avatar';
+import { render } from '../render';
 
 const firstTopic: Topic = {
   source: 'nodeseek',
@@ -78,6 +84,38 @@ describe('topic route sessions', () => {
     expect(hook.result.current.state.replyFilter).toBe('author');
     expect(hook.result.current.state.replyOrder).toBe('newest');
     expect(hook.result.current.state.selectedTopic).toEqual(firstTopic);
+  });
+
+  it('keeps draft revision checks and uses the latest notification callback', async () => {
+    const notify = jest.fn<(message: string) => void>();
+    const nextNotify = jest.fn<(message: string) => void>();
+    const hook = await renderNativeHook(
+      ({ notify }: { notify: (message: string) => void }) => useTopicSessionController({ notify, topic: firstTopic }),
+      { initialProps: { notify } }
+    );
+    const commands = hook.result.current.commands.composer;
+    try {
+      await act(async () => commands.changeContent('first draft'));
+      const submittedRevision = commands.getDraftRevision();
+      await act(async () => commands.changeContent('newer draft'));
+      await act(async () => {
+        expect(commands.completeSubmission(submittedRevision)).toBe(false);
+      });
+      expect(hook.result.current.state.replyContent).toBe('newer draft');
+      expect(commands.getDraftRevision()).toBe(2);
+
+      await hook.rerender({ notify: nextNotify });
+      await act(async () => hook.result.current.commands.composer.replyToFloor({ ...firstReply, floor: undefined }));
+      expect(nextNotify).toHaveBeenCalledWith('当前楼层信息不完整，刷新主题后再试。');
+      expect(notify).not.toHaveBeenCalled();
+      await act(async () => {
+        expect(commands.completeSubmission(2)).toBe(true);
+      });
+      expect(hook.result.current.state.replyContent).toBe('');
+      expect(commands.getDraftRevision()).toBe(3);
+    } finally {
+      await hook.unmount();
+    }
   });
 
   it('isolates state between native Topic route instances', async () => {
@@ -148,29 +186,33 @@ function renderTopicController({
   return renderNativeHook(
     () => {
       const session = useTopicSessionController({ notify, topic });
-      const gateway = {
-        ...readGateway,
-        getReadPlan: (source, operation) => {
-          const authSurfaceOpen = isSessionSource(source) && getIdentityBarriers().includes(source);
-          const identityTrust = isSessionSource(source) ? getIdentityTrust?.(source) || 'confirmed' : undefined;
-          return resolveForumReadPlan(
-            source,
-            operation,
-            getSourceEnabled(source),
-            isSessionSource(source)
-              ? {
-                  source,
-                  authenticated: identityTrust === 'confirmed',
-                  authSurfaceOpen,
-                  identityKey: `${source}:test`,
-                  identityTrust: identityTrust!,
-                  sessionEpoch: getSessionEpochs()[source],
-                  sourceEnabled: getSourceEnabled(source)
-                }
-              : undefined
-          );
-        }
-      } as ReadGateway;
+      const gateway = useMemo(
+        () =>
+          ({
+            ...readGateway,
+            getReadPlan: (source, operation) => {
+              const authSurfaceOpen = isSessionSource(source) && getIdentityBarriers().includes(source);
+              const identityTrust = isSessionSource(source) ? getIdentityTrust?.(source) || 'confirmed' : undefined;
+              return resolveForumReadPlan(
+                source,
+                operation,
+                getSourceEnabled(source),
+                isSessionSource(source)
+                  ? {
+                      source,
+                      authenticated: identityTrust === 'confirmed',
+                      authSurfaceOpen,
+                      identityKey: `${source}:test`,
+                      identityTrust: identityTrust!,
+                      sessionEpoch: getSessionEpochs()[source],
+                      sourceEnabled: getSourceEnabled(source)
+                    }
+                  : undefined
+              );
+            }
+          }) as ReadGateway,
+        [readGateway, getIdentityBarriers, getIdentityTrust, getSourceEnabled, getSessionEpochs]
+      );
       const controller = useTopicController({
         focused: getActive(),
         appActive: getAppActive(),
@@ -198,6 +240,102 @@ function renderTopicController({
 }
 
 describe('topic query controller', () => {
+  it('does not render an unchanged production reply while the reply draft changes', async () => {
+    const getTopic = jest.fn<TestGetTopic>(async () => firstDetail);
+    const hook = await renderTopicController({ readGateway: { getTopic } });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+    const commands = hook.result.current.session.commands;
+    const settings = createEmptyReaderData().settings;
+    const theme = createTheme(settings);
+    const reply = prepareReplyContent(
+      { ...firstReply, contentHtml: '<pre><code>original reply</code></pre>' },
+      'nodeseek'
+    );
+    const bodyContent = reply.preparedContent.contentPlan.rows[0];
+    if (bodyContent?.type !== 'codeBlock') throw new Error('Expected one production code block');
+    const props: ComponentProps<typeof MemoizedReplyItem> = {
+      actionBusy: false,
+      bodyContent,
+      decisionFor: () => ({ allowed: false, reason: 'login-required' }),
+      contentWidth: 360,
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      onTogglePollSelection: jest.fn(),
+      pollSelections: {},
+      query: '',
+      reply,
+      replyFloor: 1,
+      repliesByFloor: new Map([[1, reply]]),
+      source: 'nodeseek',
+      styles: createTopicStyles(theme, settings),
+      theme,
+      topicId: firstTopic.id,
+      topicStateKey: 'nodeseek:1',
+      onInteract: jest.fn(),
+      onDeleteReply: jest.fn(),
+      onEditReply: jest.fn(),
+      onLocateReply: hook.result.current.controller.locateReply,
+      onOpenTopic: jest.fn(),
+      onOpenUser: jest.fn(),
+      onReplyToFloor: commands.composer.replyToFloor,
+      onVotePoll: jest.fn(),
+      onToggleReplyQuote: hook.result.current.controller.toggleReplyQuote
+    };
+    // Avatar is a plain production child, so a reply render cannot hide behind another memo boundary.
+    const avatarRender = jest.spyOn(avatarComponents, 'Avatar');
+    const control = await render(<MemoizedReplyItem {...props} />);
+    try {
+      expect(control.getByText('original reply')).toBeTruthy();
+      expect(avatarRender).toHaveBeenCalled();
+      avatarRender.mockClear();
+      const replyRendersAfterDraft: number[] = [];
+      for (const draft of ['first draft', 'second draft', 'third draft']) {
+        await act(async () => hook.result.current.session.commands.composer.changeContent(draft));
+        await control.rerender(
+          <MemoizedReplyItem
+            {...props}
+            onLocateReply={hook.result.current.controller.locateReply}
+            onReplyToFloor={hook.result.current.session.commands.composer.replyToFloor}
+            onToggleReplyQuote={hook.result.current.controller.toggleReplyQuote}
+          />
+        );
+        replyRendersAfterDraft.push(avatarRender.mock.calls.length);
+      }
+      expect(replyRendersAfterDraft).toEqual([0, 0, 0]);
+      expect(control.getByText('original reply')).toBeTruthy();
+      expect(hook.result.current.session.state.replyContent).toBe('third draft');
+      for (const group of ['topic', 'view', 'composer'] as const)
+        expect(hook.result.current.session.commands[group]).toBe(commands[group]);
+      expect(commands.composer.getDraftRevision()).toBe(3);
+      expect(getTopic).toHaveBeenCalledTimes(1);
+
+      const quote = {
+        replyKey: 'reply:1',
+        reference: { source: 'nodeseek', topicId: '1', postNumber: 2 },
+        quotedReply: firstReply
+      } satisfies Parameters<ReturnType<typeof useTopicController>['toggleReplyQuote']>[0];
+      await act(async () => hook.result.current.controller.toggleReplyQuote(quote));
+      expect(Object.values(hook.result.current.session.state.expandedQuotes)).toEqual([true]);
+      await act(async () => hook.result.current.controller.toggleReplyQuote(quote));
+      expect(Object.values(hook.result.current.session.state.expandedQuotes)).toEqual([false]);
+
+      const changed = prepareReplyContent(
+        { ...reply, contentHtml: '<pre><code>changed reply</code></pre>' },
+        'nodeseek'
+      );
+      const changedBody = changed.preparedContent.contentPlan.rows[0];
+      if (changedBody?.type !== 'codeBlock') throw new Error('Expected one changed code block');
+      await control.rerender(<MemoizedReplyItem {...props} reply={changed} bodyContent={changedBody} />);
+      expect(control.getByText('changed reply')).toBeTruthy();
+      expect(avatarRender).toHaveBeenCalled();
+    } finally {
+      await control.unmount();
+      await hook.unmount();
+      avatarRender.mockRestore();
+    }
+  });
+
   it.each(['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const)(
     'keeps the original %s deadline and does not restart its timed-out read on foreground',
     async (source) => {

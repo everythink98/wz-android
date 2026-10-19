@@ -2,6 +2,61 @@
 
 本文记录已确认事故的历史症状、根因、当前状态、修复证据和验收边界。按 REG 编号或能力 ID 查找条目，先读状态与当前结论，再核对证据适用的源码、构建、设备和来源。历史通过结果不能直接作为当前版本的验证结论。
 
+## `REG-PERF-033` 草稿变化使未变化的回复列表重复渲染
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03`、`WRITE-01` |
+| 历史症状与根因 | session 每次返回新命令组，使依赖 quote/composer 命令的回调变化；输入草稿时生产回复组件重复渲染。旧候选随整体迭代回退，本次仅恢复 Topic 的局部修复，不恢复 User 或导航改动。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx` 经真实 session/controller 与生产回复组件验证草稿、引用、正文、revision 和最新 notify。 |
+| 修复与证据 | 命令组按原依赖分别 useMemo，不冻结真实状态。seed 20261019 修前实际累计渲染为 [2,3,4]、期望 [0,0,0]；修后目标用例及完整 owner 129 项通过。证据为 ignored `.codex-tmp/focused-performance-20261019/comment/`。 |
+| 验收边界 | 仅关闭可复现的额外渲染机制，不由组件计数推断真机跟手或全部评论卡顿消失。 |
+
+## `REG-PERF-034` 未变化的富文本文档重复序列化
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/02/04/05/06/07`、`NOTIFY-02` |
+| 历史症状与根因 | 同一富文本文档的 snapshot 和模式比较重复调用 getMarkdown；旧候选统一回退后，本次恢复局部结果复用。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts` 的真实 Tiptap runtime；原有 `tests/integration/performance/editor-stress.test.ts` 补充同输入压力证据。 |
+| 修复与证据 | 每 Editor 只缓存最近一个不可变 doc 的 Markdown；现有 INIT/DESTROY 清除，程序换文档不依赖 revision。两站累计序列化 [4,6,7,8,9,10,14] 降为 [1,2,3,4,5,6,7]；原有四组 rich 压力各 100 次快照只序列化一次，source 仍为零。与工具栏 owner 合计 189 项通过，seed 20261019。证据为 ignored `.codex-tmp/focused-performance-20261019/editor/report.json`。 |
+| 验收边界 | 每次仍重建 request、epoch、revision、投票 sidecar 与校验，不缓存快照或权限。覆盖 undo/redo、模式切换及同 revision 换文档；工作量下降不是 Native 输入延迟或帧率结论。 |
+
+## `REG-PERF-037` 清理属性名时重复解码无关值
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03` |
+| 历史症状与根因 | sanitizer 后清理自有属性仅需键名，却调用 node.attributes 解码全部属性值并分配新对象。旧候选随整体回退，本次仅恢复该一行修复。 |
+| 当前 owner | `src/domain/forum/topicContentSplit.test.ts`；共享安全与正文内容守恒由 sanitization 和 presentation contract 展开。 |
+| 修复与证据 | 改取 rawAttributes 键名，原删除与值消费者不变。seed 20261019 新行为断言修前额外读取一次，修后为零；同时核对正文、实体值和伪造键删除，相关四文件 224 项通过。证据为 ignored `.codex-tmp/focused-performance-20261019/attributes-red.log` 与 `.codex-tmp/focused-performance-20261019/attributes-green.log`。 |
+| 验收边界 | 不跳过安全清洗，也不按减少调用次数换算整体耗时或帧率收益。 |
+
+## `REG-PERF-039` 同一编辑器状态重复派生工具栏
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-06/07`，共享入口 `WRITE-01/02/04/05`、`NOTIFY-02` |
+| 历史症状与根因 | 格式面板与 Native 状态发布各订阅工具栏，同一 EditorState 被重复查询。旧候选随整体回退，本次不改变订阅结构，只复用最近结果。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts`，真实 runtime 同时检查 HTML 按钮与 Native TOOLBAR_STATE。 |
+| 修复与证据 | WeakMap 每 Editor 只保留最近一个 EditorState 的派生值；选区、storedMarks 与文档变化重新计算。修前五阶段 bold 查询实际为 [2,4,2,4,4]，修后 [1,1,1,1,1]；保留两面状态、heading 和原格式 owner。与序列化 owner 合计 189 项通过，seed 20261019，证据同 `.codex-tmp/focused-performance-20261019/editor/report.json`。 |
+| 验收边界 | 没有新增生命周期、监听或历史缓存；没有将查询次数下降解释为真机流畅度提升。 |
+
+## `REG-PERF-041` NodeSeek 同次解析重复枚举与无用原文切片
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03` |
+| 历史症状与根因 | 受限提示扫描重建已经存在的全量节点数组；无表单正文仍复制仅表单分支使用的原文范围。原候选混在 Worker 接入改动中，本次独立恢复。 |
+| 当前 owner | `src/sources/nodeseek/topicParser.test.ts`，共享主楼与回复页由 reader/provider contract 展开。 |
+| 修复与证据 | 同次未变 DOM 复用已有 nodes，无 form 时不复制原文范围。seed 20261019 修前 10 失败、75 通过，修后 85 项通过；全量枚举 2→1、无表单切片 1→0。表单仍走原文范围，受限提示和正文优先级保持。证据为 ignored `.codex-tmp/focused-performance-20261019/parser/result.json`。 |
+| 验收边界 | 不引入 Worker、异步 reader、日期参数或跨请求缓存；局部工作量不代替完整页面和真机性能验收。 |
+
 ## `REG-NOTIFY-087` NodeSeek 完整消息列表被当作无限分页并误报格式错误
 
 | 字段 | 内容 |

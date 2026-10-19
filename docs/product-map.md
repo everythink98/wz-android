@@ -1002,6 +1002,12 @@ NodeSeek 私信列表以原 `id` 优先、正安全整数 `max_id` 备用确定�
 
 ## 回归检索
 
+`TOPIC-01/02/03`：共享正文编译清理自有属性时仅枚举未解码属性名，属性移除、安全清洗及需要值的消费者保持。NodeSeek 同次页面解析复用已有 DOM 节点列表；仅含表单的正文提取精确原文范围，无表单继续用既有正文 HTML，不跨请求缓存。主要 owner 为 `src/domain/forum/topicContentSplit.test.ts`、`src/sources/nodeseek/topicParser.test.ts`，共享安全和内容守恒由 presentation、sanitization 与 reader contract 展开。
+
+`TOPIC-03`、`WRITE-01`：输入草稿不应使正文未变化的回复行因 session 命令组引用变化而重新渲染；命令依赖变动、引用展开及真正正文更新仍正常生效。主要 owner 为 `tests/ui/topic/topic-session-controller.test.tsx` 的真实 controller 与生产回复组件链。
+
+`WRITE-01/02/04/05/06/07`、`NOTIFY-02`：共享富文本编辑器只复用最近一个不可变文档的 Markdown 和最近一个 EditorState 的工具栏派生。INIT/DESTROY、同 revision 程序换文档、选区和 storedMarks、编辑及 undo/redo 都保持失效语义；账号、投票与权限继续逐次校验。主要 owner 为 `src/ui/composer/editorRuntime.test.ts`，重复快照的内容与工作量由原有 `tests/integration/performance/editor-stress.test.ts` 补充。以上局部工作量减少不能替代真机帧时或跟手验收。
+
 本文件只保留稳定能力契约和共享 seam；逃逸问题的历史症状、根因、状态与当前 owner 只维护在 `docs/regression-corpus.md`。产品/runtime 改动按能力 ID 检索，纯测试、文档或治理改动按 evidence owner 检索：
 
 ```powershell

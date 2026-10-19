@@ -1641,6 +1641,35 @@ const EMPTY_TOOLBAR_STATE: ToolbarState = {
   link: false
 };
 
+const toolbarStateByEditor = new WeakMap<
+  TiptapEditor,
+  { editorState: TiptapEditor['state']; toolbarState: ToolbarState }
+>();
+
+function selectToolbarState({ editor }: { editor: TiptapEditor | null }): ToolbarState {
+  if (!editor) return EMPTY_TOOLBAR_STATE;
+  const editorState = editor.state;
+  const cached = toolbarStateByEditor.get(editor);
+  if (cached?.editorState === editorState) return cached.toolbarState;
+  const toolbarState: ToolbarState = {
+    blockquote: editor.isActive('blockquote'),
+    bold: editor.isActive('bold'),
+    bulletList: editor.isActive('bulletList'),
+    code: editor.isActive('code'),
+    codeBlock: editor.isActive('codeBlock'),
+    heading: editor.isActive('heading') ? Number(editor.getAttributes('heading').level || 2) : 0,
+    italic: editor.isActive('italic'),
+    orderedList: editor.isActive('orderedList'),
+    strike: editor.isActive('strike'),
+    table: editor.isActive('table'),
+    taskList: editor.isActive('taskList'),
+    underline: editor.isActive('underline'),
+    link: editor.isActive('link')
+  };
+  toolbarStateByEditor.set(editor, { editorState, toolbarState });
+  return toolbarState;
+}
+
 function ComposerToolbarState({
   children,
   editor,
@@ -1650,24 +1679,7 @@ function ComposerToolbarState({
   editor: TiptapEditor;
   onChange?: (state: ToolbarState) => void;
 }) {
-  const state = useEditorState({
-    editor,
-    selector: ({ editor: currentEditor }): ToolbarState => ({
-      blockquote: Boolean(currentEditor?.isActive('blockquote')),
-      bold: Boolean(currentEditor?.isActive('bold')),
-      bulletList: Boolean(currentEditor?.isActive('bulletList')),
-      code: Boolean(currentEditor?.isActive('code')),
-      codeBlock: Boolean(currentEditor?.isActive('codeBlock')),
-      heading: currentEditor?.isActive('heading') ? Number(currentEditor.getAttributes('heading').level || 2) : 0,
-      italic: Boolean(currentEditor?.isActive('italic')),
-      orderedList: Boolean(currentEditor?.isActive('orderedList')),
-      strike: Boolean(currentEditor?.isActive('strike')),
-      table: Boolean(currentEditor?.isActive('table')),
-      taskList: Boolean(currentEditor?.isActive('taskList')),
-      underline: Boolean(currentEditor?.isActive('underline')),
-      link: Boolean(currentEditor?.isActive('link'))
-    })
-  });
+  const state = useEditorState({ editor, selector: selectToolbarState });
   useEffect(() => {
     if (state) onChange?.(state);
   }, [onChange, state]);
@@ -2131,6 +2143,11 @@ export function ComposerEditorRuntime() {
   const configRef = useRef<RuntimeConfig | null>(null);
   const submissionLockedRef = useRef(false);
   const maskedMarkdownRef = useRef<{ markdown: string; masked: string } | null>(null);
+  const richMarkdownRef = useRef<{
+    editor: TiptapEditor;
+    document: TiptapEditor['state']['doc'];
+    markdown: string;
+  } | null>(null);
   const [mode, setMode] = useState<ComposerMode>('rich');
   const topicEditor = config?.intentKind === 'create-topic' || config?.intentKind === 'edit-topic';
   const modeRef = useRef<ComposerMode>('rich');
@@ -2275,6 +2292,16 @@ export function ComposerEditorRuntime() {
     }
   });
   const editorRef = useCommittedRef(editor);
+  const getRichMarkdown = useCallback(() => {
+    const current = editorRef.current;
+    if (!current) return '';
+    const document = current.state.doc;
+    // Programmatic replacements may change the document without advancing the host revision.
+    if (richMarkdownRef.current?.editor !== current || richMarkdownRef.current.document !== document) {
+      richMarkdownRef.current = { editor: current, document, markdown: current.getMarkdown() };
+    }
+    return richMarkdownRef.current.markdown;
+  }, [editorRef]);
 
   const validate = useCallback((markdown: string) => {
     if (maskedMarkdownRef.current?.markdown !== markdown) {
@@ -2287,9 +2314,7 @@ export function ComposerEditorRuntime() {
     (forcedMode?: ComposerMode): ComposerSnapshot => {
       const snapshotMode = forcedMode || modeRef.current;
       const markdown =
-        snapshotMode === 'source'
-          ? sourceViewRef.current?.state.doc.toString() || ''
-          : editorRef.current?.getMarkdown() || '';
+        snapshotMode === 'source' ? sourceViewRef.current?.state.doc.toString() || '' : getRichMarkdown();
       const polls = snapshotMode === 'source' ? pollsForSource(markdown) : readPollsFromEditor(editorRef.current);
       const issues = validate(markdown);
       return {
@@ -2301,7 +2326,7 @@ export function ComposerEditorRuntime() {
         pendingNodeSeekPolls: polls
       };
     },
-    [editorRef, validate]
+    [editorRef, getRichMarkdown, validate]
   );
 
   const postSnapshot = useCallback(
@@ -2479,7 +2504,7 @@ export function ComposerEditorRuntime() {
         return;
       }
       if (nextMode === 'source') {
-        const markdown = editorRef.current?.getMarkdown() || '';
+        const markdown = getRichMarkdown();
         readPollsFromEditor(editorRef.current);
         setSource(markdown);
         modeRef.current = 'source';
@@ -2508,7 +2533,7 @@ export function ComposerEditorRuntime() {
       try {
         suppressChangesRef.current = true;
         setExpressionConfig(editorRef.current, configRef.current);
-        if (editorRef.current?.getMarkdown() !== markdown) replaceRichMarkdownDocument(editorRef.current, markdown);
+        if (getRichMarkdown() !== markdown) replaceRichMarkdownDocument(editorRef.current, markdown);
         suppressChangesRef.current = false;
         modeRef.current = 'rich';
         flushSync(() => setMode('rich'));
@@ -2520,7 +2545,7 @@ export function ComposerEditorRuntime() {
         runtimeError('markdown-parse-failed', 'Markdown 无法解析，已保留源码', revisionRef.current);
       }
     },
-    [closeBuilder, editorRef, postSnapshot, postState, setSource, validate]
+    [closeBuilder, editorRef, getRichMarkdown, postSnapshot, postState, setSource, validate]
   );
 
   const cancelHostActions = useCallback(() => {
@@ -2542,6 +2567,7 @@ export function ComposerEditorRuntime() {
       submissionLockedRef.current = false;
       cancelHostActions();
       maskedMarkdownRef.current = null;
+      richMarkdownRef.current = null;
       configRef.current = next;
       setConfig(next);
       closeBuilder();
@@ -2636,6 +2662,7 @@ export function ComposerEditorRuntime() {
         cancelHostActions();
         initializedRef.current = false;
         maskedMarkdownRef.current = null;
+        richMarkdownRef.current = null;
         editorRef.current?.destroy();
         sourceViewRef.current?.destroy();
         sourceViewRef.current = null;
