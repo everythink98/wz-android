@@ -434,6 +434,7 @@ describe('app runtime startup', () => {
       );
       await completeDocument('/api/notification/unread-count', { atMe: 1, reply: 2, message: 0 });
       await waitFor(() => expect(runtime.routes!.notificationRouteRuntime.unreadTotal).toBe(3));
+      expect(runtime.routes!.moreBadgeState).toBe('messages');
       let list!: ReturnType<NonNullable<typeof runtime.routes>['notificationRouteRuntime']['gateway']['listPage']>;
       await act(async () => {
         list = runtime.routes!.notificationRouteRuntime.gateway.listPage('nodeseek', {
@@ -441,7 +442,7 @@ describe('app runtime startup', () => {
           expectedIdentityKey: 'nodeseek:42'
         });
       });
-      await completeDocument('/api/notification/at-me/list?page=1', {
+      await completeDocument('/api/notification/at-me/list', {
         atList: [{ id: 13, post_id: 832584, commenter_id: 7, commenter_name: 'bob', post_title: 'Recovered mention' }],
         hasMore: false
       });
@@ -451,9 +452,19 @@ describe('app runtime startup', () => {
       });
       expect(mockNetworkFetcher.mock.calls.map(([url]) => url)).toEqual([
         'https://www.nodeseek.com/api/notification/unread-count',
-        'https://www.nodeseek.com/api/notification/at-me/list?page=1'
+        'https://www.nodeseek.com/api/notification/at-me/list'
       ]);
       expect(view.queryByTestId('mock-webview')).toBeNull();
+      let refresh!: ReturnType<NonNullable<typeof runtime.routes>['notificationRouteRuntime']['refreshSnapshots']>;
+      await act(async () => {
+        refresh = runtime.routes!.notificationRouteRuntime.refreshSnapshots();
+      });
+      await completeDocument('/api/notification/unread-count', { atMe: 0, reply: 0, message: 0 });
+      await act(async () => {
+        await refresh;
+      });
+      await waitFor(() => expect(runtime.routes!.notificationRouteRuntime.unreadTotal).toBe(0));
+      expect(runtime.routes!.moreBadgeState).toBe('none');
       const notificationFetcher = mockUseNotificationsRuntime.mock.calls.at(-1)![0].fetcher;
       for (const url of ['https://linux.do/notifications.json', 'https://yaohuo.me/bbs/receive.aspx']) {
         const original = new Response('original security response', {

@@ -2392,9 +2392,8 @@ it.each(['anonymous', 'same', 'unknown'] as const)(
   'reconciles concurrent NodeSeek notification USER NOT FOUND responses without replaying writes: %s',
   async (outcome) => {
     const { response } = accountClearFixture('nodeseek');
-    const linuxDo = seedAccount();
+    await saveAccountSessionSnapshot(seedAccount());
     accountClearFixture('yaohuo');
-    const yaohuo = appQueryClient.getQueryData(accountQueryKeys.snapshot('yaohuo'));
     const probe = Promise.withResolvers<Response>();
     let restored = false;
     const json = (value: unknown, status = 200) =>
@@ -2409,6 +2408,12 @@ it.each(['anonymous', 'same', 'unknown'] as const)(
       throw new Error(`Unexpected notification account request: ${input}`);
     });
     const { view, runtime } = await renderSiteRuntime('nodeseek', fetcher);
+    // Storage restoration may replace seeded objects before any notification request begins.
+    const linuxDo = appQueryClient.getQueryData(accountQueryKeys.snapshot('linuxdo'));
+    const yaohuo = appQueryClient.getQueryData(accountQueryKeys.snapshot('yaohuo'));
+    expect(linuxDo).toMatchObject({ status: 'logged-in', identityTrust: 'confirmed', currentUser: { id: 'alice' } });
+    expect(yaohuo).toMatchObject({ status: 'logged-in', identityTrust: 'confirmed', currentUser: { id: '7' } });
+    expect(fetcher).not.toHaveBeenCalled();
     const epoch = runtime().read.forumSessionEpochs.nodeseek;
     const otherEpochs = {
       linuxdo: runtime().read.forumSessionEpochs.linuxdo,

@@ -188,6 +188,8 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 
 Android FlashList 的保位补丁以原生 `contentOffsetCorrection` 区分布局补位和手势位移。MVCP 在每次启用周期内、移动视口前累计双轴补位量；滚动、拖动及惯性事件保存创建时的补位量快照，以 dp 传给列表。列表仅用已包含当前补位的事件更新阅读锚点，不要求手势后的 offset 等于原补位目标；新拖动也不能用旧坐标清掉尚未确认的锚点。补位期间发起的显式定位在原生补位确认后重新对齐目标；关闭保位或替换原生锚点时清除旧周期。其他平台没有该事件字段时沿用既有保位流程。
 
+保留页面的 Native ScrollView 临时 detach/attach 只停止、恢复 MVCP 的 UIManager 订阅，保留配置、锚点及累计补位量；同一组件重接不会重新发送未变的 prop。只有显式把 maintainVisibleContentPosition 设为 null 才清理周期，纵横两轴一致。真实 helper/ScrollView setter 的临时重接与显式禁用由 RN patch 中的 `MaintainVisibleScrollPositionHelperTest` 验证，见 `REG-NAV-015`。
+
 FlashList 前插补页时，布局和逻辑 offset 继续更新，旧可见内容的 stable key 与物理组件绑定保留到首轮补位结算。仅在旧 key 序列完整保留、存在合格阅读锚点时暂缓回收同步；显式命令、删除、重排及禁用保位按现有流程接管。旧索引上的延迟 viewability 回调在交接前取消，结算后按当前可见内容重新报告。媒体 viewport 通过可见 key 在新数据中的位置判断方向，前插造成的 index 增量不视为向下滚动。
 
 ### 页面状态投影

@@ -2027,6 +2027,7 @@ describe('notification routes', () => {
     { action: 'return during read', remaining: 2 },
     { action: 'confirmed read', remaining: 0 },
     { action: 'return during mark all', remaining: 0 },
+    { action: 'confirmed mark all', remaining: 0 },
     { action: 'pull to refresh', remaining: 0 },
     { action: 'reopen notifications', remaining: 0 }
   ])('reconciles $remaining unread after $action', async ({ action, remaining }) => {
@@ -2037,6 +2038,9 @@ describe('notification routes', () => {
       persisted = value;
     });
     let unread = 2;
+    const markAllCounts = { atMe: 1, reply: 1, message: 1 };
+    const markedGroups: string[] = [];
+    const snapshotsAfterMarkAll: (typeof markAllCounts)[] = [];
     let snapshotReads = 0;
     const firstSnapshot = Promise.withResolvers<Response>();
     let writeSignal: AbortSignal | undefined;
@@ -2044,6 +2048,11 @@ describe('notification routes', () => {
       if (url.endsWith('/unread-count')) {
         snapshotReads += 1;
         if (action === 'first snapshot pending' && snapshotReads === 1) return firstSnapshot.promise;
+        if (action === 'confirmed mark all') {
+          const snapshot = { ...markAllCounts };
+          if (markedGroups.length === 3) snapshotsAfterMarkAll.push(snapshot);
+          return new Response(JSON.stringify(snapshot), { status: 200 });
+        }
         return new Response(
           JSON.stringify({
             atMe: 0,
@@ -2054,6 +2063,18 @@ describe('notification routes', () => {
         );
       }
       if (url.includes('/markViewed')) {
+        if (action === 'confirmed mark all') {
+          const request = new URL(url);
+          expect(init?.method).toBe('POST');
+          expect(request.search).toBe('?all=true');
+          const group = request.pathname.split('/').at(-2);
+          if (group === 'at-me') markAllCounts.atMe = 0;
+          else if (group === 'reply-to-me') markAllCounts.reply = 0;
+          else if (group === 'message') markAllCounts.message = 0;
+          else throw new Error('Unexpected mark-all notification group');
+          markedGroups.push(group);
+          return new Response(JSON.stringify({ success: true }), { status: 200 });
+        }
         // The server has applied the read; returning cancels receipt of its response.
         unread = remaining;
         if (action === 'confirmed read' || action === 'first snapshot pending')
@@ -2066,7 +2087,7 @@ describe('notification routes', () => {
       if (url.endsWith('/message/with/9')) {
         return new Response(JSON.stringify({ msgArray: [privateMessageRow(20), privateMessageRow(21)] }));
       }
-      if (url.includes('/list?page=')) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      if (new URL(url).pathname.endsWith('/list')) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       throw new Error(`Unexpected request: ${url}`);
     });
     const sessions = projectTestAccountSessions(
@@ -2130,7 +2151,10 @@ describe('notification routes', () => {
     let alert: ReturnType<typeof jest.spyOn> | undefined;
     try {
       if (action === 'first snapshot pending') await waitFor(() => expect(snapshotReads).toBe(1));
-      else await waitFor(() => expect(view.getByTestId('unread-total').props.children).toBe(2));
+      else
+        await waitFor(() =>
+          expect(view.getByTestId('unread-total').props.children).toBe(action === 'confirmed mark all' ? 3 : 2)
+        );
       if (action === 'return during read' || action === 'confirmed read' || action === 'first snapshot pending') {
         await act(async () =>
           navigationRef.navigate('NotificationDetail', {
@@ -2158,7 +2182,7 @@ describe('notification routes', () => {
         else await waitFor(() => expect(view.getByTestId('unread-total').props.children).toBe(remaining));
         await act(async () => navigationRef.goBack());
         if (writeSignal) expect(writeSignal.aborted).toBe(true);
-      } else if (action === 'return during mark all') {
+      } else if (action === 'return during mark all' || action === 'confirmed mark all') {
         await act(async () => navigationRef.navigate('notifications'));
         await fireEvent.press(view.getByTestId('notification-source-nodeseek'));
         await waitFor(() => expect(view.getByText('全部已读')).toBeTruthy());
@@ -2166,9 +2190,15 @@ describe('notification routes', () => {
           buttons?.find((button) => button.text === '确认')?.onPress?.();
         });
         await fireEvent.press(view.getByText('全部已读'));
-        await waitFor(() => expect(writeSignal).toBeDefined());
-        await act(async () => navigationRef.goBack());
-        expect(writeSignal?.aborted).toBe(true);
+        if (action === 'confirmed mark all') {
+          await waitFor(() => expect(markedGroups).toEqual(['at-me', 'reply-to-me', 'message']));
+          await waitFor(() => expect(snapshotsAfterMarkAll).toContainEqual({ atMe: 0, reply: 0, message: 0 }));
+          expect(navigationRef.getCurrentRoute()?.name).toBe('notifications');
+        } else {
+          await waitFor(() => expect(writeSignal).toBeDefined());
+          await act(async () => navigationRef.goBack());
+          expect(writeSignal?.aborted).toBe(true);
+        }
       } else {
         await act(async () => navigationRef.navigate('notifications'));
         await waitFor(() => expect(view.getByText('暂无消息')).toBeTruthy());

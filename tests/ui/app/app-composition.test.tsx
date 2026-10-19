@@ -53,10 +53,12 @@ describe('App composition bootstrap', () => {
     const settings = createEmptyReaderData().settings;
     const theme = createTheme(settings);
     const onScreenChange = jest.fn<ComponentProps<typeof AppRoutes>['onScreenChange']>();
-    // AppRoutes is replaced at this boundary; only its navigation callbacks are consumed here.
-    const routes = { onScreenChange, onReady: jest.fn<() => void>() } as unknown as NonNullable<
-      ReturnType<typeof useAppRuntime>['routes']
-    >;
+    // AppRoutes is replaced at this boundary; only its navigation callbacks and badge are consumed here.
+    const routes = {
+      onScreenChange,
+      onReady: jest.fn<() => void>(),
+      moreBadgeState: 'messages'
+    } as unknown as NonNullable<ReturnType<typeof useAppRuntime>['routes']>;
     const runtime: ReturnType<typeof useAppRuntime> = {
       onUserInteraction: jest.fn(),
       accountHost: (<Text>账号</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
@@ -71,9 +73,11 @@ describe('App composition bootstrap', () => {
     const view = await render(<AppComposition />);
     const initial = jest.mocked(AppRoutes).mock.calls.at(-1)![0].onScreenChange;
     for (let index = 0; index < 10; index++) {
-      jest.mocked(useAppRuntime).mockReturnValue({ ...runtime, routes: { ...routes } });
+      const moreBadgeState = index % 2 ? 'messages' : 'none';
+      jest.mocked(useAppRuntime).mockReturnValue({ ...runtime, routes: { ...routes, moreBadgeState } });
       await view.rerender(<AppComposition />);
       expect(jest.mocked(AppRoutes).mock.calls.at(-1)![0].onScreenChange).toBe(initial);
+      expect(jest.mocked(AppRoutes).mock.calls.at(-1)![0].moreBadgeState).toBe(moreBadgeState);
     }
     await act(async () => initial('search', 'search-route'));
     expect(onScreenChange).toHaveBeenCalledWith('search', 'search-route');

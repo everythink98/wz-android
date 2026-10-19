@@ -85,15 +85,6 @@ function findRows(value: unknown, keys: readonly string[]): Record<string, unkno
   return undefined;
 }
 
-function hasMore(value: unknown, page: number, rowCount: number) {
-  if (!isRecord(value)) return false;
-  const explicit = bool(value, 'hasMore', 'has_more', 'more');
-  if (explicit !== undefined) return explicit;
-  const pages = Number(text(value, 'totalPages', 'total_pages', 'pages'));
-  if (Number.isFinite(pages) && pages > 0) return page < pages;
-  return rowCount >= 30;
-}
-
 function count(value: unknown, ...keys: string[]): number | undefined {
   if (!isRecord(value)) return undefined;
   for (const key of keys) {
@@ -132,16 +123,17 @@ async function fetchJson(path: string, options: NotificationAdapterAccess) {
     });
   }
   let data: unknown;
+  let parsedJson = true;
   try {
     data = body ? JSON.parse(body) : {};
   } catch {
-    throw new Error('NodeSeek 消息返回内容格式不正确');
+    parsedJson = false;
   }
   if (!response.ok) {
     const message = isRecord(data) ? text(data, 'message', 'error') : '';
     const ownUserRequest =
       path === '/api/notification/unread-count' ||
-      /^\/api\/notification\/(?:at-me|reply-to-me|message)\/list\?page=\d+$/.test(path);
+      /^\/api\/notification\/(?:at-me|reply-to-me|message)\/list$/.test(path);
     // A missing conversation counterpart must not invalidate the current account.
     if (response.status === 500 && ownUserRequest && message === 'USER NOT FOUND') {
       throw Object.assign(new Error('NodeSeek 登录状态需要重新确认，请重新检测登录'), {
@@ -151,12 +143,15 @@ async function fetchJson(path: string, options: NotificationAdapterAccess) {
         status: response.status
       });
     }
-    const error = new Error(message || `NodeSeek 消息请求失败：HTTP ${response.status}`);
+    const error = Object.assign(new Error(message || `NodeSeek 消息请求失败：HTTP ${response.status}`), {
+      status: response.status
+    });
     if (response.status === 401 || response.status === 403) {
       Object.assign(error, { source: 'nodeseek', loginRequired: true });
     }
     throw error;
   }
+  if (!parsedJson) throw new Error('NodeSeek 消息返回内容格式不正确');
   return data;
 }
 
@@ -286,7 +281,6 @@ export const nodeSeekNotificationAdapter = {
   },
 
   async listPage(options: NotificationListOptions): Promise<NotificationPage> {
-    const page = Math.max(1, Number(options.cursor) || 1);
     const selectedGroup = options.categoryId ? nodeSeekGroupByCategory[options.categoryId] : undefined;
     if (options.categoryId && options.categoryId !== 'all' && !selectedGroup) {
       throw new Error('NodeSeek 消息分类不正确');
@@ -294,15 +288,14 @@ export const nodeSeekNotificationAdapter = {
     const groups = selectedGroup ? [selectedGroup] : (Object.keys(groupConfig) as NodeSeekGroup[]);
     const results = await Promise.all(
       groups.map(async (group) => {
-        const data = await fetchJson(`/api/notification/${group}/list?page=${page}`, options);
+        const data = await fetchJson(`/api/notification/${group}/list`, options);
         const rows = findRows(data, groupConfig[group].listKey);
         if (!rows) throw new Error('NodeSeek 消息返回内容格式不正确');
         const items = rows.map((row) => rowNotification(group, row, options.userId)).filter(Boolean);
         return annotateSourceDiagnosticSummary(
           {
             items,
-            candidateCount: rows.length,
-            hasMore: hasMore(data, page, rows.length)
+            candidateCount: rows.length
           },
           {
             parserVariant: 'nodeseek-notifications',
@@ -322,7 +315,6 @@ export const nodeSeekNotificationAdapter = {
         (!options.unreadOnly || item.unread) &&
         !(item.id.startsWith('message:fallback:') && (idCounts.get(item.id) || 0) > 1)
     );
-    const more = results.some((result) => result.hasMore);
     const ambiguousIdentity = parsedItems.some((item) => item.id.startsWith('message:fallback:'));
     const quality = notificationPageQuality(
       results.reduce((count, result) => count + result.candidateCount, 0),
@@ -330,7 +322,7 @@ export const nodeSeekNotificationAdapter = {
       ambiguousIdentity
     );
     return mergeSourceDiagnosticSummaries(
-      { items, cursor: more ? String(page + 1) : null, hasMore: more, quality },
+      { items, cursor: null, hasMore: false, quality },
       'nodeseek-notifications',
       results,
       {
@@ -493,7 +485,7 @@ export const nodeSeekNotificationAdapter = {
 
   async markAllRead(options: NotificationAdapterAccess): Promise<NotificationMarkResult> {
     for (const group of ['at-me', 'reply-to-me', 'message'] as const) {
-      await runNodeSeekAction({
+      const data = await runNodeSeekAction({
         request: {
           path: `/api/notification/${group}/markViewed?all=true`,
           method: 'POST',
@@ -505,6 +497,9 @@ export const nodeSeekNotificationAdapter = {
         timeoutMs: options.timeoutMs,
         userAgent: options.userAgent
       });
+      if (!isRecord(data) || data.success !== true) {
+        return { confirmed: false, message: 'NodeSeek 未确认全部消息已读，请刷新核对原站状态' };
+      }
     }
     return { confirmed: true };
   }

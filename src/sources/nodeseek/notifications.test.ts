@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { nodeSeekNotificationAdapter } from './notifications';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
@@ -155,6 +157,49 @@ describe('NodeSeek notifications', () => {
     await expect(
       nodeSeekNotificationAdapter.listPage({ fetcher, identityKey: 'nodeseek:7', userId: '7' })
     ).rejects.toMatchObject({ source: 'nodeseek', reason: 'cloudflare' });
+  });
+
+  it.each([429, 500, 503])('preserves HTTP %s when a notification response is not JSON', async (status) => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<html><title>Service unavailable</title></html>', {
+          status,
+          headers: { 'content-type': 'text/html' }
+        })
+    );
+    const error = await nodeSeekNotificationAdapter
+      .listPage({ fetcher, identityKey: 'nodeseek:7', userId: '7', categoryId: 'mentions' })
+      .catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ status, message: `NodeSeek 消息请求失败：HTTP ${status}` });
+    expect(normalizeDiagnosticReason(error)).toBe('http_error');
+    expect(sourceErrorFromUnknown('nodeseek', error).kind).toBe('ordinary');
+    expect(error).not.toHaveProperty('reason', 'account-recheck-required');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([401, 403])('preserves the login gate for a non-JSON HTTP %s notification response', async (status) => {
+    const fetcher = vi.fn(
+      async () => new Response('Access denied', { status, headers: { 'content-type': 'text/plain' } })
+    );
+    const error = await nodeSeekNotificationAdapter
+      .readUnreadSnapshot({ fetcher, identityKey: 'nodeseek:7', userId: '7' })
+      .catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ status, source: 'nodeseek', loginRequired: true });
+    expect(sourceErrorFromUnknown('nodeseek', error).kind).toBe('login-required');
+    expect(error).not.toHaveProperty('reason', 'cloudflare');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the server message and HTTP status when notification error JSON is valid', async () => {
+    const fetcher = vi.fn(async () => new Response('{"error":"Service unavailable"}', { status: 503 }));
+    const error = await nodeSeekNotificationAdapter
+      .readUnreadSnapshot({ fetcher, identityKey: 'nodeseek:7', userId: '7' })
+      .catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ status: 503, message: 'Service unavailable' });
+    expect(sourceErrorFromUnknown('nodeseek', error).kind).toBe('ordinary');
   });
 
   it('rejects malformed notification JSON instead of returning an empty page', async () => {
@@ -572,21 +617,58 @@ describe('NodeSeek notifications', () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
-  it('does not discard rows when one remote page is larger than the unified page hint', async () => {
+  it.each([
+    { categoryId: 'replies', unreadOnly: false, expectedCount: 40 },
+    { categoryId: 'replies', unreadOnly: true, expectedCount: 0 },
+    { categoryId: 'all', unreadOnly: false, expectedCount: 60 },
+    { categoryId: 'all', unreadOnly: true, expectedCount: 0 }
+  ])('finishes the complete $categoryId list when unreadOnly=$unreadOnly', async (options) => {
+    const fetcher = vi.fn(async (input: string) => {
+      const pathname = new URL(input).pathname;
+      const length = pathname.endsWith('/at-me/list') ? 15 : pathname.endsWith('/reply-to-me/list') ? 40 : 5;
+      const rows = Array.from({ length }, (_, index) => ({
+        id: index + 1,
+        post_id: index + 101,
+        sender_id: index + 101,
+        receiver_id: 7,
+        viewed: true
+      }));
+      return json(
+        pathname.endsWith('/message/list') ? { success: true, msgArray: rows } : { success: true, data: rows }
+      );
+    });
+
+    const page = await nodeSeekNotificationAdapter.listPage({
+      fetcher,
+      identityKey: 'nodeseek:7',
+      userId: '7',
+      categoryId: options.categoryId,
+      unreadOnly: options.unreadOnly
+    });
+
+    expect(page.items).toHaveLength(options.expectedCount);
+    expect(page.quality).toBe('complete');
+    expect(page.hasMore).toBe(false);
+    expect(page.cursor).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(options.categoryId === 'all' ? 3 : 1);
+    expect(fetcher.mock.calls.map(([input]) => new URL(input).search)).toEqual(
+      Array.from({ length: fetcher.mock.calls.length }, () => '')
+    );
+  });
+
+  it('does not discard rows when the complete source list is larger than the unified page hint', async () => {
     const rows = Array.from({ length: 15 }, (_, index) => index + 1);
     const fetcher = vi.fn(async (input: string) => {
       const pathname = new URL(input).pathname;
       if (pathname.endsWith('/at-me/list')) {
-        return json({ hasMore: false, atList: rows.map((id) => ({ id, post_id: id, viewed: false })) });
+        return json({ atList: rows.map((id) => ({ id, post_id: id, viewed: false })) });
       }
       if (pathname.endsWith('/reply-to-me/list')) {
         return json({
-          hasMore: false,
           replyList: rows.map((id) => ({ id: id + 100, post_id: id + 100, viewed: false }))
         });
       }
       return json({
-        hasMore: false,
         msgArray: rows.map((id) => ({ id: id + 200, sender_id: id + 200, receiver_id: 7, viewed: false }))
       });
     });
@@ -600,6 +682,7 @@ describe('NodeSeek notifications', () => {
 
     expect(page.items).toHaveLength(45);
     expect(page.hasMore).toBe(false);
+    expect(page.cursor).toBeNull();
   });
 
   it('loads the exact NodeSeek comment from its origin page', async () => {
@@ -1018,6 +1101,39 @@ describe('NodeSeek notifications', () => {
         userId: '7'
       })
     ).resolves.toEqual({ confirmed: false, message: 'NodeSeek 未确认私信已发送' });
+  });
+
+  it.each(['at-me', 'reply-to-me', 'message'])(
+    'does not confirm all read or continue after an unconfirmed %s response',
+    async (unconfirmedGroup) => {
+      const groups = ['at-me', 'reply-to-me', 'message'];
+      const fetcher = vi.fn(async (url: string) =>
+        json(new URL(url).pathname === `/api/notification/${unconfirmedGroup}/markViewed` ? {} : { success: true })
+      );
+
+      await expect(
+        nodeSeekNotificationAdapter.markAllRead({ fetcher, identityKey: 'nodeseek:7', userId: '7' })
+      ).resolves.toEqual({ confirmed: false, message: 'NodeSeek 未确认全部消息已读，请刷新核对原站状态' });
+      expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(
+        groups.slice(0, groups.indexOf(unconfirmedGroup) + 1).map((group) => `/api/notification/${group}/markViewed`)
+      );
+    }
+  );
+
+  it.each([
+    { name: 'an explicit rejection', status: 200, payload: { success: false, message: '原站拒绝全部已读' } },
+    { name: 'an HTTP failure', status: 503, payload: { error: '原站暂不可用' } }
+  ])('keeps $name visible and stops later mark-all requests', async ({ status, payload }) => {
+    const fetcher = vi.fn(async (url: string) =>
+      new URL(url).pathname === '/api/notification/reply-to-me/markViewed'
+        ? new Response(JSON.stringify(payload), { status })
+        : json({ success: true })
+    );
+
+    await expect(
+      nodeSeekNotificationAdapter.markAllRead({ fetcher, identityKey: 'nodeseek:7', userId: '7' })
+    ).rejects.toMatchObject({ status });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('reads the three unread counters and marks all three groups through their real endpoints', async () => {

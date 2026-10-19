@@ -3,7 +3,7 @@ import { cleanup } from '@testing-library/react-native';
 import { CommonActions, DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useRef, useState } from 'react';
-import { Linking, Pressable, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
 import { useAppLifecycleRuntime } from '@/app/useAppLifecycleRuntime';
 import { useAppDeepLinkNavigation } from '@/app/useAppDeepLinkNavigation';
@@ -531,6 +531,39 @@ describe('App navigator UI state', () => {
       expect(view.getByLabelText(messagesLabel)).toBeTruthy();
     }
   );
+
+  it('updates the rendered unread badge without removing an update badge or resetting the active tab', async () => {
+    const view = await render(<Navigator moreBadgeState="both" />);
+    await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+    const hasBadge = (destination: 'notifications' | 'more') =>
+      view.getByTestId(`main-tab-${destination}`).queryAll((node) => {
+        const style = StyleSheet.flatten(node.props.style);
+        return style?.width === 8 && style?.height === 8 && style?.borderRadius === 999;
+      }).length > 0;
+    expect(hasBadge('notifications')).toBe(true);
+    expect(hasBadge('more')).toBe(true);
+    await fireEvent.press(view.getByTestId('main-tab-notifications'));
+    await fireEvent.changeText(view.getByLabelText('消息状态'), 'keep-message-state');
+    const routeKey = navigationRef.getCurrentRoute()!.key;
+
+    await view.rerender(<Navigator moreBadgeState="update" />);
+    expect(view.getByLabelText('消息')).toBeTruthy();
+    expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();
+    expect(hasBadge('notifications')).toBe(false);
+    expect(hasBadge('more')).toBe(true);
+
+    for (const [state, unread] of [
+      ['none', false],
+      ['messages', true],
+      ['none', false]
+    ] as const) {
+      await view.rerender(<Navigator moreBadgeState={state} />);
+      expect(hasBadge('notifications')).toBe(unread);
+      expect(hasBadge('more')).toBe(false);
+      expect(navigationRef.getCurrentRoute()?.key).toBe(routeKey);
+      expect(view.getByLabelText('消息状态').props.value).toBe('keep-message-state');
+    }
+  });
 
   it('opens an Android summary in the message tab and returns from settings to that tab', async () => {
     const view = await renderNavigator();

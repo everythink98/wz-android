@@ -2,6 +2,40 @@
 
 本文记录已确认事故的历史症状、根因、当前状态、修复证据和验收边界。按 REG 编号或能力 ID 查找条目，先读状态与当前结论，再核对证据适用的源码、构建、设备和来源。历史通过结果不能直接作为当前版本的验证结论。
 
+## `REG-NOTIFY-087` NodeSeek 完整消息列表被当作无限分页并误报格式错误
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/03` |
+| 历史症状与根因 | 2026-10-19，匹配 HEAD a460a914 的普通模拟器包，回复组去重后停在 40 条却一直加载，聚合列表停在 60 条；一分钟分别有 168 次和 59 次成功的 notification-list。原站三个 list 接口一次返回当前列表，前端不带 page 参数且无分页。App 自行按原始行数 ≥30 生成下一页，服务器忽略页号，重复内容被 UI 去重后仍触底续读。现场另两次 HTTP 503/text-html 被先行 JSON.parse 误分类为 invalid_response，显示「消息返回内容格式不正确」和重试。 |
+| 当前 owner | `src/sources/nodeseek/notifications.test.ts` 负责真实 adapter 的完整快照、全部有效行保留、未读过滤、HTTP/CF/鉴权边界；Root 的匹配普通包验收另核对实际触底和切页。 |
+| 修复与红绿证据 | 三组请求与原站一致，移除虚构页号及条数猜页，返回 cursor=null/hasMore=false；不截断列表，不吞坏响应。HTTP 错误在 JSON 解码失败时仍保留状态，成功响应坏 JSON 继续报错。HTTP 修前 6 项失败，修后 63 项通过；完整快照修前新增 4 项失败，修后 67 项通过，seed 20261019。证据位于 ignored `.codex-tmp/message-fixes-20261019/http-applied01/` 与 `pagination-contract01/`。 |
+| 原站与现场依据 | 原站公开[通知脚本](https://www.nodeseek.com/static/js/notification.12b48cfc3f5f38b8fc9d.js)直接读取三个 list；同身份只读 page1/page2 的 40 个原始 ID 序列 hash 相同，未保存消息正文或 Cookie。旧包 journal 对应 buildId 987226de4a754285a411a5268bebd445。脱敏结构、请求时间与 HTTP 503 关联证据为 ignored `.codex-tmp/message-fixes-20261019/ns-real-shape.json`、`.codex-tmp/message-fixes-20261019/diagnostics-before/notification-list-summary.json` 和 `.codex-tmp/message-fixes-20261019/diagnostics-before/actual-format-failures.json`。 |
+| 验收边界 | 匹配修复源码的普通模拟器包 buildId 621c11177e8d4ff0bf9e0894498c34b6，NS 全部 62 条、回复 42 条、@我 15 条、私信 5 条触底均显示完成；未读全部 2 条、未读私信为空也正常终止。回复列表停在底部超过一分钟，仍有 6 条可见行及完成提示。只读 Live 与脱敏请求记录位于 ignored `.codex-tmp/message-fixes-20261019/live-final.json`、`.codex-tmp/message-fixes-20261019/diagnostics-final.json`。其他站真实分页与批量已读不由本次 NS Live 代验，不将当前快照宣称为可任意分页的全部历史。 |
+
+## `REG-NAV-015` 保留列表临时重接后丢失滚动补位配置
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-01`、`NOTIFY-01` |
+| 历史症状与根因 | 用户报告消息切首页再返回后大量空白。检查发现已提交 RN 补丁把 helper.stop 当成显式关闭，清空 config 与累计 correction；ReactScrollView 临时 detach 调 stop、重接只调 start，不会重发未变化的 MVCP prop。此 Native 缺陷已用真实 helper 复现；它与具体手机空白现场的因果尚未完全闭环。 |
+| 当前 owner | `patches/react-native+0.86.3.patch` 内的 MaintainVisibleScrollPositionHelper、两轴 ScrollView setter 和 MaintainVisibleScrollPositionHelperTest。 |
+| 修复与红绿证据 | 临时 stop 只停止订阅，保留当前周期；显式 null 在两轴 setter 中清理配置后再 stop/discard。真实 owner 修前 7 项中临时 stop/start 场景失败，期望 scrollY=680、实际600；修后 7/7、零跳过，包含显式禁用清零，39 秒。全 29 个 patch 文件 reverse-check 和隔离副本正反向字节检查通过，其余既有补丁块保持。证据位于 ignored `.codex-tmp/notification-regression-20261019/mvcp-fix01/`。 |
+| 验收边界 | 修前普通包滚动后切首页返回三次未复现大片空白，历史真机空白截图所属 APK 来源未确认。最终匹配修复包同样滚动至 NS 回复列表底部，切首页返回三次仍各有 6 条可见行及完成提示；截图与节点摘要在 ignored `.codex-tmp/message-fixes-20261019/`。真实长评论手势及所有偶发空白仍未闭环，不能由 Native 单测或本次有限切页推断全部消失。 |
+
+## `REG-NOTIFY-088` NodeSeek 未确认全部已读却提示成功
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02/03`、`NAV-01` |
+| 历史症状与根因 | 用户报告全部已读后红点偶尔不消失。检查发现 markAllRead 丢弃三组 POST 的业务回包，2xx 的空对象或其他未确认 JSON 仍返回 confirmed:true，界面因而可能提示成功，实际未读继续保留。原站前端以 success 明确确认才提示完成。此缺陷可确定复现，但未证明所有用户红点现场都由它造成。 |
+| 当前 owner | `src/sources/nodeseek/notifications.test.ts` 固定三组回包确认及停止边界；`tests/ui/notifications/notifications-route.test.tsx` 固定正常三组确认后新 snapshot 为零并落盘；App runtime、composition、navigator owners 分别覆盖上游映射、透传及实际红点 View 的动态增删。历史首次 GET 被复用的事故仍保留在 `REG-NOTIFY-065`。 |
+| 修复与红绿证据 | 每组必须为对象且 success===true；未确认时返回 confirmed:false 与刷新核对提示，不继续后面的 POST，不清本地计数。三个组各返回空对象的新增 oracle 修前 3 项失败；修后同组 72/72，含拒绝、HTTP 失败、正常三 POST 和消息解析，seed 20261019。证据为 ignored `.codex-tmp/message-fixes-20261019/mark-all-confirmation01/receipt.json`。 |
+| 红点复查与边界 | 受控正常写后对账、App runtime/composition/navigator 41 项和 notification runtime 62 项通过。最终 Live 时 NS 新增 2 条未读，另两站均为零，Native 消息红点正常保留，与权威计数一致。红点按所有启用来源汇总，失败保留可信旧数，不能只因清空 NS 而抹掉其他站未读。未进行真实 POST；受控 HTTP 不冒充 Live 全部已读，实际手机偶发残留仍须同身份、三组回包和新 snapshot 现场核对。 |
+
 表中的「当前 owner」指承担行为验证的测试或实现模块；oracle 指判断行为是否符合预期的可观察结果或断言。测试归属与证据分层见[测试标准](testing-standard.md)，剩余工作见[技术债务与待验收项](code-cleanup-map.md)。REG 编号、状态和字段名供文档检查器使用，保持原有标识。
 
 ## `REG-ACCOUNT-069` NodeSeek 掉登录返回 HTTP 500 时消息页仍只提示重试

@@ -1588,15 +1588,7 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
    private var firstVisibleViewRef: WeakReference<View>? = null
    private var prevFirstVisibleFrame: Rect? = null
    private var isListening = false
-@@ -75,6 +79,7 @@
- 
-   /** Stop listening to view hierarchy updates. Should be called before this is destroyed. */
-   fun stop() {
-+    config = null
-     if (!isListening) {
-       return
-     }
-@@ -82,12 +87,24 @@
+@@ -82,12 +86,24 @@
      uIManager.removeUIManagerEventListener(this)
    }
  
@@ -1622,7 +1614,7 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
  
      val newFrame = Rect()
      firstVisibleView.getHitRect(newFrame)
-@@ -96,6 +113,9 @@
+@@ -96,6 +112,9 @@
        val deltaX = newFrame.left - prevFirstVisibleFrame.left
        if (deltaX != 0) {
          val scrollX = scrollView.scrollX
@@ -1632,7 +1624,7 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
          scrollView.scrollToPreservingMomentum(scrollX + deltaX, scrollView.scrollY)
          this.prevFirstVisibleFrame = newFrame
          if (config.autoScrollToTopThreshold != null && scrollX <= config.autoScrollToTopThreshold) {
-@@ -106,6 +126,8 @@
+@@ -106,6 +125,8 @@
        val deltaY = newFrame.top - prevFirstVisibleFrame.top
        if (deltaY != 0) {
          val scrollY = scrollView.scrollY
@@ -1723,7 +1715,7 @@ diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/r
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/scroll/MaintainVisibleScrollPositionHelperTest.kt
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,289 @@
 +/*
 + * Copyright (c) Meta Platforms, Inc. and affiliates.
 + *
@@ -1746,6 +1738,8 @@ new file mode 100644
 +import com.facebook.react.bridge.UIManager
 +import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags
 +import com.facebook.react.uimanager.DisplayMetricsHolder
++import com.facebook.react.uimanager.UIManagerHelper
++import com.facebook.react.uimanager.common.UIManagerType
 +import com.facebook.react.uimanager.events.EventDispatcher
 +import com.facebook.react.uimanager.events.EventDispatcherProvider
 +import com.facebook.react.views.view.ReactViewGroup
@@ -1865,28 +1859,85 @@ new file mode 100644
 +
 +  @Test
 +  fun disablingClearsTheAnchorAndStartsANewCorrectionCycle() {
-+    for (stop in listOf(false, true)) {
-+      val (scrollView, anchor) = scrollView()
-+      val helper = MaintainVisibleScrollPositionHelper(scrollView, false)
-+      val uiManager = mock<UIManager>()
-+      helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
-+      helper.willMountItems(uiManager)
-+      anchor.offsetTopAndBottom(600)
-+      helper.didMountItems(uiManager)
-+      val previousCycle = events.last()
++    val (scrollView, anchor) = scrollView()
++    val helper = MaintainVisibleScrollPositionHelper(scrollView, false)
++    val uiManager = mock<UIManager>()
++    helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++    helper.willMountItems(uiManager)
++    anchor.offsetTopAndBottom(600)
++    helper.didMountItems(uiManager)
++    val previousCycle = events.last()
 +
-+      if (stop) helper.stop() else helper.config = null
-+      anchor.offsetTopAndBottom(120)
-+      helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
-+      helper.didMountItems(uiManager)
-+      assertEquals(Point(), scrollView.reactScrollViewScrollState.contentOffsetCorrection)
-+      assertEquals(600, scrollView.scrollY)
-+      assertCorrection(previousCycle, 0.0, 300.0)
++    helper.config = null
++    anchor.offsetTopAndBottom(120)
++    helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++    helper.didMountItems(uiManager)
++    assertEquals(Point(), scrollView.reactScrollViewScrollState.contentOffsetCorrection)
++    assertEquals(600, scrollView.scrollY)
++    assertCorrection(previousCycle, 0.0, 300.0)
 +
-+      helper.willMountItems(uiManager)
-+      anchor.offsetTopAndBottom(-80)
-+      helper.didMountItems(uiManager)
-+      assertCorrection(events.last(), 0.0, -40.0)
++    helper.willMountItems(uiManager)
++    anchor.offsetTopAndBottom(-80)
++    helper.didMountItems(uiManager)
++    assertCorrection(events.last(), 0.0, -40.0)
++  }
++
++  @Test
++  fun explicitlyDisablingEitherScrollViewClearsItsCorrectionCycle() {
++    val uiManager = mock<UIManager>()
++    Mockito.mockStatic(UIManagerHelper::class.java, Mockito.CALLS_REAL_METHODS).use { managers ->
++      managers.`when`<UIManager> { UIManagerHelper.getUIManager(context, UIManagerType.FABRIC) }
++          .thenReturn(uiManager)
++      fun assertDisabledClears(
++          scrollView: ReactScrollViewHelper.HasScrollState,
++          setConfig: (MaintainVisibleScrollPositionHelper.Config?) -> Unit,
++      ) {
++        setConfig(MaintainVisibleScrollPositionHelper.Config(0, null))
++        try {
++          scrollView.reactScrollViewScrollState.contentOffsetCorrection.set(120, -80)
++          setConfig(null)
++          assertEquals(Point(), scrollView.reactScrollViewScrollState.contentOffsetCorrection)
++          setConfig(MaintainVisibleScrollPositionHelper.Config(0, null))
++          assertEquals(Point(), scrollView.reactScrollViewScrollState.contentOffsetCorrection)
++        } finally {
++          setConfig(null)
++        }
++      }
++      val vertical = ReactScrollView(context)
++      assertDisabledClears(vertical, vertical::setMaintainVisibleContentPosition)
++      val horizontal = ReactHorizontalScrollView(context)
++      assertDisabledClears(horizontal, horizontal::setMaintainVisibleContentPosition)
++    }
++  }
++
++  @Test
++  fun temporaryWindowDetachKeepsConfiguredAnchoringAndItsCorrectionCycle() {
++    val (scrollView, anchor) = scrollView()
++    val helper = MaintainVisibleScrollPositionHelper(scrollView, false)
++    val uiManager = mock<UIManager>()
++    Mockito.mockStatic(UIManagerHelper::class.java, Mockito.CALLS_REAL_METHODS).use { managers ->
++      managers.`when`<UIManager> { UIManagerHelper.getUIManager(context, UIManagerType.FABRIC) }
++          .thenReturn(uiManager)
++      helper.config = MaintainVisibleScrollPositionHelper.Config(0, null)
++      helper.start()
++      try {
++        helper.willMountItems(uiManager)
++        anchor.offsetTopAndBottom(600)
++        helper.didMountItems(uiManager)
++        assertEquals(600, scrollView.scrollY)
++
++        // ReactScrollView detaches/reattaches the same instance without resending its MVCP prop.
++        helper.stop()
++        helper.start()
++        helper.willMountItems(uiManager)
++        anchor.offsetTopAndBottom(80)
++        helper.didMountItems(uiManager)
++
++        assertEquals(680, scrollView.scrollY)
++        assertEquals(Point(0, 680), scrollView.reactScrollViewScrollState.contentOffsetCorrection)
++      } finally {
++        helper.stop()
++      }
 +    }
 +  }
 +
@@ -1954,3 +2005,25 @@ new file mode 100644
 +    override fun getEventDispatcher() = dispatcher
 +  }
 +}
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
+@@ -395,6 +395,7 @@ public class ReactScrollView extends ScrollView
+       mMaintainVisibleContentPositionHelper = new MaintainVisibleScrollPositionHelper(this, false);
+       mMaintainVisibleContentPositionHelper.start();
+     } else if (config == null && mMaintainVisibleContentPositionHelper != null) {
++      mMaintainVisibleContentPositionHelper.setConfig(null);
+       mMaintainVisibleContentPositionHelper.stop();
+       mMaintainVisibleContentPositionHelper = null;
+     }
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactHorizontalScrollView.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactHorizontalScrollView.java
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactHorizontalScrollView.java
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactHorizontalScrollView.java
+@@ -428,6 +428,7 @@ public class ReactHorizontalScrollView extends HorizontalScrollView
+       mMaintainVisibleContentPositionHelper = new MaintainVisibleScrollPositionHelper(this, true);
+       mMaintainVisibleContentPositionHelper.start();
+     } else if (config == null && mMaintainVisibleContentPositionHelper != null) {
++      mMaintainVisibleContentPositionHelper.setConfig(null);
+       mMaintainVisibleContentPositionHelper.stop();
+       mMaintainVisibleContentPositionHelper = null;
+     }
