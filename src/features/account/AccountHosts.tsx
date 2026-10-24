@@ -6,10 +6,12 @@ import { AccountHost } from './AccountHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { createAccountHostStyles } from './accountHostStyles';
 import { SiteLoginHost } from './components/SiteLoginHost';
+import { LinuxDoCreditAuthModal } from './components/LinuxDoCreditAuthModal';
 import type { useAccountController } from './useAccountController';
 import type { useAccountCredentialController } from './useAccountCredentialController';
 import type { useAccountStatusController } from './useAccountStatusController';
 import type { useNodeImageAuthController } from './useNodeImageAuthController';
+import type { useLinuxDoCreditAuthController } from './useLinuxDoCreditAuthController';
 import type { useSessionController } from './useSessionController';
 import type { useVerificationController } from './useVerificationController';
 
@@ -45,6 +47,7 @@ type AccountHostsView = {
 };
 
 export type AccountHostsProps = {
+  authSurfaceBlockMessages?: Partial<Record<'nodeseek' | 'linuxdo' | 'yaohuo', string>>;
   account: ReturnType<typeof useAccountController>;
   blockedMessage: string;
   credentials: ReturnType<typeof useAccountCredentialController>;
@@ -53,6 +56,7 @@ export type AccountHostsProps = {
     (request: LoginNavigationRequest) => boolean
   >;
   nodeImage: ReturnType<typeof useNodeImageAuthController>;
+  linuxDoCredit: ReturnType<typeof useLinuxDoCreditAuthController>;
   session: ReturnType<typeof useSessionController>;
   status: ReturnType<typeof useAccountStatusController>;
   verification: ReturnType<typeof useVerificationController>;
@@ -61,9 +65,11 @@ export type AccountHostsProps = {
 
 export function AccountHosts({
   account,
+  authSurfaceBlockMessages = {},
   blockedMessage,
   credentials,
   loginNavigation,
+  linuxDoCredit,
   nodeImage,
   session,
   status,
@@ -72,9 +78,17 @@ export function AccountHosts({
 }: AccountHostsProps) {
   const { styles } = useReaderThemeStyles(createAccountHostStyles);
   const accountSessionViewModels = status.accountSessionViewModels;
+  const authBlock = (source: 'nodeseek' | 'linuxdo' | 'yaohuo') =>
+    blockedMessage || authSurfaceBlockMessages[source] || '';
 
   return (
     <>
+      <LinuxDoCreditAuthModal
+        key={linuxDoCredit.panel.generation}
+        panel={linuxDoCredit.panel}
+        styles={styles}
+        webViewBlockMessage={authBlock('linuxdo')}
+      />
       <HiddenBrowserHost
         blockedMessage={blockedMessage}
         failLinuxDoBrowserFetchById={session.failLinuxDoBrowserFetchById}
@@ -126,8 +140,8 @@ export function AccountHosts({
         loadingLinuxDoPage={view.loadingLinuxDoPage}
         loadingNodeImageAuthPage={nodeImage.panel.loading}
         mountLinuxDoWebView={view.mountLinuxDoWebView}
-        nodeImageAuthDocument={nodeImage.panel.document}
-        nodeImageAuthError={nodeImage.panel.error}
+        nodeImageAuthDocument={authBlock('nodeseek') ? null : nodeImage.panel.document}
+        nodeImageAuthError={authBlock('nodeseek') || nodeImage.panel.error}
         nodeImageAuthWebViewRef={nodeImage.panel.webViewRef}
         resetLinuxDoWebView={verification.resetLinuxDoWebView}
         setLinuxDoWebViewErrorForSession={verification.setLinuxDoWebViewErrorForSession}
@@ -137,7 +151,7 @@ export function AccountHosts({
         showLinuxDoPanel={view.showLinuxDoPanel}
         showNodeImageAuthPanel={nodeImage.panel.visible}
         styles={styles}
-        webViewBlockMessage={blockedMessage}
+        webViewBlockMessage={authBlock('linuxdo')}
         changeLinuxDoPanel={verification.changeLinuxDoPanel}
         requestLinuxDoCredentialFill={() => credentials.openAccountLogin('linuxdo', true)}
         closeNodeImageAuthPanel={nodeImage.panel.close}
@@ -156,7 +170,7 @@ export function AccountHosts({
         session={accountSessionViewModels.nodeseek}
         styles={styles}
         visible={view.showLoginPanel}
-        webViewBlockMessage={blockedMessage}
+        webViewBlockMessage={authBlock('nodeseek')}
         webViewRef={view.webViewRef}
         onCheck={() => {
           void view.checkNodeSeekLoginAndRetry();
@@ -186,7 +200,7 @@ export function AccountHosts({
         session={accountSessionViewModels.yaohuo}
         styles={styles}
         visible={view.showYaohuoLoginPanel}
-        webViewBlockMessage={blockedMessage}
+        webViewBlockMessage={authBlock('yaohuo')}
         webViewRef={view.yaohuoWebViewRef}
         onCheck={() => {
           void view.checkYaohuoLoginAndClose();

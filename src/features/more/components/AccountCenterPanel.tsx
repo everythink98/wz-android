@@ -1,18 +1,10 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { MoreScreenStyles } from '../styles';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  Alert,
-  Keyboard,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  useWindowDimensions,
-  View
-} from 'react-native';
-import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
+import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ChevronRight, RefreshCw, Settings2 } from 'lucide-react-native';
+import { Button, List } from 'react-native-paper';
+import { AppTextInput as TextInput } from '@/ui/controls/InputControls';
 import { CredentialVaultError } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
@@ -21,9 +13,11 @@ import { Avatar } from '@/ui/avatar/Avatar';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { DisclosureChevron, ExpandableContent, ExpandablePanel } from '@/ui/controls/ExpandableControls';
-import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
+import { IconButton } from '@/ui/controls/ButtonControls';
+import { DisclosureChevron, ExpandableContent } from '@/ui/controls/ExpandableControls';
+import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
+import { Portal } from '@gorhom/portal';
+import { createMoreSiteSettingStyles } from '../accountStyles';
 import {
   accountCenterSummary,
   createSiteAccountViews,
@@ -38,96 +32,114 @@ function createAccountCenterStyles(theme: ReaderTheme, settings: ReaderStyleSett
   const actionColor = theme.primary;
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
+    header: { alignItems: 'center', flexDirection: 'row', gap: 8, minHeight: 52 },
+    title: {
+      flex: 1,
+      color: theme.ink,
+      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontSize: fontSize(22),
+      fontWeight: '600'
+    },
     selectorRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      gap: 4
+      flexDirection: 'row',
+      marginBottom: 0
     },
     siteTabs: {
       flex: 1,
       flexDirection: 'row',
       minWidth: 0
     },
-    refreshSlot: {
+    settingsButton: {
       alignItems: 'center',
+      flex: 1,
+      flexDirection: 'row',
+      gap: 6,
       justifyContent: 'center',
       minHeight: 48,
-      width: 48
+      paddingHorizontal: 8
+    },
+    settingsRow: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row'
+    },
+    settingsBody: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      gap: 8,
+      paddingTop: 8,
+      paddingBottom: 8
     },
     siteTab: {
       alignItems: 'center',
-      borderBottomColor: 'transparent',
-      borderBottomWidth: 2,
       flex: 1,
       justifyContent: 'center',
       minHeight: 48,
       paddingHorizontal: 6,
       paddingVertical: 10
     },
-    siteTabSelected: {
-      borderBottomColor: actionColor
+    siteTabIndicator: {
+      backgroundColor: actionColor,
+      bottom: 0,
+      height: 2,
+      position: 'absolute',
+      width: 24
     },
     siteTabText: {
       color: theme.muted,
       fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: fontSize(12),
-      fontWeight: '600'
+      fontSize: fontSize(13),
+      fontWeight: '500'
     },
     siteTabTextSelected: {
-      color: theme.ink,
-      fontWeight: '700'
+      color: theme.primary,
+      fontWeight: '600'
     },
     siteDetail: {
       gap: 0,
-      paddingBottom: 2,
-      paddingHorizontal: 4,
-      paddingTop: 4
+      paddingHorizontal: 0,
+      paddingTop: 0
     },
     accountPanel: {
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: 12,
-      borderWidth: StyleSheet.hairlineWidth,
-      overflow: 'hidden'
+      backgroundColor: 'transparent'
     },
     siteOverview: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 12,
-      paddingHorizontal: 12,
-      paddingVertical: 12
+      gap: 14,
+      paddingHorizontal: 0,
+      paddingTop: 16,
+      paddingBottom: 16
     },
     siteOverviewCopy: {
       flex: 1,
-      gap: 2,
+      gap: 4,
       minWidth: 0
     },
+    identityName: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 6,
+      maxWidth: '100%'
+    },
     siteTitle: {
-      fontSize: fontSize(20)
+      flexShrink: 1,
+      fontSize: fontSize(20),
+      fontWeight: '600',
+      textAlign: 'left'
     },
     identityMeta: {
       fontSize: fontSize(12),
-      lineHeight: fontSize(17)
+      lineHeight: fontSize(17),
+      textAlign: 'left'
     },
     section: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      gap: 8,
-      paddingBottom: 8,
-      paddingHorizontal: 12,
-      paddingTop: 8
-    },
-    sectionHeader: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 8
-    },
-    sectionCopy: {
-      flex: 1,
-      gap: 2,
-      minWidth: 0
+      gap: 4,
+      paddingBottom: 0,
+      paddingHorizontal: 0,
+      paddingTop: 0
     },
     secondaryActions: {
       alignItems: 'center',
@@ -143,76 +155,13 @@ function createAccountCenterStyles(theme: ReaderTheme, settings: ReaderStyleSett
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       gap: 2,
-      paddingHorizontal: 12,
-      paddingVertical: 6
-    },
-    settingsToggle: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      minHeight: 48
-    },
-    settingsFooter: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12
-    },
-    action: {
-      alignItems: 'center',
-      borderRadius: 12,
-      flexDirection: 'row',
-      gap: 4,
-      justifyContent: 'center',
-      minHeight: 48,
-      paddingHorizontal: 14,
-      paddingVertical: 9
-    },
-    actionCompact: {
-      minHeight: 48,
-      paddingHorizontal: 10,
-      paddingVertical: 7
-    },
-    actionDisabled: {
-      opacity: 0.42
+      paddingHorizontal: 0,
+      paddingVertical: 2
     },
     actionTextQuiet: {
       color: actionColor
     }
   });
-}
-
-function AccountAction({
-  compact = false,
-  disclosure = false,
-  disabled = false,
-  label,
-  accountStyles,
-  styles,
-  theme,
-  onPress
-}: {
-  compact?: boolean;
-  disclosure?: boolean;
-  disabled?: boolean;
-  label: string;
-  accountStyles: AccountCenterStyles;
-  styles: MoreScreenStyles;
-  theme: ReaderTheme;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      style={[accountStyles.action, compact && accountStyles.actionCompact, disabled && accountStyles.actionDisabled]}
-      onPress={onPress}
-    >
-      <Text style={[styles.buttonText, accountStyles.actionTextQuiet]}>{label}</Text>
-      {disclosure ? <ChevronRight size={15} color={theme.primary} strokeWidth={1.8} /> : null}
-    </Pressable>
-  );
 }
 
 function messageFromError(error: unknown) {
@@ -237,12 +186,17 @@ function CredentialEditor({
   onCommand: CommandHandler;
 }) {
   const { height } = useWindowDimensions();
+  const { styles: settingStyles } = useReaderThemeStyles(createMoreSiteSettingStyles);
   const [editing, setEditing] = useState(false);
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [keyboardAvoidingEnabled, setKeyboardAvoidingEnabled] = useState(false);
   const savingRef = useRef(false);
+  const openEditor = () => {
+    recordUserInteraction();
+    setEditing(true);
+  };
 
   const clearDraft = () => {
     setAccount('');
@@ -340,49 +294,63 @@ function CredentialEditor({
 
   return (
     <View style={accountStyles.section}>
-      <View style={accountStyles.sectionHeader}>
-        <View style={accountStyles.sectionCopy}>
-          <Text style={styles.menuLabel}>自动填入</Text>
-          <Text style={styles.meta}>
-            {view.credential.state === 'invalidated'
-              ? '需要重新设置'
-              : view.credential.hasCredential
-                ? `已设置 · ${view.credential.protection === 'biometric' ? '用户身份认证' : 'Android 本机加密'}`
-                : '未设置，登录失效时可快速填入'}
-          </Text>
-        </View>
-        {!editing ? (
-          <AccountAction
-            compact
-            disclosure
-            label={
-              view.credential.state === 'invalidated' ? '重新设置' : view.credential.hasCredential ? '管理' : '设置'
-            }
-            accountStyles={accountStyles}
-            styles={styles}
-            theme={theme}
-            onPress={() => setEditing(true)}
-          />
-        ) : null}
-      </View>
+      <List.Item
+        title="自动填入"
+        accessible={false}
+        onPress={openEditor}
+        description={
+          view.credential.state === 'invalidated'
+            ? '需要重新设置'
+            : view.credential.hasCredential
+              ? `已设置 · ${view.credential.protection === 'biometric' ? '用户身份认证' : 'Android 本机加密'}`
+              : '未设置，登录失效时可快速填入'
+        }
+        style={settingStyles.row}
+        containerStyle={settingStyles.rowContainer}
+        contentStyle={settingStyles.rowContent}
+        titleStyle={settingStyles.title}
+        descriptionStyle={settingStyles.description}
+        descriptionNumberOfLines={2}
+        right={
+          !editing
+            ? () => (
+                <Button
+                  compact
+                  icon={({ color, size }) => <ChevronRight color={color} size={size} />}
+                  style={settingStyles.button}
+                  contentStyle={settingStyles.buttonContent}
+                  labelStyle={settingStyles.buttonLabel}
+                  onPress={openEditor}
+                >
+                  {view.credential.state === 'invalidated'
+                    ? '重新设置'
+                    : view.credential.hasCredential
+                      ? '管理'
+                      : '设置'}
+                </Button>
+              )
+            : undefined
+        }
+      />
       <ModalSheetFrame
         backdropLabel={`关闭${view.label}自动填入设置`}
         keyboardAvoidingEnabled={keyboardAvoidingEnabled}
         visible={editing}
         onRequestClose={closeEditor}
       >
-        <View style={styles.searchFilterHeader}>
-          <View style={styles.flex}>
-            <Text style={styles.searchFilterTitle}>
-              {view.credential.state === 'missing'
-                ? '设置自动填入'
-                : view.credential.state === 'invalidated'
-                  ? '重新设置自动填入'
-                  : '管理自动填入'}
-            </Text>
-            <Text style={styles.meta}>{view.label}</Text>
-          </View>
-        </View>
+        <ModalSheetHeader
+          title={
+            view.credential.state === 'missing'
+              ? '设置自动填入'
+              : view.credential.state === 'invalidated'
+                ? '重新设置自动填入'
+                : '管理自动填入'
+          }
+          subtitle={view.label}
+          closeLabel="关闭自动填入编辑"
+          closeDisabled={busy}
+          onClose={closeEditor}
+        />
         <ScrollView
           overScrollMode="never"
           style={[styles.searchFilterBody, { maxHeight: Math.max(320, Math.round(height * 0.58)) }]}
@@ -390,15 +358,17 @@ function CredentialEditor({
           keyboardShouldPersistTaps="always"
         >
           <View style={styles.stack}>
-            <Text style={styles.panelTitle}>账号 / 邮箱</Text>
             <TextInput
+              variant="outlined"
+              label="账号 / 邮箱"
               accessibilityLabel={`${view.label} 登录账号`}
+              aria-label={`${view.label} 登录账号`}
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect={false}
               placeholder="账号 / 邮箱"
               placeholderTextColor={theme.muted}
-              style={styles.input}
+              style={settingStyles.input}
               value={account}
               onFocus={() => setKeyboardAvoidingEnabled(true)}
               onChange={recordUserInteraction}
@@ -406,16 +376,18 @@ function CredentialEditor({
             />
           </View>
           <View style={styles.stack}>
-            <Text style={styles.panelTitle}>密码</Text>
             <TextInput
+              variant="outlined"
+              label="密码"
               accessibilityLabel={`${view.label} 登录密码`}
+              aria-label={`${view.label} 登录密码`}
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect={false}
               placeholder="密码"
               placeholderTextColor={theme.muted}
               secureTextEntry
-              style={styles.input}
+              style={settingStyles.input}
               value={password}
               onFocus={() => setKeyboardAvoidingEnabled(true)}
               onChange={recordUserInteraction}
@@ -425,19 +397,52 @@ function CredentialEditor({
         </ScrollView>
         <View style={styles.searchFilterActions}>
           {view.credential.state !== 'missing' ? (
-            <AppButton compact label="删除" variant="danger" disabled={busy} onPress={confirmDelete} />
+            <Button
+              compact
+              accessibilityLabel="删除"
+              textColor={theme.danger}
+              style={settingStyles.button}
+              contentStyle={settingStyles.buttonContent}
+              labelStyle={settingStyles.buttonLabel}
+              disabled={busy}
+              onPress={() => {
+                recordUserInteraction();
+                confirmDelete();
+              }}
+            >
+              删除
+            </Button>
           ) : null}
           <View style={styles.flex} />
-          <AppButton compact label="取消" variant="ghost" disabled={busy} onPress={closeEditor} />
-          <AppButton
+          <Button
             compact
-            label={busy ? '保存中' : '保存'}
-            variant="primary"
+            accessibilityLabel="取消"
+            style={settingStyles.button}
+            contentStyle={settingStyles.buttonContent}
+            labelStyle={settingStyles.buttonLabel}
+            disabled={busy}
+            onPress={() => {
+              recordUserInteraction();
+              closeEditor();
+            }}
+          >
+            取消
+          </Button>
+          <Button
+            compact
+            mode="contained"
+            accessibilityLabel={busy ? '保存中' : '保存'}
+            style={settingStyles.button}
+            contentStyle={settingStyles.buttonContent}
+            labelStyle={settingStyles.buttonLabel}
             disabled={busy || !account.trim() || !password}
             onPress={() => {
+              recordUserInteraction();
               void persist();
             }}
-          />
+          >
+            {busy ? '保存中' : '保存'}
+          </Button>
         </View>
       </ModalSheetFrame>
     </View>
@@ -460,12 +465,13 @@ function primaryCommand(view: SiteAccountView): AccountCenterCommand | null {
 export function AccountCenterPanel({
   credentials,
   enabledSessionSources,
-  expanded,
+  active,
   forcedSite,
+  headerHostName,
   pendingFillSite,
   selectedSite,
   profile,
-  overviewContent,
+  renderOverview,
   nodeSeekUserId,
   sessions,
   siteContent,
@@ -474,17 +480,17 @@ export function AccountCenterPanel({
   styles,
   theme,
   onCommand,
-  onExpandedChange,
   onSelectedSiteChange
 }: {
   credentials: CredentialSummaries;
   enabledSessionSources: readonly SessionSite[];
-  expanded: boolean;
+  active: boolean;
   forcedSite?: SessionSite | null;
+  headerHostName?: string;
   pendingFillSite?: SessionSite | null;
   selectedSite?: SessionSite;
   profile?: UserDetails;
-  overviewContent?: ReactNode;
+  renderOverview?: (settingsAction: ReactNode) => ReactNode;
   nodeSeekUserId: number | null;
   sessions: SiteSessionViewModels;
   siteContent: Partial<Record<SessionSite, ReactNode>>;
@@ -493,11 +499,13 @@ export function AccountCenterPanel({
   styles: MoreScreenStyles;
   theme: ReaderTheme;
   onCommand: CommandHandler;
-  onExpandedChange: (expanded: boolean) => void;
   onSelectedSiteChange?: (site: SessionSite) => void;
 }) {
   const [expandedSite, setExpandedSite] = useState<SessionSite>('nodeseek');
-  const [settingsState, setSettingsState] = useState<{ owner: string; expanded: boolean } | null>(null);
+  const [settingsState, setSettingsState] = useState<{
+    owner: string;
+    phase: 'expanded' | 'collapsed';
+  } | null>(null);
   const availableViews = useMemo(
     () => createSiteAccountViews(sessions, credentials, nodeSeekUserId),
     [credentials, nodeSeekUserId, sessions]
@@ -509,7 +517,31 @@ export function AccountCenterPanel({
       .filter((view): view is SiteAccountView => Boolean(view));
   }, [availableViews, enabledSessionSources]);
   const { styles: accountStyles } = useReaderThemeStyles(createAccountCenterStyles);
+  const { styles: settingStyles } = useReaderThemeStyles(createMoreSiteSettingStyles);
   const selectedView = views.find((view) => view.site === (selectedSite ?? expandedSite)) ?? views[0];
+  const settingsOwner = selectedView ? `${selectedView.site}:${selectedView.user?.id ?? 'anonymous'}` : '';
+  const settingsVisited = settingsState?.owner === settingsOwner;
+  const settingsExpanded = settingsVisited && settingsState.phase === 'expanded';
+  if (settingsState !== null && settingsState.owner !== settingsOwner) setSettingsState(null);
+  const headerContent = (
+    <View style={[accountStyles.header, styles.morePageInset]}>
+      <Text style={accountStyles.title}>我的</Text>
+      {views.length ? <Text style={styles.meta}>{accountCenterSummary(views)}</Text> : null}
+      {views.length ? (
+        <IconButton
+          ghost
+          iconOnly
+          iconSize={18}
+          icon={RefreshCw}
+          label={statusBusy ? '刷新中' : '刷新账号'}
+          loading={statusBusy}
+          onPress={() => void onCommand({ type: 'refresh' })}
+        />
+      ) : null}
+    </View>
+  );
+
+  const header = headerHostName ? <Portal hostName={headerHostName}>{headerContent}</Portal> : headerContent;
 
   useEffect(() => {
     if (selectedSite !== undefined) return;
@@ -523,15 +555,9 @@ export function AccountCenterPanel({
 
   if (!selectedView) {
     return (
-      <ExpandablePanel
-        quiet
-        title="账号中心"
-        meta="0 个账号站点"
-        icon={User}
-        expanded={expanded}
-        onExpandedChange={onExpandedChange}
-      >
-        <View style={accountStyles.siteDetail}>
+      <View testID="my-account">
+        {header}
+        <View style={[accountStyles.siteDetail, styles.morePageInset]}>
           <View style={accountStyles.accountPanel}>
             <View style={accountStyles.siteOverview}>
               <View style={accountStyles.siteOverviewCopy}>
@@ -541,7 +567,7 @@ export function AccountCenterPanel({
             </View>
           </View>
         </View>
-      </ExpandablePanel>
+      </View>
     );
   }
 
@@ -549,20 +575,35 @@ export function AccountCenterPanel({
   const waitingForForm = pendingFillSite === selectedView.site;
   const loggedIn = selectedView.isLoggedIn;
   const levelLabel = profile?.levelLabel || selectedView.user?.levelLabel;
-  const settingsOwner = `${selectedView.site}:${selectedView.user?.id ?? 'anonymous'}`;
-  const settingsVisited = settingsState?.owner === settingsOwner;
-  const settingsExpanded = settingsVisited && settingsState.expanded;
   const renderSettings = siteSettings?.[selectedView.site];
+  const primaryLabel = waitingForForm
+    ? '等待登录表单'
+    : selectedView.primaryAction === 'open-user'
+      ? '查看主页'
+      : selectedView.primaryLabel;
+  const settingsAction = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="站点设置"
+      accessibilityHint={`${settingsExpanded ? '收起' : '展开'}${selectedView.label}的登录信息与设置`}
+      accessibilityState={{ expanded: settingsExpanded }}
+      style={accountStyles.settingsButton}
+      onPress={() =>
+        setSettingsState((current) => ({
+          owner: settingsOwner,
+          phase: current?.owner === settingsOwner && current.phase === 'expanded' ? 'collapsed' : 'expanded'
+        }))
+      }
+    >
+      <Settings2 size={16} color={theme.muted} strokeWidth={1.8} />
+      <Text style={styles.meta}>站点设置</Text>
+      <DisclosureChevron expanded={settingsExpanded} color={theme.muted} size={14} />
+    </Pressable>
+  );
 
   return (
-    <ExpandablePanel
-      quiet
-      title="账号中心"
-      meta={accountCenterSummary(views)}
-      icon={User}
-      expanded={expanded}
-      onExpandedChange={onExpandedChange}
-    >
+    <View testID="my-account">
+      {header}
       <View style={accountStyles.selectorRow}>
         <View style={accountStyles.siteTabs}>
           {views.map((view) => {
@@ -574,7 +615,7 @@ export function AccountCenterPanel({
                 accessibilityRole="tab"
                 accessibilityLabel={`${view.label}，${view.statusLabel}${selected ? '，已选择' : ''}`}
                 accessibilityState={{ selected }}
-                style={[accountStyles.siteTab, selected && accountStyles.siteTabSelected]}
+                style={accountStyles.siteTab}
                 onPress={() => {
                   if (selected) return;
                   if (selectedSite === undefined) setExpandedSite(view.site);
@@ -588,134 +629,113 @@ export function AccountCenterPanel({
                 >
                   {view.label}
                 </Text>
+                {selected ? <View style={accountStyles.siteTabIndicator} /> : null}
               </Pressable>
             );
           })}
         </View>
-        <View style={accountStyles.refreshSlot}>
-          <IconButton
-            ghost
-            iconOnly
-            iconSize={18}
-            icon={RefreshCw}
-            label={statusBusy ? '刷新中' : '刷新账号'}
-            loading={statusBusy}
-            onPress={() => {
-              void onCommand({ type: 'refresh' });
-            }}
-          />
-        </View>
       </View>
-      <View style={accountStyles.siteDetail}>
-        <View style={accountStyles.accountPanel}>
-          <View style={accountStyles.siteOverview}>
-            {selectedView.user ? (
-              <Avatar
-                contentSource={selectedView.site}
-                name={profile?.displayName || selectedView.identityLabel}
-                uri={profile?.avatar || selectedView.user.avatar}
-              />
+      <Pressable
+        accessibilityRole={primary ? 'button' : undefined}
+        accessibilityLabel={primary ? primaryLabel : undefined}
+        accessibilityHint={primary ? `${selectedView.identityLabel}，${selectedView.statusLabel}` : undefined}
+        accessibilityState={{ disabled: !primary || selectedView.primaryDisabled || waitingForForm }}
+        disabled={!primary || selectedView.primaryDisabled || waitingForForm}
+        style={[accountStyles.siteOverview, styles.morePageInset]}
+        onPress={() => {
+          if (primary) void onCommand(primary);
+        }}
+      >
+        <Avatar
+          key={settingsOwner}
+          large
+          contentSource={selectedView.site}
+          name={profile?.displayName || selectedView.identityLabel}
+          uri={profile?.avatar || selectedView.user?.avatar}
+        />
+        <View style={accountStyles.siteOverviewCopy}>
+          <View style={accountStyles.identityName}>
+            <Text numberOfLines={2} style={[styles.menuLabel, accountStyles.siteTitle]}>
+              {selectedView.user ? profile?.displayName || selectedView.identityLabel : selectedView.label}
+            </Text>
+            {primary ? <ChevronRight size={15} color={theme.muted} strokeWidth={1.8} /> : null}
+          </View>
+          <Text style={[styles.meta, accountStyles.identityMeta]}>
+            {selectedView.statusLabel}
+            {levelLabel ? ` · ${levelLabel}` : ''}
+          </Text>
+          {primary && selectedView.primaryAction !== 'open-user' ? (
+            <Text style={[styles.buttonText, accountStyles.actionTextQuiet]}>{primaryLabel}</Text>
+          ) : null}
+        </View>
+      </Pressable>
+      {renderOverview ? (
+        <View style={accountStyles.section}>{renderOverview(settingsAction)}</View>
+      ) : (
+        <View style={[accountStyles.settingsRow, styles.morePageInset]}>{settingsAction}</View>
+      )}
+      {settingsVisited ? (
+        <ExpandableContent expanded={settingsExpanded}>
+          <View testID="account-site-settings" style={[accountStyles.settingsBody, styles.morePageInset]}>
+            <CredentialEditor
+              key={settingsOwner}
+              active={active && settingsExpanded && forcedSite !== selectedView.site}
+              site={selectedView.site}
+              view={selectedView}
+              accountStyles={accountStyles}
+              styles={styles}
+              theme={theme}
+              onCommand={onCommand}
+            />
+            {loggedIn ? (
+              <View style={accountStyles.secondaryActions}>
+                <Button
+                  compact
+                  accessibilityLabel="检测或重新登录"
+                  icon={({ color, size }) => <ChevronRight color={color} size={size} />}
+                  style={settingStyles.button}
+                  contentStyle={settingStyles.buttonContent}
+                  labelStyle={settingStyles.buttonLabel}
+                  onPress={() => {
+                    recordUserInteraction();
+                    setSettingsState(null);
+                    void onCommand({ type: 'open-login', site: selectedView.site });
+                  }}
+                >
+                  检测或重新登录
+                </Button>
+                {selectedView.credential.hasCredential ? (
+                  <Button
+                    compact
+                    accessibilityLabel="自动填入"
+                    style={settingStyles.button}
+                    contentStyle={settingStyles.buttonContent}
+                    labelStyle={settingStyles.buttonLabel}
+                    disabled={waitingForForm}
+                    onPress={() => {
+                      recordUserInteraction();
+                      setSettingsState(null);
+                      void onCommand({ type: 'open-login-with-fill', site: selectedView.site });
+                    }}
+                  >
+                    自动填入
+                  </Button>
+                ) : null}
+              </View>
             ) : null}
-            <View style={accountStyles.siteOverviewCopy}>
-              <Text style={[styles.menuLabel, accountStyles.siteTitle]}>
-                {selectedView.user ? profile?.displayName || selectedView.identityLabel : selectedView.label}
-              </Text>
-              <Text style={[styles.meta, accountStyles.identityMeta]}>
-                {selectedView.statusLabel}
-                {levelLabel ? ` · ${levelLabel}` : ''}
-              </Text>
-            </View>
-            {primary ? (
-              <AccountAction
-                compact
-                disclosure
-                label={
-                  waitingForForm
-                    ? '等待登录表单'
-                    : selectedView.primaryAction === 'open-user'
-                      ? '查看主页'
-                      : selectedView.primaryLabel
-                }
-                accountStyles={accountStyles}
-                styles={styles}
-                theme={theme}
-                disabled={selectedView.primaryDisabled || waitingForForm}
-                onPress={() => {
-                  void onCommand(primary);
-                }}
-              />
+            {renderSettings ? (
+              <View style={accountStyles.accountFeatures}>{renderSettings(active && settingsExpanded)}</View>
             ) : null}
           </View>
-          {overviewContent ? <View style={accountStyles.section}>{overviewContent}</View> : null}
+        </ExpandableContent>
+      ) : null}
+      <View style={[accountStyles.siteDetail, styles.morePageInset]}>
+        <View style={accountStyles.accountPanel}>
           {siteContent[selectedView.site] ? (
             <View style={accountStyles.accountFeatures}>{siteContent[selectedView.site]}</View>
           ) : null}
-          <View style={accountStyles.settingsFooter}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={settingsExpanded ? '收起站点设置' : '站点设置'}
-              accessibilityState={{ expanded: settingsExpanded }}
-              style={accountStyles.settingsToggle}
-              onPress={() =>
-                setSettingsState((state) => ({
-                  owner: settingsOwner,
-                  expanded: state?.owner !== settingsOwner || !state.expanded
-                }))
-              }
-            >
-              <Text style={styles.meta}>站点设置</Text>
-              <DisclosureChevron expanded={settingsExpanded} size={16} color={theme.muted} />
-            </Pressable>
-          </View>
-          <ExpandableContent expanded={settingsExpanded}>
-            {settingsVisited ? (
-              <>
-                <CredentialEditor
-                  key={settingsOwner}
-                  active={expanded && settingsExpanded && forcedSite !== selectedView.site}
-                  site={selectedView.site}
-                  view={selectedView}
-                  accountStyles={accountStyles}
-                  styles={styles}
-                  theme={theme}
-                  onCommand={onCommand}
-                />
-                {loggedIn ? (
-                  <View style={accountStyles.secondaryActions}>
-                    <AccountAction
-                      compact
-                      disclosure
-                      label="检测或重新登录"
-                      accountStyles={accountStyles}
-                      styles={styles}
-                      theme={theme}
-                      onPress={() => {
-                        void onCommand({ type: 'open-login', site: selectedView.site });
-                      }}
-                    />
-                    {selectedView.credential.hasCredential ? (
-                      <AccountAction
-                        compact
-                        label="自动填入"
-                        accountStyles={accountStyles}
-                        styles={styles}
-                        theme={theme}
-                        disabled={waitingForForm}
-                        onPress={() => {
-                          void onCommand({ type: 'open-login-with-fill', site: selectedView.site });
-                        }}
-                      />
-                    ) : null}
-                  </View>
-                ) : null}
-                {renderSettings ? (
-                  <View style={accountStyles.accountFeatures}>{renderSettings(expanded && settingsExpanded)}</View>
-                ) : null}
-              </>
-            ) : null}
-          </ExpandableContent>
         </View>
       </View>
-    </ExpandablePanel>
+    </View>
   );
 }

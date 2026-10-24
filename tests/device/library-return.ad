@@ -7,7 +7,19 @@ open ${APP_ID} --relaunch
 wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait "role=button label=\"收藏\"" 10000
-find "role=button label=\"收藏\"" click
+wait stable 1500 15000
+
+press "role=button label=\"关注\""
+wait id="library-users-ready" 60000
+wait "id=\"library-tab-users\" label=\"关注用户，已选择\"" 10000
+back --system
+wait text="我的" 10000
+press "role=button label=\"历史\""
+wait id="library-history-ready" 60000
+wait "id=\"library-tab-history\" label=\"历史，已选择\"" 10000
+back --system
+wait text="我的" 10000
+press "role=button label=\"收藏\""
 wait id="library-favorites-ready" 60000
 wait "id=\"library-tab-favorites\" label=\"帖子，已选择\"" 10000
 wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
@@ -32,4 +44,5 @@ wait "id=\"library-source-linuxdo\" label=\"linux.do，已选择\"" 10000
 press id="library-source-all"
 wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
 back --system
-wait text="关于阅坛" 10000
+wait text="我的" 10000
+wait "role=button label=\"收藏\"" 10000

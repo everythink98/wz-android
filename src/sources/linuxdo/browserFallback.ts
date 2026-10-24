@@ -156,6 +156,10 @@ async function fetchLinuxDoThroughWebView(
       });
     }
     if (
+      (typeof error === 'object' &&
+        error !== null &&
+        'reason' in error &&
+        (error.reason === 'private-access-stale' || error.reason === 'source-disabled')) ||
       reason === 'canceled' ||
       reason === 'stale' ||
       reason === 'superseded' ||

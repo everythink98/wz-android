@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { parseForumContentHtml } from '@/domain/forum/html';
 import type { Reply } from '@/domain/forum/models';
 import {
   compileForumContent,
@@ -25,6 +26,92 @@ function previewCatalog(
 }
 
 describe('topic content rendering contracts', () => {
+  it.each([
+    ['opening', 'first'],
+    ['opening', 'after text'],
+    ['reply', 'first'],
+    ['reply', 'after text']
+  ] as const)('keeps a %s lightbox %s without adding an empty paragraph', (role, position) => {
+    const prefix = position === 'after text' ? '<p>before</p>' : '';
+    const prepare = (html: string) => prepareLinuxDoContent(html, [], { role, topicId: '42' }).preparedContent;
+    const paragraphs = (html: string) =>
+      parseForumContentHtml(html)
+        .querySelectorAll('p')
+        .map((node) => node.innerHTML);
+
+    for (const { lightbox, imageCount } of [
+      {
+        lightbox:
+          '<div class="lightbox-wrapper"><a class="lightbox" href="https://img.example/original.jpg">' +
+          '<img src="https://img.example/display.jpg" alt="photo" width="640" height="360"></a></div>',
+        imageCount: 1
+      },
+      { lightbox: '<div class="lightbox-wrapper"></div>', imageCount: 0 }
+    ]) {
+      const expected = prepare(`${prefix}${lightbox}`);
+      for (const opener of ['<p>', '<P \t\n> \t\n\f\r ']) {
+        const actual = prepare(`${prefix}${opener}${lightbox}</p>`);
+        const plan = requirePreparedForumContent(actual, actual.contentHtml, {
+          role,
+          source: 'linuxdo',
+          topicId: '42'
+        });
+        const renderedHtml = plan.rows.flatMap((row) => ('html' in row ? [row.html] : [])).join('');
+
+        expect(plan.previewImages).toEqual(expected.contentPlan.previewImages);
+        expect(parseForumContentHtml(renderedHtml).querySelectorAll('img')).toHaveLength(imageCount);
+        expect({ prepared: paragraphs(actual.contentHtml), rendered: paragraphs(renderedHtml) }).toEqual({
+          prepared: paragraphs(expected.contentHtml),
+          rendered: paragraphs(expected.contentHtml)
+        });
+      }
+    }
+  });
+
+  it.each(['opening', 'reply'] as const)('preserves authored paragraph spacing and breaks in %s content', (role) => {
+    const lightbox = '<div class="lightbox-wrapper"><img src="https://img.example/lightbox.jpg" alt="photo"></div>';
+    const paragraphs = [
+      '<p>before<br>after</p>',
+      '<p></p>',
+      '<p/>',
+      '<p>&nbsp;</p>',
+      '<p>\u00a0</p>',
+      '<p>\u00a0',
+      '<p><br></p>',
+      '<p><br>',
+      '<p id="keep-anchor">',
+      '<p title="> </p>">',
+      '<p>before',
+      '<p><img src="https://img.example/paragraph.jpg" alt="paragraph photo" width="640" height="360"></p>'
+    ];
+    const paragraphContent = (html: string) =>
+      parseForumContentHtml(html)
+        .querySelectorAll('p')
+        .map((node) => ({
+          attributes: node.attributes,
+          breaks: node.querySelectorAll('br').length,
+          images: node.querySelectorAll('img').map((image) => image.getAttribute('src')),
+          text: node.rawText
+        }));
+
+    for (const paragraph of paragraphs) {
+      const prepared = prepareLinuxDoContent(`${paragraph}${lightbox}`, [], { role, topicId: '42' }).preparedContent;
+      const plan = requirePreparedForumContent(prepared, prepared.contentHtml, {
+        role,
+        source: 'linuxdo',
+        topicId: '42'
+      });
+      const renderedHtml = plan.rows.flatMap((row) => ('html' in row ? [row.html] : [])).join('');
+
+      expect(paragraphContent(prepared.contentHtml), paragraph).toEqual(paragraphContent(paragraph));
+      expect(paragraphContent(renderedHtml), paragraph).toEqual(paragraphContent(paragraph));
+      expect(plan.previewImages.map((image) => image.source)).toEqual([
+        ...(paragraph.includes('<img') ? ['https://img.example/paragraph.jpg'] : []),
+        'https://img.example/lightbox.jpg'
+      ]);
+    }
+  });
+
   it('isolates block formulas while keeping inline formulas in text flow and copy text', () => {
     const prepared = prepareLinuxDoContent(
       '<p>before</p><div class="math">x^2 + y^2</div><p>after <span class="math">z^2</span></p>',

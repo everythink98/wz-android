@@ -487,7 +487,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     if (port < 1 || port > 65535) {
       throw IllegalArgumentException("端口必须是 1-65535")
     }
-    return NetworkProxyProfile(protocol, host, port, username?.ifBlank { null }, password?.ifBlank { null })
+    return NetworkProxyProfile(protocol, host, port, username?.ifBlank { null }, password)
   }
 
   private fun applyWebViewProxy(port: Int) {

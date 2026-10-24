@@ -24,6 +24,7 @@ export type AccountStatusObservation = {
 
 export type AccountSessionSnapshot = SiteSessionState & {
   identityTrust: IdentityTrust;
+  handoffPending?: true;
 };
 
 export type SiteSessionStates = Record<SessionSite, SiteSessionState>;
@@ -127,7 +128,9 @@ export function accountSessionAccess(snapshot: AccountSessionSnapshot) {
   const identityKey = accountSessionIdentityKey(snapshot);
   const authenticated = identityKey !== `${snapshot.site}:anonymous`;
   const identityTrust =
-    (snapshot.identityTrust === 'confirmed' && !authenticated) || (snapshot.identityTrust === 'none' && authenticated)
+    snapshot.handoffPending ||
+    (snapshot.identityTrust === 'confirmed' && !authenticated) ||
+    (snapshot.identityTrust === 'none' && authenticated)
       ? ('unknown' as const)
       : snapshot.identityTrust;
   return {
@@ -152,10 +155,15 @@ export function accountSessionSnapshotFromObservation(
     };
   }
   if (session.status === 'logged-in') {
-    return { ...session, identityTrust: 'confirmed' };
+    return { ...session, identityTrust: 'confirmed', ...(previous.handoffPending ? { handoffPending: true } : {}) };
   }
   if (session.status === 'anonymous' || session.status === 'verified' || session.status === 'expired') {
-    return { ...session, currentUser: undefined, identityTrust: 'none' };
+    return {
+      ...session,
+      currentUser: undefined,
+      identityTrust: 'none',
+      ...(previous.handoffPending ? { handoffPending: true } : {})
+    };
   }
   return { ...session, identityTrust: 'unknown' };
 }

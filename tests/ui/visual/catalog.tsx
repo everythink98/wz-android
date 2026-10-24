@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { PortalProvider } from '@gorhom/portal';
 import { StyleSheet, Text, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
@@ -55,19 +56,21 @@ export function VisualScenarioView({ appearance = {}, id }: { appearance?: Visua
   return (
     <QueryClientProvider client={queryClient}>
       <ReaderStyleProvider value={{ settings, theme }}>
-        <View key={id} style={[styles.root, { backgroundColor: theme.background }]}>
-          {scenario.kind === 'rendered' ? (
-            scenario.render()
-          ) : (
-            <View style={[styles.classification, { backgroundColor: theme.surface, borderColor: theme.line }]}>
-              <Text style={[styles.classificationTitle, { color: theme.ink }]}>{scenario.title}</Text>
-              <Text style={[styles.classificationKind, { color: theme.primary }]}>{scenario.kind}</Text>
-              <Text style={[styles.classificationNote, { color: theme.muted }]}>
-                {scenario.note || '此能力没有可独立渲染的 App 界面。'}
-              </Text>
-            </View>
-          )}
-        </View>
+        <PortalProvider>
+          <View key={id} style={[styles.root, { backgroundColor: theme.background }]}>
+            {scenario.kind === 'rendered' ? (
+              scenario.render()
+            ) : (
+              <View style={[styles.classification, { backgroundColor: theme.surface, borderColor: theme.line }]}>
+                <Text style={[styles.classificationTitle, { color: theme.ink }]}>{scenario.title}</Text>
+                <Text style={[styles.classificationKind, { color: theme.primary }]}>{scenario.kind}</Text>
+                <Text style={[styles.classificationNote, { color: theme.muted }]}>
+                  {scenario.note || '此能力没有可独立渲染的 App 界面。'}
+                </Text>
+              </View>
+            )}
+          </View>
+        </PortalProvider>
       </ReaderStyleProvider>
     </QueryClientProvider>
   );

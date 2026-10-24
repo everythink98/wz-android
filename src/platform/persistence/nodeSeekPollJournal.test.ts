@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   directory: '',
   connections: [] as { close(): void }[],
   legacy: new Map<string, string>(),
+  queries: [] as string[],
   fail: ''
 }));
 
@@ -21,6 +22,7 @@ vi.mock('expo-sqlite', async () => {
       harness.connections.push(db);
       const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
       const check = (sql: string) => {
+        harness.queries.push(sql);
         if (harness.fail && sql.includes(harness.fail)) {
           harness.fail = '';
           throw new Error('injected storage failure');
@@ -79,6 +81,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   harness.legacy.clear();
+  harness.queries = [];
   harness.fail = '';
   harness.directory = mkdtempSync(join(tmpdir(), 'wz-poll-journal-'));
 });
@@ -259,6 +262,53 @@ describe('NodeSeek poll journal', () => {
       entry('poll_cleanup_001', '999')
     );
     expect(harness.legacy.has(legacyKey())).toBe(false);
+  });
+
+  it('blocks the current read when cleanup commit and rollback fail and restores committed intents after reopening', async () => {
+    const known = entry('poll_cleanup_known');
+    const pending = entry('poll_cleanup_pending', null);
+    harness.legacy.set(legacyKey(), JSON.stringify([known, pending]));
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    const { openDatabaseAsync } = await import('expo-sqlite');
+    vi.mocked(storage.removeItem).mockImplementationOnce(async (key) => {
+      harness.legacy.delete(key);
+      const db = await vi.mocked(openDatabaseAsync).mock.results[0]!.value;
+      const exec = db.execAsync.bind(db);
+      vi.spyOn(db, 'execAsync').mockImplementation(async (sql) => {
+        if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+          harness.queries.push(sql);
+          throw new Error('cleanup transaction unavailable');
+        }
+        return exec(sql);
+      });
+    });
+    const store = await load();
+    const current = expect(store.readNodeSeekPollJournalEntry(identity, known.localId)).rejects.toThrow('状态不明');
+    const queued = expect(store.readNodeSeekPollJournalEntry(identity, pending.localId)).rejects.toThrow('状态不明');
+    await Promise.all([current, queued]);
+    expect(harness.queries.slice(-2)).toEqual(['COMMIT', 'ROLLBACK']);
+    const frozenQueries = [...harness.queries];
+    await expect(store.readNodeSeekPollJournalEntry(identity, known.localId)).rejects.toThrow('状态不明');
+    await expect(store.claimNodeSeekPollJournalEntry(identity, pending)).rejects.toThrow('状态不明');
+    expect(harness.queries).toEqual(frozenQueries);
+    const committed = inspect();
+    expect(committed.prepare('SELECT status FROM nodeseek_poll_migration').get()).toEqual({
+      status: 'cleanup_pending'
+    });
+    expect(committed.prepare('SELECT local_id, remote_id FROM nodeseek_poll_journal ORDER BY local_id').all()).toEqual([
+      { local_id: known.localId, remote_id: known.remoteId },
+      { local_id: pending.localId, remote_id: null }
+    ]);
+    harness.connections.forEach((db) => db.close());
+    harness.connections = [];
+    vi.resetModules();
+    const reopened = await load();
+    await expect(reopened.readNodeSeekPollJournalEntry(identity, known.localId)).resolves.toEqual(known);
+    await expect(reopened.claimNodeSeekPollJournalEntry(identity, pending)).resolves.toEqual({
+      claimed: false,
+      entry: pending
+    });
+    expect(inspect().prepare('SELECT status FROM nodeseek_poll_migration').get()).toEqual({ status: 'ready' });
   });
 
   it('does not clear legacy storage when the independent committed-data verification fails', async () => {

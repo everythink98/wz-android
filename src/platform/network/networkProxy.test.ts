@@ -121,18 +121,30 @@ describe('network proxy settings', () => {
     expect(state.activeId).toBeNull();
   });
 
-  it('stores proxy settings only in SecureStore', async () => {
-    await saveNetworkProxyState({
-      enabled: true,
-      activeId: socksProfile.id,
-      profiles: [socksProfile]
-    });
+  it.each(['demo-password', ' ', '  demo-password  '])(
+    'preserves password %j through SecureStore and Native apply/probe',
+    async (password) => {
+      const profile = createNetworkProxyProfile({ ...socksProfile, password });
+      const state = {
+        enabled: true,
+        activeId: profile.id,
+        profiles: [profile]
+      };
+      await saveNetworkProxyState(state);
+      expect(SecureStore.setItemAsync).toHaveBeenCalledWith(NETWORK_PROXY_STORAGE_KEY, JSON.stringify(state));
+      vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify(state));
+      const restored = (await loadNetworkProxyState()).profiles[0];
+      expect(restored).toEqual(profile);
+      const applyProxy = vi.fn().mockResolvedValue({ ok: true });
+      const testProxy = vi.fn().mockResolvedValue({ ok: true });
+      const module = { applyProxy, testProxy };
 
-    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
-      NETWORK_PROXY_STORAGE_KEY,
-      expect.stringContaining('demo-password')
-    );
-  });
+      await applyNetworkProxy(restored, module);
+      await testNetworkProxy(restored, module);
+      expect(applyProxy).toHaveBeenCalledWith(expect.objectContaining({ password }));
+      expect(testProxy).toHaveBeenCalledWith(expect.objectContaining({ password }));
+    }
+  );
 
   it('rejects a corrupted saved proxy value instead of silently allowing direct traffic', async () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce('{broken-json');

@@ -34,7 +34,7 @@ function capture(name) {
   writeFileSync(path.join(evidence, `${name}.png`), bytes);
   const { width, data } = pngjs.PNG.sync.read(bytes);
   let blue = 0;
-  // The central indicator below the secondary rail; excludes selected tabs and avatars.
+  // This strip may include selected tabs; compare against the captured baseline and inspect candidates.
   for (let cy = list.y; cy < list.y + list.height * 0.3; cy++) {
     for (let cx = Math.round(width * 0.44); cx < width * 0.56; cx++) {
       const i = (cy * width + cx) * 4;

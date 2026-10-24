@@ -2,7 +2,7 @@ import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { type ComponentProps, Profiler, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -10,12 +10,14 @@ import { MoreScreen as MoreScreenView } from '@/features/more/MoreScreen';
 import { AccountOverviewPanel } from '@/features/more/components/AccountOverviewPanel';
 import { createMoreScreenStyles } from '@/features/more/styles';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
-import { createTheme } from '@/ui/theme/tokens';
+import { createTheme, readerRadii } from '@/ui/theme/tokens';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createAppQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { NodeSeekAccountOverview } from '@/domain/forum/accountData';
+import { LinuxDoCreditError } from '@/domain/forum/linuxDoCredit';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { NavigationBackdropProvider, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -166,12 +168,15 @@ jest.mock('lucide-react-native', () => {
     Image: Icon,
     Info: Icon,
     GripVertical: Icon,
+    History: Icon,
     RefreshCw: Icon,
     Server: Icon,
     Settings: Icon,
+    Settings2: Icon,
     Star: Icon,
     Trash2: Icon,
     User: Icon,
+    Users: Icon,
     X: Icon
   };
 });
@@ -260,6 +265,12 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
         },
         getNodeSeekStardustCredits: async () => {
           throw new Error('星辰流水未提供');
+        },
+        getLinuxDoCreditAccount: async () => {
+          throw new Error('LDC 余额未提供');
+        },
+        getLinuxDoCreditTransactions: async () => {
+          throw new Error('LDC 明细未提供');
         }
       },
       sessions: sessionViewModels,
@@ -268,6 +279,12 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
     },
     center: {
       openCredits: jest.fn(),
+      openLinuxDoCredit: jest.fn(),
+      linuxDoCredit: {
+        open: jest.fn<() => void>(),
+        connectSilently: jest.fn<() => void>(),
+        busy: false
+      },
       command: jest.fn(async () => undefined),
       credentials: {
         summaries: emptyCredentialSummaries(),
@@ -371,6 +388,39 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
 }
 
 describe('More screen state and actions', () => {
+  it('samples scrolling content below a separately measured glass header', async () => {
+    const view = await render(
+      <NavigationBackdropProvider>
+        <MoreScreen {...moreProps()} />
+        <NavigationGlass />
+      </NavigationBackdropProvider>
+    );
+    const content = within(view.getByTestId('more-glass-content'));
+    const header = view.getByTestId('more-glass-header');
+    expect(within(header).getByText('我的')).toBeTruthy();
+    expect(content.queryByText('我的')).toBeNull();
+    expect(content.getByTestId('account-site-nodeseek')).toBeTruthy();
+    const topGlass = view.getByTestId('navigation-glass-toolbar');
+    const bottomGlass = view.getByTestId('navigation-glass');
+    expect(topGlass.props.blurTarget.current).toBeTruthy();
+    expect(topGlass.props.blurTarget.current).toBe(bottomGlass.props.blurTarget.current);
+    await fireEvent(header, 'layout', { nativeEvent: { layout: { height: 104 } } });
+    expect(StyleSheet.flatten(view.getByTestId('more-scroll').props.contentContainerStyle).paddingTop).toBe(104);
+  });
+
+  it('shows account controls directly above grouped personal settings', async () => {
+    const view = await render(<MoreScreen {...moreProps()} />);
+
+    expect(view.getByText('我的')).toBeTruthy();
+    expect(view.getByTestId('account-site-nodeseek')).toBeTruthy();
+    expect(view.queryByLabelText('展开账号中心')).toBeNull();
+    expect(view.queryByLabelText('收起账号中心')).toBeNull();
+    expect(view.getByText('设置')).toBeTruthy();
+    expect(view.getByRole('button', { name: '收藏' })).toBeTruthy();
+    expect(view.getByRole('button', { name: '关注' })).toBeTruthy();
+    expect(view.getByRole('button', { name: '历史' })).toBeTruthy();
+  });
+
   it('updates download progress without rerunning unrelated account and proxy layout consumers', async () => {
     const props = moreProps();
     const reader = createEmptyReaderState();
@@ -520,7 +570,7 @@ describe('More screen state and actions', () => {
   it('keeps the selected site when all account sources are temporarily disabled', async () => {
     const enabled = moreProps({ account: { enabledSessionSources: ['linuxdo', 'nodeseek'] } });
     const view = await render(<MoreScreen {...enabled} />);
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+
     await fireEvent.press(view.getByTestId('account-site-linuxdo'));
 
     await view.rerender(<MoreScreen {...moreProps({ account: { enabledSessionSources: [] } })} />);
@@ -541,13 +591,86 @@ describe('More screen state and actions', () => {
             : { center: { credentials: { pendingFillSite: 'linuxdo' } } }
       });
       const view = await render(<MoreScreen {...initial} />);
-      await fireEvent.press(view.getByLabelText('展开账号中心'));
+
       await view.rerender(<MoreScreen {...requested} />);
       expect(view.getByTestId('account-site-linuxdo').props.accessibilityState.selected).toBe(true);
       await view.rerender(<MoreScreen {...initial} />);
       expect(view.getByTestId('account-site-linuxdo').props.accessibilityState.selected).toBe(true);
     }
   );
+
+  it('shows the separate LDC balance in the LinuxDo profile and opens its income and expense records', async () => {
+    const props = moreProps({
+      account: { enabledSessionSources: ['linuxdo'], read: { sessions: authorizedLinuxDoSessions } }
+    });
+    const getBalance = jest.fn<MoreScreenProps['account']['read']['gateway']['getLinuxDoCreditAccount']>(async () => ({
+      userId: '7',
+      username: 'alice',
+      availableBalance: '1234.50',
+      pendingBalance: '2.25'
+    }));
+    const getTransactions = jest.fn<MoreScreenProps['account']['read']['gateway']['getLinuxDoCreditTransactions']>();
+    props.account.read.gateway = {
+      ...props.account.read.gateway,
+      getReadPlan: () => ({
+        state: 'ready',
+        lane: 'authenticated',
+        transport: 'managed-session',
+        cacheScope: 'authenticated:ldc-profile'
+      }),
+      getLinuxDoCreditAccount: getBalance,
+      getLinuxDoCreditTransactions: getTransactions
+    };
+    const view = await render(<MoreScreen {...props} />);
+    await waitFor(() => expect(view.getByLabelText('LDC 可用余额 1,234.50')).toBeTruthy());
+    expect(view.getByText('待到账 2.25 LDC')).toBeTruthy();
+    expect(getTransactions).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('LDC 可用余额 1,234.50'));
+    expect(props.account.center.openLinuxDoCredit).toHaveBeenCalledTimes(1);
+    expect(view.queryByRole('button', { name: '刷新 LDC 余额' })).toBeNull();
+    expect(getBalance).toHaveBeenCalledTimes(1);
+    expect(getTransactions).not.toHaveBeenCalled();
+  });
+
+  it('requests background LDC connection and shows loading until that attempt releases the account barrier', async () => {
+    const props = moreProps({
+      account: { enabledSessionSources: ['linuxdo'], read: { sessions: authorizedLinuxDoSessions } }
+    });
+    props.account.read.gateway = {
+      ...props.account.read.gateway,
+      getReadPlan: () => ({
+        state: 'ready',
+        lane: 'authenticated',
+        transport: 'managed-session',
+        cacheScope: 'authenticated:ldc-profile'
+      }),
+      getLinuxDoCreditAccount: async () => {
+        throw new LinuxDoCreditError('authorization-required', '请先连接 LDC');
+      }
+    };
+    const view = await render(<MoreScreen {...props} />);
+    await waitFor(() => expect(props.account.center.linuxDoCredit.connectSilently).toHaveBeenCalledTimes(1));
+    expect(props.account.center.linuxDoCredit.open).not.toHaveBeenCalled();
+    await view.rerender(
+      <MoreScreen
+        {...props}
+        account={{
+          ...props.account,
+          center: {
+            ...props.account.center,
+            linuxDoCredit: { ...props.account.center.linuxDoCredit, busy: true }
+          }
+        }}
+      />
+    );
+    expect(view.getByText('读取余额中')).toBeTruthy();
+    expect(view.queryByText('请先连接 LDC')).toBeNull();
+    expect(view.queryByRole('button', { name: '连接 LDC' })).toBeNull();
+    await view.rerender(<MoreScreen {...props} />);
+    expect(view.getByText('请先连接 LDC')).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: '连接 LDC' }));
+    expect(props.account.center.linuxDoCredit.open).toHaveBeenCalledTimes(1);
+  });
 
   it('refreshes level details through the unified account action only after the user expands them', async () => {
     const refreshLevel = jest.fn();
@@ -559,7 +682,7 @@ describe('More screen state and actions', () => {
       }
     });
     const view = await render(<MoreScreen {...props} />);
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+
     expect(view.queryByLabelText('重试等级', { includeHiddenElements: true })).toBeNull();
     await fireEvent.press(view.getByLabelText('刷新账号'));
     expect(refreshLevel).not.toHaveBeenCalled();
@@ -663,7 +786,7 @@ describe('More screen state and actions', () => {
       return props;
     };
     const view = await render(<MoreScreen {...propsFor('42')} />);
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+
     await waitFor(() => expect(view.getByLabelText('回复 8')).toBeTruthy());
     await waitFor(() => expect(view.getByLabelText('鸡腿 5')).toBeTruthy());
     expect(view.queryByText('NS 资料 42', { includeHiddenElements: true })).toBeNull();
@@ -919,7 +1042,7 @@ describe('More screen state and actions', () => {
       getNodeSeekAttendanceBoard: getAttendance
     };
     const view = await render(<MoreScreen {...props} />);
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+
     await waitFor(() => expect(view.getByLabelText('重试资料')).toBeTruthy());
     await waitFor(() => expect(view.getByLabelText('重试签到状态')).toBeTruthy());
     const coinSlot = view.getByLabelText('鸡腿 暂无数据');
@@ -995,7 +1118,7 @@ describe('More screen state and actions', () => {
       })
     };
     const view = await render(<MoreScreen {...props} />);
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+
     await waitFor(() => expect(getOverview).toHaveBeenCalledTimes(1));
     await view.rerender(
       <MoreScreen
@@ -1017,7 +1140,7 @@ describe('More screen state and actions', () => {
     expect(view.getByLabelText('鸡腿 7')).toBeTruthy();
   });
 
-  it('loads only the expanded confirmed account, exposes zero statistics, and pauses reads while inactive', async () => {
+  it('loads only the selected confirmed account, exposes zero statistics, and pauses reads while inactive', async () => {
     const user = {
       source: 'nodeseek' as const,
       id: '42',
@@ -1079,9 +1202,9 @@ describe('More screen state and actions', () => {
       getNodeSeekAttendanceBoard
     };
     const view = await render(<MoreScreen {...props} />);
-    expect(getUserDetails).not.toHaveBeenCalled();
-    expect(getNodeSeekAttendanceBoard).not.toHaveBeenCalled();
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    expect(getUserDetails).toHaveBeenCalledTimes(1);
+    expect(getNodeSeekAttendanceBoard).toHaveBeenCalledTimes(1);
+
     await waitFor(() => expect(view.getByLabelText('鸡腿 0')).toBeTruthy());
     expect(view.getByLabelText('主题 0')).toBeTruthy();
     expect(view.getByLabelText('星辰 2')).toBeTruthy();
@@ -1199,7 +1322,7 @@ describe('More screen state and actions', () => {
           <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>{children}</ReaderStyleProvider>
         )
       });
-      await fireEvent.press(view.getByLabelText('展开账号中心'));
+
       await waitFor(() => expect(view.getByLabelText('主题 3')).toBeTruthy());
       expect(StyleSheet.flatten(view.getByLabelText('主题 3').props.style).width).toBe('50%');
       expect(view.getByLabelText(`回复 ${replyCount}`).props.accessibilityRole).toBe('button');
@@ -1230,7 +1353,7 @@ describe('More screen state and actions', () => {
       getUserDetails: async () => ({ ...user, topicCount: 3 })
     };
     const view = await render(<MoreScreen {...props} />);
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+
     await waitFor(() => expect(view.getByLabelText('主题 3')).toBeTruthy());
     expect(view.queryByLabelText('回复 0')).toBeNull();
     expect(view.queryByLabelText('我的回复')).toBeNull();
@@ -1252,7 +1375,6 @@ describe('More screen state and actions', () => {
       />
     );
 
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
     await fireEvent.press(view.getByTestId('account-site-linuxdo'));
     await fireEvent.press(view.getByText('linux.do 等级'));
     expect(refreshLinuxDoLevel).not.toHaveBeenCalled();
@@ -1286,6 +1408,114 @@ describe('More screen state and actions', () => {
     expect(view.getByTestId('account-site-nodeseek').props.accessibilityState.selected).toBe(true);
     expect(refreshLinuxDoLevel).not.toHaveBeenCalled();
   });
+
+  it.each(['start', 'finish'] as const)(
+    'keeps source rows measurable through collapse and rejects hidden changes or a delayed drag %s',
+    async (delayedPhase) => {
+      const updateSettings = jest.fn();
+      const view = await render(
+        <MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} contentSourcesExpanded />
+      );
+      const sources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
+      const rows = sources.map((source) => view.getByTestId(`content-source-row-${source}`));
+      for (const [index, row] of rows.entries()) {
+        await fireEvent(row, 'layout', {
+          nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+        });
+      }
+      const sourceSwitch = view.getByLabelText('V2EX 内容源开关');
+      const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+      const lateSwitchChange = sourceSwitch.props.onChange;
+      const lateAccessibilityAction = handle.props.onAccessibilityAction;
+      mockDeferScheduleOnRN = delayedPhase === 'start';
+      await act(async () => {
+        handle.props.onGestureStart({ translationY: 0 });
+      });
+      mockDeferScheduleOnRN = true;
+      await act(async () => {
+        handle.props.onGestureUpdate({ translationY: 56 });
+        handle.props.onGestureFinalize({ canceled: false });
+      });
+      await fireEvent.press(view.getByLabelText('收起内容源'));
+      for (const [index, source] of sources.entries()) {
+        expect(view.getByTestId(`content-source-row-${source}`, { includeHiddenElements: true })).toBe(rows[index]);
+        expect(view.queryByTestId(`content-source-row-${source}`)).toBeNull();
+      }
+      expect(view.queryByLabelText('V2EX 内容源开关')).toBeNull();
+      expect(
+        view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项', { includeHiddenElements: true }).props.gestureEnabled
+      ).toBe(false);
+      await act(async () => {
+        lateSwitchChange({ nativeEvent: { value: false } });
+        lateAccessibilityAction({ nativeEvent: { actionName: 'moveDown' } });
+      });
+      expect(updateSettings).not.toHaveBeenCalled();
+
+      mockDeferScheduleOnRN = false;
+      await fireEvent.press(view.getByLabelText('展开内容源'));
+      for (const [index, source] of sources.entries()) {
+        expect(view.getByTestId(`content-source-row-${source}`)).toBe(rows[index]);
+      }
+      await act(async () => {
+        for (const callback of mockDeferredRNCalls.splice(0)) callback();
+      });
+      expect(updateSettings).not.toHaveBeenCalled();
+      const reopenedHandle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+      await act(async () => {
+        reopenedHandle.props.onGestureStart({ translationY: 0 });
+        reopenedHandle.props.onGestureUpdate({ translationY: 56 });
+        reopenedHandle.props.onGestureFinalize({ canceled: false });
+      });
+      expect(updateSettings).toHaveBeenCalledWith({
+        contentSources: [
+          readerData.settings.contentSources[1],
+          readerData.settings.contentSources[0],
+          ...readerData.settings.contentSources.slice(2)
+        ]
+      });
+    }
+  );
+
+  it.each(['mode changes twice', 'initial discovery finishes'] as const)(
+    'preserves measured source rows when screen-reader %s while collapsed',
+    async (change) => {
+      const discovery = Promise.withResolvers<boolean>();
+      if (change === 'initial discovery finishes') mockIsScreenReaderEnabled.mockReturnValueOnce(discovery.promise);
+      const updateSettings = jest.fn();
+      const view = await render(<MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} />);
+      const sources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
+      const heights = [56, 72, 64, 80];
+      let y = 0;
+      for (const [index, source] of sources.entries()) {
+        await fireEvent(view.getByTestId(`content-source-row-${source}`, { includeHiddenElements: true }), 'layout', {
+          nativeEvent: { layout: { height: heights[index], width: 300, x: 0, y } }
+        });
+        y += heights[index]!;
+      }
+      if (change === 'mode changes twice') {
+        await act(async () => mockScreenReaderChangeListener?.(true));
+        await act(async () => mockScreenReaderChangeListener?.(false));
+      } else await act(async () => discovery.resolve(false));
+      expect(updateSettings).not.toHaveBeenCalled();
+
+      await fireEvent.press(view.getByLabelText('展开内容源'));
+      const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+      expect(handle.props.gestureEnabled).toBe(true);
+      await act(async () => {
+        handle.props.onGestureStart({ translationY: 0 });
+        handle.props.onGestureUpdate({ translationY: 64 });
+        handle.props.onGestureFinalize({ canceled: false });
+      });
+      expect(updateSettings).toHaveBeenCalledTimes(1);
+      expect(updateSettings).toHaveBeenCalledWith({
+        contentSources: [
+          readerData.settings.contentSources[1],
+          readerData.settings.contentSources[0],
+          ...readerData.settings.contentSources.slice(2)
+        ]
+      });
+    }
+  );
 
   it('keeps all content sources in an accessible, collapsed settings-only panel', async () => {
     const updateSettings = jest.fn();
@@ -1412,7 +1642,7 @@ describe('More screen state and actions', () => {
     const view = await render(<MoreScreen {...moreProps()} />);
 
     expect(view.queryByTestId('content-source-row-v2ex')).toBeNull();
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
+
     await fireEvent.press(view.getByLabelText('展开内容源'));
 
     for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
@@ -1450,8 +1680,8 @@ describe('More screen state and actions', () => {
     expect(mockDragRunsOnJS).toBe(false);
     expect(mockScheduleOnRN).toHaveBeenCalledTimes(2);
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toMatchObject({
-      backgroundColor: '#F0F0F0',
-      borderRadius: 10,
+      backgroundColor: createTheme(readerData.settings).surface2,
+      borderRadius: readerRadii.control,
       borderTopWidth: 0,
       elevation: 2,
       marginHorizontal: 0,
@@ -1874,7 +2104,7 @@ describe('More screen state and actions', () => {
     }).toEqual({ gestureEnabled: false, persistedChanges: 0 });
   });
 
-  it('opens the Library from More without a duplicate message entry', async () => {
+  it('opens each personal shortcut in its Library collection without a duplicate message entry', async () => {
     const open = jest.fn();
     const view = await render(
       <MoreScreen
@@ -1886,10 +2116,12 @@ describe('More screen state and actions', () => {
       />
     );
 
-    await fireEvent.press(view.getByRole('button', { name: '收藏' }));
-    expect(open).toHaveBeenCalledTimes(1);
+    for (const label of ['收藏', '关注', '历史']) {
+      await fireEvent.press(view.getByRole('button', { name: label }));
+    }
+    expect(open.mock.calls).toEqual([['favorites'], ['users'], ['history']]);
     expect(StyleSheet.flatten(view.getByTestId('more-library-row').props.style)).toMatchObject({
-      borderBottomColor: createTheme(readerData.settings).line,
+      flexDirection: 'row',
       borderBottomWidth: StyleSheet.hairlineWidth
     });
     expect(view.queryByText('消息通知')).toBeNull();
@@ -2035,20 +2267,28 @@ describe('More screen state and actions', () => {
   });
 
   it('updates the read-channel threshold from Account Center', async () => {
-    const updateSettings = jest.fn();
-    const view = await render(
-      <MoreScreen
-        {...moreProps({
-          utilities: { settings: { update: updateSettings } }
-        })}
-      />
-    );
+    const measure = jest
+      .spyOn(View.prototype, 'measureInWindow')
+      .mockImplementation((callback) => callback(40, 200, 180, 240));
+    try {
+      const updateSettings = jest.fn();
+      const view = await render(
+        <MoreScreen
+          {...moreProps({
+            utilities: { settings: { update: updateSettings } }
+          })}
+        />
+      );
 
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
-    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
-    await fireEvent.press(view.getByLabelText('站点设置'));
-    await fireEvent.press(view.getByLabelText('4 次'));
+      await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+      await fireEvent.press(view.getByLabelText('站点设置'));
+      await fireEvent.press(view.getByRole('button', { name: '读取通道自愈阈值' }));
+      await waitFor(() => expect(view.getByLabelText('4 次')).toBeTruthy());
+      await fireEvent.press(view.getByLabelText('4 次'));
 
-    expect(updateSettings).toHaveBeenCalledWith({ nodeSeekRecoveryThreshold: 4 });
+      expect(updateSettings).toHaveBeenCalledWith({ nodeSeekRecoveryThreshold: 4 });
+    } finally {
+      measure.mockRestore();
+    }
   });
 });

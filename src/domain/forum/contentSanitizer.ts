@@ -972,6 +972,32 @@ function sanitizeNodeSeekAnsiReportSections(root: HTMLElement) {
   transformForumElements(root, [...replacements.keys()], (node) => replacements.get(node));
 }
 
+function removeAutoClosedLightboxParagraphs(root: HTMLElement, markup: string) {
+  if (!markup.includes('lightbox-wrapper')) return;
+  const shells: HTMLElement[] = [];
+  const parents = new Set(root.querySelectorAll('.lightbox-wrapper').map((node) => node.parentNode));
+  for (const parent of parents) {
+    if (!parent) continue;
+    let previous: HTMLElement | undefined;
+    for (const node of parent.childNodes) {
+      if (node instanceof TextNode && /^[\t\n\f\r ]*$/.test(node.rawText)) continue;
+      if (
+        node instanceof HTMLElement &&
+        node.tagName === 'DIV' &&
+        node.classList.contains('lightbox-wrapper') &&
+        previous?.tagName === 'P' &&
+        previous.childNodes.every((child) => child instanceof TextNode && /^[\t\n\f\r ]*$/.test(child.rawText)) &&
+        // Auto-closed p ranges contain only the opener; authored empty paragraphs keep their closing tag.
+        /^<p[\t\n\f\r ]*>$/i.test(markup.slice(...previous.range))
+      ) {
+        shells.push(previous);
+      }
+      previous = node instanceof HTMLElement ? node : undefined;
+    }
+  }
+  if (shells.length) transformForumElements(root, shells, () => []);
+}
+
 export function sanitizeContentHtmlWithRoot(
   html: unknown,
   baseUrl: string,
@@ -979,6 +1005,7 @@ export function sanitizeContentHtmlWithRoot(
 ) {
   const normalizedHtml = sanitizeNodeSeekAnsiCodeBlocksHtml(html);
   const root = parseForumContentHtml(normalizedHtml);
+  removeAutoClosedLightboxParagraphs(root, normalizedHtml);
   removeHiddenContent(root);
   sanitizeNodeSeekAnsiReportSections(root);
   transformRoot?.(root);

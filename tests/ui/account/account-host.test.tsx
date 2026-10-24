@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { act, render } from '@testing-library/react-native';
 import { createRef, type ComponentProps } from 'react';
+import { StyleSheet } from 'react-native';
 import type { WebView } from 'react-native-webview';
 import { createAccountSessionSnapshot, createAccountSessionViewModel } from '@/domain/session/siteSessionState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -91,6 +92,10 @@ describe('AccountHost NodeImage authorization boundary', () => {
     const view = await render(<AccountHost {...baseProps} />);
 
     expect(nodeImageWebViewProps.source).toEqual({ uri: 'https://www.nodeimage.com/' });
+    expect(StyleSheet.flatten(nodeImageWebViewProps.style)).toMatchObject({
+      flex: 1,
+      backgroundColor: createTheme({ theme: 'light' }).surface
+    });
     expect(nodeImageWebViewProps.injectedJavaScript).toBe('session-script');
     expect(view.getByTestId('nodeimage-auth-touch-shield', { includeHiddenElements: true })).toBeTruthy();
     expect(nodeImageModalProps.actions).toBeUndefined();

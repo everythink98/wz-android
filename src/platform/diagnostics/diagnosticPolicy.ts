@@ -28,6 +28,7 @@ export type DiagnosticOutcome = 'success' | 'partial' | 'blocked' | 'noop' | 'ca
 const DIAGNOSTIC_REASONS = [
   'canceled',
   'timeout',
+  'preparation_timeout',
   'login_required',
   'verification_required',
   'permission_denied',
@@ -781,6 +782,7 @@ const categoricalFieldValues = {
     'cancel',
     'close-button',
     'hardware-back',
+    'initialization-incomplete',
     'navigation-away',
     'source-disabled',
     'success',

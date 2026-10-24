@@ -1,4 +1,6 @@
-import { getCategories as getForumCategories, getFeed as getForumFeed } from './feedRead';
+import { getCategories as getForumCategories, getFeed as getForumFeed, getSourceCategories } from './feedRead';
+import { READ_PREPARATION_BUDGET_MS, readWithinAggregateSourceBudget, type ReadPreparation } from './readAggregation';
+import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import {
   getReply as getForumReply,
   getReplies as getForumReplies,
@@ -21,6 +23,8 @@ import {
   getNodeSeekStardustCredits as getNodeSeekStardustCreditsDirect
 } from '@/sources/nodeseek/accountData';
 import { getYaohuoAccountOverview as getYaohuoAccountOverviewDirect } from '@/sources/yaohuo/accountData';
+import { getLinuxDoCreditAccount, getLinuxDoCreditTransactions, LINUXDO_CREDIT_URL } from '@/sources/linuxdo/credit';
+import { LinuxDoCreditError } from '@/domain/forum/linuxDoCredit';
 import {
   getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
   type LinuxDoLevelProfile
@@ -152,6 +156,7 @@ type ReadGatewayDependencies = {
   reading?: DiscourseReadingRuntime;
   anonymousFetcher: Fetcher;
   fetcher: Fetcher;
+  beforeRequest?: () => Promise<void>;
   getEnabledSources?: () => readonly Source[];
   linuxDoUserAgent?: () => string;
   nodeSeekUserAgent: () => string;
@@ -170,6 +175,7 @@ type ManagedReadKeys =
   | 'nodeSeekAuthenticated'
   | 'nodeSeekUserAgent'
   | 'includedSources'
+  | 'preparation'
   | 'unavailableSources';
 type ManagedGetCategoriesOptions = Omit<GetCategoriesOptions, ManagedReadKeys>;
 type ManagedGetFeedOptions = Omit<GetFeedOptions, ManagedReadKeys>;
@@ -355,6 +361,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       fetcherForSource?: (source: Source) => Fetcher;
       nodeSeekAuthenticated?: boolean;
       nodeSeekUserAgent?: string;
+      preparation?: ReadPreparation;
+      signal?: AbortSignal;
       trace: DiagnosticTrace;
       unavailableSources?: readonly Source[];
     }) => Promise<T>,
@@ -364,6 +372,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     onBeforeSessionChange?: (result: T) => void
   ) => {
     const readingRequest = dependencies.reading?.startRequest();
+    const preparationDeadline = Date.now() + READ_PREPARATION_BUDGET_MS;
+    let activeSignal = signal;
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source, ...intentFields });
     if (context?.trace && Object.keys(intentFields).length) {
@@ -436,14 +446,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             isSessionSource(planSource) &&
             readSessionSnapshot(planSource).identityKey === sessionSnapshots.get(planSource)?.identityKey
         ));
-    const recoveryCommitIsEligible = () => readIsCurrent() && signal?.aborted !== true;
+    const recoveryCommitIsEligible = () => readIsCurrent() && activeSignal?.aborted !== true;
     const accountFailures = new Map<Source, 'http-401' | 'account-recheck-required'>();
     const reportedAccountFailures = new Set<SessionSource>();
     const reportAccountFailure = (planSource: Source, reason: unknown, preserveResult?: () => void) => {
       if (
         !isSessionSource(planSource) ||
         reportedAccountFailures.has(planSource) ||
-        signal?.aborted ||
+        activeSignal?.aborted ||
         !enabledSourcesAreCurrent() ||
         getReadPlan(planSource, readOperation).cacheScope !== planSnapshot.get(planSource)?.cacheScope ||
         (reason !== 'http-401' && !(planSource === 'linuxdo' && reason === 'account-recheck-required'))
@@ -506,14 +516,32 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           };
         }
         if (plan.transport === 'native-no-cookie') return anonymousFetcher;
-        return rejectUnauthorizedResponse(async (input, init) => {
+        const managedFetcher: Fetcher = async (input, init) => {
           const response = await dependencies.fetcher(input, init);
-          const failure = await forumResponseAccountFailure(planSource, input, response, signal);
+          const failure = await forumResponseAccountFailure(planSource, input, response, activeSignal);
           if (failure && accountFailures.get(planSource) !== 'http-401') accountFailures.set(planSource, failure);
           return response;
-        });
+        };
+        const forumFetcher = rejectUnauthorizedResponse(managedFetcher);
+        return (input, init) =>
+          planSource === 'linuxdo' && new URL(input).origin === LINUXDO_CREDIT_URL
+            ? managedFetcher(input, init)
+            : forumFetcher(input, init);
       };
       const operationFetcher = source === 'all' ? localFetcher : sourcePlanFetcher(source);
+      let expectedGeneration = getReadNetworkRuntimeSnapshot().generation;
+      const preparation: ReadPreparation | undefined =
+        (readOperation === 'feed' && source === 'all') || readOperation === 'categories'
+          ? {
+              deadline: preparationDeadline,
+              beforeRequest: async () => {
+                if (!recoveryCommitIsEligible()) throw new RequestCanceledError();
+                await dependencies.beforeRequest?.();
+                if (!recoveryCommitIsEligible()) throw new RequestCanceledError();
+                expectedGeneration = getReadNetworkRuntimeSnapshot().generation;
+              }
+            }
+          : undefined;
       markDiagnosticStage(trace, 'credential', {
         source,
         hasCredential: Boolean(
@@ -523,13 +551,13 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         ),
         isCredentialKnown: unavailablePlanSources.length === 0
       });
-      markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
+      if (!preparation) markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
       const ownFetcher = (fetcher: Fetcher, attempt: ReadAttempt) =>
         withForumSourceReadEligibility(
           withManagedReadIntent(
             withDiagnosticFetcher(
               trace,
-              readOperation === 'account-data'
+              readOperation === 'account-data' || preparation
                 ? withRequestBeforeSend(fetcher, () => {
                     if (!recoveryCommitIsEligible()) throw new RequestCanceledError();
                   })
@@ -550,6 +578,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           nodeSeekAuthenticated,
           nodeSeekUserAgent: nodeSeekPlan?.state === 'ready' ? dependencies.nodeSeekUserAgent() : undefined,
           trace,
+          signal: activeSignal,
+          ...(preparation ? { preparation } : {}),
           ...(source === 'all' ? { includedSources } : {}),
           ...(unavailableSources.length ? { unavailableSources } : {})
         });
@@ -562,79 +592,110 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
               recoveryCommitIsEligible
             )
           : runOperation(operationFetcher, attempt);
-      const expectedGeneration = getReadNetworkRuntimeSnapshot().generation;
-      const firstAttempt: ReadAttempt = { contentRequestStarted: false, replayable: true };
-      let result: T;
-      try {
-        result = await runReadAttempt(firstAttempt);
-      } catch (error) {
-        const runtimeAfterFailure = getReadNetworkRuntimeSnapshot();
-        const recoveryEligible = recoveryCommitIsEligible();
-        const retryAfterRotation =
-          source !== 'all' &&
-          runtimeAfterFailure.generation > expectedGeneration &&
-          runtimeAfterFailure.triggerSource === source &&
-          firstAttempt.contentRequestStarted &&
-          firstAttempt.replayable &&
-          recoveryEligible;
-        const recoverAfterTimeout =
-          !retryAfterRotation &&
-          error instanceof RequestTimeoutError &&
-          sourceUsesDirectTimeoutRecovery(source) &&
-          firstAttempt.contentRequestStarted &&
-          firstAttempt.replayable &&
-          recoveryEligible;
-        markDiagnosticStage(trace, 'guard', {
-          source,
-          state: retryAfterRotation || recoverAfterTimeout ? 'recovery-qualified' : 'recovery-skipped',
-          recoveryDecision:
-            retryAfterRotation || recoverAfterTimeout ? 'commit' : recoveryEligible ? 'rejected' : 'ineligible',
-          reason: normalizeDiagnosticReason(error),
-          previousGeneration: expectedGeneration,
-          generation: runtimeAfterFailure.generation,
-          hasContentRequest: firstAttempt.contentRequestStarted,
-          isReplayable: firstAttempt.replayable,
-          isEligible: recoveryEligible
-        });
-        if (!retryAfterRotation && !recoverAfterTimeout) {
-          throw error;
-        }
-        if (recoverAfterTimeout) {
-          const recoveryTrace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
+      const runReadAttempts = async () => {
+        const firstAttempt: ReadAttempt = { contentRequestStarted: false, replayable: true };
+        let result: T;
+        try {
+          result = await runReadAttempt(firstAttempt);
+        } catch (error) {
+          const runtimeAfterFailure = getReadNetworkRuntimeSnapshot();
+          const recoveryEligible = recoveryCommitIsEligible();
+          const retryAfterRotation =
+            source !== 'all' &&
+            runtimeAfterFailure.generation > expectedGeneration &&
+            runtimeAfterFailure.triggerSource === source &&
+            firstAttempt.contentRequestStarted &&
+            firstAttempt.replayable &&
+            recoveryEligible;
+          const recoverAfterTimeout =
+            !retryAfterRotation &&
+            error instanceof RequestTimeoutError &&
+            sourceUsesDirectTimeoutRecovery(source) &&
+            firstAttempt.contentRequestStarted &&
+            firstAttempt.replayable &&
+            recoveryEligible;
+          markDiagnosticStage(trace, 'guard', {
             source,
-            parentTraceId: trace.traceId,
-            generation: expectedGeneration,
-            reason: 'timeout'
+            state: retryAfterRotation || recoverAfterTimeout ? 'recovery-qualified' : 'recovery-skipped',
+            recoveryDecision:
+              retryAfterRotation || recoverAfterTimeout ? 'commit' : recoveryEligible ? 'rejected' : 'ineligible',
+            reason: normalizeDiagnosticReason(error),
+            previousGeneration: expectedGeneration,
+            generation: runtimeAfterFailure.generation,
+            hasContentRequest: firstAttempt.contentRequestStarted,
+            isReplayable: firstAttempt.replayable,
+            isEligible: recoveryEligible
           });
-          try {
-            await recoverReadNetworkRuntime(source, expectedGeneration, { trace: recoveryTrace });
-          } catch (recoveryError) {
-            markDiagnosticStage(trace, 'guard', {
+          if (!retryAfterRotation && !recoverAfterTimeout) {
+            throw error;
+          }
+          if (recoverAfterTimeout) {
+            const recoveryTrace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
               source,
-              state: 'recovery-failed',
-              recoveryDecision: 'failed',
-              reason: normalizeDiagnosticReason(recoveryError),
-              generation: getReadNetworkRuntimeSnapshot().generation
+              parentTraceId: trace.traceId,
+              generation: expectedGeneration,
+              reason: 'timeout'
             });
-            if (getReadNetworkRuntimeSnapshot().generation <= expectedGeneration) {
-              throw error;
+            try {
+              await recoverReadNetworkRuntime(source, expectedGeneration, { trace: recoveryTrace });
+            } catch (recoveryError) {
+              markDiagnosticStage(trace, 'guard', {
+                source,
+                state: 'recovery-failed',
+                recoveryDecision: 'failed',
+                reason: normalizeDiagnosticReason(recoveryError),
+                generation: getReadNetworkRuntimeSnapshot().generation
+              });
+              if (getReadNetworkRuntimeSnapshot().generation <= expectedGeneration) {
+                throw error;
+              }
             }
           }
+          if (!recoveryCommitIsEligible()) {
+            throw new RequestCanceledError();
+          }
+          const generation = getReadNetworkRuntimeSnapshot().generation;
+          markDiagnosticStage(trace, 'transport', {
+            source,
+            channel: 'direct',
+            state: 'retry',
+            reason: recoverAfterTimeout ? 'timeout' : 'runtime_rotation',
+            retryCount: 1,
+            generation
+          });
+          result = await runReadAttempt({ contentRequestStarted: false, replayable: true });
         }
-        if (!recoveryCommitIsEligible()) {
-          throw new RequestCanceledError();
-        }
-        const generation = getReadNetworkRuntimeSnapshot().generation;
-        markDiagnosticStage(trace, 'transport', {
-          source,
-          channel: 'direct',
-          state: 'retry',
-          reason: recoverAfterTimeout ? 'timeout' : 'runtime_rotation',
-          retryCount: 1,
-          generation
-        });
-        result = await runReadAttempt({ contentRequestStarted: false, replayable: true });
-      }
+        return result;
+      };
+      const remoteCatalog =
+        readOperation === 'categories' &&
+        source !== 'all' &&
+        directPlan?.state === 'ready' &&
+        directPlan.transport !== 'none';
+      const categoryUserAgent = remoteCatalog
+        ? source === 'nodeseek'
+          ? dependencies.nodeSeekUserAgent()
+          : discourseAuth?.userAgent
+        : undefined;
+      const result = remoteCatalog
+        ? await readWithinAggregateSourceBudget(
+            source,
+            signal,
+            (sourceSignal) => {
+              activeSignal = sourceSignal;
+              expectedGeneration = getReadNetworkRuntimeSnapshot().generation;
+              return runReadAttempts();
+            },
+            {
+              preparation,
+              prepare:
+                (source === 'nodeseek' || source === 'linuxdo') && !categoryUserAgent?.trim()
+                  ? (preparationSignal) => resolveWebViewUserAgent(undefined, preparationSignal)
+                  : undefined,
+              trace
+            }
+          )
+        : await runReadAttempts();
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
@@ -785,14 +846,19 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           { source, reason }
         );
       }
+      if (error instanceof LinuxDoCreditError) throw error;
       throw Object.assign(error instanceof Error ? error : new Error(sourceError.message), sourceError);
     }
   };
 
   const readAccountData = <T>(
-    source: 'nodeseek' | 'yaohuo',
+    source: SessionSource,
     options: ManagedAccountDataOptions,
-    operation: (credentials: { fetcher: Fetcher; nodeSeekUserAgent?: string }) => Promise<T>,
+    operation: (credentials: {
+      fetcher: Fetcher;
+      nodeSeekUserAgent?: string;
+      discourseAuth?: LinuxDoReadAuth;
+    }) => Promise<T>,
     context?: ReadGatewayReadContext
   ) =>
     read(
@@ -843,6 +909,30 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
 
   return {
     reading: dependencies.reading,
+    getLinuxDoCreditAccount(
+      options: ManagedAccountDataOptions & { username: string },
+      context?: ReadGatewayReadContext
+    ) {
+      return readAccountData(
+        'linuxdo',
+        options,
+        ({ fetcher, discourseAuth }) =>
+          getLinuxDoCreditAccount({ ...options, fetcher, userAgent: discourseAuth?.userAgent }),
+        context
+      );
+    },
+    getLinuxDoCreditTransactions(
+      options: ManagedAccountDataOptions & { username: string; page: number },
+      context?: ReadGatewayReadContext
+    ) {
+      return readAccountData(
+        'linuxdo',
+        options,
+        ({ fetcher, discourseAuth }) =>
+          getLinuxDoCreditTransactions({ ...options, fetcher, userAgent: discourseAuth?.userAgent }),
+        context
+      );
+    },
     getNodeSeekAccountOverview(options: ManagedAccountDataOptions, context?: ReadGatewayReadContext) {
       return readAccountData(
         'nodeseek',
@@ -909,11 +999,10 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         source,
         'getCategories',
         'categories',
-        (credentials) =>
-          getForumCategories({
-            ...options,
-            ...credentials
-          }),
+        ({ trace, ...credentials }) =>
+          source === 'all'
+            ? getForumCategories({ ...options, ...credentials, diagnosticTrace: trace })
+            : getSourceCategories({ ...options, ...credentials, source }),
         context,
         options.signal
       );

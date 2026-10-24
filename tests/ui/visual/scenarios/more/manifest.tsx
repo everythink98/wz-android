@@ -1,6 +1,5 @@
 import { useState, type PropsWithChildren } from 'react';
 import { ScrollView, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { defaultContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
@@ -21,19 +20,6 @@ import type { VisualScenarioDefinition } from '../../types';
 const noop = () => undefined;
 const noopAsync = async () => undefined;
 const noStyles = () => null;
-
-function SafeAreaShell({ children }: PropsWithChildren) {
-  return (
-    <SafeAreaProvider
-      initialMetrics={{
-        frame: { x: 0, y: 0, width: 390, height: 844 },
-        insets: { top: 0, right: 0, bottom: 0, left: 0 }
-      }}
-    >
-      {children}
-    </SafeAreaProvider>
-  );
-}
 
 function MoreScreenFrame({ children }: PropsWithChildren) {
   const { styles } = useReaderThemeStyles(createMoreScreenStyles);
@@ -83,11 +69,9 @@ function UtilityOverviewScenario() {
     }
   };
   return (
-    <SafeAreaShell>
-      <MoreScreenFrame>
-        <MoreUtilityPanels runtime={runtime} />
-      </MoreScreenFrame>
-    </SafeAreaShell>
+    <MoreScreenFrame>
+      <MoreUtilityPanels runtime={runtime} contentSourcesExpanded={false} onContentSourcesExpandedChange={noop} />
+    </MoreScreenFrame>
   );
 }
 
@@ -108,23 +92,21 @@ function ProxyScenario() {
     profiles: [profile]
   };
   return (
-    <SafeAreaShell>
-      <NetworkProxyModal
-        activeProfile={profile}
-        applyError="代理应用失败，已保持受管请求阻断"
-        applyStatus="failed"
-        proxyState={state}
-        styles={styles}
-        theme={theme}
-        visible={visible}
-        onClose={() => setVisible(false)}
-        onDeleteProfile={noopAsync}
-        onSelectProfile={noopAsync}
-        onSetEnabled={noopAsync}
-        onTestProfile={async () => ({ ok: false, message: '视觉场景不执行网络测试' })}
-        onUpsertProfile={noopAsync}
-      />
-    </SafeAreaShell>
+    <NetworkProxyModal
+      activeProfile={profile}
+      applyError="代理应用失败，已保持受管请求阻断"
+      applyStatus="failed"
+      proxyState={state}
+      styles={styles}
+      theme={theme}
+      visible={visible}
+      onClose={() => setVisible(false)}
+      onDeleteProfile={noopAsync}
+      onSelectProfile={noopAsync}
+      onSetEnabled={noopAsync}
+      onTestProfile={async () => ({ ok: false, message: '视觉场景不执行网络测试' })}
+      onUpsertProfile={noopAsync}
+    />
   );
 }
 

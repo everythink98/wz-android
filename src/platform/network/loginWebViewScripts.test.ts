@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import {
+  LINUXDO_SESSION_INIT_OBSERVER_SCRIPT,
   LINUXDO_WEBVIEW_PROBE_SCRIPT,
   NODESEEK_LOGIN_PROBE_SCRIPT,
   nodeImageAuthPayloadScript,
@@ -172,13 +173,265 @@ function runLinuxDoLoginProbe(html: string) {
   return JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
 }
 
+function createLinuxDoSessionDocument(url = 'https://linux.do/latest') {
+  const dom = new JSDOM('<header class="d-header"><li class="current-user"></li></header>', {
+    url,
+    runScripts: 'outside-only'
+  });
+  loginProbeDocuments.push(dom);
+  const page = dom.window;
+  const postMessage = vi.fn();
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  const open = vi.spyOn(page.XMLHttpRequest.prototype, 'open').mockImplementation(() => {});
+  const send = vi.spyOn(page.XMLHttpRequest.prototype, 'send').mockImplementation(() => {});
+  Object.defineProperty(page, 'ReactNativeWebView', { value: { postMessage } });
+  Object.defineProperty(page, 'fetch', { value: fetch, writable: true });
+  const inject = () => page.eval(LINUXDO_SESSION_INIT_OBSERVER_SCRIPT);
+  const probe = () => page.eval(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+  const initialized = () => Reflect.get(page, '__WZ_LINUXDO_SESSION_INITIALIZED__');
+  const messages = () => postMessage.mock.calls.map(([message]) => JSON.parse(message));
+  const startXhr = (method = 'POST', target = '/dynamic-endpoint', body = 'visitor_id=PRIVATE_FINGERPRINT') => {
+    const xhr = new page.XMLHttpRequest();
+    xhr.open(method, target, true);
+    xhr.send(body);
+    return xhr;
+  };
+  const completeXhr = (xhr: XMLHttpRequest, status: number) => {
+    Object.defineProperty(xhr, 'status', { value: status, configurable: true });
+    xhr.dispatchEvent(new page.Event('loadend'));
+  };
+  return { page, fetch, open, send, inject, probe, initialized, messages, postMessage, startXhr, completeXhr };
+}
+
+describe('linux.do current-document session initialization', () => {
+  afterEach(() => {
+    for (const dom of loginProbeDocuments.splice(0)) {
+      Reflect.get(dom.window, '__WZ_LINUXDO_PAGE_OBSERVER__')?.disconnect();
+      dom.window.close();
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('reports completion after the observed XHR succeeds without reading or forwarding private state', () => {
+    const session = createLinuxDoSessionDocument();
+    const readCookie = vi.spyOn(session.page.Document.prototype, 'cookie', 'get');
+    const writeCookie = vi.spyOn(session.page.Document.prototype, 'cookie', 'set');
+    const writeStorage = vi.spyOn(session.page.Storage.prototype, 'setItem');
+    session.inject();
+    session.probe();
+    expect(session.initialized()).toBe(false);
+    expect(session.messages().at(-1)).toMatchObject({ status: 'logged-in', hasSessionInitialization: false });
+    const xhr = session.startXhr();
+    expect(session.initialized()).toBe(false);
+    session.completeXhr(xhr, 204);
+    expect(session.initialized()).toBe(true);
+    expect(session.messages().at(-1)).toMatchObject({ status: 'logged-in', hasSessionInitialization: true });
+    expect(session.open).toHaveBeenCalledExactlyOnceWith('POST', '/dynamic-endpoint', true);
+    expect(session.send).toHaveBeenCalledExactlyOnceWith('visitor_id=PRIVATE_FINGERPRINT');
+    expect(session.fetch).not.toHaveBeenCalled();
+    expect(readCookie).not.toHaveBeenCalled();
+    expect(writeCookie).not.toHaveBeenCalled();
+    expect(writeStorage).not.toHaveBeenCalled();
+    expect(JSON.stringify(session.messages())).not.toContain('PRIVATE_FINGERPRINT');
+  });
+
+  it.each([0, 199, 300, 403, 500])('does not complete initialization after XHR status %s', (status) => {
+    const session = createLinuxDoSessionDocument();
+    session.inject();
+    session.completeXhr(session.startXhr(), status);
+    expect(session.initialized()).toBe(false);
+  });
+
+  it('observes fetch strings and URLSearchParams while preserving the original promise and arguments', async () => {
+    const session = createLinuxDoSessionDocument();
+    session.inject();
+    for (const body of [
+      'visitor_id=PRIVATE_STRING',
+      new session.page.URLSearchParams({ visitor_id: 'PRIVATE_FORM' })
+    ]) {
+      const pending = Promise.withResolvers<Response>();
+      session.fetch.mockReturnValueOnce(pending.promise);
+      const init = { method: 'post', body };
+      const returned = session.page.fetch('/new-endpoint', init);
+      expect(returned).toBe(pending.promise);
+      expect(session.initialized()).toBe(false);
+      pending.resolve(new Response(null, { status: 200 }));
+      await returned;
+      expect(session.initialized()).toBe(true);
+      expect(session.fetch).toHaveBeenLastCalledWith('/new-endpoint', init);
+    }
+    expect(session.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps failed fetch and synchronous transport exceptions unchanged', async () => {
+    const session = createLinuxDoSessionDocument();
+    session.inject();
+    const failure = new Error('network failure');
+    const pending = Promise.withResolvers<Response>();
+    session.fetch.mockReturnValueOnce(pending.promise);
+    const returned = session.page.fetch('/dynamic', { method: 'POST', body: 'visitor_id=PRIVATE' });
+    const rejection = expect(returned).rejects.toBe(failure);
+    pending.reject(failure);
+    await rejection;
+    expect(session.initialized()).toBe(false);
+    session.fetch.mockImplementationOnce(() => {
+      throw failure;
+    });
+    expect(() => session.page.fetch('/dynamic', { method: 'POST', body: 'visitor_id=PRIVATE' })).toThrow(failure);
+    session.send.mockImplementationOnce(() => {
+      throw failure;
+    });
+    expect(() => session.startXhr()).toThrow(failure);
+    session.open.mockImplementationOnce(() => {
+      throw failure;
+    });
+    expect(() => session.startXhr()).toThrow(failure);
+    expect(session.initialized()).toBe(false);
+  });
+
+  it('ignores unrelated requests and does not inspect Request body streams', async () => {
+    const session = createLinuxDoSessionDocument();
+    session.inject();
+    for (const [method, target, body] of [
+      ['POST', 'https://other.example/dynamic', 'visitor_id=PRIVATE'],
+      ['GET', '/dynamic', 'visitor_id=PRIVATE'],
+      ['POST', '/dynamic', 'other_visitor_id=PRIVATE'],
+      ['POST', '/dynamic', 'data=visitor_id=PRIVATE']
+    ]) {
+      session.completeXhr(session.startXhr(method, target, body), 200);
+      session.fetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+      await session.page.fetch(target, { method, body });
+      expect(session.initialized()).toBe(false);
+    }
+    const request = new Request('https://linux.do/dynamic', { method: 'POST', body: 'visitor_id=PRIVATE' });
+    const clone = vi.spyOn(request, 'clone');
+    const text = vi.spyOn(request, 'text');
+    session.fetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await session.page.fetch(request);
+    expect(session.initialized()).toBe(false);
+    expect(clone).not.toHaveBeenCalled();
+    expect(text).not.toHaveBeenCalled();
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it.each(['https://other.example/', 'http://linux.do/', 'https://www.linux.do/', 'https://linux.do:444/'])(
+    'does not install the observer on %s',
+    (url) => {
+      const session = createLinuxDoSessionDocument(url);
+      const send = session.page.XMLHttpRequest.prototype.send;
+      session.inject();
+      expect(session.page.XMLHttpRequest.prototype.send).toBe(send);
+      expect(session.page.fetch).toBe(session.fetch);
+      expect(session.initialized()).toBeUndefined();
+    }
+  );
+
+  it('does not install in a child frame or wrap requests and probe listeners twice', () => {
+    const session = createLinuxDoSessionDocument();
+    const frame = session.page.document.createElement('iframe');
+    session.page.document.body.appendChild(frame);
+    const child = frame.contentWindow;
+    if (!child) throw new Error('Expected the attached iframe to have a window');
+    const childSend: unknown = Reflect.get(child, 'eval')('XMLHttpRequest.prototype.send');
+    Reflect.get(child, 'eval')(LINUXDO_SESSION_INIT_OBSERVER_SCRIPT);
+    expect(Reflect.get(child, 'eval')('XMLHttpRequest.prototype.send')).toBe(childSend);
+    expect(Reflect.get(child, '__WZ_LINUXDO_SESSION_INITIALIZED__')).toBeUndefined();
+    session.inject();
+    const wrappedSend = session.page.XMLHttpRequest.prototype.send;
+    const wrappedFetch = session.page.fetch;
+    session.probe();
+    session.inject();
+    session.probe();
+    expect(session.page.XMLHttpRequest.prototype.send).toBe(wrappedSend);
+    expect(session.page.fetch).toBe(wrappedFetch);
+    session.postMessage.mockClear();
+    session.completeXhr(session.startXhr(), 200);
+    expect(session.postMessage).toHaveBeenCalledOnce();
+    expect(session.messages()[0]).toMatchObject({ hasSessionInitialization: true });
+    session.inject();
+    expect(session.initialized()).toBe(true);
+  });
+
+  it('does not let an older completion authorize a newer attempt or reset its success', async () => {
+    const session = createLinuxDoSessionDocument();
+    session.inject();
+    const first = session.startXhr();
+    const pending = Promise.withResolvers<Response>();
+    session.fetch.mockReturnValueOnce(pending.promise);
+    const second = session.page.fetch('/another-endpoint', { method: 'POST', body: 'visitor_id=PRIVATE' });
+    session.completeXhr(first, 200);
+    expect(session.initialized()).toBe(false);
+    pending.resolve(new Response(null, { status: 403 }));
+    await second;
+    expect(session.initialized()).toBe(false);
+    const older = session.startXhr();
+    session.completeXhr(session.startXhr(), 201);
+    expect(session.initialized()).toBe(true);
+    session.completeXhr(older, 500);
+    expect(session.initialized()).toBe(true);
+    session.startXhr();
+    expect(session.initialized()).toBe(false);
+  });
+});
+
 describe('linux.do login WebView probe script', () => {
   afterEach(() => {
-    const pageWindow = window as typeof window & { __WZ_LINUXDO_PAGE_OBSERVER__?: MutationObserver };
+    const pageWindow = window as typeof window & {
+      __WZ_LINUXDO_PAGE_OBSERVER__?: MutationObserver;
+      __WZ_LINUXDO_SESSION_INIT_LISTENER__?: EventListener;
+    };
     pageWindow.__WZ_LINUXDO_PAGE_OBSERVER__?.disconnect();
     delete pageWindow.__WZ_LINUXDO_PAGE_OBSERVER__;
+    if (pageWindow.__WZ_LINUXDO_SESSION_INIT_LISTENER__) {
+      window.removeEventListener('wz-linuxdo-session-initialization', pageWindow.__WZ_LINUXDO_SESSION_INIT_LISTENER__);
+      delete pageWindow.__WZ_LINUXDO_SESSION_INIT_LISTENER__;
+    }
+    Reflect.deleteProperty(window, '__WZ_LINUXDO_SESSION_INITIALIZED__');
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['hidden widget', '<div class="cf-turnstile" hidden></div>'],
+    [
+      'hidden ancestor',
+      '<div style="display:none"><iframe src="https://challenges.cloudflare.com/widget"></iframe></div>'
+    ],
+    ['invisible widget', '<div class="cf-turnstile" style="visibility:hidden"></div>'],
+    ['transparent ancestor', '<div style="opacity:0"><div class="cf-turnstile"></div></div>']
+  ])('does not treat a %s as an unfinished challenge on a loaded forum page', (_label, widget) => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 300, 65));
+    Reflect.set(window, '__WZ_LINUXDO_SESSION_INITIALIZED__', true);
+    expect(
+      runLinuxDoLoginProbe('<header class="d-header"><li class="current-user"></li></header>' + widget)
+    ).toMatchObject({ status: 'logged-in', hasSessionInitialization: true, hasChallengeMarker: false });
+  });
+
+  it('ignores a zero-area challenge frame and observes an interactive widget becoming hidden or visible', async () => {
+    const bounds = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 0, 0));
+    expect(runLinuxDoLoginProbe('<iframe src="https://challenges.cloudflare.com/widget"></iframe>')).toMatchObject({
+      hasChallengeMarker: false
+    });
+    bounds.mockReturnValue(new DOMRect(0, 0, 300, 65));
+    const widget = document.createElement('div');
+    widget.className = 'cf-turnstile';
+    document.body.replaceChildren(widget);
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'ReactNativeWebView', { configurable: true, value: { postMessage } });
+    window.eval(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+    expect(JSON.parse(postMessage.mock.lastCall?.[0] || '{}')).toMatchObject({ hasChallengeMarker: true });
+    widget.style.display = 'none';
+    await Promise.resolve();
+    expect(JSON.parse(postMessage.mock.lastCall?.[0] || '{}')).toMatchObject({ hasChallengeMarker: false });
+    widget.style.removeProperty('display');
+    await Promise.resolve();
+    expect(JSON.parse(postMessage.mock.lastCall?.[0] || '{}')).toMatchObject({ hasChallengeMarker: true });
+    widget.hidden = true;
+    await Promise.resolve();
+    expect(JSON.parse(postMessage.mock.lastCall?.[0] || '{}')).toMatchObject({ hasChallengeMarker: false });
+    widget.hidden = false;
+    await Promise.resolve();
+    expect(JSON.parse(postMessage.mock.lastCall?.[0] || '{}')).toMatchObject({ hasChallengeMarker: true });
   });
 
   it('reports changing challenge and login markers without forwarding page text or duplicating observers', async () => {

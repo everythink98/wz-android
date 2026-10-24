@@ -290,6 +290,9 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
     if (proxyType) output.proxyType = proxyType;
     if (tlsVersion) output.tlsVersion = tlsVersion;
     if (errorType) output.errorType = errorType;
+    const socketLocalPort = safeCount(input.socketLocalPort);
+    if (socketLocalPort !== undefined && socketLocalPort >= 1 && socketLocalPort <= 65535)
+      output.socketLocalPort = socketLocalPort;
     for (const key of [
       'hasLoginCookie',
       'hasDiscoursePresent',

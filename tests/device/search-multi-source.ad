@@ -21,17 +21,17 @@ press id="search-source-v2ex"
 wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
 wait label="打开搜索筛选，当前默认" 10000
 press label="打开搜索筛选，当前默认"
-find "label=\"例如 qna / jobs\"" click
+find "label=\"节点\"" click
 keyboard dismiss
 wait "label=\"展开 V2EX 更多筛选\"" 10000
 press "label=\"展开 V2EX 更多筛选\""
-fill "label=\"V2EX 用户名\"" handfeel
+fill "label=\"作者\"" handfeel
 keyboard dismiss
 wait "label=\"收起 V2EX 更多筛选\"" 10000
-find "label=\"handfeel\"" click
+find "label=\"作者\"" click
 keyboard dismiss
 wait "label=\"收起 V2EX 更多筛选\"" 10000
-wait label="handfeel" 10000
+is text value="handfeel" handfeel
 wait id="search-filter-close" 10000
 press id="search-filter-close"
 wait label="打开搜索筛选，当前默认" 10000

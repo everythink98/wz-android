@@ -39,7 +39,7 @@ describe('shared accessibility basics', () => {
       accessibilityLiveRegion: 'polite',
       accessibilityState: { busy: true }
     });
-    const [indicator] = view.root?.queryAll((instance) => instance.type === 'ActivityIndicator') || [];
+    const [indicator] = view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar') || [];
     expect(indicator.props.accessible).toBe(false);
     expect(view.getByText('正在读取主题').props.accessible).toBe(false);
   });

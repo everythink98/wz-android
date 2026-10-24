@@ -18,7 +18,7 @@ export function ReaderStyleProvider({ children, value }: { children: ReactNode; 
       ...base,
       colors: {
         ...base.colors,
-        primary: theme.primaryStrong,
+        primary: theme.dark ? theme.primary : theme.primaryStrong,
         onPrimary: theme.onPrimary,
         secondaryContainer: theme.primarySoft,
         onSecondaryContainer: theme.ink,

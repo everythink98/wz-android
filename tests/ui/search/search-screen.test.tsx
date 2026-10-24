@@ -20,11 +20,11 @@ import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme } from '@/ui/theme/tokens';
+import { createTheme, readerRadii } from '@/ui/theme/tokens';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 const mockSearchNavigationDispatch = jest.fn();
-const mockSearchNavigation = { dispatch: mockSearchNavigationDispatch };
+const mockSearchNavigation = { dispatch: mockSearchNavigationDispatch, isFocused: () => mockSearchFocused };
 const mockSearchInputCommit = jest.fn();
 let mockSearchFocused = true;
 let lastSearchListData: readonly unknown[] = [];
@@ -747,7 +747,7 @@ describe('Search state', () => {
     }
   );
 
-  it('counts native text input as activity but not controlled value updates', async () => {
+  it('counts native input and clearing as activity but not controlled value updates', async () => {
     const previous = AppState.currentState;
     AppState.currentState = 'active';
     let now = 100_000;
@@ -761,6 +761,13 @@ describe('Search state', () => {
       expect(userPresent()).toBe(false);
       await fireEvent(view.getByTestId('search-query'), 'change', { nativeEvent: { text: '真实输入' } });
       expect(userPresent()).toBe(true);
+      now += 60_000;
+      await fireEvent.press(view.getByLabelText('清空搜索关键词'));
+      expect(props.onQueryChange).toHaveBeenLastCalledWith('');
+      expect(props.onSearch).not.toHaveBeenCalled();
+      expect(userPresent()).toBe(true);
+      await view.rerender(<SearchScreen {...props} query="" />);
+      expect(view.queryByRole('button', { name: '清空搜索关键词' })).toBeNull();
     } finally {
       clock.mockRestore();
       AppState.currentState = previous;
@@ -955,11 +962,12 @@ describe('Search state', () => {
       ]
     });
 
-    expect(view.getAllByTestId(/^search-source-/).map((tab) => tab.props.testID)).toEqual([
-      'search-source-all',
-      'search-source-nodeseek',
-      'search-source-v2ex'
-    ]);
+    expect(
+      view
+        .getAllByRole('button')
+        .filter((tab) => tab.props.testID?.startsWith('search-source-'))
+        .map((tab) => tab.props.testID)
+    ).toEqual(['search-source-all', 'search-source-nodeseek', 'search-source-v2ex']);
     expect(view.queryByTestId('search-source-linuxdo')).toBeNull();
     expect(view.queryByText('linux.do')).toBeNull();
     expect(view.getByTestId('search-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
@@ -976,11 +984,12 @@ describe('Search state', () => {
       />
     );
 
-    expect(view.getAllByTestId(/^search-source-/).map((tab) => tab.props.testID)).toEqual([
-      'search-source-all',
-      'search-source-v2ex',
-      'search-source-nodeseek'
-    ]);
+    expect(
+      view
+        .getAllByRole('button')
+        .filter((tab) => tab.props.testID?.startsWith('search-source-'))
+        .map((tab) => tab.props.testID)
+    ).toEqual(['search-source-all', 'search-source-v2ex', 'search-source-nodeseek']);
     expect(view.getByTestId('search-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
     expect(onSearchSourceChange).not.toHaveBeenCalled();
 
@@ -994,7 +1003,12 @@ describe('Search state', () => {
       />
     );
 
-    expect(view.getAllByTestId(/^search-source-/).map((tab) => tab.props.testID)).toEqual(['search-source-all']);
+    expect(
+      view
+        .getAllByRole('button')
+        .filter((tab) => tab.props.testID?.startsWith('search-source-'))
+        .map((tab) => tab.props.testID)
+    ).toEqual(['search-source-all']);
     expect(view.queryByText('第一页主题')).toBeNull();
     expect(view.getByText('尚未启用内容源')).toBeTruthy();
     expect(view.getByTestId('search-all-sources-settled')).toBeTruthy();
@@ -1050,8 +1064,8 @@ describe('Search state', () => {
         const recentSearchButton = view.getByLabelText('搜索最近记录 codex');
         expect(StyleSheet.flatten(recentSearchButton.props.style).minHeight).toBe(48);
         expect(StyleSheet.flatten(recentSearchButton.parent?.props.style)).toMatchObject({
-          borderTopLeftRadius: 10,
-          borderTopRightRadius: 10,
+          borderTopLeftRadius: readerRadii.surface,
+          borderTopRightRadius: readerRadii.surface,
           borderTopWidth: StyleSheet.hairlineWidth
         });
         expect(view.getByText('codex').props.numberOfLines).toBe(2);
@@ -1062,8 +1076,8 @@ describe('Search state', () => {
         const deleteButton = view.getByLabelText('删除最近搜索 react native');
         expect(StyleSheet.flatten(deleteButton.props.style).minHeight).toBe(48);
         expect(StyleSheet.flatten(deleteButton.parent?.props.style)).toMatchObject({
-          borderBottomLeftRadius: 10,
-          borderBottomRightRadius: 10,
+          borderBottomLeftRadius: readerRadii.surface,
+          borderBottomRightRadius: readerRadii.surface,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderTopWidth: StyleSheet.hairlineWidth
         });
@@ -1686,6 +1700,12 @@ describe('Search state', () => {
 
     expect(view.getByLabelText('打开搜索筛选，当前默认').props.accessibilityState.selected).toBe(false);
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    let close = view.getByTestId('search-filter-close');
+    while (StyleSheet.flatten(close.props.style)?.width === undefined) close = close.parent!;
+    expect(StyleSheet.flatten(close.props.style)).toMatchObject({
+      width: 48,
+      height: 48
+    });
     await fireEvent.press(view.getByText('相关'));
     await fireEvent.press(view.getByText('确认筛选'));
     expect(view.getByLabelText('打开搜索筛选，当前相关').props.accessibilityState.selected).toBe(true);
@@ -2134,8 +2154,8 @@ describe('Search state', () => {
     await fireEvent.press(view.getByText('完成'));
     await fireEvent.press(view.getByLabelText('匹配全部标签'));
     await fireEvent.press(view.getByLabelText('展开更多筛选'));
-    await fireEvent.press(view.getByText('我读过'));
-    await fireEvent.press(view.getByText('我赞过'));
+    await fireEvent.press(view.getByLabelText('我读过'));
+    await fireEvent.press(view.getByLabelText('我赞过'));
     await fireEvent.press(view.getByText('已解决'));
     await fireEvent.press(view.getByText('之前'));
     await fireEvent.press(view.getByLabelText('选择精确日期'));
@@ -2203,7 +2223,7 @@ describe('Search state', () => {
     expect(view.getByText('2 条 AI 结果')).toBeTruthy();
     expect(view.getByText('✦ AI')).toBeTruthy();
     expect(view.getByLabelText('AI 搜索').props.accessibilityState).toEqual({ checked: false, disabled: false });
-    await fireEvent.press(view.getByLabelText('AI 搜索'));
+    await fireEvent(view.getByLabelText('AI 搜索'), 'valueChange', true);
     expect(onToggleLinuxDoAiSearch).toHaveBeenCalledTimes(1);
   });
 

@@ -4,6 +4,9 @@ import { PixelRatio, Platform, StyleSheet } from 'react-native';
 import { TouchableRipple } from 'react-native-paper';
 import type { Image } from 'expo-image';
 import { TopicShareSheet } from '@/features/topic/components/TopicShareSheet';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createTheme } from '@/ui/theme/tokens';
 import type { TopicDetail } from '@/domain/forum/models';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { act, fireEvent, render, within } from '../render';
@@ -180,6 +183,27 @@ afterEach(() => {
 });
 
 describe('Topic body image sharing', () => {
+  it.each(['light', 'dark'] as const)('keeps the %s modal background behind the export paper', async (mode) => {
+    const settings = { ...createEmptyReaderData().settings, theme: mode };
+    const theme = createTheme(settings);
+    const view = await render(
+      <ReaderStyleProvider value={{ settings, theme }}>
+        <TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />
+      </ReaderStyleProvider>
+    );
+    expect(view.root?.queryAll((node) => String(node.type) === 'Modal')[0]?.props.backdropColor).toBe(theme.surface);
+  });
+
+  it('balances the title between equal-width toolbar slots when only close is shown', async () => {
+    const view = await render(<TopicShareSheet topic={topic} mediaContext={mediaContext} onClose={jest.fn()} />);
+    const toolbar = view.getByRole('header', { name: '正文长图' }).parent!.parent!;
+    const spacer = toolbar.children.at(-1)!;
+    if (typeof spacer === 'string') throw new Error('Expected a toolbar spacer');
+    let close = view.getByRole('button', { name: '关闭' });
+    while (StyleSheet.flatten(close.props.style)?.width === undefined) close = close.parent!;
+    expect(StyleSheet.flatten(spacer.props.style).width).toBe(StyleSheet.flatten(close.props.style).width);
+  });
+
   it('uses reading typography and preserves safe alignment and emphasis in the exported body', async () => {
     const view = await render(
       <TopicShareSheet

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { StackActions } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RenderHTMLConfigProvider, TRenderEngineProvider } from 'react-native-render-html';
@@ -76,9 +76,22 @@ jest.mock('@/features/notifications/NotificationScreens', () => ({
 jest.mock('@/features/more/components/MoreAccountPanel', () => ({ MoreAccountPanel: () => null }));
 jest.mock('@/features/more/components/MoreUpdatePanel', () => ({ MoreUpdatePanel: () => null }));
 jest.mock('@/features/more/components/MoreUtilityPanels', () => ({
-  MoreUtilityPanels: ({ runtime }: { runtime: typeof mockMoreUtilities }) => {
+  MoreUtilityPanels: ({
+    runtime,
+    contentSourcesExpanded,
+    onContentSourcesExpandedChange
+  }: ComponentProps<typeof import('@/features/more/components/MoreUtilityPanels').MoreUtilityPanels>) => {
     mockMoreUtilities = runtime;
-    return null;
+    const ReactModule = jest.requireActual<typeof import('react')>('react');
+    const { ContentSourcesPanel } = jest.requireActual<typeof import('@/features/more/components/ContentSourcesPanel')>(
+      '@/features/more/components/ContentSourcesPanel'
+    );
+    return ReactModule.createElement(ContentSourcesPanel, {
+      expanded: contentSourcesExpanded,
+      preferences: runtime.settings.value.contentSources,
+      onExpandedChange: onContentSourcesExpandedChange,
+      onChange: (contentSources) => runtime.settings.update({ contentSources })
+    });
   }
 }));
 jest.mock('react-native-gesture-handler', () => {

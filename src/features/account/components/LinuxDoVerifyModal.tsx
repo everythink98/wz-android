@@ -1,9 +1,22 @@
 import { memo } from 'react';
 import { ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator } from 'react-native-paper';
 import { WebView } from 'react-native-webview';
-import { ArrowLeft, KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  CircleAlert,
+  CircleCheck,
+  Clock3,
+  KeyRound,
+  LogOut,
+  RefreshCw,
+  ShieldCheck
+} from 'lucide-react-native';
 import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
-import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
+import {
+  LINUXDO_SESSION_INIT_OBSERVER_SCRIPT,
+  LINUXDO_WEBVIEW_PROBE_SCRIPT
+} from '@/platform/network/loginWebViewScripts';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import type { AccountHostStyles } from '../accountHostStyles';
 import type { LinuxDoRecoveryPanel } from '../useVerificationController';
@@ -56,6 +69,14 @@ export function LinuxDoVerifyModal(props: Props) {
     ({ outcome }) => outcome === 'pending' || outcome === 'verification-required'
   );
   const blocked = recovery?.results.some(({ outcome }) => outcome === 'verification-required');
+  const completed =
+    result && recovery.results.length > 0 && recovery.results.every(({ outcome }) => outcome === 'completed');
+  const ResultIcon = blocked ? CircleAlert : completed ? CircleCheck : ShieldCheck;
+  const resultColor = blocked
+    ? styles.verificationWarning.color
+    : completed
+      ? styles.verificationSuccess.color
+      : styles.verificationAccent.color;
   const needsReopen = page.needsRemount || (!mountLinuxDoWebView && !!linuxDoWebViewError);
   const close = () => onShowLinuxDoPanelChange(false);
   const primaryLabel = busy
@@ -149,43 +170,83 @@ export function LinuxDoVerifyModal(props: Props) {
         ) : undefined
       }
     >
-      {busy ? (
-        <View style={styles.verificationStatus} accessibilityLiveRegion="polite">
-          <Text style={styles.verificationTitle}>正在确认{recovery ? '访问是否恢复' : '登录状态'}</Text>
-          <Text style={styles.verificationBody}>
-            {recovery ? '验证结果正在交回原请求，请稍候。' : '正在检查主站会话，请稍候。'}
-          </Text>
-          <Text style={styles.verificationHint}>可以随时关闭并返回原页面。</Text>
-        </View>
+      {busy && !mountLinuxDoWebView ? (
+        <ScrollView
+          overScrollMode="never"
+          contentContainerStyle={styles.verificationStatus}
+          accessibilityLiveRegion="polite"
+        >
+          <View style={styles.verificationContent}>
+            <View style={styles.verificationStatusIcon}>
+              <ActivityIndicator size={28} color={styles.verificationAccent.color} accessible={false} />
+            </View>
+            <Text style={styles.verificationTitle}>正在确认{recovery ? '访问是否恢复' : '登录状态'}</Text>
+            <Text style={styles.verificationBody}>
+              {recovery ? '验证结果正在交回原请求，请稍候。' : '正在检查主站会话，请稍候。'}
+            </Text>
+            <Text style={styles.verificationHint}>可以随时关闭并返回原页面。</Text>
+          </View>
+        </ScrollView>
       ) : result ? (
         <ScrollView
           overScrollMode="never"
           contentContainerStyle={styles.verificationStatus}
           accessibilityLiveRegion="polite"
         >
-          <Text style={styles.verificationTitle}>
-            {blocked ? '还需要一次验证' : canRetry ? '等待继续检测' : '本次检测已结束'}
-          </Text>
-          {blocked ? <Text style={styles.verificationBody}>站点仍在拦截请求，可以重新验证后再试。</Text> : null}
-          {recovery.results.map((entry, index) => (
-            <View key={index} style={styles.verificationResult}>
-              <Text style={styles.verificationResultLabel}>{entry.kind === 'page' ? '页面访问' : '阅读记录'}</Text>
-              <Text style={styles.verificationBody}>
-                {entry.outcome === 'completed'
-                  ? entry.kind === 'page'
-                    ? '已恢复'
-                    : '已同步'
-                  : entry.error ||
-                    (entry.outcome === 'verification-required'
-                      ? '仍被站点拦截'
-                      : entry.outcome === 'stale'
-                        ? '请求已过期，请返回原页面重试。'
-                        : entry.outcome === 'pending'
-                          ? '等待检测'
-                          : '恢复失败，请返回原页面重试。')}
-              </Text>
+          <View style={styles.verificationContent}>
+            <View
+              style={[
+                styles.verificationStatusIcon,
+                blocked && styles.verificationWarningBackground,
+                completed && styles.verificationSuccessBackground
+              ]}
+            >
+              <ResultIcon size={28} strokeWidth={1.6} color={resultColor} accessible={false} />
             </View>
-          ))}
+            <Text style={styles.verificationTitle}>
+              {blocked ? '还需要一次验证' : canRetry ? '等待继续检测' : completed ? '验证已完成' : '检测结果'}
+            </Text>
+            {blocked ? <Text style={styles.verificationBody}>站点仍在拦截请求，可以重新验证后再试。</Text> : null}
+            {recovery.results.map((entry, index) => {
+              const EntryIcon =
+                entry.outcome === 'completed' ? CircleCheck : entry.outcome === 'pending' ? Clock3 : CircleAlert;
+              return (
+                <View key={index} style={styles.verificationResult}>
+                  <View style={styles.verificationResultHeader}>
+                    <EntryIcon
+                      size={18}
+                      strokeWidth={1.8}
+                      color={
+                        entry.outcome === 'completed'
+                          ? styles.verificationSuccess.color
+                          : entry.outcome === 'pending'
+                            ? styles.verificationAccent.color
+                            : styles.verificationWarning.color
+                      }
+                      accessible={false}
+                    />
+                    <Text style={styles.verificationResultLabel}>
+                      {entry.kind === 'page' ? '页面访问' : '阅读记录'}
+                    </Text>
+                  </View>
+                  <Text style={[styles.verificationBody, styles.verificationResultBody]}>
+                    {entry.outcome === 'completed'
+                      ? entry.kind === 'page'
+                        ? '已恢复'
+                        : '已同步'
+                      : entry.error ||
+                        (entry.outcome === 'verification-required'
+                          ? '仍被站点拦截'
+                          : entry.outcome === 'stale'
+                            ? '请求已过期，请返回原页面重试。'
+                            : entry.outcome === 'pending'
+                              ? '等待检测'
+                              : '恢复失败，请返回原页面重试。')}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
         </ScrollView>
       ) : web && showLinuxDoPanel && mountLinuxDoWebView && !webViewBlockMessage && !page.needsRemount ? (
         <WebView
@@ -201,6 +262,7 @@ export function LinuxDoVerifyModal(props: Props) {
           thirdPartyCookiesEnabled
           setSupportMultipleWindows={false}
           injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
+          injectedJavaScriptBeforeContentLoaded={LINUXDO_SESSION_INIT_OBSERVER_SCRIPT}
           onLoadProgress={page.webViewProps.onLoadProgress}
           onLoadStart={page.webViewProps.onLoadStart}
           onLoadEnd={page.webViewProps.onLoadEnd}
@@ -209,7 +271,7 @@ export function LinuxDoVerifyModal(props: Props) {
           onHttpError={page.webViewProps.onHttpError}
           onRenderProcessGone={page.webViewProps.onRenderProcessGone}
           onShouldStartLoadWithRequest={page.webViewProps.onShouldStartLoadWithRequest}
-          style={styles.flex}
+          style={styles.webView}
           renderError={() => <View style={styles.webViewErrorPlaceholder} />}
         />
       ) : null}

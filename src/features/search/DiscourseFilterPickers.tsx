@@ -1,8 +1,8 @@
+import { AppTextInput as TextInput } from '@/ui/controls/InputControls';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pressable, ScrollView, Text, TextInput, type ViewStyle, View } from 'react-native';
-import { X } from 'lucide-react-native';
+import { Pressable, ScrollView, Text, type ViewStyle, View } from 'react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption } from '@/domain/forum/models';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { DiscourseSearchFilter, SourceSearchFilter } from '@/domain/forum/searchFilters';
@@ -11,8 +11,7 @@ import { forumQueryKeys } from '@/platform/query/serverState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
-import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
+import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import type { SearchStyles } from './styles';
 
 type SearchTagCandidatesRequest = {
@@ -277,18 +276,7 @@ export function DiscourseFilterPickers({
   return (
     <>
       <ModalSheetFrame backdropLabel="关闭标签选择" visible={tags.visible} onRequestClose={tags.close}>
-        <View style={styles.searchFilterHeader}>
-          <Text style={styles.searchFilterTitle}>选择标签</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="关闭标签选择"
-            hitSlop={TOUCH_HIT_SLOP}
-            style={styles.searchInlineButton}
-            onPress={tags.close}
-          >
-            <X size={18} color={theme.muted} strokeWidth={2} />
-          </Pressable>
-        </View>
+        <ModalSheetHeader title="选择标签" closeLabel="关闭标签选择" onClose={tags.close} />
         <View style={styles.searchFilterBodyInner}>
           <TextInput
             accessibilityLabel="搜索标签"
@@ -340,18 +328,7 @@ export function DiscourseFilterPickers({
         </View>
       </ModalSheetFrame>
       <ModalSheetFrame backdropLabel="关闭分类选择" visible={category.visible} onRequestClose={category.close}>
-        <View style={styles.searchFilterHeader}>
-          <Text style={styles.searchFilterTitle}>选择分类</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="关闭分类选择"
-            hitSlop={TOUCH_HIT_SLOP}
-            style={styles.searchInlineButton}
-            onPress={category.close}
-          >
-            <X size={18} color={theme.muted} strokeWidth={2} />
-          </Pressable>
-        </View>
+        <ModalSheetHeader title="选择分类" closeLabel="关闭分类选择" onClose={category.close} />
         <View style={styles.searchFilterBodyInner}>
           <TextInput
             accessibilityLabel="搜索分类"
@@ -414,18 +391,7 @@ export function DiscourseFilterPickers({
         </ScrollView>
       </ModalSheetFrame>
       <ModalSheetFrame backdropLabel="关闭作者选择" visible={users.visible} onRequestClose={users.close}>
-        <View style={styles.searchFilterHeader}>
-          <Text style={styles.searchFilterTitle}>选择发帖人</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="关闭作者选择"
-            hitSlop={TOUCH_HIT_SLOP}
-            style={styles.searchInlineButton}
-            onPress={users.close}
-          >
-            <X size={18} color={theme.muted} strokeWidth={2} />
-          </Pressable>
-        </View>
+        <ModalSheetHeader title="选择发帖人" closeLabel="关闭作者选择" onClose={users.close} />
         <View style={styles.searchFilterBodyInner}>
           <TextInput
             accessibilityLabel="搜索作者"

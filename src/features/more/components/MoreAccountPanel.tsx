@@ -17,6 +17,8 @@ import { createMoreScreenStyles } from '../styles';
 import { AccountCenterPanel } from './AccountCenterPanel';
 import { AccountOverviewPanel } from './AccountOverviewPanel';
 import { useAccountOverview, type AccountOverviewGateway } from '../useAccountOverview';
+import { useLinuxDoCredit } from '../useLinuxDoCredit';
+import { LinuxDoCreditSummary } from './LinuxDoCreditSummary';
 import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
 import { NodeSeekAttendancePanel, NodeSeekServicesPanel } from './NodeSeekServicesPanel';
 
@@ -24,13 +26,23 @@ export type MoreAccountCapabilities = {
   active: boolean;
   enabledSessionSources: readonly SessionSite[];
   read: {
-    gateway: AccountOverviewGateway & Pick<ReadGateway, 'getNodeSeekCredits' | 'getNodeSeekStardustCredits'>;
+    gateway: AccountOverviewGateway &
+      Pick<
+        ReadGateway,
+        'getNodeSeekCredits' | 'getNodeSeekStardustCredits' | 'getLinuxDoCreditAccount' | 'getLinuxDoCreditTransactions'
+      >;
     sessionEpochs: ForumSessionEpochs;
     sessions: SiteSessionViewModels;
     statusBusy: boolean;
   };
   center: {
     openCredits: (currency: NodeSeekCreditCurrency) => void;
+    openLinuxDoCredit: () => void;
+    linuxDoCredit: {
+      open: () => void | Promise<void>;
+      connectSilently: () => void | Promise<void>;
+      busy: boolean;
+    };
     command: (command: AccountCenterCommand) => void | Promise<void>;
     credentials: {
       summaries: CredentialSummaries;
@@ -65,16 +77,17 @@ export type MoreAccountCapabilities = {
 };
 
 export function MoreAccountPanel({
+  headerHostName,
   nodeSeekRecoveryThreshold,
   runtime,
   onNodeSeekRecoveryThresholdChange
 }: {
+  headerHostName?: string;
   nodeSeekRecoveryThreshold: number;
   runtime: MoreAccountCapabilities;
   onNodeSeekRecoveryThresholdChange: (value: number) => void;
 }) {
   const { styles: screenStyles, theme } = useReaderThemeStyles(createMoreScreenStyles);
-  const [expanded, setExpanded] = useState(false);
   const [selectedSite, setSelectedSite] = useState<SessionSite>('nodeseek');
   const [linuxDoLevelExpanded, setLinuxDoLevelExpanded] = useState(false);
   const [linuxDoLevelContentOwner, setLinuxDoLevelContentOwner] = useState<string | null>(null);
@@ -99,17 +112,26 @@ export function MoreAccountPanel({
     if (runtime.enabledSessionSources.includes(site) && site !== selectedSite) setSelectedSite(site);
   }, [site, selectedSite, runtime.enabledSessionSources]);
   const session = sessions[site];
+  const currentUser = session.currentUser;
   const siteOwner = `${site}:${session.currentUser?.id ?? 'anonymous'}`;
   if (linuxDoLevelContentOwner !== null && linuxDoLevelContentOwner !== siteOwner) setLinuxDoLevelContentOwner(null);
   const linuxDoLevelContentVisited = linuxDoLevelExpanded || linuxDoLevelContentOwner === siteOwner;
-  const dataActive =
-    runtime.active && expanded && runtime.enabledSessionSources.includes(site) && !runtime.surfaces[site];
+  const dataActive = runtime.active && runtime.enabledSessionSources.includes(site) && !runtime.surfaces[site];
   const data = useAccountOverview({
     active: dataActive,
     gateway: runtime.read.gateway,
     session,
     sessionEpochs: runtime.read.sessionEpochs,
     site
+  });
+  const credit = useLinuxDoCredit({
+    active: dataActive && site === 'linuxdo' && linuxDoSession.canWrite && linuxDoSession.identityTrust === 'confirmed',
+    gateway: runtime.read.gateway,
+    userId: linuxDoSession.currentUser?.id ?? '',
+    username: linuxDoSession.currentUser?.username ?? linuxDoSession.currentUser?.id ?? '',
+    sessionEpoch: runtime.read.sessionEpochs.linuxdo,
+    connectSilently: runtime.center.linuxDoCredit.connectSilently,
+    connecting: runtime.center.linuxDoCredit.busy
   });
   const observeBoard = useLatestCallback(runtime.center.nodeSeek.observeBoard);
   const refreshData = useLatestCallback(data.refresh);
@@ -126,7 +148,8 @@ export function MoreAccountPanel({
   });
   const handleCommand = useLatestCallback(async (command: AccountCenterCommand) => {
     await runtime.center.command(command);
-    if (command.type === 'refresh') await Promise.all([refreshData(), refreshLevel()]);
+    if (command.type === 'refresh')
+      await Promise.all([refreshData(), refreshLevel(), ...(site === 'linuxdo' ? [credit.refresh()] : [])]);
   });
   useEffect(() => {
     if (dataActive && data.board) observeBoard(data.board);
@@ -137,23 +160,6 @@ export function MoreAccountPanel({
     profile: linuxDoLevelProfile,
     refresh: refreshLinuxDoLevel
   } = runtime.center.linuxDoLevel;
-  useEffect(() => {
-    if (
-      (nodeSeekEnabled && runtime.surfaces.nodeseek) ||
-      (yaohuoEnabled && runtime.surfaces.yaohuo) ||
-      (linuxDoEnabled && runtime.surfaces.linuxdo)
-    ) {
-      setExpanded(true);
-    }
-  }, [
-    linuxDoEnabled,
-    nodeSeekEnabled,
-    runtime.surfaces.linuxdo,
-    runtime.surfaces.nodeseek,
-    runtime.surfaces.yaohuo,
-    yaohuoEnabled
-  ]);
-
   useEffect(() => {
     if (
       linuxDoLevelExpanded &&
@@ -189,24 +195,44 @@ export function MoreAccountPanel({
 
   return (
     <AccountCenterPanel
+      headerHostName={headerHostName}
       credentials={runtime.center.credentials.summaries}
       enabledSessionSources={runtime.enabledSessionSources}
-      expanded={expanded}
+      active={runtime.active}
       forcedSite={forcedSite}
       selectedSite={site}
       onSelectedSiteChange={setSelectedSite}
       profile={data.profile}
-      overviewContent={
-        session.currentUser && session.canWrite && session.identityTrust === 'confirmed' ? (
-          <AccountOverviewPanel
-            data={data}
-            site={site}
-            user={session.currentUser}
-            styles={screenStyles}
-            onCommand={runtime.center.command}
-            onOpenCredits={runtime.center.openCredits}
-          />
-        ) : null
+      renderOverview={
+        currentUser && session.canWrite && session.identityTrust === 'confirmed'
+          ? (settingsAction) => (
+              <AccountOverviewPanel
+                data={data}
+                site={site}
+                user={currentUser}
+                settingsAction={settingsAction}
+                styles={screenStyles}
+                onCommand={runtime.center.command}
+                onOpenCredits={runtime.center.openCredits}
+              >
+                {site === 'linuxdo' ? (
+                  <LinuxDoCreditSummary
+                    account={credit.account}
+                    busy={credit.busy}
+                    error={credit.error}
+                    forumVerificationRequired={credit.forumVerificationRequired}
+                    onOpen={runtime.center.openLinuxDoCredit}
+                    onConnect={() => {
+                      if (credit.forumVerificationRequired)
+                        void runtime.center.command({ type: 'open-login', site: 'linuxdo' });
+                      else void runtime.center.linuxDoCredit.open();
+                    }}
+                    onRefresh={() => void credit.refresh()}
+                  />
+                ) : null}
+              </AccountOverviewPanel>
+            )
+          : undefined
       }
       pendingFillSite={runtime.center.credentials.pendingFillSite}
       nodeSeekUserId={nodeSeekEnabled ? nodeSeekUserIdForSession(sessions.nodeseek) : null}
@@ -228,7 +254,6 @@ export function MoreAccountPanel({
         linuxdo: linuxDoEnabled ? (
           <>
             <MenuButton
-              nested
               icon={Activity}
               label="linux.do 等级"
               value={linuxDoLevelMeta}
@@ -267,7 +292,6 @@ export function MoreAccountPanel({
                 apiKeyBusy={runtime.center.nodeImageKey.busy}
                 apiKeySaved={runtime.center.nodeImageKey.saved}
                 recoveryThreshold={nodeSeekRecoveryThreshold}
-                styles={screenStyles}
                 theme={theme}
                 onAuthorizeApiKey={() => void runtime.center.nodeImageKey.authorize()}
                 onClearApiKey={() => void runtime.center.nodeImageKey.clear()}
@@ -286,7 +310,6 @@ export function MoreAccountPanel({
       styles={screenStyles}
       theme={theme}
       onCommand={handleCommand}
-      onExpandedChange={setExpanded}
     />
   );
 }

@@ -1,119 +1,81 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
+import type { ReactNode } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { Button, IconButton as PaperIconButton } from 'react-native-paper';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  type ReaderStyleSettings,
+  alphaColor,
+  fontFamilyValue,
+  readerRadii,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
     floating: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      borderColor: theme.line,
+      width: 52,
+      height: 52,
+      margin: 0,
+      borderRadius: readerRadii.pill,
+      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
+      borderColor: alphaColor(theme.primary, 0.22),
       borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface,
-      elevation: 1
+      elevation: 3,
+      shadowColor: theme.primaryStrong,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.16,
+      shadowRadius: 8
     },
     button: {
-      minHeight: 40,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 6,
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
-      paddingVertical: 5
+      borderColor: theme.lineStrong,
+      backgroundColor: theme.surface
     },
-    compact: {
-      minHeight: 40,
-      gap: 4,
-      paddingHorizontal: 8,
-      paddingVertical: 2
-    },
-    iconOnly: {
-      width: 44,
-      minHeight: 44,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      borderRadius: 22,
-      paddingHorizontal: 0,
-      paddingVertical: 0
-    },
-    tiny: {
-      alignSelf: 'flex-start',
-      borderRadius: 8,
-      minHeight: 40,
-      gap: 5,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.1 : 0.045),
-      borderColor: theme.line,
-      paddingHorizontal: 10,
-      paddingVertical: 0
-    },
-    ghost: {
-      backgroundColor: 'transparent',
-      borderColor: 'transparent'
-    },
+    content: { minHeight: 48, paddingHorizontal: 12 },
+    compactContent: { minHeight: 40, paddingHorizontal: 8 },
+    iconContent: { columnGap: 6, paddingLeft: 6 },
+    compactIconContent: { paddingLeft: 2 },
+    iconOnly: { width: 48, height: 48, margin: 0, borderRadius: 0, backgroundColor: 'transparent' },
+    tiny: { alignSelf: 'flex-start', backgroundColor: theme.mist, borderColor: 'transparent' },
+    ghost: { backgroundColor: 'transparent', borderColor: 'transparent' },
     danger: {
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
-      borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.24)
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.12 : 0.045),
+      borderColor: alphaColor(theme.danger, 0.2)
     },
-    primary: {
-      backgroundColor: theme.primaryStrong,
-      borderColor: theme.primaryStrong
-    },
-    active: {
-      backgroundColor: theme.mist,
-      borderColor: 'transparent'
-    },
-    disabled: {
-      opacity: 0.45
-    },
+    primary: { backgroundColor: theme.mist, borderColor: alphaColor(theme.primary, 0.22) },
+    active: { backgroundColor: theme.mist, borderColor: 'transparent' },
+    disabled: { opacity: 0.45 },
     text: {
-      color: theme.ink,
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: fontSize(13),
-      fontWeight: '600'
-    },
-    textCompact: {
-      fontSize: fontSize(12),
-      fontWeight: '500'
-    },
-    textTiny: {
-      color: theme.muted,
-      fontSize: fontSize(12),
       fontWeight: '500',
+      lineHeight: fontSize(18),
       includeFontPadding: false,
-      lineHeight: fontSize(16)
+      letterSpacing: 0,
+      marginHorizontal: 0,
+      marginVertical: 10
     },
-    textActive: {
-      color: theme.primary
-    },
-    textDanger: {
-      color: theme.danger
-    },
-    textPrimary: {
-      color: theme.onPrimary,
-      fontWeight: '700',
-      letterSpacing: 0
-    }
+    textCompact: { fontSize: fontSize(12), lineHeight: fontSize(16), marginVertical: 8 },
+    backdrop: { borderRadius: readerRadii.control, overflow: 'hidden' },
+    floatingBackdrop: { width: 52, height: 52, borderRadius: readerRadii.pill, overflow: 'hidden' },
+    transparent: { backgroundColor: 'transparent' }
   });
 }
 
 export function FloatingIconButton({
+  backdrop,
   disabled = false,
-  icon,
+  icon: Icon,
   label,
   loading = false,
   onPress
 }: {
+  backdrop?: ReactNode;
   disabled?: boolean;
   icon: LucideIcon;
   label: string;
@@ -121,25 +83,30 @@ export function FloatingIconButton({
   onPress: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const Icon = icon;
-  return (
-    <Pressable
-      accessibilityRole="button"
+  const color = backdrop ? (theme.dark ? theme.primary : theme.primaryStrong) : theme.onPrimary;
+  const button = (
+    <PaperIconButton
       accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      style={styles.floating}
+      accessibilityState={{ disabled: disabled || loading, busy: loading }}
+      disabled={disabled || loading}
+      loading={loading}
+      icon={({ size, color }) => <Icon size={size} color={color} strokeWidth={1.8} accessible={false} />}
+      iconColor={color}
+      size={22}
+      style={[styles.floating, backdrop ? styles.transparent : undefined]}
       onPress={() => {
         recordUserInteraction();
         onPress();
       }}
-    >
-      {loading ? (
-        <ActivityIndicator color={theme.primary} size="small" />
-      ) : (
-        <Icon size={20} color={theme.primary} strokeWidth={1.9} />
-      )}
-    </Pressable>
+    />
+  );
+  return backdrop ? (
+    <View style={styles.floatingBackdrop}>
+      {backdrop}
+      {button}
+    </View>
+  ) : (
+    button
   );
 }
 
@@ -150,10 +117,11 @@ export function IconButton({
   disabled = false,
   ghost = false,
   iconOnly = false,
-  icon,
+  icon: Icon,
   iconSize,
   label,
   loading = false,
+  testID,
   tiny = false,
   onPress
 }: {
@@ -167,58 +135,74 @@ export function IconButton({
   iconSize?: number;
   label: string;
   loading?: boolean;
+  testID?: string;
   tiny?: boolean;
   onPress: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const Icon = icon;
-  const resolvedIconSize = iconSize ?? (tiny ? 15 : iconOnly ? 14 : compact ? 14 : 17);
   const color = active ? activeColor || theme.primary : theme.ink;
+  const labelColor = active ? theme.primary : tiny ? theme.muted : theme.ink;
+  const size = iconSize ?? (tiny ? 16 : iconOnly ? 20 : 18);
+  const press = () => {
+    recordUserInteraction();
+    onPress();
+  };
+  const state = { disabled: disabled || loading, selected: active, busy: loading };
+  const icon = () => (
+    <Icon size={size} color={color} fill={active ? color : 'none'} strokeWidth={1.8} accessible={false} />
+  );
+  if (iconOnly)
+    return (
+      <PaperIconButton
+        testID={testID}
+        accessibilityLabel={label}
+        accessibilityState={state}
+        disabled={state.disabled}
+        loading={loading}
+        icon={icon}
+        iconColor={color}
+        size={size}
+        hitSlop={TOUCH_HIT_SLOP}
+        style={[styles.iconOnly, disabled && styles.disabled]}
+        onPress={press}
+      />
+    );
   return (
-    <Pressable
-      hitSlop={TOUCH_HIT_SLOP}
-      accessibilityRole="button"
+    <Button
+      testID={testID}
       accessibilityLabel={label}
-      accessibilityState={{ disabled: disabled || loading, selected: active, busy: loading }}
+      accessibilityState={state}
+      disabled={state.disabled}
+      loading={loading}
+      mode="text"
+      compact
+      icon={icon}
+      textColor={labelColor}
+      hitSlop={TOUCH_HIT_SLOP}
       style={[
         styles.button,
         ghost && styles.ghost,
-        compact && styles.compact,
-        iconOnly && styles.iconOnly,
         tiny && styles.tiny,
-        active && !iconOnly && styles.active,
+        active && styles.active,
         disabled && styles.disabled
       ]}
-      disabled={disabled || loading}
-      onPress={() => {
-        recordUserInteraction();
-        onPress();
-      }}
+      contentStyle={[
+        styles.content,
+        (compact || tiny) && styles.compactContent,
+        styles.iconContent,
+        (compact || tiny) && styles.compactIconContent
+      ]}
+      labelStyle={[styles.text, (compact || tiny) && styles.textCompact, { color: labelColor }]}
+      onPress={press}
     >
-      {loading ? (
-        <ActivityIndicator
-          accessible={false}
-          color={color}
-          size="small"
-          style={{ width: resolvedIconSize, height: resolvedIconSize }}
-        />
-      ) : (
-        <Icon size={resolvedIconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
-      )}
-      {iconOnly ? null : (
-        <Text
-          numberOfLines={1}
-          style={[styles.text, compact && styles.textCompact, tiny && styles.textTiny, active && styles.textActive]}
-        >
-          {label}
-        </Text>
-      )}
-    </Pressable>
+      {label}
+    </Button>
   );
 }
 
 export function AppButton({
   accessibilityLabel,
+  backdrop,
   compact = false,
   disabled = false,
   label,
@@ -228,6 +212,7 @@ export function AppButton({
   onPress
 }: {
   accessibilityLabel?: string;
+  backdrop?: ReactNode;
   compact?: boolean;
   disabled?: boolean;
   label: string;
@@ -236,40 +221,50 @@ export function AppButton({
   variant?: 'default' | 'danger' | 'ghost' | 'primary';
   onPress: () => void;
 }) {
-  const { styles } = useReaderThemeStyles(createStyles);
-  return (
-    <Pressable
+  const { styles, theme } = useReaderThemeStyles(createStyles);
+  const color =
+    variant === 'danger'
+      ? theme.danger
+      : variant === 'primary'
+        ? theme.dark
+          ? theme.primary
+          : theme.primaryStrong
+        : theme.ink;
+  const button = (
+    <Button
       testID={testID}
-      hitSlop={TOUCH_HIT_SLOP}
-      accessibilityRole="button"
       accessibilityLabel={accessibilityLabel || label}
       accessibilityState={{ disabled }}
+      disabled={disabled}
+      mode="text"
+      compact
+      textColor={color}
+      hitSlop={TOUCH_HIT_SLOP}
       style={[
         styles.button,
-        compact && styles.compact,
         tiny && styles.tiny,
         variant === 'ghost' && styles.ghost,
         variant === 'primary' && styles.primary,
         variant === 'danger' && styles.danger,
+        backdrop ? styles.transparent : undefined,
         disabled && styles.disabled
       ]}
-      disabled={disabled}
+      contentStyle={[styles.content, (compact || tiny) && styles.compactContent]}
+      labelStyle={[styles.text, (compact || tiny) && styles.textCompact, { color }]}
       onPress={() => {
         recordUserInteraction();
         onPress();
       }}
     >
-      <Text
-        style={[
-          styles.text,
-          compact && styles.textCompact,
-          tiny && styles.textTiny,
-          variant === 'primary' && styles.textPrimary,
-          variant === 'danger' && styles.textDanger
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
+      {label}
+    </Button>
+  );
+  return backdrop ? (
+    <View style={styles.backdrop}>
+      {backdrop}
+      {button}
+    </View>
+  ) : (
+    button
   );
 }

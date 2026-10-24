@@ -1,12 +1,16 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  alphaColor,
+  fontFamilyValue
+} from '@/ui/theme/tokens';
 import { createMoreAccountStyles } from './accountStyles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
 export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
-  const radiusSm = 10;
-  const radiusMd = 14;
   return StyleSheet.create({
     buttonText: {
       color: theme.ink,
@@ -15,13 +19,14 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       fontWeight: '600'
     },
     content: {
-      flex: 1
+      flex: 1,
+      backgroundColor: theme.surface
     },
     errorBox: {
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: radiusMd,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -39,20 +44,42 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderRadius: 0,
+      marginTop: 0,
       paddingHorizontal: 0,
+      paddingVertical: 6
+    },
+    settingsSection: { marginTop: 16 },
+    settingsSectionLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      paddingBottom: 6
+    },
+    libraryShortcuts: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      paddingVertical: 6
+    },
+    libraryShortcut: {
+      alignItems: 'center',
+      flex: 1,
+      gap: 6,
+      justifyContent: 'center',
+      minHeight: 64,
       paddingVertical: 8
     },
-    input: {
-      minHeight: 42,
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: radiusSm,
-      borderWidth: StyleSheet.hairlineWidth,
+    libraryShortcutLabel: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 14,
-      paddingHorizontal: 12,
-      paddingVertical: 9
+      fontSize: Math.round(13 * settings.fontScale),
+      fontWeight: '500'
+    },
+    input: {
+      minHeight: 48
     },
     loginWebViewHeader: {
       alignItems: 'center',
@@ -90,7 +117,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 15,
-      fontWeight: '600'
+      fontWeight: '500'
     },
     meta: {
       color: theme.muted,
@@ -120,22 +147,10 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       gap: 14,
       paddingBottom: 4
     },
-    searchFilterHeader: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 12
-    },
-    searchFilterTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 17,
-      fontWeight: '700',
-      lineHeight: 22
-    },
     sectionTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 17,
+      fontSize: Math.round(20 * settings.fontScale),
       fontWeight: '600',
       paddingVertical: 8
     },
@@ -144,11 +159,22 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       width: '100%'
     },
     moreContentInner: {
-      gap: 10,
-      padding: 16,
+      padding: 20,
       paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
       paddingBottom: 124
     },
+    moreFullWidthContent: { paddingHorizontal: 0 },
+    moreGlassHeader: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      left: 0,
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.line
+    },
+    moreHeaderHost: { minHeight: 52 },
+    morePageInset: { paddingHorizontal: 20 },
     readingSettingsContent: {
       paddingTop: 12
     },
@@ -184,7 +210,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       lineHeight: 16,
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.07),
       borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.2),
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 7,
       paddingVertical: 2
@@ -193,7 +219,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       gap: 7,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 9
@@ -226,12 +252,12 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       height: 6,
       overflow: 'hidden',
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.08),
-      borderRadius: 999
+      borderRadius: readerRadii.pill
     },
     updateProgressFill: {
       height: '100%',
       backgroundColor: theme.primary,
-      borderRadius: 999
+      borderRadius: readerRadii.pill
     },
     updateProgressMeta: {
       color: theme.muted,
@@ -280,7 +306,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       padding: 2,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth
     },
     appearanceSegment: {
@@ -289,7 +315,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       justifyContent: 'center',
       minHeight: 48,
       minWidth: 0,
-      borderRadius: 6,
+      borderRadius: readerRadii.control,
       paddingHorizontal: 4
     },
     appearanceSegmentActive: {
@@ -335,7 +361,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       height: 48,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth
     },
     appearanceStepButtonText: {
@@ -375,7 +401,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     contentSourceRowDragging: {
       backgroundColor: theme.surface2,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       borderTopWidth: 0,
       elevation: 2,
       marginHorizontal: 0,

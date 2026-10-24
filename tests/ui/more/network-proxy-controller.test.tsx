@@ -739,4 +739,67 @@ describe('network proxy controller', () => {
     expect(hook.result.current.applyStatus).toBe('failed');
     await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('native disable failed');
   });
+
+  it.each(['success', 'failure'] as const)(
+    'waits for a newer proxy disable after the previous apply completes with eventual %s',
+    async (outcome) => {
+      mockLoadNetworkProxyState.mockResolvedValue({
+        enabled: true,
+        activeId: profileA.id,
+        profiles: [profileA, profileB]
+      });
+      const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+      await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+      const previousApply = deferred<unknown>();
+      const latestApply = deferred<unknown>();
+      mockApplyNetworkProxy.mockReturnValueOnce(previousApply.promise).mockReturnValueOnce(latestApply.promise);
+      let selection: Promise<void> | undefined;
+      let disable: Promise<void> | undefined;
+      let request: Promise<Response> | undefined;
+      let settled = false;
+      try {
+        await act(async () => {
+          selection = hook.result.current.selectProxyProfile(profileB.id);
+        });
+        await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(2));
+        request = hook.result.current.networkProxyFetcher('https://example.invalid/feed');
+        void request.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          }
+        );
+        await act(async () => {
+          disable = hook.result.current.setProxyEnabled(false);
+          void disable.catch(() => undefined);
+        });
+        await waitFor(() => expect(hook.result.current.proxyState.enabled).toBe(false));
+        await act(async () => previousApply.resolve({ ok: true }));
+        await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(3));
+        expect(settled).toBe(false);
+        expect(baseFetcher).not.toHaveBeenCalled();
+        if (outcome === 'failure') {
+          await act(async () => latestApply.reject(new Error('latest apply failed')));
+          await expect(request).rejects.toThrow('latest apply failed');
+          await expect(disable).rejects.toThrow('latest apply failed');
+          expect(baseFetcher).not.toHaveBeenCalled();
+        } else {
+          await act(async () => latestApply.resolve({ ok: true }));
+          await expect(request).resolves.toBeInstanceOf(Response);
+          await disable;
+          expect(baseFetcher).toHaveBeenCalledTimes(1);
+        }
+      } finally {
+        await act(async () => {
+          previousApply.resolve({ ok: true });
+          latestApply.resolve({ ok: true });
+          await Promise.allSettled([selection, disable, request]);
+        });
+        await hook.unmount();
+      }
+    }
+  );
 });

@@ -1,29 +1,82 @@
 import type { Source, SourceErrors } from '@/domain/forum/models';
-import { REQUEST_CANCELED_MESSAGE, withAbortableTimeout } from '@/platform/network/request';
+import { RequestCanceledError, REQUEST_CANCELED_MESSAGE, withAbortableTimeout } from '@/platform/network/request';
+import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { sourceErrorFromUnknown } from './sourceErrors';
 
 export const AGGREGATE_SOURCE_BUDGET_MS = 5_000;
+export const READ_PREPARATION_BUDGET_MS = 10_000;
+
+export type ReadPreparation = {
+  deadline: number;
+  beforeRequest?: () => Promise<void>;
+};
 
 export async function readWithinAggregateSourceBudget<T>(
   source: Source,
   parentSignal: AbortSignal | undefined,
   read: (signal: AbortSignal) => Promise<T>,
-  prepare?: () => Promise<unknown>
+  {
+    prepare,
+    preparation,
+    trace
+  }: {
+    prepare?: (signal: AbortSignal) => Promise<unknown>;
+    preparation?: ReadPreparation;
+    trace?: DiagnosticTrace;
+  } = {}
 ) {
   if (parentSignal?.aborted) {
     return Promise.reject(new Error(REQUEST_CANCELED_MESSAGE));
   }
-  if (prepare) {
-    await withAbortableTimeout(prepare, { signal: parentSignal });
-    if (parentSignal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
+  if (prepare || preparation?.beforeRequest) {
+    const startedAt = Date.now();
+    const remaining = (preparation?.deadline ?? startedAt + READ_PREPARATION_BUDGET_MS) - startedAt;
+    const timeoutError = () =>
+      Object.assign(new Error('读取准备超时，请重试'), { source, reason: 'preparation_timeout', retryable: true });
+    if (trace) markDiagnosticStage(trace, 'guard', { source, state: 'pending', timeoutMs: Math.max(0, remaining) });
+    try {
+      if (remaining <= 0) throw timeoutError();
+      await withAbortableTimeout(
+        async (signal) => {
+          if (signal.aborted) throw new RequestCanceledError();
+          await preparation?.beforeRequest?.();
+          if (signal.aborted) throw new RequestCanceledError();
+          if (trace)
+            markDiagnosticStage(trace, 'guard', { source, state: 'network-ready', latencyMs: Date.now() - startedAt });
+          await prepare?.(signal);
+          if (signal.aborted) throw new RequestCanceledError();
+        },
+        { signal: parentSignal, timeoutMs: remaining, timeoutError }
+      );
+      if (trace) markDiagnosticStage(trace, 'guard', { source, state: 'ready', latencyMs: Date.now() - startedAt });
+    } catch (error) {
+      if (trace)
+        markDiagnosticStage(trace, 'guard', {
+          source,
+          state: 'failure',
+          reason: normalizeDiagnosticReason(error),
+          latencyMs: Date.now() - startedAt
+        });
+      throw error;
+    }
   }
-  return withAbortableTimeout(read, {
-    signal: parentSignal,
-    timeoutMs: AGGREGATE_SOURCE_BUDGET_MS,
-    canceledError: () => new Error(REQUEST_CANCELED_MESSAGE),
-    timeoutError: () => Object.assign(new Error(`${source} 聚合读取超过 5 秒`), { source, reason: 'aggregate_timeout' })
-  });
+  if (parentSignal?.aborted) throw new RequestCanceledError();
+  if (trace) markDiagnosticStage(trace, 'transport', { source, state: 'start', timeoutMs: AGGREGATE_SOURCE_BUDGET_MS });
+  return withAbortableTimeout(
+    (signal) => {
+      if (signal.aborted) throw new RequestCanceledError();
+      return read(signal);
+    },
+    {
+      signal: parentSignal,
+      timeoutMs: AGGREGATE_SOURCE_BUDGET_MS,
+      canceledError: () => new Error(REQUEST_CANCELED_MESSAGE),
+      timeoutError: () =>
+        Object.assign(new Error(`${source} 聚合读取超过 5 秒`), { source, reason: 'aggregate_timeout' })
+    }
+  );
 }
 
 export function mergeSettledSourceErrors(

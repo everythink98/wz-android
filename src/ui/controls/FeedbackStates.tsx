@@ -1,10 +1,17 @@
+import { ActivityIndicator } from 'react-native-paper';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  alphaColor,
+  fontFamilyValue,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { AppButton } from './ButtonControls';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
@@ -14,7 +21,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 14,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -38,7 +45,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       minHeight: 156,
       backgroundColor: alphaColor(theme.primary, 0.035),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.12),
-      borderRadius: 14,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 16,
       paddingVertical: 22
@@ -50,7 +57,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     centeredText: { textAlign: 'center' },
     actions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
     placeholders: { gap: 8 },
-    line: { alignSelf: 'stretch', height: 10, borderRadius: 999, backgroundColor: theme.line },
+    line: { alignSelf: 'stretch', height: 10, borderRadius: readerRadii.pill, backgroundColor: theme.line },
     shortLine: { width: '42%' },
     mutedLine: { width: '68%' }
   });

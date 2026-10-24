@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { TouchableRipple } from 'react-native-paper';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
@@ -13,22 +14,33 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     pill: {
       minHeight: 40,
       justifyContent: 'center',
-      backgroundColor: 'transparent',
+      backgroundColor: theme.surface2,
       borderColor: 'transparent',
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
+      borderRadius: readerRadii.control,
+      borderWidth: 0,
+      paddingHorizontal: 12,
       paddingVertical: 4
     },
+    touchTarget: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+    subtabTarget: { paddingHorizontal: 10 },
+    subtabScroll: { marginLeft: -10 },
     pillActive: {
       backgroundColor: theme.mist,
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.12)
+      borderColor: 'transparent'
     },
-    pillText: { color: theme.muted, fontFamily, fontSize: fontSize(11), fontWeight: '500' },
+    pillText: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: fontSize(11),
+      lineHeight: fontSize(16),
+      includeFontPadding: false,
+      fontWeight: '500'
+    },
     pillTextActive: { color: theme.primary, fontWeight: '600' },
-    subtabRail: { gap: 20, paddingRight: 18, paddingVertical: 0 },
+    subtabRail: { gap: 0, paddingRight: 18, paddingVertical: 0 },
     wrappingRail: { flexDirection: 'row', flexWrap: 'wrap', paddingRight: 0, rowGap: 4 },
     subtab: {
+      borderRadius: 0,
       minHeight: 34,
       justifyContent: 'center',
       backgroundColor: 'transparent',
@@ -39,7 +51,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingBottom: 5
     },
     subtabActive: { borderBottomColor: theme.primary },
-    subtabText: { color: theme.muted, fontFamily, fontSize: fontSize(12), fontWeight: '500' },
+    subtabText: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: fontSize(12),
+      lineHeight: fontSize(16),
+      includeFontPadding: false,
+      fontWeight: '500'
+    },
     subtabTextActive: { color: theme.primary, fontWeight: '600' },
     tabRail: {
       gap: 22,
@@ -48,6 +67,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingRight: 18
     },
     tab: {
+      borderRadius: 0,
       minWidth: 48,
       minHeight: 48,
       justifyContent: 'center',
@@ -57,7 +77,15 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     compactTab: { minWidth: undefined, minHeight: 40 },
     tabActive: { borderBottomColor: theme.primary },
-    tabText: { color: theme.muted, fontFamily, fontSize: fontSize(13), fontWeight: '500', textAlign: 'center' },
+    tabText: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: fontSize(13),
+      lineHeight: fontSize(18),
+      includeFontPadding: false,
+      fontWeight: '500',
+      textAlign: 'center'
+    },
     tabTextActive: { color: theme.primary, fontWeight: '600' },
     settingGroup: { gap: 7 },
     panelTitle: { color: theme.ink, fontFamily, fontSize: fontSize(15), fontWeight: '600' }
@@ -94,7 +122,7 @@ export function PillRail({
   }, [resetScrollKey]);
   const railStyle = isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail;
   const content = items.map((item, index) => (
-    <Pressable
+    <TouchableRipple
       testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}
       hitSlop={TOUCH_HIT_SLOP}
       key={index}
@@ -102,29 +130,35 @@ export function PillRail({
       accessibilityRole="button"
       accessibilityState={{ disabled, selected: value === item.value }}
       disabled={disabled}
-      style={
-        isTabs
-          ? [styles.tab, compactTabs && styles.compactTab, value === item.value && styles.tabActive]
-          : isSubtabs
-            ? [styles.subtab, value === item.value && styles.subtabActive]
-            : [styles.pill, value === item.value && styles.pillActive]
-      }
+      style={[styles.touchTarget, isSubtabs && styles.subtabTarget]}
       onPress={() => onChange(item.value)}
     >
-      <Text
+      <View
+        testID={testIDPrefix ? `${testIDPrefix}-${item.value}-container` : undefined}
         style={
           isTabs
-            ? [styles.tabText, value === item.value && styles.tabTextActive]
+            ? [styles.tab, compactTabs && styles.compactTab, value === item.value && styles.tabActive]
             : isSubtabs
-              ? [styles.subtabText, value === item.value && styles.subtabTextActive]
-              : [styles.pillText, value === item.value && styles.pillTextActive]
+              ? [styles.subtab, value === item.value && styles.subtabActive]
+              : [styles.pill, value === item.value && styles.pillActive]
         }
       >
-        {item.label}
-      </Text>
-    </Pressable>
+        <Text
+          style={
+            isTabs
+              ? [styles.tabText, value === item.value && styles.tabTextActive]
+              : isSubtabs
+                ? [styles.subtabText, value === item.value && styles.subtabTextActive]
+                : [styles.pillText, value === item.value && styles.pillTextActive]
+          }
+        >
+          {item.label}
+        </Text>
+      </View>
+    </TouchableRipple>
   ));
-  if (layout === 'wrap') return <View style={[railStyle, styles.wrappingRail]}>{content}</View>;
+  if (layout === 'wrap')
+    return <View style={[railStyle, styles.wrappingRail, isSubtabs && styles.subtabScroll]}>{content}</View>;
   return (
     <ScrollView
       overScrollMode="never"
@@ -133,6 +167,7 @@ export function PillRail({
       showsHorizontalScrollIndicator={false}
       fadingEdgeLength={0}
       contentContainerStyle={railStyle}
+      style={isSubtabs ? styles.subtabScroll : undefined}
     >
       {content}
     </ScrollView>

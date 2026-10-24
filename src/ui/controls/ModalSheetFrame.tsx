@@ -1,8 +1,12 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useEffect, useState, type ReactNode, type RefObject } from 'react';
-import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useContext, useEffect, useState, type ReactNode, type RefObject } from 'react';
+import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { X } from 'lucide-react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
+import { IconButton } from './ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import type { ReaderStyleSettings, ReaderTheme } from '@/ui/theme/tokens';
+import { NavigationGlass } from '@/ui/navigation/NavigationGlass';
+import { fontFamilyValue, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   ComposerKeyboardHost,
   type ComposerKeyboardHostHandle,
@@ -10,7 +14,7 @@ import {
 } from '@/ui/composer/ComposerKeyboardHost';
 import Animated, { useAnimatedStyle, useEvent, useSharedValue } from 'react-native-reanimated';
 
-function createStyles(theme: ReaderTheme, _settings: ReaderStyleSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     root: {
       flex: 1,
@@ -23,21 +27,75 @@ function createStyles(theme: ReaderTheme, _settings: ReaderStyleSettings) {
     sheet: {
       maxHeight: '82%',
       gap: 12,
-      backgroundColor: theme.surface,
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18,
+      overflow: 'hidden',
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopLeftRadius: readerRadii.sheet,
+      borderTopRightRadius: readerRadii.sheet,
       paddingHorizontal: 16,
-      paddingTop: 9,
-      paddingBottom: 18
+      paddingTop: 9
     },
     handle: {
       alignSelf: 'center',
       width: 36,
       height: 4,
-      borderRadius: 999,
+      borderRadius: readerRadii.pill,
       backgroundColor: theme.lineStrong
+    },
+    header: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 12 },
+    headerCopy: { flex: 1, minWidth: 0, gap: 2 },
+    title: {
+      color: theme.ink,
+      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontSize: Math.round(17 * settings.fontScale),
+      lineHeight: Math.round(22 * settings.fontScale),
+      includeFontPadding: false,
+      fontWeight: '600'
+    },
+    subtitle: {
+      color: theme.muted,
+      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontSize: Math.round(12 * settings.fontScale),
+      lineHeight: Math.round(17 * settings.fontScale),
+      includeFontPadding: false
     }
   });
+}
+
+export function ModalSheetHeader({
+  title,
+  subtitle,
+  closeLabel,
+  closeTestID,
+  closeDisabled = false,
+  onClose
+}: {
+  title: string;
+  subtitle?: string;
+  closeLabel: string;
+  closeTestID?: string;
+  closeDisabled?: boolean;
+  onClose: () => void;
+}) {
+  const { styles } = useReaderThemeStyles(createStyles);
+  return (
+    <View testID="modal-sheet-header" style={styles.header}>
+      <View style={styles.headerCopy}>
+        <Text accessibilityRole="header" style={styles.title}>
+          {title}
+        </Text>
+        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      </View>
+      <IconButton
+        icon={X}
+        iconOnly
+        label={closeLabel}
+        testID={closeTestID}
+        disabled={closeDisabled}
+        onPress={onClose}
+      />
+    </View>
+  );
 }
 
 export function ModalSheetFrame({
@@ -62,6 +120,7 @@ export function ModalSheetFrame({
   onRequestClose: () => void;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
+  const safeAreaInsets = useContext(SafeAreaInsetsContext);
   const localImeInsets = Platform.OS === 'android' && Number(Platform.Version) >= 30 && !!keyboardHostRef;
   const trackImeInsets = localImeInsets && keyboardAvoiding && keyboardAvoidingEnabled && visible;
   const imeBottom = useSharedValue(0);
@@ -100,7 +159,15 @@ export function ModalSheetFrame({
         style={styles.backdrop}
         onPress={onRequestClose}
       />
-      <View style={[styles.sheet, bottomInset ? { marginBottom: bottomInset } : null]}>
+      <View
+        testID="modal-sheet"
+        style={[
+          styles.sheet,
+          { paddingBottom: Math.max(18, safeAreaInsets?.bottom ?? 0) },
+          bottomInset ? { marginBottom: bottomInset } : null
+        ]}
+      >
+        <NavigationGlass variant="surface" />
         <View style={styles.handle} />
         {children}
       </View>

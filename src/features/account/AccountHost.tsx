@@ -137,6 +137,7 @@ export function AccountHost({
         {showNodeImageAuthPanel && nodeImageAuthDocument && !webViewBlockMessage ? (
           <>
             <WebView
+              style={styles.webView}
               key={nodeImageAuthDocument.key}
               ref={nodeImageAuthWebViewRef}
               source={{ uri: nodeImageAuthDocument.url }}

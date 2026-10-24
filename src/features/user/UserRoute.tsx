@@ -75,7 +75,12 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     },
     [runtime.reader]
   );
-  const openTopic = useCallback((topic: Topic) => navigation.push('Topic', { topic }), [navigation]);
+  const openTopic = useCallback(
+    (topic: Topic) => {
+      if (navigation.isFocused()) navigation.push('Topic', { topic });
+    },
+    [navigation]
+  );
   const profile = controller.userProfile;
   const recipientId = profile?.id || '';
   const canMessage =
@@ -85,7 +90,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     Number(recipientId) > 0 &&
     runtime.nodeSeekMessaging.identityKey !== `nodeseek:${Number(recipientId)}`;
   const openPrivateMessage = useCallback(() => {
-    if (!canMessage || !profile) return;
+    if (!navigation.isFocused() || !canMessage || !profile) return;
     const { identityKey, available } = runtime.nodeSeekMessaging;
     if (!available || !identityKey) {
       runtime.account.requestNodeSeekVerification('登录 NodeSeek 后可发送私信');

@@ -114,9 +114,14 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     commands: { composer: topicComposer, view: topicView }
   } = topicSession;
   const openTopicRoute = useCallback(
-    (nextTopic: Topic, location?: TopicLocationTarget) => navigation.push('Topic', { topic: nextTopic, location }),
+    (nextTopic: Topic, location?: TopicLocationTarget) => {
+      if (navigation.isFocused()) navigation.push('Topic', { topic: nextTopic, location });
+    },
     [navigation]
   );
+  const stableOpenUser = useLatestCallback((user: UserReference) => {
+    if (navigation.isFocused()) navigation.push('User', { user });
+  });
   const requestTopicLocation = useCallback(
     (location: TopicLocationTarget) => {
       topicView.changeCommentQuery('');
@@ -202,7 +207,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     onOpenImagePreview: (url, displaySize, posterUri, referrerPolicy) =>
       openImagePreviewRef.current(url, displaySize, posterUri, referrerPolicy),
     onOpenTopic: openTopicDestination,
-    onOpenUser: (user) => navigation.push('User', { user }),
+    onOpenUser: stableOpenUser,
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
     selectedTopic,
     settings: runtime.reader.data.settings,
@@ -319,7 +324,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     [topicView]
   );
   const stableOpenTopic = useLatestCallback(openTopicDestination);
-  const stableOpenUser = useLatestCallback((user: UserReference) => navigation.push('User', { user }));
   const stableRefreshReplies = useLatestCallback(refreshTopicReplies);
   const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);
   return (
@@ -358,7 +362,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
               String(runtime.account.sessionViewModels[topicDetail.source].currentUser?.id) === topicDetail.authorId
                 ? {
                     editTopic: () => {
-                      if (topicDetail.source !== 'v2ex')
+                      if (navigation.isFocused() && topicDetail.source !== 'v2ex')
                         navigation.push('TopicComposer', {
                           kind: 'edit',
                           source: topicDetail.source,
@@ -372,7 +376,9 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
               getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
               onScroll: handleTopicScroll,
               openOriginal: openOriginalUrl,
-              openReadingSettings: () => navigation.push('ReadingSettings'),
+              openReadingSettings: () => {
+                if (navigation.isFocused()) navigation.push('ReadingSettings');
+              },
               openTopic: stableOpenTopic,
               openUser: stableOpenUser,
               refreshReplies: stableRefreshReplies,

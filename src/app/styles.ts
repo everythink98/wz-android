@@ -31,7 +31,7 @@ export function createAppStyles(theme: ReaderTheme) {
       right: 0,
       left: 0,
       height: NativeStatusBar.currentHeight ?? 0,
-      backgroundColor: theme.background,
+      backgroundColor: theme.surface,
       zIndex: 20,
       elevation: 0
     },
@@ -47,6 +47,11 @@ export function createAppStyles(theme: ReaderTheme) {
       elevation: 0,
       paddingHorizontal: 10,
       paddingTop: 4
+    },
+    navOverlay: {
+      position: 'absolute',
+      backgroundColor: 'transparent',
+      borderTopColor: theme.dark ? '#2B2D30' : '#ECEEF0'
     }
   });
 }

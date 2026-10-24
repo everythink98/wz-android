@@ -183,9 +183,11 @@ describe('topic post action rail', () => {
     expect(button.props.accessibilityState).toEqual({ busy: true, disabled: true, selected: false });
     expect(StyleSheet.flatten(button.props.style).backgroundColor).toBe('transparent');
     expect(StyleSheet.flatten(button.props.style).opacity).toBeUndefined();
-    const indicators = view.container.queryAll((node) => /ActivityIndicator|ProgressBar/.test(node.type));
+    const indicators = view.container.queryAll((node) => node.props.accessibilityRole === 'progressbar');
     expect(indicators).toHaveLength(1);
-    expect(indicators[0]?.props.color).toBe(theme.primary);
+    expect(
+      indicators[0]?.queryAll((node) => StyleSheet.flatten(node.props.style)?.borderColor === theme.primary).length
+    ).toBeGreaterThan(0);
     expect(StyleSheet.flatten(indicators[0]?.parent?.props.style)).toMatchObject({ height: 22, width: 22 });
   });
 

@@ -84,7 +84,7 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn()
 }));
-vi.mock('./feedRead', () => forumMocks);
+vi.mock('./feedRead', () => ({ ...forumMocks, getSourceCategories: forumMocks.getCategories }));
 vi.mock('./searchRead', () => forumMocks);
 vi.mock('./sourceRead', () => forumMocks);
 vi.mock('@/sources/linuxdo/reader', () => ({
@@ -1820,6 +1820,74 @@ describe('source gateway read contract', () => {
     await expect(gateway.getFeed({ source: 'nodeseek' })).rejects.toThrow('请求已取消');
     expect(firstCommit).toHaveBeenCalledTimes(1);
     expect(secondCommit).not.toHaveBeenCalled();
+  });
+
+  it('bounds a single catalog including its accepted fallback evidence commit', async () => {
+    vi.useFakeTimers();
+    const finishCommit = Promise.withResolvers<void>();
+    const commit = vi.fn(() => finishCommit.promise);
+    const fetcher = vi.fn(forumReadEvidenceFetcher(commit));
+    const controller = new AbortController();
+    forumMocks.getCategories.mockImplementationOnce(async ({ fetcher: scopedFetcher, signal }) => {
+      const response = await scopedFetcher('https://www.nodeseek.com/', { signal });
+      acceptForumReadResponse(response);
+      return { items: [], errors: {} };
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => 'saved' });
+    let failure: unknown;
+    const request = gateway.getCategories({ source: 'nodeseek', signal: controller.signal }).catch((error: unknown) => {
+      failure = error;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(failure).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(failure).toMatchObject({ reason: 'aggregate_timeout' });
+      expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    } finally {
+      controller.abort();
+      finishCommit.resolve();
+      await request;
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([500, 3_000])('keeps a catalog rotation replay inside the original read budget: %dms', async (replayMs) => {
+    vi.useFakeTimers();
+    const beforeRequest = vi.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 7_400)));
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+        readNetworkRuntimeMocks.generation = 8;
+        readNetworkRuntimeMocks.triggerSource = 'v2ex';
+        throw new RequestCanceledError();
+      })
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, replayMs));
+        return new Response('{}');
+      });
+    const readCatalog = async ({ fetcher: scopedFetcher, signal }: { fetcher: Fetcher; signal: AbortSignal }) => {
+      await scopedFetcher('https://www.v2ex.com/api/topics/latest.json', { signal });
+      return { items: [], errors: {} };
+    };
+    forumMocks.getCategories.mockImplementationOnce(readCatalog).mockImplementationOnce(readCatalog);
+    const gateway = createReadGateway({ fetcher, beforeRequest, nodeSeekUserAgent: () => 'saved' });
+    const request = gateway.getCategories({ source: 'v2ex' }).catch((error: unknown) => error);
+    try {
+      await vi.advanceTimersByTimeAsync(replayMs === 500 ? 10_900 : 12_400);
+      expect(await request).toMatchObject(
+        replayMs === 500 ? { items: [], errors: {} } : { reason: 'aggregate_timeout' }
+      );
+      expect(beforeRequest).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    } finally {
+      await vi.advanceTimersByTimeAsync(3_000);
+      await request;
+      vi.useRealTimers();
+    }
   });
 
   it('returns typed Yaohuo expiry without invoking a logout command', async () => {

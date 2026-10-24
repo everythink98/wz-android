@@ -1,5 +1,6 @@
+import { ActivityIndicator } from 'react-native-paper';
 import type { TopicStyles } from '../styles';
-import { ActivityIndicator, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
+import { Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react-native';
 import { alphaColor, type ReaderTheme } from '@/ui/theme/tokens';
@@ -113,7 +114,7 @@ export function DetailActionButton({
     >
       <View style={[styles.detailActionIconSlot, compact && styles.replyCompactActionIconSlot]}>
         {pending ? (
-          <ActivityIndicator size="small" color={color} />
+          <ActivityIndicator accessible={false} size={resolvedIconSize} color={color} />
         ) : iconContent ? (
           iconContent
         ) : (

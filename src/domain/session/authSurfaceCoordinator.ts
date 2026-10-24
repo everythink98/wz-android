@@ -1,12 +1,13 @@
 import type { SessionSite } from './siteSessionState';
 
-export type AuthSurface = 'linuxdo-login' | 'nodeimage-auth' | 'nodeseek-login' | 'yaohuo-login';
+export type AuthSurface = 'linuxdo-login' | 'linuxdo-credit' | 'nodeimage-auth' | 'nodeseek-login' | 'yaohuo-login';
 
 export type AuthSurfaceCloseReason =
   | 'authoritative-recovery'
   | 'cancel'
   | 'close-button'
   | 'hardware-back'
+  | 'initialization-incomplete'
   | 'navigation-away'
   | 'source-disabled'
   | 'success'
@@ -35,7 +36,13 @@ export type AuthSurfaceRegistry = {
   visible: AuthSurface | null;
 };
 
-const AUTH_SURFACES: readonly AuthSurface[] = ['linuxdo-login', 'nodeimage-auth', 'nodeseek-login', 'yaohuo-login'];
+const AUTH_SURFACES: readonly AuthSurface[] = [
+  'linuxdo-login',
+  'linuxdo-credit',
+  'nodeimage-auth',
+  'nodeseek-login',
+  'yaohuo-login'
+];
 
 export function createAuthSurfaceRegistry(): AuthSurfaceRegistry {
   return { generation: 0, active: {}, visible: null };
@@ -60,11 +67,12 @@ export function isAuthSurfaceVisible(registry: AuthSurfaceRegistry, surface: Aut
 
 export function beginAuthSurface(
   registry: AuthSurfaceRegistry,
-  input: Omit<AuthSurfaceTicket, 'generation'>
+  input: Omit<AuthSurfaceTicket, 'generation'>,
+  visible = true
 ): AuthSurfaceTicket {
   const active = registry.active[input.surface];
   if (active?.phase === 'open') {
-    showAuthSurface(registry, input.surface);
+    if (visible) showAuthSurface(registry, input.surface);
     const { phase: _phase, ...ticket } = active;
     return ticket;
   }
@@ -74,7 +82,7 @@ export function beginAuthSurface(
   };
   registry.generation = ticket.generation;
   registry.active[input.surface] = { ...ticket, phase: 'open' };
-  showAuthSurface(registry, input.surface);
+  if (visible) showAuthSurface(registry, input.surface);
   return ticket;
 }
 
@@ -93,9 +101,13 @@ export function finishAuthSurface(
   const closed = {
     ...ticket,
     closeReason,
-    shouldReconcile: closeReason !== 'authoritative-recovery' && closeReason !== 'source-disabled'
+    shouldReconcile:
+      closeReason !== 'authoritative-recovery' &&
+      closeReason !== 'source-disabled' &&
+      closeReason !== 'initialization-incomplete'
   };
-  if (retainWhileReconciling && closed.shouldReconcile) {
+  // Disabling a source does not confirm any session changes made by its open page.
+  if (retainWhileReconciling && closeReason !== 'authoritative-recovery') {
     registry.active[surface] = { ...lifecycle, phase: 'reconciling' };
   } else {
     delete registry.active[surface];

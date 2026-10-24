@@ -29,7 +29,7 @@ import {
 import type { ComposerIntent, ComposerSite } from '@/domain/forum/structuredComposer';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import type { ComposerToolbarAction, ComposerToolbarState } from './structuredComposerBridge';
 
 export type ComposerToolbarProps = {
@@ -74,7 +74,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       justifyContent: 'center',
       gap: 5,
       paddingHorizontal: 10,
-      borderRadius: 8
+      borderRadius: readerRadii.control
     },
     topicButton: { flex: 1 },
     selected: { backgroundColor: theme.primarySoft },
@@ -91,7 +91,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       backgroundColor: theme.surface,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: 10,
+      borderRadius: readerRadii.surface,
       elevation: 4,
       overflow: 'hidden'
     },

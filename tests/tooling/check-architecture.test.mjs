@@ -287,6 +287,19 @@ test('keeps NodeImage credential ensure in the Account write capability', () => 
   );
 });
 
+test('exposes the LDC opening action while keeping its WebView state in Account', () => {
+  const allowed = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { return { read: {}, write: {}, center: { linuxDoCredit: { open() {} } }, hosts: {} }; }'
+  });
+  assert.deepEqual(analyzeArchitecture(allowed).issues, []);
+  const rejected = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { return { read: {}, write: {}, center: { linuxDoCredit: { webViewRef: {} } }, hosts: {} }; }'
+  });
+  assert.ok(analyzeArchitecture(rejected).issues.some((issue) => issue.code === 'raw-account-center-capability'));
+});
+
 test('allows the explicit account recheck command without exposing raw session state', () => {
   const srcDir = architectureFixture({
     'features/account/useAccountRuntime.ts':

@@ -1,7 +1,7 @@
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '../render';
-import { Alert, DeviceEventEmitter, Platform, Text } from 'react-native';
+import { act, fireEvent, render, waitFor, within } from '../render';
+import { Alert, DeviceEventEmitter, Platform, StyleSheet, Text } from 'react-native';
 import { Profiler } from 'react';
 import { CredentialVaultError, emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -16,6 +16,8 @@ jest.mock('lucide-react-native', () => ({
   ChevronRight: () => null,
   ChevronUp: () => null,
   RefreshCw: () => null,
+  Settings2: () => null,
+  X: () => null,
   User: () => null
 }));
 
@@ -35,7 +37,7 @@ describe('Account center user authentication', () => {
       <AccountCenterPanel
         credentials={emptyCredentialSummaries()}
         enabledSessionSources={allSessionSources}
-        expanded
+        active
         nodeSeekUserId={null}
         sessions={sessions}
         siteContent={{
@@ -47,7 +49,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={jest.fn<() => void>()}
-        onExpandedChange={jest.fn()}
       />
     );
     const card = view.getByText('NS 账号内容').parent?.parent?.parent;
@@ -65,13 +66,14 @@ describe('Account center user authentication', () => {
     }
   });
 
-  it('creates site settings only when opened and keeps their collapse subtree within the same owner', async () => {
+  it('opens site settings inline and closes them when the account owner changes', async () => {
     const settingsRender = jest.fn(() => <Text>NS 低频设置</Text>);
-    const view = await render(
+    const panel = (selectedSite: (typeof allSessionSources)[number]) => (
       <AccountCenterPanel
         credentials={emptyCredentialSummaries()}
         enabledSessionSources={allSessionSources}
-        expanded
+        active
+        selectedSite={selectedSite}
         nodeSeekUserId={null}
         sessions={sessions}
         siteContent={{}}
@@ -80,24 +82,30 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={jest.fn<() => void>()}
-        onExpandedChange={jest.fn()}
       />
     );
+    const view = await render(panel('nodeseek'));
 
     expect(settingsRender).not.toHaveBeenCalled();
     expect(view.queryByText('自动填入', { includeHiddenElements: true })).toBeNull();
     await fireEvent.press(view.getByLabelText('站点设置'));
-    const settingsContent = view.getByText('NS 低频设置');
-    expect(view.getByText('自动填入')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('收起站点设置'));
+    expect(view.getByLabelText('站点设置').props.accessibilityState.expanded).toBe(true);
+    const inlineSettings = within(view.getByTestId('my-account')).getByTestId('account-site-settings');
+    const settingsContent = within(inlineSettings).getByText('NS 低频设置');
+    expect(within(inlineSettings).getByText('自动填入')).toBeTruthy();
+    expect(view.queryByLabelText('关闭NodeSeek站点设置')).toBeNull();
+    await fireEvent.press(view.getByLabelText('站点设置'));
+    expect(view.getByLabelText('站点设置').props.accessibilityState.expanded).toBe(false);
     expect(view.queryByText('NS 低频设置')).toBeNull();
     expect(view.getByText('NS 低频设置', { includeHiddenElements: true })).toBe(settingsContent);
 
-    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    await fireEvent.press(view.getByLabelText('站点设置'));
+    expect(view.getByText('NS 低频设置')).toBe(settingsContent);
+    await view.rerender(panel('linuxdo'));
     expect(view.queryByText('自动填入', { includeHiddenElements: true })).toBeNull();
     expect(view.queryByText('NS 低频设置', { includeHiddenElements: true })).toBeNull();
     const rendersBeforeReturn = settingsRender.mock.calls.length;
-    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    await view.rerender(panel('nodeseek'));
     expect(settingsRender).toHaveBeenCalledTimes(rendersBeforeReturn);
     expect(view.queryByText('自动填入', { includeHiddenElements: true })).toBeNull();
     await fireEvent.press(view.getByLabelText('站点设置'));
@@ -117,11 +125,12 @@ describe('Account center user authentication', () => {
           }
         })
       );
-    const panel = (id: string) => (
+    const panel = (id: string, selectedSite: (typeof allSessionSources)[number] = 'nodeseek') => (
       <AccountCenterPanel
         credentials={emptyCredentialSummaries()}
         enabledSessionSources={allSessionSources}
-        expanded
+        active
+        selectedSite={selectedSite}
         nodeSeekUserId={Number(id)}
         sessions={accountSessions(id)}
         siteContent={{ nodeseek: <Text>NS 账号内容</Text> }}
@@ -129,7 +138,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={jest.fn<() => void>()}
-        onExpandedChange={jest.fn()}
       />
     );
     const view = await render(panel('123'));
@@ -137,9 +145,9 @@ describe('Account center user authentication', () => {
     await fireEvent.press(view.getByText('设置'));
     await fireEvent.changeText(view.getByLabelText('NodeSeek 登录账号'), 'local-account');
     await fireEvent.changeText(view.getByLabelText('NodeSeek 登录密码'), 'local-password');
-    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    await view.rerender(panel('123', 'linuxdo'));
     expect(view.queryByLabelText('NodeSeek 登录密码', { includeHiddenElements: true })).toBeNull();
-    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    await view.rerender(panel('123', 'nodeseek'));
     await fireEvent.press(view.getByLabelText('站点设置'));
     await fireEvent.press(view.getByText('设置'));
     expect(view.getByLabelText('NodeSeek 登录账号').props.value).toBe('');
@@ -161,7 +169,7 @@ describe('Account center user authentication', () => {
         <AccountCenterPanel
           credentials={emptyCredentialSummaries()}
           enabledSessionSources={allSessionSources}
-          expanded
+          active
           nodeSeekUserId={null}
           sessions={sessions}
           siteContent={{}}
@@ -169,7 +177,6 @@ describe('Account center user authentication', () => {
           styles={styles}
           theme={theme}
           onCommand={onCommand}
-          onExpandedChange={jest.fn()}
         />
       );
       await fireEvent.press(view.getByLabelText('站点设置'));
@@ -209,7 +216,7 @@ describe('Account center user authentication', () => {
     const common = {
       credentials: emptyCredentialSummaries(),
       enabledSessionSources: allSessionSources,
-      expanded: true,
+      active: true,
       nodeSeekUserId: null,
       sessions,
       siteContent: {},
@@ -217,7 +224,6 @@ describe('Account center user authentication', () => {
       styles,
       theme,
       onCommand: jest.fn<() => void>(),
-      onExpandedChange: jest.fn(),
       onSelectedSiteChange: selectionChanges
     };
     const panel = (site: (typeof allSessionSources)[number]) => (
@@ -249,7 +255,7 @@ describe('Account center user authentication', () => {
         key="forced-disabled"
         credentials={emptyCredentialSummaries()}
         enabledSessionSources={['yaohuo', 'nodeseek']}
-        expanded
+        active
         forcedSite="linuxdo"
         nodeSeekUserId={null}
         sessions={sessions}
@@ -261,7 +267,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={jest.fn(async (_command: AccountCenterCommand) => undefined)}
-        onExpandedChange={jest.fn()}
       />
     );
 
@@ -279,7 +284,7 @@ describe('Account center user authentication', () => {
         key="pending-disabled"
         credentials={emptyCredentialSummaries()}
         enabledSessionSources={['yaohuo', 'nodeseek']}
-        expanded
+        active
         pendingFillSite="linuxdo"
         nodeSeekUserId={null}
         sessions={sessions}
@@ -288,7 +293,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={jest.fn(async (_command: AccountCenterCommand) => undefined)}
-        onExpandedChange={jest.fn()}
       />
     );
     expect(view.getByTestId('account-site-yaohuo').props.accessibilityState.selected).toBe(true);
@@ -297,15 +301,14 @@ describe('Account center user authentication', () => {
   it('falls back to the first enabled site when the selected site is disabled', async () => {
     const common = {
       credentials: emptyCredentialSummaries(),
-      expanded: true,
+      active: true,
       nodeSeekUserId: null,
       sessions,
       siteContent: {},
       statusBusy: false,
       styles,
       theme,
-      onCommand: jest.fn(async (_command: AccountCenterCommand) => undefined),
-      onExpandedChange: jest.fn()
+      onCommand: jest.fn(async (_command: AccountCenterCommand) => undefined)
     };
     const view = await render(<AccountCenterPanel {...common} enabledSessionSources={['nodeseek', 'linuxdo']} />);
     await fireEvent.press(view.getByTestId('account-site-linuxdo'));
@@ -316,43 +319,13 @@ describe('Account center user authentication', () => {
     expect(view.queryByTestId('account-site-linuxdo')).toBeNull();
   });
 
-  it('keeps open site settings when the selected site is tapped again', async () => {
-    const onSelectedSiteChange = jest.fn();
-    const view = await render(
-      <AccountCenterPanel
-        credentials={emptyCredentialSummaries()}
-        enabledSessionSources={allSessionSources}
-        expanded
-        nodeSeekUserId={null}
-        sessions={sessions}
-        siteContent={{}}
-        statusBusy={false}
-        styles={styles}
-        theme={theme}
-        onCommand={jest.fn(async (_command: AccountCenterCommand) => undefined)}
-        onExpandedChange={jest.fn()}
-        onSelectedSiteChange={onSelectedSiteChange}
-      />
-    );
-    await fireEvent.press(view.getByLabelText('站点设置'));
-    expect(view.getByLabelText('收起站点设置').props.accessibilityState.expanded).toBe(true);
-    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
-    expect(view.getByLabelText('收起站点设置').props.accessibilityState.expanded).toBe(true);
-    expect(onSelectedSiteChange).not.toHaveBeenCalled();
-
-    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
-    expect(view.getByLabelText('站点设置').props.accessibilityState.expanded).toBe(false);
-    expect(onSelectedSiteChange).toHaveBeenCalledTimes(1);
-    expect(onSelectedSiteChange).toHaveBeenLastCalledWith('linuxdo');
-  });
-
   it('shows stable management guidance for an empty enabled account set', async () => {
     const onCommand = jest.fn(async (_command: AccountCenterCommand) => undefined);
     const view = await render(
       <AccountCenterPanel
         credentials={emptyCredentialSummaries()}
         enabledSessionSources={[]}
-        expanded
+        active
         nodeSeekUserId={null}
         sessions={sessions}
         siteContent={{}}
@@ -360,7 +333,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={onCommand}
-        onExpandedChange={jest.fn()}
       />
     );
 
@@ -417,7 +389,7 @@ describe('Account center user authentication', () => {
       <AccountCenterPanel
         credentials={credentials}
         enabledSessionSources={allSessionSources}
-        expanded
+        active
         nodeSeekUserId={42}
         sessions={mixedSessions}
         siteContent={{}}
@@ -425,7 +397,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={onCommand}
-        onExpandedChange={jest.fn()}
       />
     );
 
@@ -435,6 +406,8 @@ describe('Account center user authentication', () => {
     expect(view.queryByText('站点')).toBeNull();
     expect(view.queryByText('刷新账号')).toBeNull();
     expect(view.getByLabelText('刷新账号')).toBeTruthy();
+    const identityStyle = StyleSheet.flatten(view.getByLabelText('查看主页').props.style);
+    expect(identityStyle.paddingTop).toBe(identityStyle.paddingBottom);
     await fireEvent.press(view.getByLabelText('查看主页'));
     expect(onCommand).toHaveBeenLastCalledWith({ type: 'open-user', user: currentUser });
 
@@ -470,7 +443,7 @@ describe('Account center user authentication', () => {
       <AccountCenterPanel
         credentials={credentials}
         enabledSessionSources={allSessionSources}
-        expanded
+        active
         nodeSeekUserId={null}
         sessions={sessions}
         siteContent={{}}
@@ -478,7 +451,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={onCommand}
-        onExpandedChange={jest.fn()}
       />
     );
 
@@ -523,7 +495,7 @@ describe('Account center user authentication', () => {
       <AccountCenterPanel
         credentials={emptyCredentialSummaries()}
         enabledSessionSources={allSessionSources}
-        expanded
+        active
         nodeSeekUserId={null}
         sessions={sessions}
         siteContent={{}}
@@ -531,7 +503,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={onCommand}
-        onExpandedChange={jest.fn()}
       />
     );
 
@@ -554,7 +525,7 @@ describe('Account center user authentication', () => {
       <AccountCenterPanel
         credentials={credentials}
         enabledSessionSources={allSessionSources}
-        expanded
+        active
         nodeSeekUserId={null}
         sessions={sessions}
         siteContent={{}}
@@ -562,7 +533,6 @@ describe('Account center user authentication', () => {
         styles={styles}
         theme={theme}
         onCommand={onCommand}
-        onExpandedChange={jest.fn()}
       />
     );
 

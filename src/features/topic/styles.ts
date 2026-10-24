@@ -1,5 +1,12 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue, LINK_COLOR } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  alphaColor,
+  fontFamilyValue,
+  LINK_COLOR
+} from '@/ui/theme/tokens';
 
 export function createTopicTableStyles(theme: ReaderTheme) {
   return StyleSheet.create({
@@ -12,7 +19,7 @@ export function createTopicTableStyles(theme: ReaderTheme) {
     htmlTableFrame: {
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: 1,
       overflow: 'hidden'
     }
@@ -24,9 +31,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
   const titleFontScale = Math.min(fontScale, 1.12);
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const linkColor = theme.dark ? theme.primary : LINK_COLOR;
-  const radiusSm = 10;
-  const radiusMd = 14;
-  const radiusLg = 18;
   const neutralBase = theme.dark ? '#ffffff' : '#000000';
   const replyNeutralSurface = alphaColor(neutralBase, theme.dark ? 0.06 : 0.035);
   const replyNeutralBorder = alphaColor(neutralBase, theme.dark ? 0.12 : 0.09);
@@ -40,9 +44,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     articleTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(22 * titleFontScale),
-      fontWeight: '700',
-      lineHeight: Math.round(31 * titleFontScale)
+      fontSize: Math.round(21 * titleFontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(30 * titleFontScale)
     },
     titleOnlyTitle: {
       fontSize: Math.round(20 * titleFontScale),
@@ -68,19 +72,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     titleOnlyHeaderStack: {
       paddingBottom: 12
     },
-    titleOnlySearchRow: {
-      backgroundColor: theme.surface2,
-      borderRadius: radiusSm,
-      gap: 8,
-      paddingHorizontal: 12
-    },
-    titleOnlySearchInput: {
-      backgroundColor: 'transparent',
-      borderWidth: 0,
-      fontSize: Math.round(13 * fontScale),
-      minHeight: 48,
-      paddingHorizontal: 0
-    },
     titleOnlyNoticeText: {
       color: theme.muted,
       fontWeight: '400',
@@ -96,7 +87,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: radiusMd,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -113,7 +104,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       minHeight: 42,
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: radiusSm,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.ink,
       fontFamily: appFontFamily,
@@ -156,7 +147,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       lineHeight: 16,
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
       borderColor: alphaColor(theme.danger, 0.34),
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
       paddingVertical: 3,
@@ -185,14 +176,14 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 11,
-      fontWeight: '600',
+      fontWeight: '400',
       includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: 'transparent',
       borderColor: theme.line,
-      borderRadius: 7,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
+      borderRadius: readerRadii.badge,
+      borderWidth: 0,
+      paddingHorizontal: 0,
       paddingVertical: 3,
       textAlignVertical: 'center'
     },
@@ -201,14 +192,14 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 11,
-      fontWeight: '700',
+      fontWeight: '600',
       includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 7,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
+      borderRadius: readerRadii.badge,
+      borderWidth: 0,
+      paddingHorizontal: 0,
       paddingVertical: 3,
       textAlignVertical: 'center'
     },
@@ -216,12 +207,12 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       alignItems: 'center',
       backgroundColor: 'transparent',
       borderColor: 'transparent',
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: 0,
       justifyContent: 'center',
       minHeight: 20,
-      paddingHorizontal: 5,
-      paddingVertical: 1
+      paddingHorizontal: 7,
+      paddingVertical: 3
     },
     topicTagRow: {
       alignItems: 'center',
@@ -234,7 +225,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 11,
-      fontWeight: '600',
+      fontWeight: '500',
       includeFontPadding: false,
       lineHeight: 14,
       textAlignVertical: 'center'
@@ -243,7 +234,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       backgroundColor: theme.surface
     },
     topicScreenRoot: {
-      flex: 1
+      flex: 1,
+      backgroundColor: theme.surface
     },
     replyActionPosition: {
       position: 'absolute',
@@ -258,8 +250,10 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       gap: 8,
       paddingHorizontal: 20,
       paddingVertical: 14,
-      borderRadius: 999,
-      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
+      borderRadius: readerRadii.pill,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.3 : 0.18),
       elevation: 3,
       shadowColor: '#000000',
       shadowOffset: { width: 0, height: 2 },
@@ -268,7 +262,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyActionText: {
       flexShrink: 1,
-      color: theme.onPrimary,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
       fontWeight: '500',
       fontSize: Math.round(14 * fontScale),
@@ -295,10 +289,41 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       fontSize: 12,
       fontWeight: '500'
     },
-    searchRow: {
+    replySearchBackground: {
+      position: 'absolute',
+      top: 2,
+      bottom: 2,
+      left: 0,
+      right: 0,
+      backgroundColor: theme.background,
+      borderColor: theme.line,
+      borderRadius: readerRadii.control,
+      borderWidth: StyleSheet.hairlineWidth
+    },
+    replySearchShell: {
+      minHeight: 48,
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 7
+      backgroundColor: 'transparent',
+      borderRadius: readerRadii.control,
+      paddingHorizontal: 0
+    },
+    replySearchIcon: {
+      transform: [{ translateX: -6 }]
+    },
+    replySearchInput: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: Math.max(46, 24 * fontScale + 16),
+      marginLeft: -16,
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 16 * fontScale,
+      lineHeight: 24 * fontScale,
+      includeFontPadding: false,
+      textAlignVertical: 'center',
+      paddingHorizontal: 0,
+      paddingVertical: 0
     },
     detailActionButton: {
       minHeight: 48,
@@ -308,7 +333,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       flexDirection: 'row',
       gap: 5,
       backgroundColor: 'transparent',
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       paddingHorizontal: 4,
       paddingVertical: 4
     },
@@ -402,13 +427,13 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     topicOverflowMenu: {
       position: 'absolute',
-      top: (NativeStatusBar.currentHeight ?? 0) + 58,
+      top: (NativeStatusBar.currentHeight ?? 0) + 64,
       right: 12,
       minWidth: 154,
       overflow: 'hidden',
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       elevation: 4
     },
@@ -483,7 +508,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       gap: 5,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.15 : 0.075),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.18),
-      borderRadius: 7,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       minHeight: 26,
       paddingHorizontal: 9,
@@ -500,7 +525,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     pollMetaPill: {
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.06),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.12),
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.muted,
       fontFamily: appFontFamily,
@@ -513,7 +538,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     pollStatePill: {
       backgroundColor: alphaColor(theme.ink, theme.dark ? 0.1 : 0.04),
       borderColor: alphaColor(theme.ink, theme.dark ? 0.16 : 0.08),
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.muted,
       fontFamily: appFontFamily,
@@ -527,7 +552,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       overflow: 'hidden',
       backgroundColor: theme.surface,
       borderColor: alphaColor(theme.ink, theme.dark ? 0.12 : 0.09),
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth
     },
     pollOptionRow: {
@@ -614,7 +639,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       minHeight: 34,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 0
@@ -659,7 +684,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       gap: 5,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.055),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.12),
-      borderRadius: 8,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
       paddingVertical: 0
@@ -701,7 +726,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       alignItems: 'center',
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.07),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.34 : 0.2),
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center',
       minHeight: 24,
@@ -729,7 +754,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       backgroundColor: theme.surface,
       borderColor: alphaColor(theme.primary, theme.dark ? 0.34 : 0.2),
       borderLeftWidth: 3,
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderRightWidth: StyleSheet.hairlineWidth,
       borderBottomWidth: StyleSheet.hairlineWidth
@@ -823,8 +848,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyComposerBottomSheetBackground: {
       backgroundColor: theme.surface,
-      borderTopLeftRadius: radiusLg,
-      borderTopRightRadius: radiusLg
+      borderTopLeftRadius: readerRadii.sheet,
+      borderTopRightRadius: readerRadii.sheet
     },
     replyComposerBottomSheetContainer: {
       zIndex: 30,
@@ -859,7 +884,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       flexShrink: 0,
       justifyContent: 'center',
       gap: 2,
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       paddingHorizontal: 6,
       paddingVertical: 3
     },
@@ -876,7 +901,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     },
     replyLocationHighlight: {
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.09),
-      borderRadius: 10
+      borderRadius: readerRadii.content
     },
     topicFooter: {
       alignSelf: 'center',
@@ -1013,7 +1038,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replyOpBadge: {
       overflow: 'hidden',
       borderColor: alphaColor(theme.primary, theme.dark ? 0.32 : 0.22),
-      borderRadius: 5,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.primary,
       fontFamily: appFontFamily,
@@ -1027,7 +1052,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
     replyContextBadge: {
       overflow: 'hidden',
       borderColor: alphaColor(theme.danger, theme.dark ? 0.36 : 0.26),
-      borderRadius: 5,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.danger,
       fontFamily: appFontFamily,
@@ -1053,7 +1078,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       alignItems: 'center',
       backgroundColor: alphaColor(linkColor, theme.dark ? 0.14 : 0.06),
       borderColor: alphaColor(linkColor, theme.dark ? 0.3 : 0.16),
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 5,
@@ -1109,7 +1134,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       overflow: 'hidden',
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: radiusSm,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       marginVertical: 5
     },
@@ -1147,7 +1172,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: radiusSm,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 10
@@ -1272,7 +1297,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 12
@@ -1303,7 +1328,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderStyleSetti
       lineHeight: 16,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
       paddingVertical: 3

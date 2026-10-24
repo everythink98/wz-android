@@ -1,3 +1,5 @@
+import { AppSwitch as Switch, AppTextInput } from '@/ui/controls/InputControls';
+import { ActivityIndicator } from 'react-native-paper';
 import {
   Fragment,
   useCallback,
@@ -10,14 +12,12 @@ import {
   type SetStateAction
 } from 'react';
 import {
-  ActivityIndicator,
   Image,
   Keyboard,
   Pressable,
   ScrollView,
   StatusBar as NativeStatusBar,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View
@@ -61,12 +61,19 @@ import { validateTopicDraft, validateTopicEdit } from '@/domain/forum/topicCompo
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
+import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
+import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { StructuredReplyComposer } from '@/ui/composer/StructuredReplyComposer';
 import { YaohuoReplyComposer } from '@/ui/composer/YaohuoReplyComposer';
 import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  alphaColor,
+  readerRadii,
+  type ReaderStyleSettings,
+  fontFamilyValue,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useKeyboardHandoff } from '@/ui/hooks/useKeyboardHandoff';
@@ -79,6 +86,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: theme.surface },
     header: {
+      zIndex: 1,
       minHeight: 56,
       paddingHorizontal: 8,
       flexDirection: 'row',
@@ -153,8 +161,11 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      borderRadius: 10,
-      backgroundColor: theme.surface2
+      borderRadius: readerRadii.control,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.05 : 0.025),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.12),
+      borderTopColor: alphaColor(theme.surface, 0.8),
+      borderWidth: StyleSheet.hairlineWidth
     },
     settingsLabel: { fontWeight: '500', fontSize: Math.round(13 * settings.fontScale) },
     yaohuoMetadataBar: { paddingVertical: 4, gap: 16 },
@@ -187,19 +198,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderBottomColor: theme.line
     },
     input: {
-      color: theme.ink,
-      fontFamily: font,
-      fontSize: Math.round(14 * settings.fontScale),
-      minHeight: 48,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.line,
-      borderRadius: 10,
-      backgroundColor: theme.surface2,
-      paddingHorizontal: 12,
-      paddingVertical: 10
+      minHeight: 48
     },
-    inputFocused: { borderColor: theme.primary },
-    inputError: { borderColor: theme.danger },
     label: { color: theme.ink, fontFamily: font, fontSize: Math.round(13 * settings.fontScale), fontWeight: '500' },
     field: { gap: 6, marginBottom: 12 },
     editor: { flex: 1, minHeight: 120 },
@@ -211,7 +211,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       gap: 4
     },
     banner: {
@@ -229,15 +229,15 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignItems: 'center',
       gap: 4,
       maxWidth: 240,
-      borderRadius: 10
+      borderRadius: readerRadii.control
     },
     tools: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     saveLine: { minHeight: 24, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-    thumbnail: { width: 56, height: 56, borderRadius: 8, backgroundColor: theme.surface2 },
+    thumbnail: { width: 56, height: 56, borderRadius: readerRadii.content, backgroundColor: theme.surface2 },
     fileIcon: {
       width: 56,
       height: 56,
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       backgroundColor: theme.surface2,
       alignItems: 'center',
       justifyContent: 'center'
@@ -257,7 +257,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingHorizontal: 12,
       paddingVertical: 8,
       gap: 8,
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line
     },
@@ -268,7 +268,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       minHeight: 48,
       paddingVertical: 12,
       paddingHorizontal: 12,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       marginVertical: 2,
       justifyContent: 'center',
       gap: 4
@@ -280,20 +280,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     sectionLabel: { marginTop: 8, marginBottom: 6 },
     choiceIndicator: { width: 24, alignItems: 'center', justifyContent: 'center' },
     switchRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12 },
-    sheetHeading: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-      marginBottom: 8
-    },
     section: {
       gap: 8,
       paddingVertical: 12,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
-    sheetBody: { paddingBottom: 16, gap: 4 },
+    sheetBody: { gap: 4 },
     chip: {
       minHeight: 48,
       flexDirection: 'row',
@@ -301,7 +294,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       gap: 8,
       paddingHorizontal: 10,
       paddingVertical: 8,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line
     },
@@ -355,20 +348,17 @@ function Field({
   disabled?: boolean;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
-  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput
+      <AppTextInput
         accessibilityLabel={label}
         accessibilityHint={error}
         accessibilityState={{ disabled }}
         editable={!disabled}
         value={value}
         onChangeText={onChange}
-        style={[styles.input, focused && styles.inputFocused, error && styles.inputError]}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        style={styles.input}
+        error={Boolean(error)}
         keyboardType={numeric ? 'number-pad' : 'default'}
         multiline={multiline}
         autoCapitalize="none"
@@ -470,6 +460,7 @@ export function TopicComposerScreen({
   const onLayout = useStartupPageLayout();
   const insets = useSafeAreaInsets();
   const [titleEditing, setTitleEditing] = useState(false);
+  const [topBarHeight, setTopBarHeight] = useState(0);
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [editorPanelOpen, setEditorPanelOpen] = useState(false);
   const [editorFocusPending, setEditorFocusPending] = useState(false);
@@ -732,1036 +723,1075 @@ export function TopicComposerScreen({
     </View>
   );
   return (
-    <ComposerKeyboardHost
-      testID="topic-keyboard-host"
-      ref={keyboardHost}
-      enabled={active && panel === null}
-      style={styles.root}
-    >
-      <Animated.View testID="create-topic-keyboard-viewport" style={[styles.root, keyboardStyle]}>
-        {/* A Modal/picker owns a different window and can consume the Activity's final IME hide frame. */}
-        {active && panel === null ? (
-          <TopicComposerKeyboardObserver
-            bottomInset={insets.bottom}
-            publish={setKeyboard}
-            pickerReady={pickerReady}
-            onOpened={keyboardOpened}
-          />
-        ) : null}
-        <SafeAreaView
-          testID="create-topic-safe-area"
-          style={[styles.root, { paddingTop: Math.max(insets.top, NativeStatusBar.currentHeight ?? 0) }]}
-          edges={['bottom']}
-          onLayout={onLayout}
-        >
-          <View style={styles.header}>
-            <IconButton icon={ChevronLeft} iconOnly label="返回" onPress={onBack} disabled={c.busy} />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={c.editing ? '编辑帖子' : '切换发帖网站'}
-              accessibilityHint={
-                c.session?.currentUser?.username
-                  ? `当前发布账号：${c.session.currentUser.username}`
-                  : c.session?.statusLabel
-              }
-              disabled={c.busy || c.editing}
-              style={styles.siteButton}
-              onPress={() => openPanel('sites')}
-            >
-              <View style={styles.siteIdentity}>
-                <View style={styles.siteName}>
-                  <Text numberOfLines={1} style={styles.heading}>
-                    {c.source ? sourceCatalog[c.source].label : '发帖'}
-                  </Text>
-                  {!c.editing ? <ChevronDown color={theme.ink} size={15} /> : null}
-                </View>
-                <Text numberOfLines={1} style={styles.muted}>
-                  {c.session?.currentUser?.username || c.session?.statusLabel || '选择发帖账号'}
-                  {draft ? ` · ${c.uploading ? '上传中…' : c.saveStatus}` : ''}
-                </Text>
-              </View>
-            </Pressable>
-            <AppButton
-              label={c.editing ? (c.busy ? '保存中…' : '保存修改') : c.busy ? '发布中…' : '发布'}
-              accessibilityLabel={c.editing ? '保存修改' : '发布'}
-              variant="primary"
-              disabled={
-                !draft ||
-                (c.editing && !c.hasChanges) ||
-                !context ||
-                !editorEnabled ||
-                c.busy ||
-                c.loading ||
-                c.contextLoading ||
-                c.uploading ||
-                unresolved ||
-                !c.session?.canWrite ||
-                !c.enabled
-              }
-              onPress={() => {
-                Keyboard.dismiss();
-                void c.submit();
-              }}
+    <NavigationBackdropProvider>
+      <ComposerKeyboardHost
+        testID="topic-keyboard-host"
+        ref={keyboardHost}
+        enabled={active && panel === null}
+        style={styles.root}
+      >
+        <Animated.View testID="create-topic-keyboard-viewport" style={[styles.root, keyboardStyle]}>
+          {/* A Modal/picker owns a different window and can consume the Activity's final IME hide frame. */}
+          {active && panel === null ? (
+            <TopicComposerKeyboardObserver
+              bottomInset={insets.bottom}
+              publish={setKeyboard}
+              pickerReady={pickerReady}
+              onOpened={keyboardOpened}
             />
-          </View>
-          {c.error ? (
-            <View style={styles.banner}>
-              <Text accessibilityRole="alert" style={styles.error}>
-                {c.error}
-              </Text>
-            </View>
           ) : null}
-          {c.editing && c.error && !c.busy ? (
-            <View style={styles.banner}>
+          <SafeAreaView
+            testID="create-topic-safe-area"
+            style={[styles.root, { paddingTop: Math.max(insets.top, NativeStatusBar.currentHeight ?? 0) }]}
+            edges={['bottom']}
+            onLayout={onLayout}
+          >
+            <View style={styles.header} onLayout={(event) => setTopBarHeight(event.nativeEvent.layout.height)}>
+              <IconButton
+                icon={ChevronLeft}
+                iconSize={24}
+                iconOnly
+                ghost
+                label="返回"
+                onPress={onBack}
+                disabled={c.busy}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={c.editing ? '编辑帖子' : '切换发帖网站'}
+                accessibilityHint={
+                  c.session?.currentUser?.username
+                    ? `当前发布账号：${c.session.currentUser.username}`
+                    : c.session?.statusLabel
+                }
+                disabled={c.busy || c.editing}
+                style={styles.siteButton}
+                onPress={() => openPanel('sites')}
+              >
+                <View style={styles.siteIdentity}>
+                  <View style={styles.siteName}>
+                    <Text numberOfLines={1} style={styles.heading}>
+                      {c.source ? sourceCatalog[c.source].label : '发帖'}
+                    </Text>
+                    {!c.editing ? <ChevronDown color={theme.ink} size={15} /> : null}
+                  </View>
+                  <Text numberOfLines={1} style={styles.muted}>
+                    {c.session?.currentUser?.username || c.session?.statusLabel || '选择发帖账号'}
+                    {draft ? ` · ${c.uploading ? '上传中…' : c.saveStatus}` : ''}
+                  </Text>
+                </View>
+              </Pressable>
               <AppButton
-                label="核对原站最新内容"
+                backdrop={<NavigationGlass accent />}
+                label={c.editing ? (c.busy ? '保存中…' : '保存修改') : c.busy ? '发布中…' : '发布'}
+                accessibilityLabel={c.editing ? '保存修改' : '发布'}
+                variant="primary"
+                disabled={
+                  !draft ||
+                  (c.editing && !c.hasChanges) ||
+                  !context ||
+                  !editorEnabled ||
+                  c.busy ||
+                  c.loading ||
+                  c.contextLoading ||
+                  c.uploading ||
+                  unresolved ||
+                  !c.session?.canWrite ||
+                  !c.enabled
+                }
                 onPress={() => {
-                  void c.reviewLatest().then((value) => {
-                    if (value) openPanel('latest');
-                  });
+                  Keyboard.dismiss();
+                  void c.submit();
                 }}
               />
             </View>
-          ) : null}
-          {unresolved && !c.busy ? (
-            <View style={styles.banner}>
-              <Text style={styles.error}>
-                {c.editing ? '上次保存结果尚未确认，请先到原站核对。' : '上次发布结果尚未确认，请先到原站核对。'}
-              </Text>
-              <View style={styles.row}>
-                <AppButton
-                  label="到原站核对"
-                  onPress={() => {
-                    if (c.source) onOpenAccount(c.source);
-                  }}
-                />
-                <AppButton
-                  label={c.editing ? '已核对，未保存' : '已核对，未发布'}
-                  onPress={() => void c.acknowledgeUnknown()}
-                />
-              </View>
-            </View>
-          ) : null}
-          {c.loading && !draft ? (
-            <View style={styles.center}>
-              <ActivityIndicator color={theme.primary} />
-              <Text style={styles.muted}>正在恢复草稿…</Text>
-            </View>
-          ) : !c.enabled && !draft ? (
-            <View style={styles.center}>
-              <Text style={styles.text}>此网站已停用</Text>
-              <AppButton label="管理内容来源" onPress={onManageSources} />
-            </View>
-          ) : !draft ? (
-            <View style={styles.center}>
-              <Text style={styles.text}>{c.session?.isLoggedIn ? '草稿暂时无法读取' : '登录后创建和恢复你的草稿'}</Text>
-              <AppButton
-                label={c.session?.isLoggedIn ? '重试读取草稿' : '登录当前网站'}
-                onPress={() => (c.session?.isLoggedIn ? c.retryDraft() : c.source && onOpenAccount(c.source))}
-              />
-            </View>
-          ) : (
-            <View style={styles.flex}>
-              <View
-                style={styles.flex}
-                pointerEvents={editorObscured ? 'none' : 'auto'}
-                accessibilityElementsHidden={editorObscured}
-                importantForAccessibility={editorObscured ? 'no-hide-descendants' : 'auto'}
-              >
-                <ScrollView
-                  overScrollMode="never"
-                  style={[styles.metaViewport, metadataCollapsed && { maxHeight: 0 }]}
-                  accessibilityElementsHidden={metadataCollapsed}
-                  importantForAccessibility={metadataCollapsed ? 'no-hide-descendants' : 'auto'}
-                  contentContainerStyle={[styles.meta, draft.source === 'yaohuo' && styles.yaohuoMeta]}
-                  keyboardShouldPersistTaps="handled"
-                >
-                  {!c.session?.canWrite ? (
-                    <View style={styles.row}>
-                      <Text style={styles.error}>请确认登录状态后发布</Text>
-                      <AppButton label="检测登录" onPress={() => onOpenAccount(draft.source)} />
-                    </View>
-                  ) : null}
-                  <ScrollView
-                    overScrollMode="never"
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.metadataRow}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    {!c.editing || draft.source === 'linuxdo' ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={rulesLoading ? '正在加载版块' : category?.name || '选择版块'}
-                        accessibilityState={{
-                          disabled: c.busy || !context || !allowed('categoryId'),
-                          busy: rulesLoading
-                        }}
-                        disabled={c.busy || !context || !allowed('categoryId')}
-                        style={[
-                          styles.metadataControl,
-                          (c.busy || !context || !allowed('categoryId')) && styles.disabled
-                        ]}
-                        onPress={() => {
-                          if (allowed('categoryId')) openPanel('categories');
-                        }}
-                      >
-                        <Text numberOfLines={1} style={styles.text}>
-                          {rulesLoading ? '加载版块…' : category?.name || '选择版块'}
-                        </Text>
-                        {rulesLoading ? (
-                          <ActivityIndicator size="small" color={theme.muted} />
-                        ) : (
-                          <ChevronDown size={14} color={theme.muted} />
-                        )}
-                      </Pressable>
-                    ) : null}
-                    {draft.source === 'linuxdo' ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={
-                          rulesLoading
-                            ? '正在加载标签规则'
-                            : draft.tags.length
-                              ? `标签 ${draft.tags.length}`
-                              : '选择标签'
-                        }
-                        accessibilityHint={tagsHint}
-                        accessibilityState={{ disabled: c.busy || !context || !allowed('tags'), busy: rulesLoading }}
-                        disabled={c.busy || !context || !allowed('tags')}
-                        style={[styles.metadataControl, (c.busy || !context || !allowed('tags')) && styles.disabled]}
-                        onPress={() => {
-                          if (allowed('tags')) openPanel('tags');
-                        }}
-                      >
-                        <Text numberOfLines={1} style={styles.muted}>
-                          {rulesLoading
-                            ? '加载标签…'
-                            : draft.tags.length
-                              ? `标签 ${draft.tags.length}`
-                              : tagsHint
-                                ? '选择标签 · 必填'
-                                : '选择标签'}
-                        </Text>
-                        {rulesLoading ? (
-                          <ActivityIndicator size="small" color={theme.muted} />
-                        ) : (
-                          <ChevronDown size={14} color={theme.muted} />
-                        )}
-                      </Pressable>
-                    ) : null}
-                  </ScrollView>
-                  {!c.editing &&
-                  draft.source === 'nodeseek' &&
-                  draft.categoryId === 'inside' &&
-                  context?.source === 'nodeseek' ? (
-                    <Text style={styles.muted}>内版发布费用：{context.insideFee} 鸡腿</Text>
-                  ) : null}
-                  <TextInput
-                    ref={titleRef}
-                    accessibilityLabel="帖子标题"
-                    placeholder="标题"
-                    placeholderTextColor={theme.muted}
-                    value={draft.title}
-                    onChangeText={(title) => c.change((value) => ({ ...value, title }))}
-                    onFocus={() => setTitleEditing(true)}
-                    onBlur={() => setTitleEditing(false)}
-                    editable={!c.busy && allowed('title')}
-                    multiline
-                    style={[styles.title, draft.source === 'yaohuo' && styles.yaohuoTitle]}
-                  />
-                  {c.errors.title ? <Text style={styles.error}>{c.errors.title}</Text> : null}
-                  {[categoryError, rankError, tagsError].filter(Boolean).map((error) => (
-                    <Text key={error} accessibilityLiveRegion="polite" style={styles.error}>
-                      {error}
-                    </Text>
-                  ))}
-                  {c.contextError ? (
-                    <View style={styles.row}>
-                      <Text style={styles.error}>{c.contextError}</Text>
-                      {c.contextNeedsVerification ? (
-                        <AppButton label="验证登录" disabled={c.busy} onPress={() => onOpenAccount(draft.source)} />
-                      ) : null}
-                      <AppButton label="重试加载规则" disabled={c.busy || c.contextLoading} onPress={c.reloadContext} />
-                    </View>
-                  ) : null}
-                </ScrollView>
-                <View style={[styles.metadataBar, draft.source === 'yaohuo' && styles.yaohuoMetadataBar]}>
-                  {metadataCollapsed ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="查看标题与标签"
-                      accessibilityHint={draft.title || '查看标题、版块和标签'}
-                      style={styles.metadataSummary}
-                      onPress={() => {
-                        setTitleEditing(true);
-                        requestAnimationFrame(() => titleRef.current?.focus());
-                      }}
-                    >
-                      <Text style={styles.muted}>标题</Text>
-                      <ChevronDown size={14} color={theme.muted} />
-                    </Pressable>
-                  ) : null}
-                  {!c.editing || draft.source === 'nodeseek' || allowed('additionalReward') ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="帖子设置"
-                      accessibilityHint={settingsSummary}
-                      accessibilityState={{ disabled: c.busy || !context, busy: rulesLoading }}
-                      disabled={c.busy || !context}
-                      style={[
-                        styles.settingsControl,
-                        draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
-                        (c.busy || !context) && styles.disabled
-                      ]}
-                      onPress={() => openPanel('options')}
-                    >
-                      <View style={styles.flex}>
-                        {draft.source !== 'yaohuo' ? (
-                          <Text style={[styles.text, styles.settingsLabel]}>帖子设置</Text>
-                        ) : null}
-                        <Text
-                          numberOfLines={1}
-                          style={draft.source === 'yaohuo' ? [styles.text, styles.settingsLabel] : styles.muted}
-                        >
-                          {rulesLoading ? '加载规则…' : settingsSummary}
-                        </Text>
-                      </View>
-                      <ChevronRight size={16} color={theme.muted} />
-                    </Pressable>
-                  ) : null}
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="附件与草稿"
-                    accessibilityState={{ disabled: c.busy }}
-                    disabled={c.busy}
-                    accessibilityHint="管理图片、附件和本机草稿"
-                    style={[
-                      styles.settingsControl,
-                      draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
-                      c.busy && styles.disabled
-                    ]}
-                    onPress={() => openPanel('more')}
-                  >
-                    <View style={styles.flex}>
-                      <View style={draft.source === 'yaohuo' && styles.yaohuoAttachmentLabel}>
-                        <Text style={[styles.text, styles.settingsLabel]}>附件与草稿</Text>
-                        {draft.source === 'yaohuo' && draft.attachments.length ? (
-                          <Text style={styles.attachmentCount}>{draft.attachments.length}</Text>
-                        ) : null}
-                      </View>
-                      {draft.source !== 'yaohuo' ? (
-                        <Text numberOfLines={1} style={styles.muted}>
-                          {draft.attachments.length ? draft.attachments.length + ' 个附件 · 管理' : '上传与草稿管理'}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <ChevronRight size={16} color={theme.muted} />
-                  </Pressable>
-                </View>
-                {c.saveStatus.startsWith('保存失败') ? (
-                  <View style={styles.saveLine}>
-                    <Text accessibilityLiveRegion="polite" style={styles.error}>
-                      {c.saveStatus}
-                    </Text>
-                    <AppButton
-                      label="重试保存草稿"
-                      compact
-                      variant="ghost"
-                      disabled={c.busy}
-                      onPress={() => {
-                        void c.flush().catch(() => undefined);
-                      }}
-                    />
-                  </View>
-                ) : null}
-                {panel === null && insertionError ? (
+            <NavigationBackdropTarget active={active} testID="composer-glass-content" topInset={topBarHeight}>
+              {c.error ? (
+                <View style={styles.banner}>
                   <Text accessibilityRole="alert" style={styles.error}>
-                    {insertionError}
+                    {c.error}
                   </Text>
-                ) : null}
-                {c.errors.body || (draft.source === 'nodeseek' && c.errors.poll) ? (
-                  <Text accessibilityLiveRegion="polite" style={styles.error}>
-                    {c.errors.body || c.errors.poll}
-                  </Text>
-                ) : null}
-                <View style={styles.editor}>
-                  {!editorEnabled && draft.source !== 'yaohuo' ? (
-                    <View style={styles.center} accessibilityLiveRegion="polite">
-                      <ActivityIndicator color={theme.primary} />
-                      <Text style={styles.muted}>正在准备正文…</Text>
-                    </View>
-                  ) : draft.source === 'yaohuo' ? (
-                    <YaohuoReplyComposer
-                      key={draft.id}
-                      presentation="embedded"
-                      dismissPanels={titleEditing || panel !== null}
-                      faceMode="inline"
-                      actionBusy={c.busy || !allowed('body')}
-                      focusSignal={bodyFocusSignal}
-                      content={draft.body}
-                      inputAccessibilityLabel="帖子正文"
-                      placeholder="写下正文…"
-                      onContentChange={(body) => c.change((value) => ({ ...value, body }))}
-                      onUploadImage={() => c.pickAttachments('image', true)}
-                      awaitKeyboardSettled={awaitKeyboardSettled}
-                      onPanelChange={changeEditorPanel}
-                      onReturnToEditor={returnToEditor}
-                    />
-                  ) : (
-                    <StructuredReplyComposer
-                      key={draft.id}
-                      ref={c.editorRef}
-                      presentation="embedded"
-                      dismissPanels={titleEditing || panel !== null}
-                      footerActions={footerActions}
-                      onTogglePreview={togglePreview}
-                      onPanelChange={changeEditorPanel}
-                      onReturnToEditor={returnToEditor}
-                      actionBusy={c.busy}
-                      visible={active && panel === null}
-                      content={draft.body}
-                      initialMode={draft.mode}
-                      readOnly={bodyReadOnly}
-                      focusSignal={bodyFocusSignal}
-                      intent={
-                        draft.edit
-                          ? { kind: 'edit-topic', site: draft.source, topicId: draft.edit.topicId, draftId: draft.id }
-                          : { kind: 'create-topic', site: draft.source, draftId: draft.id }
-                      }
-                      pendingNodeSeekPolls={draft.pendingNodeSeekPolls}
-                      nodeSeekMemberId={
-                        draft.source === 'nodeseek' ? draft.identityKey.slice('nodeseek:'.length) : undefined
-                      }
-                      discourseEmojiUrls={c.emojiUrls}
-                      onSnapshot={(snapshot) => c.acceptSnapshot(snapshot, draft.id)}
-                      onUploadImage={() => c.pickAttachments('image', true)}
-                      awaitKeyboardSettled={awaitKeyboardSettled}
-                      onLoadLinuxDoPollCapabilities={async () => {
-                        if (context?.source !== 'linuxdo') throw new Error('请先加载发帖设置');
-                        return context.pollCapabilities;
-                      }}
-                      onLoadLinuxDoTemplates={c.editorServices.loadTemplates}
-                      onUseLinuxDoTemplate={c.editorServices.useTemplate}
-                      onResolveLinuxDoUpload={c.editorServices.resolveUpload}
-                    />
-                  )}
-                </View>
-              </View>
-              {editorObscured ? (
-                <View testID="draft-owner-overlay" style={[StyleSheet.absoluteFill, styles.root, styles.center]}>
-                  {c.enabled && c.loading ? (
-                    <>
-                      <ActivityIndicator color={theme.primary} />
-                      <Text style={styles.muted}>正在恢复草稿…</Text>
-                    </>
-                  ) : c.enabled ? (
-                    <>
-                      <Text style={styles.error}>尚未完成草稿保存与切换，原草稿仍保留。</Text>
-                      <AppButton label="重试保存并恢复" onPress={c.retryDraft} disabled={c.busy} />
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.text}>此网站已停用</Text>
-                      <AppButton label="管理内容来源" onPress={onManageSources} />
-                    </>
-                  )}
                 </View>
               ) : null}
-            </View>
-          )}
-          <ModalSheetFrame
-            keyboardHostRef={modalKeyboardHost}
-            visible={Boolean(panel) && (!editorObscured || panel === 'sites')}
-            backdropLabel="收起发帖面板"
-            onRequestClose={() => setPanel(null)}
-          >
-            <View style={styles.sheetHeading}>
-              <Text style={styles.heading}>{panel ? panelTitle[panel] : ''}</Text>
-              <IconButton icon={X} iconOnly label="关闭发帖选项" onPress={() => setPanel(null)} />
-            </View>
-            {c.error ? (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {c.error}
-              </Text>
-            ) : null}
-            {panel === 'categories' || panel === 'tags' ? (
-              <TopicSelectionPanel
-                mode={panel}
-                controller={c}
-                query={panel === 'categories' ? categoryQuery : tagQuery}
-                onQueryChange={panel === 'categories' ? setCategoryQuery : setTagQuery}
-                error={panel === 'categories' ? categoryError : tagsError}
-                hint={panel === 'tags' ? tagsHint : undefined}
-                tagSearch={tagSearch}
-                onSelectCategory={() => openPanel('categories')}
-                onClose={() => setPanel(null)}
-              />
-            ) : (
-              <ScrollView
-                overScrollMode="never"
-                key={panel}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.sheetBody}
-              >
-                {insertionError ? (
-                  <Text accessibilityRole="alert" style={styles.error}>
-                    {insertionError}
+              {c.editing && c.error && !c.busy ? (
+                <View style={styles.banner}>
+                  <AppButton
+                    label="核对原站最新内容"
+                    onPress={() => {
+                      void c.reviewLatest().then((value) => {
+                        if (value) openPanel('latest');
+                      });
+                    }}
+                  />
+                </View>
+              ) : null}
+              {unresolved && !c.busy ? (
+                <View style={styles.banner}>
+                  <Text style={styles.error}>
+                    {c.editing ? '上次保存结果尚未确认，请先到原站核对。' : '上次发布结果尚未确认，请先到原站核对。'}
                   </Text>
-                ) : null}
-                {panel === 'latest' && c.editContext ? (
-                  <View style={styles.section}>
-                    <Text selectable style={styles.heading}>
-                      {c.editContext.original.title}
-                    </Text>
-                    <Text selectable style={styles.text}>
-                      {c.editContext.original.body}
-                    </Text>
-                    <Text selectable style={styles.muted}>
-                      版块：{c.editContext.original.categoryId} · 标签：
-                      {c.editContext.original.tags?.map((tag) => tag.name).join('、') || '无'} · 阅读权限：
-                      {c.editContext.original.rank ?? '无'}
-                    </Text>
+                  <View style={styles.row}>
                     <AppButton
-                      label="保留本机修改继续"
-                      disabled={unresolved || c.busy}
+                      label="到原站核对"
                       onPress={() => {
-                        void c.rebaseEdit().then(() => setPanel(null));
+                        if (c.source) onOpenAccount(c.source);
                       }}
                     />
+                    <AppButton
+                      label={c.editing ? '已核对，未保存' : '已核对，未发布'}
+                      onPress={() => void c.acknowledgeUnknown()}
+                    />
                   </View>
-                ) : null}
-                {panel === 'options' && c.editing && draft?.source === 'yaohuo' && allowed('additionalReward') ? (
-                  <Field
-                    label="追加悬赏妖晶（选填）"
-                    numeric
-                    disabled={c.busy}
-                    value={draft.additionalReward || ''}
-                    error={c.errors.additionalReward}
-                    onChange={(additionalReward) => c.change((value) => ({ ...value, additionalReward }))}
+                </View>
+              ) : null}
+              {c.loading && !draft ? (
+                <View style={styles.center}>
+                  <ActivityIndicator color={theme.primary} />
+                  <Text style={styles.muted}>正在恢复草稿…</Text>
+                </View>
+              ) : !c.enabled && !draft ? (
+                <View style={styles.center}>
+                  <Text style={styles.text}>此网站已停用</Text>
+                  <AppButton label="管理内容来源" onPress={onManageSources} />
+                </View>
+              ) : !draft ? (
+                <View style={styles.center}>
+                  <Text style={styles.text}>
+                    {c.session?.isLoggedIn ? '草稿暂时无法读取' : '登录后创建和恢复你的草稿'}
+                  </Text>
+                  <AppButton
+                    label={c.session?.isLoggedIn ? '重试读取草稿' : '登录当前网站'}
+                    onPress={() => (c.session?.isLoggedIn ? c.retryDraft() : c.source && onOpenAccount(c.source))}
                   />
-                ) : null}
-                {panel === 'sites'
-                  ? (['nodeseek', 'linuxdo', 'yaohuo'] as const).map((site) => (
-                      <Pressable
-                        key={site}
-                        accessibilityRole="button"
-                        accessibilityLabel={`选择 ${sourceCatalog[site].label}`}
-                        accessibilityState={{ selected: site === c.source, disabled: c.busy }}
-                        disabled={c.busy}
-                        style={[styles.option, styles.optionRow, site === c.source && styles.selected]}
-                        onPress={() => {
-                          setPanel(null);
-                          void c.switchSource(site);
-                        }}
+                </View>
+              ) : (
+                <View style={styles.flex}>
+                  <View
+                    style={styles.flex}
+                    pointerEvents={editorObscured ? 'none' : 'auto'}
+                    accessibilityElementsHidden={editorObscured}
+                    importantForAccessibility={editorObscured ? 'no-hide-descendants' : 'auto'}
+                  >
+                    <ScrollView
+                      overScrollMode="never"
+                      style={[styles.metaViewport, metadataCollapsed && { maxHeight: 0 }]}
+                      accessibilityElementsHidden={metadataCollapsed}
+                      importantForAccessibility={metadataCollapsed ? 'no-hide-descendants' : 'auto'}
+                      contentContainerStyle={[styles.meta, draft.source === 'yaohuo' && styles.yaohuoMeta]}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      {!c.session?.canWrite ? (
+                        <View style={styles.row}>
+                          <Text style={styles.error}>请确认登录状态后发布</Text>
+                          <AppButton label="检测登录" onPress={() => onOpenAccount(draft.source)} />
+                        </View>
+                      ) : null}
+                      <ScrollView
+                        overScrollMode="never"
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.metadataRow}
+                        keyboardShouldPersistTaps="handled"
                       >
-                        <View style={styles.optionText}>
-                          <Text style={[styles.text, site === c.source && styles.selectedText]}>
-                            {sourceCatalog[site].label}
-                            {c.draftSites[site] ? ' · 有草稿' : ''}
-                          </Text>
-                          <Text style={styles.muted}>
-                            {!enabledSources.includes(site)
-                              ? '已停用'
-                              : sessions[site].currentUser?.username || sessions[site].statusLabel}
-                          </Text>
+                        {!c.editing || draft.source === 'linuxdo' ? (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={rulesLoading ? '正在加载版块' : category?.name || '选择版块'}
+                            accessibilityState={{
+                              disabled: c.busy || !context || !allowed('categoryId'),
+                              busy: rulesLoading
+                            }}
+                            disabled={c.busy || !context || !allowed('categoryId')}
+                            style={[
+                              styles.metadataControl,
+                              (c.busy || !context || !allowed('categoryId')) && styles.disabled
+                            ]}
+                            onPress={() => {
+                              if (allowed('categoryId')) openPanel('categories');
+                            }}
+                          >
+                            <Text numberOfLines={1} style={styles.text}>
+                              {rulesLoading ? '加载版块…' : category?.name || '选择版块'}
+                            </Text>
+                            {rulesLoading ? (
+                              <ActivityIndicator size="small" color={theme.muted} />
+                            ) : (
+                              <ChevronDown size={14} color={theme.muted} />
+                            )}
+                          </Pressable>
+                        ) : null}
+                        {draft.source === 'linuxdo' ? (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={
+                              rulesLoading
+                                ? '正在加载标签规则'
+                                : draft.tags.length
+                                  ? `标签 ${draft.tags.length}`
+                                  : '选择标签'
+                            }
+                            accessibilityHint={tagsHint}
+                            accessibilityState={{
+                              disabled: c.busy || !context || !allowed('tags'),
+                              busy: rulesLoading
+                            }}
+                            disabled={c.busy || !context || !allowed('tags')}
+                            style={[
+                              styles.metadataControl,
+                              (c.busy || !context || !allowed('tags')) && styles.disabled
+                            ]}
+                            onPress={() => {
+                              if (allowed('tags')) openPanel('tags');
+                            }}
+                          >
+                            <Text numberOfLines={1} style={styles.muted}>
+                              {rulesLoading
+                                ? '加载标签…'
+                                : draft.tags.length
+                                  ? `标签 ${draft.tags.length}`
+                                  : tagsHint
+                                    ? '选择标签 · 必填'
+                                    : '选择标签'}
+                            </Text>
+                            {rulesLoading ? (
+                              <ActivityIndicator size="small" color={theme.muted} />
+                            ) : (
+                              <ChevronDown size={14} color={theme.muted} />
+                            )}
+                          </Pressable>
+                        ) : null}
+                      </ScrollView>
+                      {!c.editing &&
+                      draft.source === 'nodeseek' &&
+                      draft.categoryId === 'inside' &&
+                      context?.source === 'nodeseek' ? (
+                        <Text style={styles.muted}>内版发布费用：{context.insideFee} 鸡腿</Text>
+                      ) : null}
+                      <TextInput
+                        ref={titleRef}
+                        accessibilityLabel="帖子标题"
+                        placeholder="标题"
+                        placeholderTextColor={theme.muted}
+                        value={draft.title}
+                        onChangeText={(title) => c.change((value) => ({ ...value, title }))}
+                        onFocus={() => setTitleEditing(true)}
+                        onBlur={() => setTitleEditing(false)}
+                        editable={!c.busy && allowed('title')}
+                        multiline
+                        style={[styles.title, draft.source === 'yaohuo' && styles.yaohuoTitle]}
+                      />
+                      {c.errors.title ? <Text style={styles.error}>{c.errors.title}</Text> : null}
+                      {[categoryError, rankError, tagsError].filter(Boolean).map((error) => (
+                        <Text key={error} accessibilityLiveRegion="polite" style={styles.error}>
+                          {error}
+                        </Text>
+                      ))}
+                      {c.contextError ? (
+                        <View style={styles.row}>
+                          <Text style={styles.error}>{c.contextError}</Text>
+                          {c.contextNeedsVerification ? (
+                            <AppButton label="验证登录" disabled={c.busy} onPress={() => onOpenAccount(draft.source)} />
+                          ) : null}
+                          <AppButton
+                            label="重试加载规则"
+                            disabled={c.busy || c.contextLoading}
+                            onPress={c.reloadContext}
+                          />
                         </View>
-                        <View style={styles.choiceIndicator}>
-                          {site === c.source ? <Check size={20} color={theme.primary} /> : null}
-                        </View>
-                      </Pressable>
-                    ))
-                  : null}
-                {panel === 'more' && draft ? (
-                  <>
-                    {hasFilePanel ? (
+                      ) : null}
+                    </ScrollView>
+                    <View style={[styles.metadataBar, draft.source === 'yaohuo' && styles.yaohuoMetadataBar]}>
+                      {metadataCollapsed ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="查看标题与标签"
+                          accessibilityHint={draft.title || '查看标题、版块和标签'}
+                          style={styles.metadataSummary}
+                          onPress={() => {
+                            setTitleEditing(true);
+                            requestAnimationFrame(() => titleRef.current?.focus());
+                          }}
+                        >
+                          <Text style={styles.muted}>标题</Text>
+                          <ChevronDown size={14} color={theme.muted} />
+                        </Pressable>
+                      ) : null}
+                      {!c.editing || draft.source === 'nodeseek' || allowed('additionalReward') ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="帖子设置"
+                          accessibilityHint={settingsSummary}
+                          accessibilityState={{ disabled: c.busy || !context, busy: rulesLoading }}
+                          disabled={c.busy || !context}
+                          style={[
+                            styles.settingsControl,
+                            draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
+                            (c.busy || !context) && styles.disabled
+                          ]}
+                          onPress={() => openPanel('options')}
+                        >
+                          <View style={styles.flex}>
+                            {draft.source !== 'yaohuo' ? (
+                              <Text style={[styles.text, styles.settingsLabel]}>帖子设置</Text>
+                            ) : null}
+                            <Text
+                              numberOfLines={1}
+                              style={draft.source === 'yaohuo' ? [styles.text, styles.settingsLabel] : styles.muted}
+                            >
+                              {rulesLoading ? '加载规则…' : settingsSummary}
+                            </Text>
+                          </View>
+                          <ChevronRight size={16} color={theme.muted} />
+                        </Pressable>
+                      ) : null}
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={mediaLabel}
+                        accessibilityLabel="附件与草稿"
+                        accessibilityState={{ disabled: c.busy }}
+                        disabled={c.busy}
+                        accessibilityHint="管理图片、附件和本机草稿"
+                        style={[
+                          styles.settingsControl,
+                          draft.source === 'yaohuo' && styles.yaohuoSettingsControl,
+                          c.busy && styles.disabled
+                        ]}
+                        onPress={() => openPanel('more')}
+                      >
+                        <View style={styles.flex}>
+                          <View style={draft.source === 'yaohuo' && styles.yaohuoAttachmentLabel}>
+                            <Text style={[styles.text, styles.settingsLabel]}>附件与草稿</Text>
+                            {draft.source === 'yaohuo' && draft.attachments.length ? (
+                              <Text style={styles.attachmentCount}>{draft.attachments.length}</Text>
+                            ) : null}
+                          </View>
+                          {draft.source !== 'yaohuo' ? (
+                            <Text numberOfLines={1} style={styles.muted}>
+                              {draft.attachments.length
+                                ? draft.attachments.length + ' 个附件 · 管理'
+                                : '上传与草稿管理'}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <ChevronRight size={16} color={theme.muted} />
+                      </Pressable>
+                    </View>
+                    {c.saveStatus.startsWith('保存失败') ? (
+                      <View style={styles.saveLine}>
+                        <Text accessibilityLiveRegion="polite" style={styles.error}>
+                          {c.saveStatus}
+                        </Text>
+                        <AppButton
+                          label="重试保存草稿"
+                          compact
+                          variant="ghost"
+                          disabled={c.busy}
+                          onPress={() => {
+                            void c.flush().catch(() => undefined);
+                          }}
+                        />
+                      </View>
+                    ) : null}
+                    {panel === null && insertionError ? (
+                      <Text accessibilityRole="alert" style={styles.error}>
+                        {insertionError}
+                      </Text>
+                    ) : null}
+                    {c.errors.body || (draft.source === 'nodeseek' && c.errors.poll) ? (
+                      <Text accessibilityLiveRegion="polite" style={styles.error}>
+                        {c.errors.body || c.errors.poll}
+                      </Text>
+                    ) : null}
+                    <View style={styles.editor}>
+                      {!editorEnabled && draft.source !== 'yaohuo' ? (
+                        <View style={styles.center} accessibilityLiveRegion="polite">
+                          <ActivityIndicator color={theme.primary} />
+                          <Text style={styles.muted}>正在准备正文…</Text>
+                        </View>
+                      ) : draft.source === 'yaohuo' ? (
+                        <YaohuoReplyComposer
+                          key={draft.id}
+                          presentation="embedded"
+                          dismissPanels={titleEditing || panel !== null}
+                          faceMode="inline"
+                          actionBusy={c.busy || !allowed('body')}
+                          focusSignal={bodyFocusSignal}
+                          content={draft.body}
+                          inputAccessibilityLabel="帖子正文"
+                          placeholder="写下正文…"
+                          onContentChange={(body) => c.change((value) => ({ ...value, body }))}
+                          onUploadImage={() => c.pickAttachments('image', true)}
+                          awaitKeyboardSettled={awaitKeyboardSettled}
+                          onPanelChange={changeEditorPanel}
+                          onReturnToEditor={returnToEditor}
+                        />
+                      ) : (
+                        <StructuredReplyComposer
+                          key={draft.id}
+                          ref={c.editorRef}
+                          presentation="embedded"
+                          dismissPanels={titleEditing || panel !== null}
+                          footerActions={footerActions}
+                          onTogglePreview={togglePreview}
+                          onPanelChange={changeEditorPanel}
+                          onReturnToEditor={returnToEditor}
+                          actionBusy={c.busy}
+                          visible={active && panel === null}
+                          content={draft.body}
+                          initialMode={draft.mode}
+                          readOnly={bodyReadOnly}
+                          focusSignal={bodyFocusSignal}
+                          intent={
+                            draft.edit
+                              ? {
+                                  kind: 'edit-topic',
+                                  site: draft.source,
+                                  topicId: draft.edit.topicId,
+                                  draftId: draft.id
+                                }
+                              : { kind: 'create-topic', site: draft.source, draftId: draft.id }
+                          }
+                          pendingNodeSeekPolls={draft.pendingNodeSeekPolls}
+                          nodeSeekMemberId={
+                            draft.source === 'nodeseek' ? draft.identityKey.slice('nodeseek:'.length) : undefined
+                          }
+                          discourseEmojiUrls={c.emojiUrls}
+                          onSnapshot={(snapshot) => c.acceptSnapshot(snapshot, draft.id)}
+                          onUploadImage={() => c.pickAttachments('image', true)}
+                          awaitKeyboardSettled={awaitKeyboardSettled}
+                          onLoadLinuxDoPollCapabilities={async () => {
+                            if (context?.source !== 'linuxdo') throw new Error('请先加载发帖设置');
+                            return context.pollCapabilities;
+                          }}
+                          onLoadLinuxDoTemplates={c.editorServices.loadTemplates}
+                          onUseLinuxDoTemplate={c.editorServices.useTemplate}
+                          onResolveLinuxDoUpload={c.editorServices.resolveUpload}
+                        />
+                      )}
+                    </View>
+                  </View>
+                  {editorObscured ? (
+                    <View testID="draft-owner-overlay" style={[StyleSheet.absoluteFill, styles.root, styles.center]}>
+                      {c.enabled && c.loading ? (
+                        <>
+                          <ActivityIndicator color={theme.primary} />
+                          <Text style={styles.muted}>正在恢复草稿…</Text>
+                        </>
+                      ) : c.enabled ? (
+                        <>
+                          <Text style={styles.error}>尚未完成草稿保存与切换，原草稿仍保留。</Text>
+                          <AppButton label="重试保存并恢复" onPress={c.retryDraft} disabled={c.busy} />
+                        </>
+                      ) : (
+                        <>
+                          <Text style={styles.text}>此网站已停用</Text>
+                          <AppButton label="管理内容来源" onPress={onManageSources} />
+                        </>
+                      )}
+                    </View>
+                  ) : null}
+                </View>
+              )}
+            </NavigationBackdropTarget>
+            <ModalSheetFrame
+              keyboardHostRef={modalKeyboardHost}
+              visible={Boolean(panel) && (!editorObscured || panel === 'sites')}
+              backdropLabel="收起发帖面板"
+              onRequestClose={() => setPanel(null)}
+            >
+              <ModalSheetHeader
+                title={panel ? panelTitle[panel] : ''}
+                closeLabel="关闭发帖选项"
+                onClose={() => setPanel(null)}
+              />
+              {c.error ? (
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {c.error}
+                </Text>
+              ) : null}
+              {panel === 'categories' || panel === 'tags' ? (
+                <TopicSelectionPanel
+                  mode={panel}
+                  controller={c}
+                  query={panel === 'categories' ? categoryQuery : tagQuery}
+                  onQueryChange={panel === 'categories' ? setCategoryQuery : setTagQuery}
+                  error={panel === 'categories' ? categoryError : tagsError}
+                  hint={panel === 'tags' ? tagsHint : undefined}
+                  tagSearch={tagSearch}
+                  onSelectCategory={() => openPanel('categories')}
+                  onClose={() => setPanel(null)}
+                />
+              ) : (
+                <ScrollView
+                  overScrollMode="never"
+                  key={panel}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.sheetBody}
+                >
+                  {insertionError ? (
+                    <Text accessibilityRole="alert" style={styles.error}>
+                      {insertionError}
+                    </Text>
+                  ) : null}
+                  {panel === 'latest' && c.editContext ? (
+                    <View style={styles.section}>
+                      <Text selectable style={styles.heading}>
+                        {c.editContext.original.title}
+                      </Text>
+                      <Text selectable style={styles.text}>
+                        {c.editContext.original.body}
+                      </Text>
+                      <Text selectable style={styles.muted}>
+                        版块：{c.editContext.original.categoryId} · 标签：
+                        {c.editContext.original.tags?.map((tag) => tag.name).join('、') || '无'} · 阅读权限：
+                        {c.editContext.original.rank ?? '无'}
+                      </Text>
+                      <AppButton
+                        label="保留本机修改继续"
+                        disabled={unresolved || c.busy}
+                        onPress={() => {
+                          void c.rebaseEdit().then(() => setPanel(null));
+                        }}
+                      />
+                    </View>
+                  ) : null}
+                  {panel === 'options' && c.editing && draft?.source === 'yaohuo' && allowed('additionalReward') ? (
+                    <Field
+                      label="追加悬赏妖晶（选填）"
+                      numeric
+                      disabled={c.busy}
+                      value={draft.additionalReward || ''}
+                      error={c.errors.additionalReward}
+                      onChange={(additionalReward) => c.change((value) => ({ ...value, additionalReward }))}
+                    />
+                  ) : null}
+                  {panel === 'sites'
+                    ? (['nodeseek', 'linuxdo', 'yaohuo'] as const).map((site) => (
+                        <Pressable
+                          key={site}
+                          accessibilityRole="button"
+                          accessibilityLabel={`选择 ${sourceCatalog[site].label}`}
+                          accessibilityState={{ selected: site === c.source, disabled: c.busy }}
+                          disabled={c.busy}
+                          style={[styles.option, styles.optionRow, site === c.source && styles.selected]}
+                          onPress={() => {
+                            setPanel(null);
+                            void c.switchSource(site);
+                          }}
+                        >
+                          <View style={styles.optionText}>
+                            <Text style={[styles.text, site === c.source && styles.selectedText]}>
+                              {sourceCatalog[site].label}
+                              {c.draftSites[site] ? ' · 有草稿' : ''}
+                            </Text>
+                            <Text style={styles.muted}>
+                              {!enabledSources.includes(site)
+                                ? '已停用'
+                                : sessions[site].currentUser?.username || sessions[site].statusLabel}
+                            </Text>
+                          </View>
+                          <View style={styles.choiceIndicator}>
+                            {site === c.source ? <Check size={20} color={theme.primary} /> : null}
+                          </View>
+                        </Pressable>
+                      ))
+                    : null}
+                  {panel === 'more' && draft ? (
+                    <>
+                      {hasFilePanel ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={mediaLabel}
+                          disabled={c.busy}
+                          style={[styles.option, styles.optionRow]}
+                          onPress={() => openPanel('attachments')}
+                        >
+                          <Paperclip size={20} color={theme.ink} />
+                          <Text style={styles.text}>{mediaLabel}</Text>
+                        </Pressable>
+                      ) : null}
+                      <Text style={styles.muted}>
+                        {c.saveStatus} · {draft.body.length} 字符
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="图片上传记录"
+                        accessibilityState={{ disabled: c.busy }}
                         disabled={c.busy}
                         style={[styles.option, styles.optionRow]}
-                        onPress={() => openPanel('attachments')}
+                        onPress={() => openPanel('images')}
                       >
-                        <Paperclip size={20} color={theme.ink} />
-                        <Text style={styles.text}>{mediaLabel}</Text>
-                      </Pressable>
-                    ) : null}
-                    <Text style={styles.muted}>
-                      {c.saveStatus} · {draft.body.length} 字符
-                    </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="图片上传记录"
-                      accessibilityState={{ disabled: c.busy }}
-                      disabled={c.busy}
-                      style={[styles.option, styles.optionRow]}
-                      onPress={() => openPanel('images')}
-                    >
-                      <ImagePlus size={20} color={theme.ink} />
-                      <View style={styles.optionText}>
-                        <Text style={styles.text}>
-                          图片上传记录{imageAttachments.length ? ` · ${imageAttachments.length}` : ''}
-                        </Text>
-                        <Text style={styles.muted}>核对上传、重试或再次插入正文</Text>
-                      </View>
-                    </Pressable>
-                    <View style={styles.section}>
-                      <Text style={styles.muted}>
-                        {c.editing
-                          ? '编辑草稿按网站、账号和帖子分别保存。返回时保留当前内容。'
-                          : '草稿按网站和账号分别保存。返回或切换网站时保留当前内容。'}
-                      </Text>
-                    </View>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="丢弃草稿"
-                      accessibilityState={{ disabled: c.busy || c.uploading }}
-                      disabled={c.busy || c.uploading}
-                      style={[styles.option, styles.optionRow]}
-                      onPress={() => {
-                        setPanel(null);
-                        void c.discard();
-                      }}
-                    >
-                      <Trash2 size={20} color={theme.danger} />
-                      <Text style={[styles.text, { color: theme.danger }]}>丢弃当前草稿</Text>
-                    </Pressable>
-                  </>
-                ) : null}
-                {panel === 'options' && draft?.source === 'nodeseek' && context?.source === 'nodeseek' ? (
-                  <>
-                    <Text style={[styles.label, styles.sectionLabel]}>阅读权限</Text>
-                    {rankError ? <Text style={styles.error}>{rankError}</Text> : null}
-                    {context.ranks.map((rank) => (
-                      <Pressable
-                        key={rank}
-                        accessibilityRole="radio"
-                        accessibilityLabel={rank === 255 ? '私有' : rank ? `Lv${rank}` : '公开'}
-                        accessibilityState={{ checked: draft.rank === rank, disabled: c.busy }}
-                        disabled={c.busy}
-                        style={[styles.option, styles.optionRow, draft.rank === rank && styles.selected]}
-                        onPress={() => c.change((value) => (value.source === 'nodeseek' ? { ...value, rank } : value))}
-                      >
-                        <Text style={[styles.text, styles.flex, draft.rank === rank && styles.selectedText]}>
-                          {rank === 255 ? '私有' : rank ? `Lv${rank}` : '公开'}
-                        </Text>
-                        <View style={styles.choiceIndicator}>
-                          {draft.rank === rank ? (
-                            <CircleCheck size={20} color={theme.primary} />
-                          ) : (
-                            <Circle size={20} color={theme.muted} />
-                          )}
+                        <ImagePlus size={20} color={theme.ink} />
+                        <View style={styles.optionText}>
+                          <Text style={styles.text}>
+                            图片上传记录{imageAttachments.length ? ` · ${imageAttachments.length}` : ''}
+                          </Text>
+                          <Text style={styles.muted}>核对上传、重试或再次插入正文</Text>
                         </View>
                       </Pressable>
-                    ))}
-                    {!c.editing && draft.categoryId === 'inside' ? (
-                      <Text style={styles.muted}>发布到内版将收取 {context.insideFee} 鸡腿</Text>
-                    ) : null}
-                  </>
-                ) : null}
-                {!c.editing && panel === 'options' && draft?.source === 'linuxdo' && context?.source === 'linuxdo' ? (
-                  <>
-                    <View style={styles.switchRow}>
-                      <Text style={[styles.text, styles.flex]}>问答／帖子投票主题</Text>
-                      <Switch
-                        accessibilityLabel="问答／帖子投票主题"
-                        disabled={c.busy || !context.postVotingEnabled || category?.onlyPostVoting}
-                        value={draft.postVoting}
-                        trackColor={{ false: theme.line, true: theme.primarySoft }}
-                        thumbColor={draft.postVoting ? theme.primary : theme.muted}
-                        onValueChange={(postVoting) =>
-                          c.change((value) => (value.source === 'linuxdo' ? { ...value, postVoting } : value))
-                        }
-                      />
-                    </View>
-                    {category?.onlyPostVoting ? <Text style={styles.muted}>此版块要求使用问答主题</Text> : null}
-                    {!context.postVotingEnabled ? <Text style={styles.muted}>当前站点未开放问答主题</Text> : null}
-                    <Text style={styles.muted}>正文中的投票可通过编辑器工具栏插入。</Text>
-                    {category?.template && draft.body !== category.template ? (
-                      <AppButton
-                        label="插入版块模板"
-                        disabled={c.busy || preview}
-                        onPress={() => void insertAndClose(category.template!)}
-                      />
-                    ) : null}
-                  </>
-                ) : null}
-                {!c.editing && panel === 'options' && draft?.source === 'yaohuo' && context?.source === 'yaohuo' ? (
-                  <>
-                    <Text style={[styles.label, styles.sectionLabel]}>帖子类型</Text>
-                    <View style={styles.row}>
-                      {context.kinds.map((kind) => (
+                      <View style={styles.section}>
+                        <Text style={styles.muted}>
+                          {c.editing
+                            ? '编辑草稿按网站、账号和帖子分别保存。返回时保留当前内容。'
+                            : '草稿按网站和账号分别保存。返回或切换网站时保留当前内容。'}
+                        </Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="丢弃草稿"
+                        accessibilityState={{ disabled: c.busy || c.uploading }}
+                        disabled={c.busy || c.uploading}
+                        style={[styles.option, styles.optionRow]}
+                        onPress={() => {
+                          setPanel(null);
+                          void c.discard();
+                        }}
+                      >
+                        <Trash2 size={20} color={theme.danger} />
+                        <Text style={[styles.text, { color: theme.danger }]}>丢弃当前草稿</Text>
+                      </Pressable>
+                    </>
+                  ) : null}
+                  {panel === 'options' && draft?.source === 'nodeseek' && context?.source === 'nodeseek' ? (
+                    <>
+                      <Text style={[styles.label, styles.sectionLabel]}>阅读权限</Text>
+                      {rankError ? <Text style={styles.error}>{rankError}</Text> : null}
+                      {context.ranks.map((rank) => (
                         <Pressable
-                          key={kind}
+                          key={rank}
                           accessibilityRole="radio"
-                          accessibilityLabel={kindLabels[kind]}
-                          accessibilityState={{ checked: draft.kind === kind, disabled: c.busy }}
+                          accessibilityLabel={rank === 255 ? '私有' : rank ? `Lv${rank}` : '公开'}
+                          accessibilityState={{ checked: draft.rank === rank, disabled: c.busy }}
                           disabled={c.busy}
-                          style={[styles.chip, draft.kind === kind && styles.selectedChip]}
-                          onPress={() => updateYaohuo((value) => ({ ...value, kind }))}
+                          style={[styles.option, styles.optionRow, draft.rank === rank && styles.selected]}
+                          onPress={() =>
+                            c.change((value) => (value.source === 'nodeseek' ? { ...value, rank } : value))
+                          }
                         >
-                          <Check size={16} color={draft.kind === kind ? theme.primary : 'transparent'} />
-                          <Text style={[styles.text, draft.kind === kind && styles.selectedText]}>
-                            {kindLabels[kind]}
+                          <Text style={[styles.text, styles.flex, draft.rank === rank && styles.selectedText]}>
+                            {rank === 255 ? '私有' : rank ? `Lv${rank}` : '公开'}
                           </Text>
+                          <View style={styles.choiceIndicator}>
+                            {draft.rank === rank ? (
+                              <CircleCheck size={20} color={theme.primary} />
+                            ) : (
+                              <Circle size={20} color={theme.muted} />
+                            )}
+                          </View>
                         </Pressable>
                       ))}
-                    </View>
-                    <View style={styles.section}>
-                      {draft.kind === 'normal' ? (
-                        <Field
-                          disabled={c.busy}
-                          label="悬赏妖晶（选填，至少 1000）"
-                          numeric
-                          value={draft.reward}
-                          error={c.errors.reward}
-                          onChange={(reward) => updateYaohuo((value) => ({ ...value, reward }))}
+                      {!c.editing && draft.categoryId === 'inside' ? (
+                        <Text style={styles.muted}>发布到内版将收取 {context.insideFee} 鸡腿</Text>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {!c.editing && panel === 'options' && draft?.source === 'linuxdo' && context?.source === 'linuxdo' ? (
+                    <>
+                      <View style={styles.switchRow}>
+                        <Text style={[styles.text, styles.flex]}>问答／帖子投票主题</Text>
+                        <Switch
+                          accessibilityLabel="问答／帖子投票主题"
+                          disabled={c.busy || !context.postVotingEnabled || category?.onlyPostVoting}
+                          value={draft.postVoting}
+
+                          onValueChange={(postVoting) =>
+                            c.change((value) => (value.source === 'linuxdo' ? { ...value, postVoting } : value))
+                          }
+                        />
+                      </View>
+                      {category?.onlyPostVoting ? <Text style={styles.muted}>此版块要求使用问答主题</Text> : null}
+                      {!context.postVotingEnabled ? <Text style={styles.muted}>当前站点未开放问答主题</Text> : null}
+                      <Text style={styles.muted}>正文中的投票可通过编辑器工具栏插入。</Text>
+                      {category?.template && draft.body !== category.template ? (
+                        <AppButton
+                          label="插入版块模板"
+                          disabled={c.busy || preview}
+                          onPress={() => void insertAndClose(category.template!)}
                         />
                       ) : null}
-                      {draft.kind === 'poll' ? (
-                        <>
-                          {c.errors.poll ? <Text style={styles.error}>{c.errors.poll}</Text> : null}
-                          {draft.poll.options.map((option, index) => (
-                            <View key={index} style={styles.row}>
-                              <View style={styles.flex}>
-                                <Field
-                                  disabled={c.busy}
-                                  label={`投票选项 ${index + 1}（最多 15 字）`}
-                                  value={option}
-                                  onChange={(text) =>
+                    </>
+                  ) : null}
+                  {!c.editing && panel === 'options' && draft?.source === 'yaohuo' && context?.source === 'yaohuo' ? (
+                    <>
+                      <Text style={[styles.label, styles.sectionLabel]}>帖子类型</Text>
+                      <View style={styles.row}>
+                        {context.kinds.map((kind) => (
+                          <Pressable
+                            key={kind}
+                            accessibilityRole="radio"
+                            accessibilityLabel={kindLabels[kind]}
+                            accessibilityState={{ checked: draft.kind === kind, disabled: c.busy }}
+                            disabled={c.busy}
+                            style={[styles.chip, draft.kind === kind && styles.selectedChip]}
+                            onPress={() => updateYaohuo((value) => ({ ...value, kind }))}
+                          >
+                            <Check size={16} color={draft.kind === kind ? theme.primary : 'transparent'} />
+                            <Text style={[styles.text, draft.kind === kind && styles.selectedText]}>
+                              {kindLabels[kind]}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                      <View style={styles.section}>
+                        {draft.kind === 'normal' ? (
+                          <Field
+                            disabled={c.busy}
+                            label="悬赏妖晶（选填，至少 1000）"
+                            numeric
+                            value={draft.reward}
+                            error={c.errors.reward}
+                            onChange={(reward) => updateYaohuo((value) => ({ ...value, reward }))}
+                          />
+                        ) : null}
+                        {draft.kind === 'poll' ? (
+                          <>
+                            {c.errors.poll ? <Text style={styles.error}>{c.errors.poll}</Text> : null}
+                            {draft.poll.options.map((option, index) => (
+                              <View key={index} style={styles.row}>
+                                <View style={styles.flex}>
+                                  <Field
+                                    disabled={c.busy}
+                                    label={`投票选项 ${index + 1}（最多 15 字）`}
+                                    value={option}
+                                    onChange={(text) =>
+                                      updateYaohuo((value) => ({
+                                        ...value,
+                                        poll: {
+                                          ...value.poll,
+                                          options: value.poll.options.map((old, at) => (at === index ? text : old))
+                                        }
+                                      }))
+                                    }
+                                  />
+                                </View>
+                                <IconButton
+                                  icon={X}
+                                  iconOnly
+                                  label={`删除投票选项 ${index + 1}`}
+                                  disabled={c.busy || draft.poll.options.length <= 2}
+                                  onPress={() =>
                                     updateYaohuo((value) => ({
                                       ...value,
                                       poll: {
                                         ...value.poll,
-                                        options: value.poll.options.map((old, at) => (at === index ? text : old))
+                                        options: value.poll.options.filter((_, at) => at !== index)
                                       }
                                     }))
                                   }
                                 />
                               </View>
-                              <IconButton
-                                icon={X}
-                                iconOnly
-                                label={`删除投票选项 ${index + 1}`}
-                                disabled={c.busy || draft.poll.options.length <= 2}
-                                onPress={() =>
-                                  updateYaohuo((value) => ({
-                                    ...value,
-                                    poll: {
-                                      ...value.poll,
-                                      options: value.poll.options.filter((_, at) => at !== index)
+                            ))}
+                            <AppButton
+                              label="添加投票选项"
+                              disabled={c.busy || draft.poll.options.length >= 9}
+                              onPress={() =>
+                                updateYaohuo((value) => ({
+                                  ...value,
+                                  poll: { ...value.poll, options: [...value.poll.options, ''] }
+                                }))
+                              }
+                            />
+                            <View style={styles.spread}>
+                              <Text style={styles.text}>投票派币</Text>
+                              <Switch
+                                accessibilityLabel="投票派币"
+                                disabled={c.busy}
+                                value={draft.poll.giftEnabled}
+                                onValueChange={(giftEnabled) =>
+                                  updateYaohuo((value) => ({ ...value, poll: { ...value.poll, giftEnabled } }))
+                                }
+                              />
+                            </View>
+                          </>
+                        ) : null}
+                        {draft.kind === 'gift' || (draft.kind === 'poll' && draft.poll.giftEnabled) ? (
+                          <Fragment key={giftKind}>
+                            <Field
+                              disabled={c.busy}
+                              label={`${giftKind === 'poll' ? '投票' : ''}派币总额（至少 2000）`}
+                              numeric
+                              value={draft[giftKind].total}
+                              error={c.errors.gift}
+                              onChange={(total) =>
+                                updateYaohuo((value) => ({ ...value, [giftKind]: { ...value[giftKind], total } }))
+                              }
+                            />
+                            <Field
+                              disabled={c.busy}
+                              label={`${giftKind === 'poll' ? '投票' : ''}每人妖晶（200–10000）`}
+                              numeric
+                              value={draft[giftKind].perPerson}
+                              onChange={(perPerson) =>
+                                updateYaohuo((value) => ({ ...value, [giftKind]: { ...value[giftKind], perPerson } }))
+                              }
+                            />
+                          </Fragment>
+                        ) : null}
+                        {draft.kind === 'files' ? (
+                          <>
+                            <Text style={styles.muted}>选择 1–9 个文件，发布时一起上传。</Text>
+                            <AppButton
+                              label="管理文件"
+                              disabled={c.busy || c.uploading}
+                              onPress={() => setPanel('attachments')}
+                            />
+                          </>
+                        ) : null}
+                        {draft.kind === 'resources' ? (
+                          <>
+                            {c.errors.resources ? <Text style={styles.error}>{c.errors.resources}</Text> : null}
+                            {draft.resources.map((resource, index) => (
+                              <View key={index} style={styles.section}>
+                                <View style={styles.spread}>
+                                  <Text style={styles.heading}>资源 {index + 1}</Text>
+                                  <IconButton
+                                    icon={X}
+                                    iconOnly
+                                    label={`删除资源 ${index + 1}`}
+                                    disabled={c.busy || draft.resources.length <= 1}
+                                    onPress={() =>
+                                      updateYaohuo((value) => ({
+                                        ...value,
+                                        resources: value.resources.filter((_, at) => at !== index)
+                                      }))
                                     }
+                                  />
+                                </View>
+                                {(['title', 'url', 'size', 'extension', 'description'] as const).map((key) => (
+                                  <Field
+                                    disabled={c.busy}
+                                    key={key}
+                                    label={`资源 ${index + 1} ${{ title: '名称', url: '链接', size: '大小（选填）', extension: '后缀（选填）', description: '说明（选填）' }[key]}`}
+                                    value={resource[key]}
+                                    multiline={key === 'description'}
+                                    onChange={(text) =>
+                                      updateYaohuo((value) => ({
+                                        ...value,
+                                        resources: value.resources.map((row, at) =>
+                                          at === index ? { ...row, [key]: text } : row
+                                        )
+                                      }))
+                                    }
+                                  />
+                                ))}
+                              </View>
+                            ))}
+                            <AppButton
+                              label="添加资源"
+                              disabled={c.busy || draft.resources.length >= 9}
+                              onPress={() =>
+                                updateYaohuo((value) => ({
+                                  ...value,
+                                  resources: [
+                                    ...value.resources,
+                                    { title: '', url: '', size: '', extension: '', description: '' }
+                                  ]
+                                }))
+                              }
+                            />
+                          </>
+                        ) : null}
+                      </View>
+                    </>
+                  ) : null}
+                  {(panel === 'attachments' || panel === 'images') && draft ? (
+                    <>
+                      {c.errors.attachments ? <Text style={styles.error}>{c.errors.attachments}</Text> : null}
+                      {c.errors.attachments && imageAttachments.length && fileAttachments.length ? (
+                        <AppButton
+                          variant="ghost"
+                          label={panel === 'images' ? `查看${mediaTitle}` : '查看图片记录'}
+                          onPress={() => openPanel(panel === 'images' ? 'attachments' : 'images')}
+                        />
+                      ) : null}
+                      {panel === 'attachments' ? (
+                        <View style={styles.mediaPickers}>
+                          {canPickFiles ? (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel="选择附件"
+                              accessibilityState={{ disabled: c.busy || c.uploading || preview }}
+                              style={[styles.mediaPicker, (c.busy || c.uploading || preview) && styles.disabled]}
+                              disabled={c.busy || c.uploading || preview}
+                              onPress={() => void pickPanelAttachment('attachment')}
+                            >
+                              <Paperclip size={21} color={theme.ink} />
+                              <Text style={styles.text}>添加附件</Text>
+                            </Pressable>
+                          ) : null}
+                          {draft.source === 'yaohuo' && draft.kind === 'files' ? (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel="选择本地文件"
+                              accessibilityState={{ disabled: c.busy || c.uploading || !context }}
+                              style={[styles.mediaPicker, (c.busy || c.uploading || !context) && styles.disabled]}
+                              disabled={c.busy || c.uploading || !context}
+                              onPress={() => void pickPanelAttachment('yaohuo-file')}
+                            >
+                              <Paperclip size={21} color={theme.ink} />
+                              <Text style={styles.text}>添加文件</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      ) : null}
+                      <Text style={styles.muted}>
+                        {panel === 'images'
+                          ? '从正文工具栏插入图片；这里保留上传记录。'
+                          : draft.source === 'linuxdo'
+                            ? '文件上传到 linux.do，以链接插入正文。'
+                            : '选择 1–9 个随帖文件，发布时上传。'}
+                      </Text>
+                      {!context && panel === 'attachments' ? (
+                        <Text style={styles.muted}>读取原站规则后即可选择文件。已保存的内容会继续保留。</Text>
+                      ) : null}
+                      {preview ? <Text style={styles.muted}>继续编辑后可添加文件或插入正文。</Text> : null}
+                      {panel === 'attachments' && context?.source === 'linuxdo' && !canPickFiles ? (
+                        <Text style={styles.muted}>当前账号和站点规则不支持普通附件。</Text>
+                      ) : null}
+                      {panel === 'attachments' && context?.source === 'linuxdo' && canPickFiles ? (
+                        <Text style={styles.muted}>附件最多 {fileSize(context.maxAttachmentBytes)}</Text>
+                      ) : null}
+                      {!visibleAttachments.length ? (
+                        <View style={styles.emptyMedia}>
+                          {panel === 'images' ? (
+                            <ImagePlus size={32} color={theme.muted} />
+                          ) : (
+                            <Paperclip size={32} color={theme.muted} />
+                          )}
+                          <Text style={styles.text}>
+                            {panel === 'images' ? '还没有图片上传记录' : '还没有添加文件'}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {visibleAttachments.map((file) => (
+                        <View key={file.id} style={styles.section}>
+                          <View style={styles.attachmentIdentity}>
+                            <AttachmentThumbnail file={file} />
+                            <View style={styles.attachmentInfo}>
+                              <Text numberOfLines={2} style={styles.text}>
+                                {file.name}
+                              </Text>
+                              <View style={styles.saveLine}>
+                                {file.status === 'uploading' ? (
+                                  <ActivityIndicator size="small" color={theme.primary} />
+                                ) : null}
+                                <Text
+                                  accessibilityLiveRegion="polite"
+                                  style={
+                                    file.status === 'failed' || file.status === 'unknown' ? styles.error : styles.muted
+                                  }
+                                >
+                                  {file.kind === 'yaohuo-file' ? '随帖文件' : file.kind === 'image' ? '图片' : '附件'} ·{' '}
+                                  {fileSize(file.size)} ·{' '}
+                                  {file.kind === 'yaohuo-file' && file.status === 'queued'
+                                    ? '发布时上传'
+                                    : {
+                                        queued: '待上传',
+                                        uploading: '上传中',
+                                        uploaded: '已上传',
+                                        failed: '上传失败',
+                                        unknown: '上传结果待核对'
+                                      }[file.status]}
+                                </Text>
+                              </View>
+                              {file.description && descriptionFileId !== file.id ? (
+                                <Text numberOfLines={2} style={styles.muted}>
+                                  {file.description}
+                                </Text>
+                              ) : null}
+                            </View>
+                            <View style={styles.attachmentActions}>
+                              {file.kind === 'yaohuo-file' ? (
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`${descriptionFileId === file.id ? '收起说明' : file.description ? '编辑说明' : '添加说明'} ${file.name}`}
+                                  accessibilityState={{ disabled: c.busy, expanded: descriptionFileId === file.id }}
+                                  style={[styles.attachmentAction, c.busy && styles.disabled]}
+                                  disabled={c.busy}
+                                  onPress={() =>
+                                    setDescriptionFileId((current) => (current === file.id ? null : file.id))
+                                  }
+                                >
+                                  <Pencil size={20} color={theme.muted} />
+                                </Pressable>
+                              ) : null}
+                              {file.kind !== 'yaohuo-file' && !['uploaded', 'uploading'].includes(file.status) ? (
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`${file.status === 'failed' ? '重试上传' : file.status === 'unknown' ? '核对后重传' : '上传并插入'} ${file.name}`}
+                                  accessibilityState={{ disabled: c.busy || c.uploading || preview }}
+                                  style={[
+                                    styles.attachmentAction,
+                                    (c.busy || c.uploading || preview) && styles.disabled
+                                  ]}
+                                  disabled={c.busy || c.uploading || preview}
+                                  onPress={() => void c.uploadFiles([file])}
+                                >
+                                  {file.status === 'queued' ? (
+                                    <Upload size={20} color={theme.primary} />
+                                  ) : (
+                                    <RotateCw size={20} color={theme.primary} />
+                                  )}
+                                </Pressable>
+                              ) : null}
+                              {file.markup ? (
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`插入正文 ${file.name}`}
+                                  accessibilityState={{ disabled: c.busy || preview }}
+                                  style={[styles.attachmentAction, (c.busy || preview) && styles.disabled]}
+                                  disabled={c.busy || preview}
+                                  onPress={() => void insertAndClose(file.markup!)}
+                                >
+                                  <CornerDownLeft size={20} color={theme.primary} />
+                                </Pressable>
+                              ) : null}
+                              <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={`移出草稿 ${file.name}`}
+                                accessibilityState={{ disabled: c.busy || c.uploading }}
+                                style={[styles.attachmentAction, (c.busy || c.uploading) && styles.disabled]}
+                                disabled={c.busy || c.uploading}
+                                onPress={() => void c.removeAttachment(file)}
+                              >
+                                <X size={20} color={theme.muted} />
+                              </Pressable>
+                            </View>
+                          </View>
+                          {file.error ? <Text style={styles.error}>{file.error}</Text> : null}
+                          {file.kind === 'yaohuo-file' && descriptionFileId === file.id ? (
+                            <View style={styles.attachmentDescription}>
+                              <AppTextInput
+                                accessibilityLabel={`${file.name} 文件说明`}
+                                label="文件说明"
+                                editable={!c.busy}
+                                placeholder="文件说明（选填）"
+                                placeholderTextColor={theme.muted}
+                                multiline
+                                value={file.description}
+                                onChangeText={(description) =>
+                                  c.change((value) => ({
+                                    ...value,
+                                    attachments: value.attachments.map((item) =>
+                                      item.id === file.id ? { ...item, description } : item
+                                    )
                                   }))
                                 }
                               />
                             </View>
-                          ))}
-                          <AppButton
-                            label="添加投票选项"
-                            disabled={c.busy || draft.poll.options.length >= 9}
-                            onPress={() =>
-                              updateYaohuo((value) => ({
-                                ...value,
-                                poll: { ...value.poll, options: [...value.poll.options, ''] }
-                              }))
-                            }
-                          />
-                          <View style={styles.spread}>
-                            <Text style={styles.text}>投票派币</Text>
-                            <Switch
-                              accessibilityLabel="投票派币"
-                              disabled={c.busy}
-                              value={draft.poll.giftEnabled}
-                              onValueChange={(giftEnabled) =>
-                                updateYaohuo((value) => ({ ...value, poll: { ...value.poll, giftEnabled } }))
-                              }
-                            />
-                          </View>
-                        </>
-                      ) : null}
-                      {draft.kind === 'gift' || (draft.kind === 'poll' && draft.poll.giftEnabled) ? (
-                        <Fragment key={giftKind}>
-                          <Field
-                            disabled={c.busy}
-                            label={`${giftKind === 'poll' ? '投票' : ''}派币总额（至少 2000）`}
-                            numeric
-                            value={draft[giftKind].total}
-                            error={c.errors.gift}
-                            onChange={(total) =>
-                              updateYaohuo((value) => ({ ...value, [giftKind]: { ...value[giftKind], total } }))
-                            }
-                          />
-                          <Field
-                            disabled={c.busy}
-                            label={`${giftKind === 'poll' ? '投票' : ''}每人妖晶（200–10000）`}
-                            numeric
-                            value={draft[giftKind].perPerson}
-                            onChange={(perPerson) =>
-                              updateYaohuo((value) => ({ ...value, [giftKind]: { ...value[giftKind], perPerson } }))
-                            }
-                          />
-                        </Fragment>
-                      ) : null}
-                      {draft.kind === 'files' ? (
-                        <>
-                          <Text style={styles.muted}>选择 1–9 个文件，发布时一起上传。</Text>
-                          <AppButton
-                            label="管理文件"
-                            disabled={c.busy || c.uploading}
-                            onPress={() => setPanel('attachments')}
-                          />
-                        </>
-                      ) : null}
-                      {draft.kind === 'resources' ? (
-                        <>
-                          {c.errors.resources ? <Text style={styles.error}>{c.errors.resources}</Text> : null}
-                          {draft.resources.map((resource, index) => (
-                            <View key={index} style={styles.section}>
-                              <View style={styles.spread}>
-                                <Text style={styles.heading}>资源 {index + 1}</Text>
-                                <IconButton
-                                  icon={X}
-                                  iconOnly
-                                  label={`删除资源 ${index + 1}`}
-                                  disabled={c.busy || draft.resources.length <= 1}
-                                  onPress={() =>
-                                    updateYaohuo((value) => ({
-                                      ...value,
-                                      resources: value.resources.filter((_, at) => at !== index)
-                                    }))
-                                  }
-                                />
-                              </View>
-                              {(['title', 'url', 'size', 'extension', 'description'] as const).map((key) => (
-                                <Field
-                                  disabled={c.busy}
-                                  key={key}
-                                  label={`资源 ${index + 1} ${{ title: '名称', url: '链接', size: '大小（选填）', extension: '后缀（选填）', description: '说明（选填）' }[key]}`}
-                                  value={resource[key]}
-                                  multiline={key === 'description'}
-                                  onChange={(text) =>
-                                    updateYaohuo((value) => ({
-                                      ...value,
-                                      resources: value.resources.map((row, at) =>
-                                        at === index ? { ...row, [key]: text } : row
-                                      )
-                                    }))
-                                  }
-                                />
-                              ))}
-                            </View>
-                          ))}
-                          <AppButton
-                            label="添加资源"
-                            disabled={c.busy || draft.resources.length >= 9}
-                            onPress={() =>
-                              updateYaohuo((value) => ({
-                                ...value,
-                                resources: [
-                                  ...value.resources,
-                                  { title: '', url: '', size: '', extension: '', description: '' }
-                                ]
-                              }))
-                            }
-                          />
-                        </>
-                      ) : null}
-                    </View>
-                  </>
-                ) : null}
-                {(panel === 'attachments' || panel === 'images') && draft ? (
-                  <>
-                    {c.errors.attachments ? <Text style={styles.error}>{c.errors.attachments}</Text> : null}
-                    {c.errors.attachments && imageAttachments.length && fileAttachments.length ? (
-                      <AppButton
-                        variant="ghost"
-                        label={panel === 'images' ? `查看${mediaTitle}` : '查看图片记录'}
-                        onPress={() => openPanel(panel === 'images' ? 'attachments' : 'images')}
-                      />
-                    ) : null}
-                    {panel === 'attachments' ? (
-                      <View style={styles.mediaPickers}>
-                        {canPickFiles ? (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="选择附件"
-                            accessibilityState={{ disabled: c.busy || c.uploading || preview }}
-                            style={[styles.mediaPicker, (c.busy || c.uploading || preview) && styles.disabled]}
-                            disabled={c.busy || c.uploading || preview}
-                            onPress={() => void pickPanelAttachment('attachment')}
-                          >
-                            <Paperclip size={21} color={theme.ink} />
-                            <Text style={styles.text}>添加附件</Text>
-                          </Pressable>
-                        ) : null}
-                        {draft.source === 'yaohuo' && draft.kind === 'files' ? (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="选择本地文件"
-                            accessibilityState={{ disabled: c.busy || c.uploading || !context }}
-                            style={[styles.mediaPicker, (c.busy || c.uploading || !context) && styles.disabled]}
-                            disabled={c.busy || c.uploading || !context}
-                            onPress={() => void pickPanelAttachment('yaohuo-file')}
-                          >
-                            <Paperclip size={21} color={theme.ink} />
-                            <Text style={styles.text}>添加文件</Text>
-                          </Pressable>
-                        ) : null}
-                      </View>
-                    ) : null}
-                    <Text style={styles.muted}>
-                      {panel === 'images'
-                        ? '从正文工具栏插入图片；这里保留上传记录。'
-                        : draft.source === 'linuxdo'
-                          ? '文件上传到 linux.do，以链接插入正文。'
-                          : '选择 1–9 个随帖文件，发布时上传。'}
-                    </Text>
-                    {!context && panel === 'attachments' ? (
-                      <Text style={styles.muted}>读取原站规则后即可选择文件。已保存的内容会继续保留。</Text>
-                    ) : null}
-                    {preview ? <Text style={styles.muted}>继续编辑后可添加文件或插入正文。</Text> : null}
-                    {panel === 'attachments' && context?.source === 'linuxdo' && !canPickFiles ? (
-                      <Text style={styles.muted}>当前账号和站点规则不支持普通附件。</Text>
-                    ) : null}
-                    {panel === 'attachments' && context?.source === 'linuxdo' && canPickFiles ? (
-                      <Text style={styles.muted}>附件最多 {fileSize(context.maxAttachmentBytes)}</Text>
-                    ) : null}
-                    {!visibleAttachments.length ? (
-                      <View style={styles.emptyMedia}>
-                        {panel === 'images' ? (
-                          <ImagePlus size={32} color={theme.muted} />
-                        ) : (
-                          <Paperclip size={32} color={theme.muted} />
-                        )}
-                        <Text style={styles.text}>{panel === 'images' ? '还没有图片上传记录' : '还没有添加文件'}</Text>
-                      </View>
-                    ) : null}
-                    {visibleAttachments.map((file) => (
-                      <View key={file.id} style={styles.section}>
-                        <View style={styles.attachmentIdentity}>
-                          <AttachmentThumbnail file={file} />
-                          <View style={styles.attachmentInfo}>
-                            <Text numberOfLines={2} style={styles.text}>
-                              {file.name}
-                            </Text>
-                            <View style={styles.saveLine}>
-                              {file.status === 'uploading' ? (
-                                <ActivityIndicator size="small" color={theme.primary} />
-                              ) : null}
-                              <Text
-                                accessibilityLiveRegion="polite"
-                                style={
-                                  file.status === 'failed' || file.status === 'unknown' ? styles.error : styles.muted
-                                }
-                              >
-                                {file.kind === 'yaohuo-file' ? '随帖文件' : file.kind === 'image' ? '图片' : '附件'} ·{' '}
-                                {fileSize(file.size)} ·{' '}
-                                {file.kind === 'yaohuo-file' && file.status === 'queued'
-                                  ? '发布时上传'
-                                  : {
-                                      queued: '待上传',
-                                      uploading: '上传中',
-                                      uploaded: '已上传',
-                                      failed: '上传失败',
-                                      unknown: '上传结果待核对'
-                                    }[file.status]}
-                              </Text>
-                            </View>
-                            {file.description && descriptionFileId !== file.id ? (
-                              <Text numberOfLines={2} style={styles.muted}>
-                                {file.description}
-                              </Text>
-                            ) : null}
-                          </View>
-                          <View style={styles.attachmentActions}>
-                            {file.kind === 'yaohuo-file' ? (
-                              <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel={`${descriptionFileId === file.id ? '收起说明' : file.description ? '编辑说明' : '添加说明'} ${file.name}`}
-                                accessibilityState={{ disabled: c.busy, expanded: descriptionFileId === file.id }}
-                                style={[styles.attachmentAction, c.busy && styles.disabled]}
-                                disabled={c.busy}
-                                onPress={() =>
-                                  setDescriptionFileId((current) => (current === file.id ? null : file.id))
-                                }
-                              >
-                                <Pencil size={20} color={theme.muted} />
-                              </Pressable>
-                            ) : null}
-                            {file.kind !== 'yaohuo-file' && !['uploaded', 'uploading'].includes(file.status) ? (
-                              <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel={`${file.status === 'failed' ? '重试上传' : file.status === 'unknown' ? '核对后重传' : '上传并插入'} ${file.name}`}
-                                accessibilityState={{ disabled: c.busy || c.uploading || preview }}
-                                style={[styles.attachmentAction, (c.busy || c.uploading || preview) && styles.disabled]}
-                                disabled={c.busy || c.uploading || preview}
-                                onPress={() => void c.uploadFiles([file])}
-                              >
-                                {file.status === 'queued' ? (
-                                  <Upload size={20} color={theme.primary} />
-                                ) : (
-                                  <RotateCw size={20} color={theme.primary} />
-                                )}
-                              </Pressable>
-                            ) : null}
-                            {file.markup ? (
-                              <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel={`插入正文 ${file.name}`}
-                                accessibilityState={{ disabled: c.busy || preview }}
-                                style={[styles.attachmentAction, (c.busy || preview) && styles.disabled]}
-                                disabled={c.busy || preview}
-                                onPress={() => void insertAndClose(file.markup!)}
-                              >
-                                <CornerDownLeft size={20} color={theme.primary} />
-                              </Pressable>
-                            ) : null}
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel={`移出草稿 ${file.name}`}
-                              accessibilityState={{ disabled: c.busy || c.uploading }}
-                              style={[styles.attachmentAction, (c.busy || c.uploading) && styles.disabled]}
-                              disabled={c.busy || c.uploading}
-                              onPress={() => void c.removeAttachment(file)}
-                            >
-                              <X size={20} color={theme.muted} />
-                            </Pressable>
-                          </View>
+                          ) : null}
                         </View>
-                        {file.error ? <Text style={styles.error}>{file.error}</Text> : null}
-                        {file.kind === 'yaohuo-file' && descriptionFileId === file.id ? (
-                          <View style={styles.attachmentDescription}>
-                            <TextInput
-                              accessibilityLabel={`${file.name} 文件说明`}
-                              editable={!c.busy}
-                              placeholder="文件说明（选填）"
-                              placeholderTextColor={theme.muted}
-                              multiline
-                              style={[styles.text, styles.descriptionInput]}
-                              value={file.description}
-                              onChangeText={(description) =>
-                                c.change((value) => ({
-                                  ...value,
-                                  attachments: value.attachments.map((item) =>
-                                    item.id === file.id ? { ...item, description } : item
-                                  )
-                                }))
-                              }
-                            />
-                          </View>
-                        ) : null}
-                      </View>
-                    ))}
-                    {visibleAttachments.length ? (
-                      <Text style={styles.muted}>移出草稿不会删除已插入的正文链接，也不会删除网站上的文件。</Text>
-                    ) : null}
-                  </>
-                ) : null}
-              </ScrollView>
-            )}
-          </ModalSheetFrame>
-        </SafeAreaView>
-      </Animated.View>
-    </ComposerKeyboardHost>
+                      ))}
+                      {visibleAttachments.length ? (
+                        <Text style={styles.muted}>移出草稿不会删除已插入的正文链接，也不会删除网站上的文件。</Text>
+                      ) : null}
+                    </>
+                  ) : null}
+                </ScrollView>
+              )}
+            </ModalSheetFrame>
+          </SafeAreaView>
+        </Animated.View>
+      </ComposerKeyboardHost>
+    </NavigationBackdropProvider>
   );
 }

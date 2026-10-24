@@ -34,7 +34,7 @@ type Failure =
   | 'smoke';
 
 // Execute the production entry and helpers. All files, processes and archive I/O stay inside this fixture.
-function release(options: { args?: string[]; failure?: Failure; platform?: string } = {}) {
+function release(options: { args?: string[]; failure?: Failure; platform?: string; nodeVersion?: string } = {}) {
   const files = new Map<string, Buffer>();
   const put = (name: string, value: string | Buffer) => files.set(path.resolve(root, name), Buffer.from(value));
   put(
@@ -170,7 +170,7 @@ function release(options: { args?: string[]; failure?: Failure; platform?: strin
       process: {
         platform: options.platform || 'win32',
         execPath: path.join(root, 'fixture-node/node.exe'),
-        versions: { node: options.failure === 'node' ? '25.2.1' : '22.23.2' },
+        versions: { node: options.failure === 'node' ? '25.2.1' : options.nodeVersion || '22.23.2' },
         env: { ANDROID_HOME: path.join(root, 'fixture-sdk'), WZ_ANDROID_KEY_PASSWORD: 'inherited-fixture-password' },
         once: (_event: string, listener: () => void) => exitListeners.add(listener),
         removeListener: (_event: string, listener: () => void) => exitListeners.delete(listener),
@@ -218,8 +218,16 @@ function release(options: { args?: string[]; failure?: Failure; platform?: strin
 }
 
 describe('release entry execution', () => {
+  it.each(['24.22.1', '26.12.1'])('runs the release workflow and records Node %s provenance', (nodeVersion) => {
+    const result = release({ nodeVersion });
+    expect(result.exitCode).toBe(0);
+    expect(result.events).toContain('verify');
+    expect(result.events).toContain('manifest');
+    expect(result.manifest).toMatchObject({ nodeVersion });
+  });
+
   it.each([
-    ['node', 'Node 22'],
+    ['node', '正式发布要求 Node'],
     ['checkout', 'clean Git checkout'],
     ['tracked-input', '缺少已跟踪输入'],
     ['keystore', 'keystore 不是普通文件'],

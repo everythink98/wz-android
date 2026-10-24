@@ -7,6 +7,7 @@ import type { ConfigT } from '@expo/metro/metro-config';
 import type { transform } from '@expo/metro-config/build/transform-worker/metro-transform-worker';
 import type { NotificationAdapterAccess } from '@/sources/notificationAdapter';
 import type { NotificationWorkerDependencies } from '@/platform/notifications/notificationWorker';
+import { accountSessionAccess, type AccountSessionSnapshot } from '@/domain/session/siteSessionState';
 
 const nativeRequire = createRequire(import.meta.url);
 const { getDefaultConfig } = nativeRequire('expo/metro-config');
@@ -93,6 +94,8 @@ describe('experimental startup inline requires', () => {
       '@/sources/notificationAdapters',
       '@/platform/notifications/notificationWorker',
       '@/platform/storage/readerDataStore',
+      '@/platform/storage/accountSessionStore',
+      '@/domain/session/siteSessionState',
       '@/platform/network/networkProxy'
     ];
     for (const config of [defaults, candidate]) {
@@ -101,6 +104,15 @@ describe('experimental startup inline requires', () => {
       let task: (() => Promise<unknown>) | undefined;
       const settings = { contentSources: { nodeseek: true } };
       const access = { identityKey: 'nodeseek:7', userId: '7' };
+      const snapshot: AccountSessionSnapshot = {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: [],
+        isVerifying: false,
+        identityTrust: 'confirmed',
+        currentUser: { source: 'nodeseek', id: '7', username: 'fixture-user', url: 'https://www.nodeseek.com' }
+      };
+      const loadAccountSnapshot = vi.fn(async () => snapshot);
       const listPage = vi.fn(async () => ({ quality: 'complete', items: [], cursor: null, hasMore: false }));
       const applyProxy = vi.fn(async () => {});
       const probeAccess = vi.fn(async () => access);
@@ -111,6 +123,8 @@ describe('experimental startup inline requires', () => {
       const runWorker = vi.fn(async (dependencies: NotificationWorkerDependencies<NotificationAdapterAccess>) => {
         expect(dependencies.sources).toEqual(['nodeseek']);
         expect(await dependencies.sourceAllowed('nodeseek')).toBe(true);
+        expect(dependencies.privateAccessAllowed).toBeTypeOf('function');
+        expect(await dependencies.privateAccessAllowed!('nodeseek', access.identityKey)).toBe(true);
         await dependencies.network.restoreProxy();
         expect(dependencies.network.probeAccess).toBe(probeAccess);
         await dependencies.network.listPage('nodeseek', access, new AbortController().signal, 'next');
@@ -129,6 +143,8 @@ describe('experimental startup inline requires', () => {
           projectContentSourcePreferences: () => ({ notificationSources: ['nodeseek'] })
         },
         '@/platform/storage/readerDataStore': { loadReaderSettings: vi.fn(async () => settings) },
+        '@/platform/storage/accountSessionStore': { loadAccountSessionSnapshot: loadAccountSnapshot },
+        '@/domain/session/siteSessionState': { accountSessionAccess },
         '@/platform/network/networkProxy': {
           loadNetworkProxyState: async () => ({ enabled: false }),
           applyNetworkProxy: applyProxy
@@ -157,7 +173,9 @@ describe('experimental startup inline requires', () => {
       });
       expect(task).toBeTypeOf('function');
       expect(deferred.filter((name) => loads.has(name))).toEqual(config === candidate ? [] : deferred);
+      expect(loadAccountSnapshot).not.toHaveBeenCalled();
       expect(await task!()).toBe('success');
+      expect(loadAccountSnapshot).toHaveBeenCalledExactlyOnceWith('nodeseek');
       expect(runWorker).toHaveBeenCalledTimes(1);
       expect(applyProxy).toHaveBeenCalledExactlyOnceWith(null);
       expect(listPage).toHaveBeenCalledExactlyOnceWith({ ...access, cursor: 'next', limit: 60 });

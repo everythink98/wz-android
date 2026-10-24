@@ -5,6 +5,7 @@ import {
   createContext,
   memo,
   type ComponentProps,
+  type ComponentRef,
   type ReactNode,
   type RefObject,
   useCallback,
@@ -19,17 +20,19 @@ import {
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type NativeTouchEvent,
   type ViewStyle,
+  Keyboard,
   PixelRatio,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   ToastAndroid,
   useWindowDimensions,
   View
 } from 'react-native';
+import { Searchbar } from 'react-native-paper';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider, TRenderEngineProvider, type CustomBlockRenderer } from 'react-native-render-html';
@@ -65,7 +68,6 @@ import {
   nodeSeekStardustReceiveFromAttributes
 } from '@/sources/nodeseek/stardustMarkup';
 import {
-  alphaColor,
   replyContextBadgeStyle,
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
@@ -84,6 +86,7 @@ import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
 import {
@@ -382,12 +385,14 @@ export const TopicContentList = memo(function TopicContentList({
   bodyMediaPaused = false,
   readingPaused: readingPausedByParent = false,
   bottomContentInset = 0,
+  commentSearchFocused,
   currentNodeSeekUser,
   discourseEmojiUrls,
   headerState,
   html,
   nodeSeekUserId,
   onImagePreviewDescriptors,
+  onCommentSearchFocusChange,
   onOpenTopic,
   onOpenUser,
   onScroll: onTopicScroll,
@@ -409,12 +414,14 @@ export const TopicContentList = memo(function TopicContentList({
   bodyMediaPaused?: boolean;
   readingPaused?: boolean;
   bottomContentInset?: number;
+  commentSearchFocused: boolean;
   currentNodeSeekUser: SiteSessionViewModels['nodeseek']['currentUser'];
   discourseEmojiUrls: DiscourseEmojiUrlMap;
   headerState: ReactNode;
   html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
   nodeSeekUserId: number | null;
   onImagePreviewDescriptors: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
+  onCommentSearchFocusChange: (focused: boolean) => void;
   onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -482,6 +489,12 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const selectedTopic = state.selectedTopic;
   const commentQuery = state.commentQuery;
+  const commentSearchRef = useRef<ComponentRef<typeof Searchbar>>(null);
+  const commentSearchContainerRef = useRef<View>(null);
+  const commentSearchMeasureRequestRef = useRef(0);
+  const commentSearchActive = active && commentSearchFocused && state.replyComposerIntent.kind === 'closed';
+  const commentSearchScopeRef = useCommittedRef(commentSearchActive);
+  const commentSearchTouchRef = useRef<NativeTouchEvent | null>(null);
   const expandedQuotes = state.expandedQuotes;
   const replyHighlightQuery = state.debouncedCommentQuery;
   const quoteStateVersion = state.quoteStateVersion;
@@ -535,6 +548,7 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const { fontScale: systemFontScale, height: windowHeight, width: windowWidth } = useWindowDimensions();
   const replyOrderMenuTriggerRef = useRef<View>(null);
+  const replyOrderMenuRequestRef = useRef(0);
   const [replyOrderMenuOpen, setReplyOrderMenuOpen] = useState(false);
   const [replyOrderMenuPlacement, setReplyOrderMenuPlacement] = useState<ViewStyle>({
     position: 'absolute',
@@ -543,13 +557,22 @@ export const TopicContentList = memo(function TopicContentList({
     minWidth: 104
   });
   const replyOrderLabel = replyOrder === 'newest' ? '倒序' : '正序';
+  const closeReplyOrderMenu = useCallback(() => {
+    replyOrderMenuRequestRef.current += 1;
+    setReplyOrderMenuOpen(false);
+  }, []);
   useEffect(() => {
-    if (!active) setReplyOrderMenuOpen(false);
-  }, [active]);
+    closeReplyOrderMenu();
+    return () => {
+      replyOrderMenuRequestRef.current += 1;
+    };
+  }, [active, closeReplyOrderMenu, windowHeight, windowWidth]);
   const openReplyOrderMenu = useCallback(() => {
-    const trigger = replyOrderMenuTriggerRef.current;
-    setReplyOrderMenuOpen(true);
-    trigger?.measureInWindow((x, y, width, height) => {
+    if (!active) return;
+    closeReplyOrderMenu();
+    const request = replyOrderMenuRequestRef.current;
+    replyOrderMenuTriggerRef.current?.measureInWindow((x, y, width, height) => {
+      if (replyOrderMenuRequestRef.current !== request) return;
       const margin = 8;
       const opensAbove = y + height / 2 > windowHeight / 2;
       setReplyOrderMenuPlacement({
@@ -558,15 +581,15 @@ export const TopicContentList = memo(function TopicContentList({
         ...(opensAbove ? { bottom: Math.max(margin, windowHeight - y + 4) } : { top: y + height + 4 }),
         minWidth: 104
       });
+      setReplyOrderMenuOpen(true);
     });
-  }, [windowHeight, windowWidth]);
-  const closeReplyOrderMenu = useCallback(() => setReplyOrderMenuOpen(false), []);
+  }, [active, closeReplyOrderMenu, windowHeight, windowWidth]);
   const selectReplyOrder = useCallback(
     (order: ReplyOrder) => {
-      setReplyOrderMenuOpen(false);
+      closeReplyOrderMenu();
       changeReplyOrder(order);
     },
-    [changeReplyOrder]
+    [changeReplyOrder, closeReplyOrderMenu]
   );
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
@@ -1225,6 +1248,44 @@ export const TopicContentList = memo(function TopicContentList({
     highlight: boolean;
   } | null>(null);
   const nativeViewportRef = useRef({ topicKey: detailTopicStateKey, offset: 0, height: 0 });
+  const revealCommentSearch = useCallback(() => {
+    const request = ++commentSearchMeasureRequestRef.current;
+    if (!commentSearchScopeRef.current || !Keyboard.isVisible()) return;
+    const container = commentSearchContainerRef.current;
+    const scroller = topicScrollRef.current?.getNativeScrollRef()?.getNativeScrollRef();
+    if (!container || !scroller) return;
+    container.measureInWindow((_x, y, _width, height) => {
+      const keyboard = Keyboard.metrics();
+      if (!keyboard || y + height + 12 <= keyboard.screenY) return;
+      // Android can scroll for focus before FlashList accepts that offset.
+      container.measureLayout(scroller, (_left, contentY, _contentWidth, contentHeight) => {
+        scroller.measureInWindow((_scrollX, viewportY, _viewportWidth, viewportHeight) => {
+          const currentKeyboard = Keyboard.metrics();
+          if (
+            !currentKeyboard ||
+            !commentSearchScopeRef.current ||
+            request !== commentSearchMeasureRequestRef.current ||
+            container !== commentSearchContainerRef.current ||
+            scroller !== topicScrollRef.current?.getNativeScrollRef()?.getNativeScrollRef()
+          )
+            return;
+          const visibleHeight = Math.min(viewportHeight, currentKeyboard.screenY - viewportY);
+          if (visibleHeight <= 0) return;
+          topicScrollRef.current?.scrollToOffset({
+            animated: false,
+            offset: Math.max(0, contentY + contentHeight + 12 - visibleHeight)
+          });
+        });
+      });
+    });
+  }, [commentSearchScopeRef, topicScrollRef]);
+  useLayoutEffect(() => {
+    if (commentSearchActive) revealCommentSearch();
+  }, [commentSearchActive, revealCommentSearch]);
+  useEffect(() => {
+    const subscription = Keyboard.addListener('keyboardDidShow', revealCommentSearch);
+    return () => subscription.remove();
+  }, [revealCommentSearch]);
   const targetHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedTargetKey, setHighlightedTargetKey] = useState('');
   useEffect(() => {
@@ -1258,7 +1319,12 @@ export const TopicContentList = memo(function TopicContentList({
         Math.min(pending.offset, Math.max(0, layout.height - 1)) -
         viewport.offset;
     }
-    if (position < -1 || position >= viewport.height) return;
+    const roundedPosition = PixelRatio.roundToNearestPixel(position);
+    if (
+      roundedPosition < PixelRatio.roundToNearestPixel(-1) ||
+      roundedPosition >= PixelRatio.roundToNearestPixel(viewport.height)
+    )
+      return;
     pendingTargetPositionRef.current = null;
     if (pending.highlight) {
       setHighlightedTargetKey(pending.commandKey);
@@ -1283,8 +1349,9 @@ export const TopicContentList = memo(function TopicContentList({
         height: event.nativeEvent.layout.height
       };
       confirmTargetPosition();
+      revealCommentSearch();
     },
-    [confirmTargetPosition, detailTopicStateKey]
+    [confirmTargetPosition, detailTopicStateKey, revealCommentSearch]
   );
   useEffect(() => {
     setReplyLocationCommand(null);
@@ -1346,7 +1413,12 @@ export const TopicContentList = memo(function TopicContentList({
       });
       if (index >= 0)
         void topicScrollRef.current?.scrollToIndex({ animated: false, index, viewOffset: anchor?.offset || 0 });
-      else topicScrollRef.current?.scrollToOffset({ animated: !anchor, offset: 0 });
+      else
+        void topicScrollRef.current?.scrollToIndex({
+          animated: false,
+          index: 0,
+          viewOffset: 0 - (topicScrollRef.current?.getFirstItemOffset() || 0)
+        });
       confirmTargetPosition();
       return;
     }
@@ -2185,10 +2257,10 @@ export const TopicContentList = memo(function TopicContentList({
                   {item.tags.map((tag, index) => (
                     <View
                       key={`${tag}-${index}`}
-                      style={[styles.topicTagPill, !titleOnlyV2ex && topicTagColorStyle(tag, theme)]}
+                      style={[styles.topicTagPill, !titleOnlyV2ex && topicTagColorStyle(tag, theme, item.tags)]}
                     >
                       <Text
-                        style={[styles.topicTagText, !titleOnlyV2ex && topicTagTextColorStyle(tag, theme)]}
+                        style={[styles.topicTagText, !titleOnlyV2ex && topicTagTextColorStyle(tag, theme, item.tags)]}
                         numberOfLines={1}
                       >
                         {tag}
@@ -2435,30 +2507,52 @@ export const TopicContentList = memo(function TopicContentList({
                 ) : unreadReplyCount > 0 ? (
                   <Text style={styles.noticeText}>较上次多 {unreadReplyCount} 条回复</Text>
                 ) : null}
-                <View style={[styles.searchRow, titleOnlyV2ex && styles.titleOnlySearchRow]}>
-                  {titleOnlyV2ex ? (
-                    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                      <Search size={16} color={theme.muted} strokeWidth={1.8} />
-                    </View>
-                  ) : null}
-                  <TextInput
+                <View
+                  ref={commentSearchContainerRef}
+                  collapsable={false}
+                  onLayout={revealCommentSearch}
+                  onTouchStart={({ nativeEvent }) => {
+                    commentSearchTouchRef.current = nativeEvent;
+                  }}
+                >
+                  <View pointerEvents="none" style={styles.replySearchBackground} />
+                  <Searchbar
+                    ref={commentSearchRef}
+                    testID="topic-reply-search"
                     accessibilityLabel="评论内查找"
-                    style={[styles.input, styles.flex, titleOnlyV2ex && styles.titleOnlySearchInput]}
+                    searchAccessibilityLabel="查找评论"
+                    icon={() => (
+                      <View style={styles.replySearchIcon}>
+                        <Search size={18} color={theme.muted} strokeWidth={1.8} accessible={false} />
+                      </View>
+                    )}
+                    clearIcon={({ color }) => <X size={18} color={color} strokeWidth={1.8} />}
+                    style={styles.replySearchShell}
+                    inputStyle={styles.replySearchInput}
                     value={commentQuery}
                     onChange={recordUserInteraction}
                     onChangeText={onCommentQueryChange}
+                    onFocus={() => onCommentSearchFocusChange(true)}
+                    onBlur={() => onCommentSearchFocusChange(false)}
+                    onIconPress={() => commentSearchRef.current?.focus()}
                     placeholder="评论内查找"
-                    placeholderTextColor={titleOnlyV2ex ? alphaColor(theme.ink, 0.68) : theme.muted}
+                    placeholderTextColor={theme.muted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    submitBehavior="blurAndSubmit"
+                    right={() =>
+                      commentQuery ? (
+                        <IconButton
+                          icon={X}
+                          iconOnly
+                          ghost
+                          iconSize={18}
+                          label="清空查找"
+                          onPress={() => onCommentQueryChange('')}
+                        />
+                      ) : null
+                    }
                   />
-                  {commentQuery ? (
-                    <IconButton
-                      icon={X}
-                      iconOnly={titleOnlyV2ex}
-                      iconSize={titleOnlyV2ex ? 16 : undefined}
-                      label="清空查找"
-                      onPress={() => onCommentQueryChange('')}
-                    />
-                  ) : null}
                 </View>
               </>
             ) : null}
@@ -2591,6 +2685,8 @@ export const TopicContentList = memo(function TopicContentList({
       read.hasNewReplies,
       newReplyFloorStart,
       onCommentQueryChange,
+      onCommentSearchFocusChange,
+      revealCommentSearch,
       onDeleteReply,
       onEditReply,
       onInteract,
@@ -2697,7 +2793,10 @@ export const TopicContentList = memo(function TopicContentList({
                   ref={topicScrollRef}
                   onLoad={onListLoad}
                   onLayout={onListViewportLayout}
-                  onContentSizeChange={confirmTargetPosition}
+                  onContentSizeChange={() => {
+                    confirmTargetPosition();
+                    revealCommentSearch();
+                  }}
                   accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
                   testID={topic ? 'topic-detail-loaded' : undefined}
                   style={[styles.content, styles.topicContent, !readingPositionReady && { opacity: 0 }]}
@@ -2712,7 +2811,13 @@ export const TopicContentList = memo(function TopicContentList({
                   keyExtractor={topicListItemKey}
                   getItemType={topicListItemType}
                   ItemSeparatorComponent={TopicListItemSeparator}
-                  keyboardShouldPersistTaps="always"
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                  onTouchStart={({ nativeEvent }) => {
+                    // Exempt the same bubbling touch from the search field and its controls.
+                    if (commentSearchTouchRef.current !== nativeEvent) commentSearchRef.current?.blur();
+                    commentSearchTouchRef.current = null;
+                  }}
                   onScroll={(event) => {
                     const previousViewport = nativeViewportRef.current;
                     if (
@@ -2742,6 +2847,7 @@ export const TopicContentList = memo(function TopicContentList({
                       height: event.nativeEvent.layoutMeasurement.height
                     };
                     confirmTargetPosition();
+                    revealCommentSearch();
                     onScrollProgress?.(event);
                     readingScrollOffset.current = event.nativeEvent.contentOffset.y;
                     readingSessionRef.current?.interact();

@@ -12,6 +12,8 @@ import { createScreenTopBarStyles } from '@/ui/controls/ScreenTopBar';
 
 // These checks exercise style factories; native providers are exercised by the UI suites.
 vi.mock('@/ui/theme/ReaderStyleProvider', () => ({ useReaderThemeStyles: vi.fn() }));
+vi.mock('@react-navigation/native', () => ({ NavigationContext: null }));
+vi.mock('expo-blur', () => ({ BlurTargetView: 'BlurTargetView', BlurView: 'BlurView' }));
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -37,14 +39,27 @@ vi.mock('lucide-react-native', () => ({
   Star: () => null
 }));
 
+function contrastRatio(foreground: unknown, background: unknown) {
+  const luminance = (hex: unknown) => {
+    const color = String(hex);
+    const channels = [1, 3, 5].map((offset) => {
+      const channel = Number.parseInt(color.slice(offset, offset + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
+
 describe('Android reader theme safety rails', () => {
   const settings: ReaderSettings = {
     ...createEmptyReaderData().settings,
     theme: 'light'
   };
 
-  it('keeps scrollable content and user profiles clear of the Android status bar', () => {
-    const theme = createTheme(settings);
+  it.each(['light', 'dark'] as const)('joins the status bar to the page surface in %s mode', (mode) => {
+    const theme = createTheme({ ...settings, theme: mode });
     const styles = createAppStyles(theme);
     const topBarStyles = createScreenTopBarStyles(theme, settings);
 
@@ -52,10 +67,11 @@ describe('Android reader theme safety rails', () => {
       position: 'absolute',
       top: 0,
       height: 24,
-      backgroundColor: theme.background
+      backgroundColor: theme.surface
     });
     expect(styles.statusBarScrim.zIndex).toBeGreaterThan(10);
     expect(topBarStyles.bar.paddingTop).toBeGreaterThan(24);
+    expect(topBarStyles.bar.zIndex).toBeGreaterThan(0);
     expect(createUserStyles(theme, settings).userContentInner.paddingBottom).toBe(
       createSearchStyles(theme, settings).contentInner.paddingBottom
     );
@@ -73,6 +89,32 @@ describe('Android reader theme safety rails', () => {
     expect(topicStatusBadgeColorStyle('success', theme).color).toBe(theme.primary);
     expect(topicStatusBadgeColorStyle('danger', theme).color).toBe(theme.danger);
   });
+
+  it('keeps tag labels and secondary text readable in both themes', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const theme = createTheme({ theme: mode });
+      expect(contrastRatio(theme.muted, theme.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(theme.ink, theme.background)).toBeGreaterThanOrEqual(4.5);
+      for (const label of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+        const tag = topicTagColorStyle(label, theme);
+        expect(contrastRatio(tag.color, tag.backgroundColor)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it.each(['light', 'dark'] as const)(
+    'distinguishes colliding tags without depending on their order in %s mode',
+    (mode) => {
+      const theme = createTheme({ theme: mode });
+      const tags = ['A', 'I', 'Q', '纯水', '人工智能'];
+      const colors = tags.map((tag) => topicTagColorStyle(tag, theme, tags));
+
+      expect(new Set(colors.map((color) => color.backgroundColor)).size).toBe(tags.length);
+      expect(new Set(colors.map((color) => color.color)).size).toBe(tags.length);
+      expect(tags.map((tag) => topicTagColorStyle(tag, theme, [...tags].reverse()))).toEqual(colors);
+      expect(topicTagColorStyle(' a ', theme, ['a', 'A', 'I'])).toEqual(topicTagColorStyle('A', theme, ['A', 'I']));
+    }
+  );
 
   it('keeps reply action buttons tappable without forcing a wrapped row', () => {
     const theme = createTheme(settings);

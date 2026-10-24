@@ -8,7 +8,7 @@ import type { ReaderView } from '@/domain/reader/readerRecordState';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
-import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import { FeedScreen } from './FeedScreen';
 import { useFeedController } from './useFeedController';
 
@@ -75,13 +75,17 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
     if (feedAllowsRemotePagination) return loadFeed();
   }, [feedAllowsRemotePagination, loadFeed]);
   const openTopic = useCallback(
-    (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
+    (topic: Topic) => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic })),
     [navigation]
   );
-  const manageContentSources = useCallback(() => navigation.dispatch(manageContentSourcesAction()), [navigation]);
+  const manageContentSources = useCallback(
+    () => dispatchFocusedRoute(navigation, manageContentSourcesAction()),
+    [navigation]
+  );
   const createTopic = useCallback(() => {
     const source = controller.feedSource;
-    navigation.dispatch(
+    dispatchFocusedRoute(
+      navigation,
       CommonActions.navigate('TopicComposer', {
         kind: 'create',
         ...(source === 'nodeseek' || source === 'linuxdo' || source === 'yaohuo' ? { initialSource: source } : {})

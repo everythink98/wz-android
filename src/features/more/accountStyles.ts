@@ -1,16 +1,53 @@
 import { StyleSheet } from 'react-native';
-import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  alphaColor,
+  fontFamilyValue
+} from '@/ui/theme/tokens';
+
+export function createMoreSiteSettingStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
+  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = (size: number) => Math.round(size * settings.fontScale);
+  return StyleSheet.create({
+    row: { paddingVertical: 0, paddingRight: 0 },
+    rowContainer: { alignItems: 'center', minHeight: 64, marginVertical: 0 },
+    rowContent: { paddingLeft: 0, paddingRight: 12, minWidth: 0 },
+    title: { color: theme.ink, fontFamily, fontSize: fontSize(14), fontWeight: '500', lineHeight: fontSize(20) },
+    description: { color: theme.muted, fontFamily, fontSize: fontSize(12), lineHeight: fontSize(18) },
+    button: { alignSelf: 'center', borderRadius: readerRadii.control, minWidth: 0 },
+    buttonContent: { minHeight: 44, flexDirection: 'row-reverse' },
+    buttonLabel: {
+      fontFamily,
+      fontSize: fontSize(13),
+      fontWeight: '500',
+      letterSpacing: 0,
+      marginHorizontal: 12,
+      marginVertical: 8
+    },
+    input: { backgroundColor: theme.surface, fontFamily, fontSize: fontSize(14) },
+    divider: { backgroundColor: theme.line, marginVertical: 4 },
+    actions: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 4 },
+    section: { gap: 8, paddingBottom: 8 },
+    menu: {
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: readerRadii.control
+    }
+  });
+}
 
 export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const levelRiskSafe = theme.dark ? '#78D69C' : '#2F7D4C';
-  const radiusMd = 14;
   return StyleSheet.create({
     levelSummary: {
       gap: 7,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.09 : 0.035),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.1),
-      borderRadius: radiusMd,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 11
@@ -42,10 +79,10 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 22,
-      fontWeight: '700',
+      fontSize: Math.round(18 * settings.fontScale),
+      fontWeight: '600',
       letterSpacing: 0,
-      lineHeight: 27
+      lineHeight: Math.round(24 * settings.fontScale)
     },
     levelMetaRow: {
       alignItems: 'center',
@@ -62,7 +99,7 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       lineHeight: 16,
       backgroundColor: theme.surface,
       borderColor: alphaColor(theme.primary, theme.dark ? 0.22 : 0.16),
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
       paddingVertical: 2
@@ -85,13 +122,13 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelTabText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 14,
-      fontWeight: '600',
-      lineHeight: 19
+      fontSize: Math.round(13 * settings.fontScale),
+      fontWeight: '500',
+      lineHeight: Math.round(18 * settings.fontScale)
     },
     levelTabTextActive: {
       color: theme.primary,
-      fontWeight: '700'
+      fontWeight: '600'
     },
     levelRequirementList: {
       gap: 10
@@ -124,16 +161,16 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     },
     levelProgressTrack: {
       width: '100%',
-      height: 8,
+      height: 4,
       overflow: 'hidden',
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.08),
-      borderRadius: 999
+      borderRadius: readerRadii.pill
     },
     levelProgressFill: {
       height: '100%',
       minWidth: 2,
       backgroundColor: theme.primary,
-      borderRadius: 999
+      borderRadius: readerRadii.pill
     },
     levelProgressFillDone: {
       backgroundColor: theme.success
@@ -183,7 +220,7 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       flexDirection: 'column',
       justifyContent: 'center',
       gap: 2,
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 8
@@ -209,7 +246,7 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       gap: 3,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.075 : 0.028),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.15 : 0.08),
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 8
@@ -233,7 +270,7 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
       gap: 8,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.07 : 0.025),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.14 : 0.08),
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },

@@ -6,7 +6,7 @@ import { nativeTestTasks } from '../../scripts/native-test-plan.mjs';
 import {
   RELEASE_REQUIRED_TRACKED_INPUTS,
   assertCleanReleaseCheckout,
-  assertReleaseNode22,
+  assertReleaseNodeVersion,
   assertTrackedReleaseInputs,
   parseJavaVersionOutput,
   releaseEnvironment,
@@ -171,13 +171,36 @@ describe('release environment boundary', () => {
     }
   });
 
-  it('requires Node 22 and a clean checkout before release work', () => {
-    expect(() => assertReleaseNode22('22.22.1')).toThrow('Node 22');
-    expect(() => assertReleaseNode22('22.22.2')).not.toThrow();
-    expect(() => assertReleaseNode22('22.23.2')).not.toThrow();
-    expect(() => assertReleaseNode22('21.99.99')).toThrow('Node 22');
-    expect(() => assertReleaseNode22('23.0.0')).toThrow('Node 22');
-    expect(() => assertReleaseNode22('25.2.1')).toThrow('Node 22');
+  it.each(['22.22.2', '22.23.0', '24.15.0', '24.22.1', '26.0.0', '26.12.1'])(
+    'accepts supported stable Node %s for release',
+    (version) => {
+      expect(() => assertReleaseNodeVersion(version)).not.toThrow();
+    }
+  );
+
+  it.each([
+    '',
+    '22',
+    '22.22',
+    'v24.22.1',
+    '24.01.0',
+    '24.0.0-rc.1',
+    '26.12.1+custom',
+    '24.0.0\n',
+    '22.22.1',
+    '22.21.99',
+    '20.99.99',
+    '21.99.99',
+    '23.0.0',
+    '24.0.0',
+    '24.14.99',
+    '25.2.1',
+    '27.0.0'
+  ])('rejects unsupported or malformed Node %j before release', (version) => {
+    expect(() => assertReleaseNodeVersion(version)).toThrow('Node');
+  });
+
+  it('requires a clean checkout before release work', () => {
     expect(() => assertCleanReleaseCheckout('')).not.toThrow();
     expect(() => assertCleanReleaseCheckout(' M scripts/release-android.mjs')).toThrow('未提交改动');
   });

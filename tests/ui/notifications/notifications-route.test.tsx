@@ -17,7 +17,7 @@ import type {
   NotificationPage
 } from '@/domain/notifications/models';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
-import type { TopicDetail, UserReference } from '@/domain/forum/models';
+import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import { notificationPageError } from '@/domain/notifications/notificationQuality';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -45,6 +45,29 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import { act, fireEvent, render, waitFor } from '../render';
 
 afterEach(() => setDiagnosticWriter(null));
+
+let mockListNavigationProps: React.ComponentProps<
+  typeof import('@/features/notifications/NotificationScreens').NotificationsScreen
+>;
+let mockDetailNavigationProps: React.ComponentProps<
+  typeof import('@/features/notifications/NotificationScreens').NotificationDetailScreen
+>;
+jest.mock('@/features/notifications/NotificationScreens', () => {
+  const actual = jest.requireActual<typeof import('@/features/notifications/NotificationScreens')>(
+    '@/features/notifications/NotificationScreens'
+  );
+  return {
+    ...actual,
+    NotificationsScreen: (props: typeof mockListNavigationProps) => {
+      mockListNavigationProps = props;
+      return <actual.NotificationsScreen {...props} />;
+    },
+    NotificationDetailScreen: (props: typeof mockDetailNavigationProps) => {
+      mockDetailNavigationProps = props;
+      return <actual.NotificationDetailScreen {...props} />;
+    }
+  };
+});
 
 const mockHistoricalHtmlRender = jest.fn<(html: string) => void>();
 jest.mock('react-native-render-html', () => {
@@ -258,6 +281,7 @@ type FocusTestStackParamList = {
   notifications: { source?: NotificationSource } | undefined;
   Other: undefined;
   User: { user: UserReference };
+  Topic: { topic: Topic };
 };
 
 const FocusTestStack = createNativeStackNavigator<FocusTestStackParamList>();
@@ -311,6 +335,91 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
 }
 
 describe('notification routes', () => {
+  it.each(['list', 'topic', 'actor'] as const)(
+    'ignores captured %s navigation after leaving the notification route and permits returning',
+    async (source) => {
+      appQueryClient.clear();
+      const item = { ...notification, id: 'first', unread: false, actor: { id: '9', name: 'actor' } };
+      const topic: Topic = {
+        source: 'nodeseek',
+        id: '42',
+        title: 'Linked topic',
+        author: 'actor',
+        createdAt: '2026-10-24T00:00:00Z',
+        url: 'https://www.nodeseek.com/post-42-1'
+      };
+      const gateway = {
+        getCategories: jest.fn(async () => []),
+        listAllPage: jest.fn(async () => ({ items: [item], errors: {}, nextCursors: {}, hasMore: false })),
+        loadDetail: jest.fn(async () => ({ notification: item, title: 'Loaded detail', contentText: 'body', topic })),
+        markRead: jest.fn(async () => ({ confirmed: true }))
+      } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+          <NavigationContainer ref={navigation}>
+            <FocusTestStack.Navigator initialRouteName={source === 'list' ? 'notifications' : 'NotificationDetail'}>
+              <FocusTestStack.Screen name="notifications">
+                {(props) => <NotificationsRoute navigation={props.navigation as never} route={props.route} />}
+              </FocusTestStack.Screen>
+              <FocusTestStack.Screen
+                name="NotificationDetail"
+                initialParams={{ notification: item, identityKey: 'nodeseek:new-account' }}
+              >
+                {(props) =>
+                  source === 'list' ? null : (
+                    <NotificationDetailRoute navigation={props.navigation as never} route={props.route} />
+                  )
+                }
+              </FocusTestStack.Screen>
+              <FocusTestStack.Screen name="Topic">{() => null}</FocusTestStack.Screen>
+              <FocusTestStack.Screen name="User">{() => null}</FocusTestStack.Screen>
+            </FocusTestStack.Navigator>
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await waitFor(() =>
+          expect(source === 'list' ? mockListNavigationProps.items : mockDetailNavigationProps.detail).toBeTruthy()
+        );
+        const list = mockListNavigationProps;
+        const detail = mockDetailNavigationProps;
+        const open = (id: string) =>
+          source === 'list'
+            ? list.onItemPress({ ...item, id })
+            : source === 'topic'
+              ? detail.onOpenTopic({ ...topic, id })
+              : detail.onOpenActor?.({
+                  source: 'nodeseek',
+                  id,
+                  username: `actor${id}`,
+                  url: `https://www.nodeseek.com/space/${id}`
+                });
+        await act(() => {
+          open('42');
+          open('43');
+          open('44');
+        });
+        expect(navigation.getRootState()?.routes).toHaveLength(2);
+        expect(navigation.getCurrentRoute()?.params).toEqual(
+          expect.objectContaining(
+            source === 'list'
+              ? { notification: expect.objectContaining({ id: '42' }) }
+              : source === 'topic'
+                ? { topic: expect.objectContaining({ id: '42' }) }
+                : { user: expect.objectContaining({ id: '42' }) }
+          )
+        );
+        await act(() => navigation.goBack());
+        await act(() => open('43'));
+        expect(navigation.getRootState()?.routes).toHaveLength(2);
+      } finally {
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
   it.each(['current', 'blur', 'background'] as const)(
     'handles a pending detail account check after %s without opening an obsolete login intent',
     async (change) => {
@@ -3762,7 +3871,7 @@ describe('notification routes', () => {
       readUnreadSnapshot: jest.fn()
     } as unknown as NotificationRouteRuntimeValue['gateway'];
     const runtime = routeRuntime(gateway);
-    const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
 
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
@@ -3804,7 +3913,7 @@ describe('notification routes', () => {
       }),
       markRead: jest.fn()
     } as unknown as NotificationRouteRuntimeValue['gateway'];
-    const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
     const view = await render(
       <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
         <NavigationContainer>
@@ -3871,7 +3980,7 @@ describe('notification routes', () => {
       identityKeys: { linuxdo: 'linuxdo:alice' },
       identitySignature: 'linuxdo:alice'
     } as NotificationRouteRuntimeValue;
-    const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
         <NavigationContainer>
@@ -3940,7 +4049,7 @@ describe('notification routes', () => {
         identityKeys: { linuxdo: 'linuxdo:alice' },
         identitySignature: 'linuxdo:alice'
       } as NotificationRouteRuntimeValue;
-      const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+      const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
       const view = await render(
         <NotificationRouteRuntimeProvider value={runtime}>
           <NavigationContainer>
@@ -4003,7 +4112,7 @@ describe('notification routes', () => {
       identityKeys: { yaohuo: 'yaohuo:7' },
       identitySignature: 'yaohuo:7'
     } as NotificationRouteRuntimeValue;
-    const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
         <NavigationContainer>
@@ -4046,7 +4155,7 @@ describe('notification routes', () => {
       markRead: jest.fn()
     } as unknown as NotificationRouteRuntimeValue['gateway'];
     const runtime = routeRuntime(gateway);
-    const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
     const rejection = Promise.reject(new Error('browser unavailable'));
     void rejection.catch(() => undefined);
     const openBrowserAsync = jest.spyOn(WebBrowser, 'openBrowserAsync').mockReturnValue(rejection);
@@ -4931,7 +5040,7 @@ describe('notification routes', () => {
       name: 'NotificationDetail' as const,
       params: { notification, identityKey: 'nodeseek:new-account' }
     };
-    const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
     const screen = () => (
       <NotificationRouteRuntimeProvider value={runtime}>
         <NavigationContainer>
@@ -4995,7 +5104,7 @@ describe('notification routes', () => {
       name: 'notifications' as const,
       params: { source: 'nodeseek' as const }
     };
-    const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+    const navigation = { navigate: jest.fn(), setParams: jest.fn(), isFocused: () => true };
     const screen = () => (
       <NotificationRouteRuntimeProvider value={runtime}>
         <NavigationContainer>

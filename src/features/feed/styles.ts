@@ -1,9 +1,14 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import { type ReaderStyleSettings, type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  alphaColor,
+  fontFamilyValue
+} from '@/ui/theme/tokens';
 
 export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
-  const radiusMd = 14;
   return StyleSheet.create({
     actions: {
       alignItems: 'center',
@@ -12,13 +17,14 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       gap: 8
     },
     content: {
-      flex: 1
+      flex: 1,
+      backgroundColor: theme.dark ? theme.surface : '#FFFFFF'
     },
     errorBox: {
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: radiusMd,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -42,6 +48,12 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     feedFixedHeader: {
       backgroundColor: theme.surface,
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      zIndex: 5,
+      overflow: 'hidden',
       paddingHorizontal: 16,
       paddingTop: (NativeStatusBar.currentHeight ?? 0) + 8
     },
@@ -50,24 +62,28 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       elevation: 0,
       shadowOpacity: 0,
       borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
+      borderBottomWidth: 0
     },
     feedSourceRail: { paddingRight: 18 },
-    feedSourceTab: { width: 'auto', minHeight: 40, padding: 0, paddingBottom: 4, justifyContent: 'center' },
+    feedSourceTab: { width: 'auto', minHeight: 48, padding: 0, paddingBottom: 6, justifyContent: 'center' },
     feedSourceLabel: {
       margin: 0,
       fontFamily: appFontFamily,
-      fontSize: Math.round(13 * settings.fontScale),
-      fontWeight: '500',
+      fontSize: Math.round(14 * settings.fontScale),
+      fontWeight: '600',
       textAlign: 'center'
     },
     feedSourceIndicator: { backgroundColor: theme.primary, height: 2 },
     feedSecondaryHeader: {
       backgroundColor: theme.surface,
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      overflow: 'hidden',
       paddingHorizontal: 16,
-      paddingTop: 6,
-      paddingBottom: 6,
-      borderBottomColor: theme.line,
+      paddingTop: 0,
+      paddingBottom: 0,
+      borderBottomColor: theme.dark ? '#2B2D30' : '#ECEEF0',
       borderBottomWidth: StyleSheet.hairlineWidth,
       zIndex: 3,
       elevation: 0
@@ -93,7 +109,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       gap: 2,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 6,
       paddingVertical: 3
@@ -103,7 +119,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       color: theme.primary,
       fontFamily: appFontFamily,
       fontSize: 12,
-      fontWeight: '700',
+      fontWeight: '500',
       includeFontPadding: false,
       lineHeight: 16
     },
@@ -115,7 +131,7 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       overflow: 'hidden',
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       elevation: 3
     },
@@ -155,8 +171,8 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     topicListSeparator: {
       width: '100%',
-      height: 1,
-      backgroundColor: theme.line
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: theme.dark ? '#2B2D30' : '#ECEEF0'
     },
     endOfListText: {
       color: theme.muted,

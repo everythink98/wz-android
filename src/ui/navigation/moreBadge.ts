@@ -8,6 +8,6 @@ export function moreBadgeState(hasUpdate: boolean, hasMessages: boolean): MoreBa
 }
 
 export function moreBadgeAccessibilityLabel(state: MoreBadgeState) {
-  if (state === 'update' || state === 'both') return '更多，有可用更新';
-  return '更多';
+  if (state === 'update' || state === 'both') return '我的，有可用更新';
+  return '我的';
 }

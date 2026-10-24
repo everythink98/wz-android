@@ -14,7 +14,7 @@
 按当前任务选择下列入口，不要求每次修改通读所有文档。
 
 - 项目背景与完整文档入口读 `README.md`，接手与文档整理读 `docs/handoff.md`，结构与数据边界读 `docs/architecture.md`。
-- 产品取舍读 `docs/product-charter.md`，视觉与无障碍读 `PRODUCT.md`，已确认待处理项读 `docs/code-cleanup-map.md`。
+- 产品取舍读 `docs/product-charter.md`；视觉、交互表现与无障碍读 `DESIGN.md`；已确认待处理项读 `docs/code-cleanup-map.md`。
 - 当前产品行为、入口、共享实现边界与主要验证证据只以 `docs/product-map.md` 为准；历史事故只以 `docs/regression-corpus.md` 为准。
 - 测试归属、证据层、隔离和验证强度读 `docs/testing-standard.md`；代码职责归属、测试归属、命名和结构门禁读 `docs/code-standards.md`。
 - 命令、覆盖安装、Replay、Smoke、工具版本和正式发布步骤只以 `package.json` 与 `docs/operator-runbook.md` 为准。

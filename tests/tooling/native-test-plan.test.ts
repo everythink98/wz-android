@@ -8,7 +8,7 @@ import { nativeTestTasks, relatedNativeTasks, verifyNativeTestReports } from '..
 describe('Native behavior test selection', () => {
   it('does not schedule Native tests for unrelated content and includes all owners after dependency changes', () => {
     expect(relatedNativeTasks(['README.md', 'src/features/user/UserScreen.tsx'])).toEqual([]);
-    expect(relatedNativeTasks(['package-lock.json'])).toHaveLength(6);
+    expect(relatedNativeTasks(['package-lock.json'])).toEqual(Object.keys(nativeTestTasks));
   });
   it('executes App and Composer together with the test source overlay', () => {
     const tasks = relatedNativeTasks([
@@ -36,6 +36,7 @@ describe('Native behavior test selection', () => {
       'NotificationDigestExecutor',
       'PreviewRegionImageMath',
       'TopicShareCapture',
+      'NetworkProxyProfile',
       'NetworkUserAgent',
       'ForumPlatformPackage'
     ].map((name) => `com.wz.reader.${name}Test`);
@@ -80,6 +81,7 @@ describe('Native behavior test selection', () => {
     ['patches/expo-file-system+57.0.6.patch', ':expo-file-system:testDebugUnitTest'],
     ['src/platform/update/download.ts', ':expo-file-system:testDebugUnitTest'],
     ['patches/expo-image+57.0.4.patch', ':expo-image:testDebugUnitTest'],
+    ['patches/expo-blur+57.0.3.patch', ':expo-blur:testDebugUnitTest'],
     ['patches/expo-image+57.0.4.patch', ':forum-platform:testDebugUnitTest'],
     ['tests/native/ComposerKeyboardTest.kt', ':app:testReleaseUnitTest'],
     ['tests/native/ComposerWebViewPrewarmTest.kt', ':app:testReleaseUnitTest'],

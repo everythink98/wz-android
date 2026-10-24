@@ -1,5 +1,6 @@
 import { StyleSheet } from 'react-native';
 import {
+  readerRadii,
   type ReaderStyleSettings,
   alphaColor,
   fontFamilyValue,
@@ -22,11 +23,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       paddingTop: 0,
       paddingBottom: 0
     },
-    categoryRail: {
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingVertical: 7
-    },
+    categoryStrip: { minHeight: 48 },
     controlRow: {
       minHeight: 48,
       alignItems: 'center',
@@ -44,8 +41,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       flexDirection: 'row',
       flexWrap: 'wrap',
       columnGap: 12,
-      rowGap: 4,
-      paddingVertical: 4
+      rowGap: 4
     },
     controlLabel: { color: theme.ink, fontFamily, fontSize: scaled(13), fontWeight: '500', lineHeight: scaled(20) },
     controlMeta: { color: theme.muted, fontFamily, fontSize: scaled(11), lineHeight: scaled(16) },
@@ -130,7 +126,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -157,7 +153,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       gap: 6,
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 12,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 11
     },
@@ -221,7 +217,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       maxWidth: '86%',
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 14,
+      borderRadius: readerRadii.surface,
       borderBottomLeftRadius: 4,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
@@ -230,7 +226,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     messageBubbleMine: {
       backgroundColor: theme.primarySoft,
       borderColor: alphaColor(theme.primary, 0.22),
-      borderBottomLeftRadius: 14,
+      borderBottomLeftRadius: readerRadii.surface,
       borderBottomRightRadius: 4
     },
     messageMetaRow: {
@@ -277,7 +273,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       gap: 10,
       backgroundColor: theme.surface2,
       borderColor: theme.lineStrong,
-      borderRadius: 16,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 15,
       paddingVertical: 7
@@ -307,13 +303,13 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
     readFailure: {
       backgroundColor: theme.surface2,
       borderColor: alphaColor(theme.danger, theme.dark ? 0.4 : 0.24),
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 10
     },
     readOnlyNotice: {
       backgroundColor: theme.surface2,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       paddingHorizontal: 12,
       paddingVertical: 10
     },
@@ -329,7 +325,7 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSty
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: theme.primaryStrong,
-      borderRadius: 14,
+      borderRadius: readerRadii.control,
       paddingHorizontal: 16
     },
     topicActionText: {

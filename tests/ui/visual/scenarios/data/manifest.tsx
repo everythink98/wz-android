@@ -56,7 +56,7 @@ function BackupScenario() {
   };
   return (
     <SafeAreaProvider initialMetrics={createSafeAreaMetrics()}>
-      <MoreUtilityPanels runtime={runtime} />
+      <MoreUtilityPanels runtime={runtime} contentSourcesExpanded={false} onContentSourcesExpandedChange={noop} />
     </SafeAreaProvider>
   );
 }

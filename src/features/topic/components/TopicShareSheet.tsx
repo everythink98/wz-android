@@ -1,17 +1,8 @@
+import { ActivityIndicator, Button } from 'react-native-paper';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Modal,
-  PixelRatio,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View
-} from 'react-native';
+import { Modal, PixelRatio, Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button } from 'react-native-paper';
+import { NavigationBackdropProvider, NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
 import { ArrowLeft, Download, Share2, X } from 'lucide-react-native';
 import { Image, type ImageRef } from 'expo-image';
 import RenderHTML, {
@@ -35,7 +26,7 @@ import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES } from '@/ui/conte
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { createTheme, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, createTheme, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import { createHtmlCustomElementModels } from '../rendering/htmlElementModels';
 import { prepareTopicShareContent } from '../topicShareContent';
 import { shareTopicImageFile } from '../shareTopicImageFile';
@@ -221,6 +212,7 @@ export function TopicShareSheet({
   const captureAbort = useRef<AbortController | null>(null);
   const [operation, setOperation] = useState<'share' | 'save' | null>(null);
   const [saved, setSaved] = useState(false);
+  const [topBarHeight, setTopBarHeight] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const currentAttempt = useRef(0);
   const [completed, setCompleted] = useState<ReadonlySet<number>>(new Set());
@@ -373,118 +365,133 @@ export function TopicShareSheet({
   };
 
   return (
-    <Modal visible animationType="slide" onRequestClose={back}>
-      <SafeAreaView style={styles.root}>
-        <View style={styles.toolbar}>
-          <IconButton icon={onBack ? ArrowLeft : X} label={onBack ? '返回分享方式' : '关闭'} iconOnly onPress={back} />
-          <View style={styles.headingGroup}>
-            <Text accessibilityRole="header" style={styles.heading}>
-              正文长图
-            </Text>
-            <Text style={styles.subtitle}>完整主帖{imageCount ? ` · ${imageCount} 张图片` : ''}</Text>
-          </View>
-          {onBack ? (
-            <IconButton icon={X} label="关闭" iconOnly onPress={close} />
-          ) : (
-            <View style={styles.headerSpacer} />
-          )}
-        </View>
-        <View style={styles.preview}>
-          {document.kind === 'ready' && !tooLarge ? (
-            <ScrollView
-              overScrollMode="never"
-              key={attempt}
-              ref={scrollRef}
-              testID="topic-share-content"
-              style={[styles.paper, { width }]}
-              contentContainerStyle={styles.card}
-              removeClippedSubviews={false}
-              onContentSizeChange={(_width, nextHeight) => {
-                if (mounted.current && currentAttempt.current === attempt) setHeight(nextHeight);
-              }}
-            >
-              <View style={styles.brandRow}>
-                <Text style={styles.source}>{sourceLabel(topic.source)}</Text>
-                <Text style={styles.brand}>阅坛</Text>
-              </View>
-              <Text style={styles.title}>{topic.title}</Text>
-              <Text style={styles.date}>
-                {topic.author} · {formatDateTime(topic.createdAt)}
+    <Modal visible backdropColor={theme.surface} animationType="slide" onRequestClose={back}>
+      <NavigationBackdropProvider>
+        <SafeAreaView style={styles.root}>
+          <View
+            style={[styles.toolbar, { zIndex: 1 }]}
+            onLayout={(event) => setTopBarHeight(event.nativeEvent.layout.height)}
+          >
+            <IconButton
+              icon={onBack ? ArrowLeft : X}
+              label={onBack ? '返回分享方式' : '关闭'}
+              iconOnly
+              ghost
+              onPress={back}
+            />
+            <View style={styles.headingGroup}>
+              <Text accessibilityRole="header" style={styles.heading}>
+                正文长图
               </Text>
-              <ImageProgressContext.Provider value={progress}>
-                <RenderHTML
-                  contentWidth={contentWidth}
-                  source={source}
-                  baseStyle={htmlBaseStyle}
-                  emSize={typeof htmlBaseStyle.fontSize === 'number' ? htmlBaseStyle.fontSize : 16}
-                  tagsStyles={tagsStyles}
-                  classesStyles={htmlClassesStyles}
-                  allowedStyles={HTML_ALLOWED_INLINE_STYLES}
-                  ignoredStyles={htmlIgnoredStyles}
-                  customHTMLElementModels={models}
-                  renderers={renderers}
-                  defaultTextProps={defaultTextProps}
-                  renderersProps={renderersProps}
-                />
-              </ImageProgressContext.Provider>
-              <View style={styles.footer}>
-                <Text style={styles.source}>阅读原帖</Text>
-                <Text style={styles.link}>{topic.url}</Text>
-              </View>
-            </ScrollView>
-          ) : null}
-        </View>
-        <View testID="topic-share-actions" style={styles.actions}>
-          {error || shareError ? (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {error || shareError}
-            </Text>
-          ) : null}
-          {imageError && !tooLarge ? <AppButton label="重新加载图片" onPress={retry} /> : null}
-          {!error && !shareError ? (
-            <View style={styles.statusRow}>
-              {!ready || operation ? <ActivityIndicator accessible={false} size="small" color={theme.primary} /> : null}
-              <Text accessibilityLiveRegion="polite" style={[styles.status, saved && styles.success]}>
-                {operation === 'save'
-                  ? '正在保存…'
-                  : operation === 'share'
-                    ? '正在准备分享…'
-                    : !ready
-                      ? imageCount
-                        ? `正在加载图片 ${completed.size}/${imageCount}`
-                        : '正在排版…'
-                      : saved
-                        ? '已保存到相册'
-                        : '上下滑动预览，导出包含完整正文'}
-              </Text>
+              <Text style={styles.subtitle}>完整主帖{imageCount ? ` · ${imageCount} 张图片` : ''}</Text>
             </View>
-          ) : null}
-          <View style={[styles.actionRow, stackActions && styles.stackedActions]}>
-            <Button
-              mode="outlined"
-              icon={({ color, size }) => <Download color={color} size={size} />}
-              style={[styles.actionButton, stackActions && styles.stackedButton]}
-              contentStyle={styles.buttonContent}
-              labelStyle={styles.buttonLabel}
-              disabled={!ready || operation !== null || saved}
-              onPress={() => void exportImage('save')}
-            >
-              保存到相册
-            </Button>
-            <Button
-              mode="contained"
-              icon={({ color, size }) => <Share2 color={color} size={size} />}
-              style={[styles.actionButton, stackActions && styles.stackedButton]}
-              contentStyle={styles.buttonContent}
-              labelStyle={styles.buttonLabel}
-              disabled={!ready || operation !== null}
-              onPress={() => void exportImage('share')}
-            >
-              分享图片
-            </Button>
+            {onBack ? (
+              <IconButton icon={X} label="关闭" iconOnly ghost onPress={close} />
+            ) : (
+              <View style={styles.headerSpacer} />
+            )}
           </View>
-        </View>
-      </SafeAreaView>
+          <NavigationBackdropTarget active testID="share-glass-content" topInset={topBarHeight}>
+            <View style={styles.preview}>
+              {document.kind === 'ready' && !tooLarge ? (
+                <ScrollView
+                  overScrollMode="never"
+                  key={attempt}
+                  ref={scrollRef}
+                  testID="topic-share-content"
+                  style={[styles.paper, { width }]}
+                  contentContainerStyle={styles.card}
+                  removeClippedSubviews={false}
+                  onContentSizeChange={(_width, nextHeight) => {
+                    if (mounted.current && currentAttempt.current === attempt) setHeight(nextHeight);
+                  }}
+                >
+                  <View style={styles.brandRow}>
+                    <Text style={styles.source}>{sourceLabel(topic.source)}</Text>
+                    <Text style={styles.brand}>阅坛</Text>
+                  </View>
+                  <Text style={styles.title}>{topic.title}</Text>
+                  <Text style={styles.date}>
+                    {topic.author} · {formatDateTime(topic.createdAt)}
+                  </Text>
+                  <ImageProgressContext.Provider value={progress}>
+                    <RenderHTML
+                      contentWidth={contentWidth}
+                      source={source}
+                      baseStyle={htmlBaseStyle}
+                      emSize={typeof htmlBaseStyle.fontSize === 'number' ? htmlBaseStyle.fontSize : 16}
+                      tagsStyles={tagsStyles}
+                      classesStyles={htmlClassesStyles}
+                      allowedStyles={HTML_ALLOWED_INLINE_STYLES}
+                      ignoredStyles={htmlIgnoredStyles}
+                      customHTMLElementModels={models}
+                      renderers={renderers}
+                      defaultTextProps={defaultTextProps}
+                      renderersProps={renderersProps}
+                    />
+                  </ImageProgressContext.Provider>
+                  <View style={styles.footer}>
+                    <Text style={styles.source}>阅读原帖</Text>
+                    <Text style={styles.link}>{topic.url}</Text>
+                  </View>
+                </ScrollView>
+              ) : null}
+            </View>
+          </NavigationBackdropTarget>
+          <View testID="topic-share-actions" style={styles.actions}>
+            {error || shareError ? (
+              <Text accessibilityRole="alert" style={styles.error}>
+                {error || shareError}
+              </Text>
+            ) : null}
+            {imageError && !tooLarge ? <AppButton label="重新加载图片" onPress={retry} /> : null}
+            {!error && !shareError ? (
+              <View style={styles.statusRow}>
+                {!ready || operation ? (
+                  <ActivityIndicator accessible={false} size="small" color={theme.primary} />
+                ) : null}
+                <Text accessibilityLiveRegion="polite" style={[styles.status, saved && styles.success]}>
+                  {operation === 'save'
+                    ? '正在保存…'
+                    : operation === 'share'
+                      ? '正在准备分享…'
+                      : !ready
+                        ? imageCount
+                          ? `正在加载图片 ${completed.size}/${imageCount}`
+                          : '正在排版…'
+                        : saved
+                          ? '已保存到相册'
+                          : '上下滑动预览，导出包含完整正文'}
+                </Text>
+              </View>
+            ) : null}
+            <View style={[styles.actionRow, stackActions && styles.stackedActions]}>
+              <Button
+                mode="outlined"
+                icon={({ color, size }) => <Download color={color} size={size} />}
+                style={[styles.actionButton, stackActions && styles.stackedButton]}
+                contentStyle={styles.buttonContent}
+                labelStyle={styles.buttonLabel}
+                disabled={!ready || operation !== null || saved}
+                onPress={() => void exportImage('save')}
+              >
+                保存到相册
+              </Button>
+              <Button
+                mode="contained"
+                icon={({ color, size }) => <Share2 color={color} size={size} />}
+                style={[styles.actionButton, stackActions && styles.stackedButton]}
+                contentStyle={styles.buttonContent}
+                labelStyle={styles.buttonLabel}
+                disabled={!ready || operation !== null}
+                onPress={() => void exportImage('share')}
+              >
+                分享图片
+              </Button>
+            </View>
+          </View>
+        </SafeAreaView>
+      </NavigationBackdropProvider>
     </Modal>
   );
 }
@@ -504,9 +511,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     headingGroup: { flex: 1, gap: 2, alignItems: 'center' },
     heading: { color: theme.ink, fontSize: font(17), fontWeight: '600' },
     subtitle: { color: theme.muted, fontSize: font(12) },
-    headerSpacer: { width: 44 },
+    headerSpacer: { width: 48 },
     preview: { flex: 1, backgroundColor: theme.background, paddingVertical: 16 },
-    paper: { flex: 1, alignSelf: 'center', borderRadius: 12, backgroundColor: '#ffffff' },
+    paper: { flex: 1, alignSelf: 'center', borderRadius: readerRadii.surface, backgroundColor: '#ffffff' },
     card: { padding: 24, backgroundColor: '#ffffff' },
     brandRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
     brand: { fontSize: font(12), fontWeight: '700', color: '#65717b', letterSpacing: 2 },
@@ -532,7 +539,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     actionRow: { flexDirection: 'row', gap: 12 },
     stackedActions: { flexDirection: 'column' },
-    actionButton: { flex: 1, borderRadius: 12 },
+    actionButton: { flex: 1, borderRadius: readerRadii.control },
     stackedButton: { flex: 0 },
     buttonContent: { minHeight: 48 },
     buttonLabel: { fontSize: font(14) },

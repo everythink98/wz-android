@@ -1,14 +1,13 @@
+import { ActivityIndicator } from 'react-native-paper';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Copy, Image, Share2, ChevronRight, X } from 'lucide-react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Copy, Image, Share2, ChevronRight } from 'lucide-react-native';
 import type { Topic } from '@/domain/forum/models';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { errorMessage } from '@/platform/network/errors';
-import { IconButton } from '@/ui/controls/ButtonControls';
-import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
+import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import type { ReaderStyleSettings, ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 
 export function TopicShareOptions({
   topic,
@@ -24,7 +23,6 @@ export function TopicShareOptions({
   onShareImage?: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const insets = useSafeAreaInsets();
   const current = useRef(true);
   const running = useRef(false);
   const operationAbort = useRef<AbortController | null>(null);
@@ -95,17 +93,8 @@ export function TopicShareOptions({
   ];
   return (
     <ModalSheetFrame visible keyboardAvoiding={false} backdropLabel="关闭分享" onRequestClose={close}>
-      <View style={styles.header}>
-        <Text accessibilityRole="header" style={styles.heading}>
-          分享帖子
-        </Text>
-        <IconButton icon={X} label="关闭分享" iconOnly onPress={close} />
-      </View>
-      <ScrollView
-        overScrollMode="never"
-        style={styles.content}
-        contentContainerStyle={{ paddingBottom: 4 + insets.bottom }}
-      >
+      <ModalSheetHeader title="分享帖子" closeLabel="关闭分享" onClose={close} />
+      <ScrollView overScrollMode="never" style={styles.content}>
         <View style={styles.topic}>
           <Text numberOfLines={2} style={styles.title}>
             {topic.title}
@@ -157,8 +146,6 @@ export function TopicShareOptions({
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const font = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    heading: { fontSize: font(18), color: theme.ink, fontWeight: '700' },
     content: { flexShrink: 1 },
     topic: {
       paddingBottom: 16,
@@ -176,13 +163,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingVertical: 14,
       paddingHorizontal: 4,
       minHeight: 76,
-      borderRadius: 10
+      borderRadius: readerRadii.control
     },
     disabled: { opacity: 0.45 },
     icon: {
       width: 44,
       height: 44,
-      borderRadius: 12,
+      borderRadius: readerRadii.control,
       backgroundColor: theme.primarySoft,
       alignItems: 'center',
       justifyContent: 'center'

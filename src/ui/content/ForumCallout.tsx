@@ -21,7 +21,7 @@ import {
   type DiscourseCalloutTone,
   type DiscourseCalloutType
 } from '@/domain/forum/callouts';
-import { alphaColor, type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, alphaColor, type ReaderTheme } from '@/ui/theme/tokens';
 import { DisclosureChevron } from '@/ui/controls/ExpandableControls';
 
 const CALLOUT_ICONS = {
@@ -118,7 +118,7 @@ export function ForumCallout({
 const calloutStyles = StyleSheet.create({
   callout: {
     alignSelf: 'stretch',
-    borderRadius: 8,
+    borderRadius: readerRadii.content,
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 12,
     marginTop: 8,

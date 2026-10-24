@@ -26,9 +26,11 @@ import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from '.
 import {
   dispatchSourceRead,
   mergeSettledSourceErrors,
+  READ_PREPARATION_BUDGET_MS,
   readWithinAggregateSourceBudget,
   settledDiagnosticFacts,
-  unavailableSourceRead
+  unavailableSourceRead,
+  type ReadPreparation
 } from './readAggregation';
 
 type AllFeedCursorState = {
@@ -120,6 +122,7 @@ export async function getFeed({
   nodeSeekUserAgent,
   discourseAuth,
   diagnosticTrace,
+  preparation = { deadline: Date.now() + READ_PREPARATION_BUDGET_MS },
   includedSources,
   unavailableSources,
   signal,
@@ -137,6 +140,7 @@ export async function getFeed({
   nodeSeekUserAgent?: string;
   discourseAuth?: LinuxDoReadAuth;
   diagnosticTrace?: DiagnosticTrace;
+  preparation?: ReadPreparation;
   includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
@@ -178,25 +182,25 @@ export async function getFeed({
         const adapterLimit = limit < 30 ? limit * sources.length : limit;
         const results = await Promise.allSettled(
           sources.map((item, index) => {
+            if (!fetchedSources[index]) {
+              return Promise.resolve({
+                items: [],
+                errors: {},
+                hasMore: false,
+                nextPage: cursorState.nextPages?.[item] ?? null,
+                nextCursor: cursorState.sourceCursors?.[item] ?? null
+              });
+            }
             const startedAt = Date.now();
             const userAgent = item === 'nodeseek' ? nodeSeekUserAgent : discourseAuth?.userAgent;
             const prepare =
-              fetchedSources[index] && item !== 'v2ex' && (item === 'yaohuo' || !userAgent?.trim())
-                ? () => resolveWebViewUserAgent(undefined, signal)
+              item !== 'v2ex' && (item === 'yaohuo' || !userAgent?.trim())
+                ? (preparationSignal: AbortSignal) => resolveWebViewUserAgent(undefined, preparationSignal)
                 : undefined;
             return readWithinAggregateSourceBudget(
               item,
               signal,
               (sourceSignal) => {
-                if (!fetchedSources[index]) {
-                  return Promise.resolve({
-                    items: [],
-                    errors: {},
-                    hasMore: false,
-                    nextPage: cursorState.nextPages?.[item] ?? null,
-                    nextCursor: cursorState.sourceCursors?.[item] ?? null
-                  });
-                }
                 const readSource = (sourceFetcher: Fetcher) =>
                   getFeed({
                     ...options,
@@ -214,7 +218,7 @@ export async function getFeed({
                   ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
                   : readSource(sourceFetcher);
               },
-              prepare
+              { prepare, preparation, trace: diagnosticTrace }
             ).then(
               (value) => {
                 if (diagnosticTrace) {
@@ -339,6 +343,8 @@ export async function getCategories({
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
+  diagnosticTrace,
+  preparation = { deadline: Date.now() + READ_PREPARATION_BUDGET_MS },
   includedSources,
   unavailableSources,
   signal,
@@ -350,48 +356,52 @@ export async function getCategories({
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: LinuxDoReadAuth;
+  diagnosticTrace?: DiagnosticTrace;
+  preparation?: ReadPreparation;
   includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
-  const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
+  const readSourceCategories = (item: Source, sourceFetcher: Fetcher): Promise<CategoriesResponse> => {
+    if (signal?.aborted) return Promise.reject(new Error(REQUEST_CANCELED_MESSAGE));
+    if (unavailableSources?.includes(item)) return unavailableSourceRead(item);
+    if (item === 'yaohuo') return Promise.resolve(yaohuoCategoriesResponse());
+    const userAgent = item === 'nodeseek' ? nodeSeekUserAgent : discourseAuth?.userAgent;
+    const prepare =
+      (item === 'nodeseek' || item === 'linuxdo') && !userAgent?.trim()
+        ? (preparationSignal: AbortSignal) => resolveWebViewUserAgent(undefined, preparationSignal)
+        : undefined;
+    return readWithinAggregateSourceBudget(
+      item,
+      signal,
+      (sourceSignal) => {
+        const readSource = (activeFetcher: Fetcher) =>
+          getSourceCategories({
+            source: item,
+            nodeSeekAuthenticated,
+            nodeSeekUserAgent,
+            discourseAuth,
+            fetcher: activeFetcher,
+            signal: sourceSignal,
+            timeoutMs
+          });
+        return source === 'all' && (item === 'linuxdo' || item === 'nodeseek')
+          ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
+          : readSource(sourceFetcher);
+      },
+      { prepare, preparation, trace: diagnosticTrace }
+    );
+  };
   if (source === 'all') {
     return runForumSourceReadAggregateAttempt(
       fetcher || fetch,
       async (aggregateFetcher, scopeFetcher) => {
         const sources = includedAggregateSources(includedSources, sourceValues);
         const results = await Promise.allSettled(
-          sources.map((item) => {
-            const userAgent = item === 'nodeseek' ? nodeSeekUserAgent : discourseAuth?.userAgent;
-            const prepare =
-              !unavailableSources?.includes(item) && (item === 'nodeseek' || item === 'linuxdo') && !userAgent?.trim()
-                ? () => resolveWebViewUserAgent(undefined, signal)
-                : undefined;
-            return readWithinAggregateSourceBudget(
-              item,
-              signal,
-              (sourceSignal) => {
-                if (unavailableSources?.includes(item)) {
-                  return unavailableSourceRead(item);
-                }
-                const readSource = (sourceFetcher: Fetcher) =>
-                  getCategories({
-                    ...options,
-                    source: item,
-                    nodeSeekAuthenticated,
-                    discourseAuth,
-                    fetcher: sourceFetcher,
-                    signal: sourceSignal
-                  });
-                const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
-                return item === 'linuxdo' || item === 'nodeseek'
-                  ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
-                  : readSource(sourceFetcher);
-              },
-              prepare
-            );
-          })
+          sources.map((item) =>
+            readSourceCategories(item, fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher)
+          )
         );
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
         const response = {
@@ -416,17 +426,24 @@ export async function getCategories({
       () => signal?.aborted !== true
     );
   }
-  if (source === 'yaohuo') {
-    return yaohuoCategoriesResponse();
-  }
+  return readSourceCategories(source, fetcher || fetch);
+}
+
+export function getSourceCategories({
+  source,
+  fetcher,
+  nodeSeekAuthenticated,
+  nodeSeekUserAgent,
+  discourseAuth,
+  signal,
+  timeoutMs
+}: NonNullable<Parameters<typeof getCategories>[0]> & { source: Source }): Promise<CategoriesResponse> {
+  if (signal?.aborted) return Promise.reject(new Error(REQUEST_CANCELED_MESSAGE));
+  if (source === 'yaohuo') return Promise.resolve(yaohuoCategoriesResponse());
   if (isDiscourseSource(source)) {
-    return getLinuxDoCategories({
-      linuxDoAccess: discourseAuth,
-      fetcher,
-      signal,
-      timeoutMs
-    });
+    return getLinuxDoCategories({ linuxDoAccess: discourseAuth, fetcher, signal, timeoutMs });
   }
+  const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   return dispatchSourceRead(source, {
     nodeseek: () => getNodeSeekCategories(options),
     v2ex: () => getV2exCategories(options)

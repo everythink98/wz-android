@@ -1,8 +1,9 @@
+import { ActivityIndicator } from 'react-native-paper';
 import Slider from '@react-native-community/slider';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Pause, Play, RotateCcw } from 'lucide-react-native';
-import type { ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 
 export type ForumContentAudioStatus = 'error' | 'idle' | 'loading' | 'buffering' | 'ready';
 
@@ -127,7 +128,7 @@ const styles = StyleSheet.create({
   frame: {
     alignItems: 'center',
     alignSelf: 'stretch',
-    borderRadius: 14,
+    borderRadius: readerRadii.surface,
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     gap: 8,
@@ -140,14 +141,14 @@ const styles = StyleSheet.create({
   },
   playButton: {
     alignItems: 'center',
-    borderRadius: 24,
+    borderRadius: readerRadii.pill,
     height: 48,
     justifyContent: 'center',
     width: 48
   },
   playGlyph: {
     alignItems: 'center',
-    borderRadius: 20,
+    borderRadius: readerRadii.pill,
     height: 40,
     justifyContent: 'center',
     width: 40

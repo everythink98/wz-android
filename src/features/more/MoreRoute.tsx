@@ -18,6 +18,7 @@ import { useDiagnosticLogController } from './useDiagnosticLogController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 
 import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
+import type { LibraryTab } from '@/domain/forum/feed';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { useMoreRouteRuntime } from './MoreRouteRuntime';
 
@@ -73,13 +74,33 @@ export function MoreRoute() {
     return () => subscription.remove();
   }, [active, showSettingsPanel]);
 
-  const account = useMemo(
-    () => ({ ...runtime.account, active: active && runtime.account.active }),
-    [active, runtime.account]
+  const account = useMemo<typeof runtime.account>(
+    () => ({
+      ...runtime.account,
+      active: active && runtime.account.active,
+      center: {
+        ...runtime.account.center,
+        openCredits: (currency) => {
+          if (navigation.isFocused()) runtime.account.center.openCredits(currency);
+        },
+        openLinuxDoCredit: () => {
+          if (navigation.isFocused()) runtime.account.center.openLinuxDoCredit();
+        },
+        command: (command) => {
+          if (!navigation.isFocused()) return;
+          return runtime.account.center.command(command);
+        }
+      }
+    }),
+    [active, navigation, runtime.account]
   );
   const utilities = useMemo(
     () => ({
-      library: runtime.library,
+      library: {
+        open: (tab?: LibraryTab) => {
+          if (navigation.isFocused()) runtime.library.open(tab);
+        }
+      },
       backup: {
         recovery: runtime.reader.status === 'recovery',
         busy: backupBusy,
@@ -114,6 +135,7 @@ export function MoreRoute() {
     }),
     [
       runtime.library,
+      navigation,
       runtime.reader.status,
       runtime.reader.data.settings,
       backupBusy,

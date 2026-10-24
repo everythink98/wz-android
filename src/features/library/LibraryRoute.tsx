@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
+import {
+  StackActions,
+  useIsFocused,
+  useNavigation,
+  useRoute,
+  useScrollToTop,
+  type RouteProp
+} from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Topic, UserReference, FeedSource } from '@/domain/forum/models';
 import type { LibraryTab } from '@/domain/forum/feed';
@@ -7,7 +14,8 @@ import type { LibraryTab } from '@/domain/forum/feed';
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
 
 import type { FollowedUserRecord, TopicRecord } from '@/domain/reader/readerData';
-import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { LibraryListItem } from './libraryScreenItems';
 import { LibraryScreen } from './LibraryScreen';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
@@ -39,9 +47,10 @@ export function LibraryRoute() {
   const runtime = useLibraryRouteRuntime();
   const active = useIsFocused();
   const navigation = useNavigation();
+  const route = useRoute<RouteProp<RootStackParamList, 'Library'>>();
   const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   useScrollToTop(listRef);
-  const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>(route.params?.initialTab ?? 'favorites');
   const actions = useReaderDataActionsController({
     commitReaderData: runtime.reader.commit,
     readerDataRef: runtime.reader.dataRef
@@ -129,7 +138,7 @@ export function LibraryRoute() {
     void pages.refetch();
   });
   const openTopic = useCallback(
-    (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
+    (topic: Topic) => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic })),
     [navigation]
   );
   const openUser = useCallback(
@@ -139,11 +148,14 @@ export function LibraryRoute() {
         runtime.notify('用户信息不完整');
         return;
       }
-      navigation.dispatch(StackActions.push('User', { user: normalized }));
+      dispatchFocusedRoute(navigation, StackActions.push('User', { user: normalized }));
     },
     [navigation, runtime]
   );
-  const openContentSourceSettings = useCallback(() => navigation.dispatch(manageContentSourcesAction()), [navigation]);
+  const openContentSourceSettings = useCallback(
+    () => dispatchFocusedRoute(navigation, manageContentSourcesAction()),
+    [navigation]
+  );
 
   return (
     <LibraryScreen

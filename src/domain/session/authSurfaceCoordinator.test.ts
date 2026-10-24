@@ -11,6 +11,25 @@ import {
 } from './authSurfaceCoordinator';
 
 describe('auth surface coordinator', () => {
+  it('holds an invisible Credit authorization barrier without exposing a visible login surface', () => {
+    const registry = createAuthSurfaceRegistry();
+    const ticket = beginAuthSurface(
+      registry,
+      {
+        surface: 'linuxdo-credit',
+        source: 'linuxdo',
+        identityKey: 'linuxdo:alice',
+        sessionEpoch: 2
+      },
+      false
+    );
+    expect(registry.visible).toBeNull();
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(true);
+    expect(finishAuthSurface(registry, 'linuxdo-credit', 'success', true)).toMatchObject({ shouldReconcile: true });
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(true);
+    expect(releaseAuthSurface(registry, 'linuxdo-credit', ticket.generation)).toBe(true);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(false);
+  });
   it('reconciles a surface exactly once across every logical close path', () => {
     const reasons = [
       'close-button',
@@ -74,6 +93,23 @@ describe('auth surface coordinator', () => {
     expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(false);
   });
 
+  it('holds the linux.do barrier through a Credit authorization close without affecting NodeSeek', () => {
+    const registry = createAuthSurfaceRegistry();
+    const ticket = beginAuthSurface(registry, {
+      source: 'linuxdo',
+      surface: 'linuxdo-credit',
+      identityKey: 'linuxdo:alice',
+      sessionEpoch: 2
+    });
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(true);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'nodeseek')).toBe(false);
+    expect(finishAuthSurface(registry, 'linuxdo-credit', 'success', true)).toMatchObject({ shouldReconcile: true });
+    expect(registry.visible).toBeNull();
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(true);
+    expect(releaseAuthSurface(registry, 'linuxdo-credit', ticket.generation)).toBe(true);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(false);
+  });
+
   it('retains the source barrier while close reconciliation is unresolved', () => {
     const registry = createAuthSurfaceRegistry();
     const ticket = beginAuthSurface(registry, {
@@ -108,27 +144,42 @@ describe('auth surface coordinator', () => {
     });
   });
 
-  it('closes a disabled source surface without starting reconciliation', () => {
-    const registry = createAuthSurfaceRegistry();
-    beginAuthSurface(registry, {
-      source: 'nodeseek',
-      surface: 'nodeseek-login',
-      identityKey: 'nodeseek:17',
-      sessionEpoch: 4
-    });
+  it.each([
+    ['nodeseek', 'nodeseek-login', 'initialization-incomplete'],
+    ['nodeseek', 'nodeseek-login', 'source-disabled'],
+    ['nodeseek', 'nodeimage-auth', 'source-disabled'],
+    ['linuxdo', 'linuxdo-login', 'source-disabled'],
+    ['linuxdo', 'linuxdo-credit', 'source-disabled'],
+    ['yaohuo', 'yaohuo-login', 'source-disabled']
+  ] as const)(
+    'retains the %s barrier after closing %s for %s without starting reconciliation',
+    (source, surface, reason) => {
+      const registry = createAuthSurfaceRegistry();
+      const ticket = beginAuthSurface(registry, {
+        source,
+        surface,
+        identityKey: `${source}:17`,
+        sessionEpoch: 4
+      });
 
-    expect(finishAuthSurface(registry, 'nodeseek-login', 'source-disabled')).toMatchObject({
-      shouldReconcile: false
-    });
-  });
+      expect(finishAuthSurface(registry, surface, reason, true)).toMatchObject({
+        shouldReconcile: false
+      });
+      expect(registry.visible).toBeNull();
+      expect(hasAuthSurfaceBarrierForSource(registry, source)).toBe(true);
+      expect(releaseAuthSurface(registry, surface, ticket.generation)).toBe(true);
+      expect(hasAuthSurfaceBarrierForSource(registry, source)).toBe(false);
+    }
+  );
 
   it('closes every other logical surface with switch-surface before opening a new one', () => {
     const close = vi.fn();
 
     closeOtherAuthSurfaces('yaohuo-login', close);
 
-    expect(close).toHaveBeenCalledTimes(3);
+    expect(close).toHaveBeenCalledTimes(4);
     expect(close).toHaveBeenCalledWith('linuxdo-login', 'switch-surface');
+    expect(close).toHaveBeenCalledWith('linuxdo-credit', 'switch-surface');
     expect(close).toHaveBeenCalledWith('nodeimage-auth', 'switch-surface');
     expect(close).toHaveBeenCalledWith('nodeseek-login', 'switch-surface');
     expect(close).not.toHaveBeenCalledWith('yaohuo-login', 'switch-surface');

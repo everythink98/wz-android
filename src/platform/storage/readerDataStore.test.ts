@@ -14,7 +14,7 @@ const harness = vi.hoisted(() => ({
   legacy: new Map<string, string>(),
   queries: [] as string[],
   pagePlans: [] as string[][],
-  fail: ''
+  fail: new Array<string>()
 }));
 vi.mock('expo-sqlite', async () => {
   const { DatabaseSync } = await import('node:sqlite');
@@ -26,8 +26,8 @@ vi.mock('expo-sqlite', async () => {
       const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
       const check = (sql: string) => {
         harness.queries.push(sql);
-        if (harness.fail && sql.includes(harness.fail)) {
-          harness.fail = '';
+        if (harness.fail[0] && sql.includes(harness.fail[0])) {
+          harness.fail.shift();
           throw new Error('injected storage failure');
         }
       };
@@ -105,7 +105,7 @@ const inspect = <T>(sql: string): T => {
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
-  harness.fail = '';
+  harness.fail = [];
   harness.queries = [];
   harness.pagePlans = [];
   harness.legacy.clear();
@@ -430,7 +430,7 @@ describe('reader data storage authority', () => {
     const store = await reopen();
     await store.loadReaderState();
     const keys = ['nodeseek:missing', 'nodeseek:2', ...Object.keys(data.history).reverse(), 'nodeseek:2'];
-    harness.fail = 'INSERT INTO reader_deleted';
+    harness.fail = ['INSERT INTO reader_deleted'];
     await expect(store.commitReaderCommand({ type: 'delete', collection: 'history', keys, at })).rejects.toThrow(
       'injected'
     );
@@ -504,7 +504,7 @@ describe('reader data storage authority', () => {
     const data = createEmptyReaderData();
     data.history[topicKey(topic)] = { topic, savedAt: at };
     seed(data);
-    harness.fail = 'INSERT INTO reader_records';
+    harness.fail = ['INSERT INTO reader_records'];
     const store = await reopen();
     await expect(store.loadReaderState()).rejects.toThrow('injected');
     expect(harness.legacy.size).toBe(2);
@@ -552,6 +552,79 @@ describe('reader data storage authority', () => {
     ).toBe(false);
     expect(harness.legacy.size).toBe(0);
   });
+
+  it.each(['settings', 'history'] as const)(
+    'rejects queued and subsequent %s reads after an uncertain write and reopens committed data',
+    async (kind) => {
+      const data = createEmptyReaderData();
+      data.settings.contentSources = data.settings.contentSources.map((item) => ({
+        ...item,
+        enabled: item.source !== 'nodeseek'
+      }));
+      data.history[topicKey(topic)] = { topic: { ...topic, replyWatermark: 7 }, savedAt: at };
+      seed(data);
+      const store = await reopen();
+      await store.loadReaderState();
+      const read = (owner: typeof store) =>
+        kind === 'settings'
+          ? owner.loadReaderSettings().then((settings) => settings.contentSources)
+          : owner.readHistoryReplyBaseline(topicKey(topic));
+      const committed = await read(store);
+      harness.fail = ['COMMIT', 'ROLLBACK'];
+      const failedWrite = store.commitReaderCommand(
+        kind === 'settings'
+          ? { type: 'settings', patch: { contentSources: [{ source: 'nodeseek', enabled: true }] } }
+          : { type: 'visit', topic: { ...topic, replyCount: 20, replyWatermark: 30 }, at }
+      );
+      const [write, queuedRead] = await Promise.allSettled([failedWrite, read(store)]);
+      expect(write).toMatchObject({ status: 'rejected', reason: { message: '本机资料事务无法确认，已停止修改。' } });
+      expect(queuedRead).toMatchObject({
+        status: 'rejected',
+        reason: { message: '本机资料事务状态不明，请重新启动后恢复。' }
+      });
+      expect(harness.queries.slice(harness.queries.lastIndexOf('ROLLBACK') + 1)).toEqual([]);
+      const queries = [...harness.queries];
+      await expect(read(store)).rejects.toThrow('事务状态不明');
+      await expect(store.loadReaderState()).rejects.toThrow('事务状态不明');
+      expect(harness.queries).toEqual(queries);
+      for (const connection of harness.connections) connection.close();
+      harness.connections = [];
+      const next = await reopen();
+      expect(await read(next)).toEqual(committed);
+      expect(JSON.parse(await next.exportReaderDataBackup())).toEqual(data);
+    }
+  );
+
+  it.each(['migration', 'cleanup'] as const)(
+    'stops direct reads and recovery SQL when %s freezes the first database lifecycle',
+    async (phase) => {
+      const data = createEmptyReaderData();
+      data.history[topicKey(topic)] = { topic, savedAt: at };
+      seed(data);
+      if (phase === 'migration') harness.fail = ['COMMIT', 'ROLLBACK'];
+      else {
+        const storage = (await import('@react-native-async-storage/async-storage')).default;
+        vi.mocked(storage.removeMany).mockImplementationOnce(async (keys) => {
+          for (const key of keys) harness.legacy.delete(key);
+          harness.fail = ['COMMIT', 'ROLLBACK'];
+        });
+      }
+      const store = await reopen();
+      await expect(store.readHistoryReplyBaseline(topicKey(topic))).rejects.toThrow('事务');
+      expect(harness.queries.slice(harness.queries.lastIndexOf('ROLLBACK') + 1)).toEqual([]);
+      const queries = [...harness.queries];
+      await expect(store.loadReaderSettings()).rejects.toThrow('事务状态不明');
+      await expect(store.readHistoryReplyBaseline(topicKey(topic))).rejects.toThrow('事务状态不明');
+      await expect(store.importReaderDataBackup(JSON.stringify(data), true)).rejects.toThrow('事务状态不明');
+      expect(harness.queries).toEqual(queries);
+      for (const connection of harness.connections) connection.close();
+      harness.connections = [];
+      const next = await reopen();
+      expect(await next.loadReaderSettings()).toEqual(data.settings);
+      expect(await next.readHistoryReplyBaseline(topicKey(topic))).toEqual({ replyCount: topic.replyCount });
+      expect(JSON.parse(await next.exportReaderDataBackup())).toEqual(data);
+    }
+  );
 
   it('normal bootstrap queries keys and counts without selecting complete record payloads', async () => {
     const store = await reopen();
@@ -626,7 +699,7 @@ describe('reader data storage authority', () => {
     let snapshot = JSON.parse(await store.exportReaderDataBackup());
     expect(snapshot.favorites['nodeseek:1'].savedAt).toBe(at);
     expect(snapshot.favorites['nodeseek:1'].topic.replyCount).toBe(10);
-    harness.fail = 'COMMIT';
+    harness.fail = ['COMMIT'];
     await expect(
       store.commitReaderCommand({ type: 'visit', topic: { ...topic, replyCount: 20 }, at: '2026-09-12T00:00:00Z' })
     ).rejects.toThrow();
@@ -802,7 +875,7 @@ describe('reader data storage authority', () => {
     await store.commitReaderCommand({ type: 'favorite', topic, enabled: true, at });
     const incoming = createEmptyReaderData();
     incoming.history['nodeseek:2'] = { topic: { ...topic, id: '2' }, savedAt: at };
-    harness.fail = 'INSERT INTO reader_records';
+    harness.fail = ['INSERT INTO reader_records'];
     const imported = store.importReaderDataBackup(JSON.stringify(incoming));
     const later = store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: '3' }, at });
     await expect(imported).rejects.toThrow('injected storage failure');

@@ -1,7 +1,7 @@
+import { ActivityIndicator } from 'react-native-paper';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  ActivityIndicator,
   Modal,
   PixelRatio,
   Pressable,
@@ -27,7 +27,8 @@ import { X } from 'lucide-react-native';
 import { imageRequestHeadersForUrl, imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/imagePreviewCatalog';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
+import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -768,115 +769,126 @@ function ImagePreviewModalContent({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={closePreview}>
-      <GestureHandlerRootView
-        onTouchStart={recordUserInteraction}
-        onTouchMove={recordUserInteraction}
-        style={[styles.imagePreviewOverlay, componentStyles.transparentOverlay]}
-      >
-        <Animated.View pointerEvents="none" style={[componentStyles.overlayBackground, backgroundStyle]} />
-        <GestureDetector gesture={previewGesture}>
-          <Animated.View style={[styles.imagePreviewScroll, previewPullStyle]}>
-            <View testID="image-preview-ring" style={componentStyles.ringViewport}>
-              {ring.slots.map(({ page, slot }) => {
-                const selected = page?.index === activeIndex;
-                const role = slot === 0 ? slot0Role : slot === 1 ? slot1Role : slot2Role;
-                return (
-                  <PreviewRingSlotView
-                    key={`preview-physical-slot-${slot}`}
-                    role={role}
-                    selected={selected}
-                    slot={slot}
-                    translateX={ringTranslateX}
-                    width={width}
-                  >
-                    {page ? (
-                      <PreviewPage
-                        active={selected}
-                        activeZoomed={selected && activeZoomed}
-                        animatedSvgZoomSuspended={selected && animatedSvgZoomSuspended}
-                        height={height}
-                        index={page.index}
-                        item={page.item}
-                        maxScale={imagePreviewMaxScale}
-                        mediaContext={mediaContext}
-                        nodeSeekUserAgent={nodeSeekMediaUserAgent}
-                        onRegisterZoom={registerZoom}
-                        onResolution={handleResolution}
-                        onToggleChrome={() => {
-                          reportInteraction();
-                          setChromeVisible((current) => !current);
-                        }}
-                        onVisibleImageChange={onVisibleImageChange}
-                        onZoomGestureSettled={handleZoomGestureSettled}
-                        onZoomGestureStart={handleZoomGestureStart}
-                        onZoomUpdate={handleZoomUpdate}
-                        styles={styles}
-                        theme={theme}
-                        width={width}
-                      />
-                    ) : null}
-                  </PreviewRingSlotView>
-                );
-              })}
-            </View>
-          </Animated.View>
-        </GestureDetector>
-        <View
-          accessible
-          accessibilityActions={[
-            { name: 'decrement', label: '上一张图片' },
-            { name: 'increment', label: '下一张图片' }
-          ]}
-          accessibilityLabel={`图片预览，第 ${activeIndex + 1} 张，共 ${previewCount} 张`}
-          accessibilityRole="adjustable"
-          accessibilityValue={{
-            min: 1,
-            max: previewCount,
-            now: activeIndex + 1,
-            text: `第 ${activeIndex + 1} 张，共 ${previewCount} 张`
-          }}
-          pointerEvents="none"
-          style={componentStyles.accessibilityPager}
-          onAccessibilityAction={handleAccessibilityAction}
-        />
-        {chromeVisible ? (
-          <>
-            <View pointerEvents="box-none" style={[styles.imagePreviewTopBar, { top: Math.max(insets.top, 12) }]}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="关闭图片预览"
-                style={styles.imagePreviewClose}
-                onPress={closePreview}
-              >
-                <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
-              </Pressable>
-              <Text accessibilityLiveRegion="polite" style={styles.imagePreviewCount}>
-                {activeIndex + 1}/{previewCount}
-              </Text>
-              <View style={componentStyles.chromeSpacer} />
-            </View>
-            {onSave ? (
-              <View
-                pointerEvents="box-none"
-                style={[componentStyles.bottomBar, { bottom: Math.max(insets.bottom, 16) }]}
-              >
+      <NavigationBackdropProvider>
+        <GestureHandlerRootView
+          onTouchStart={recordUserInteraction}
+          onTouchMove={recordUserInteraction}
+          style={[styles.imagePreviewOverlay, componentStyles.transparentOverlay]}
+        >
+          <View style={StyleSheet.absoluteFill}>
+            <NavigationBackdropTarget active={chromeVisible} testID="image-preview-glass-content">
+              <Animated.View pointerEvents="none" style={[componentStyles.overlayBackground, backgroundStyle]} />
+              <GestureDetector gesture={previewGesture}>
+                <Animated.View style={[styles.imagePreviewScroll, previewPullStyle]}>
+                  <View testID="image-preview-ring" style={componentStyles.ringViewport}>
+                    {ring.slots.map(({ page, slot }) => {
+                      const selected = page?.index === activeIndex;
+                      const role = slot === 0 ? slot0Role : slot === 1 ? slot1Role : slot2Role;
+                      return (
+                        <PreviewRingSlotView
+                          key={`preview-physical-slot-${slot}`}
+                          role={role}
+                          selected={selected}
+                          slot={slot}
+                          translateX={ringTranslateX}
+                          width={width}
+                        >
+                          {page ? (
+                            <PreviewPage
+                              active={selected}
+                              activeZoomed={selected && activeZoomed}
+                              animatedSvgZoomSuspended={selected && animatedSvgZoomSuspended}
+                              height={height}
+                              index={page.index}
+                              item={page.item}
+                              maxScale={imagePreviewMaxScale}
+                              mediaContext={mediaContext}
+                              nodeSeekUserAgent={nodeSeekMediaUserAgent}
+                              onRegisterZoom={registerZoom}
+                              onResolution={handleResolution}
+                              onToggleChrome={() => {
+                                reportInteraction();
+                                setChromeVisible((current) => !current);
+                              }}
+                              onVisibleImageChange={onVisibleImageChange}
+                              onZoomGestureSettled={handleZoomGestureSettled}
+                              onZoomGestureStart={handleZoomGestureStart}
+                              onZoomUpdate={handleZoomUpdate}
+                              styles={styles}
+                              theme={theme}
+                              width={width}
+                            />
+                          ) : null}
+                        </PreviewRingSlotView>
+                      );
+                    })}
+                  </View>
+                </Animated.View>
+              </GestureDetector>
+            </NavigationBackdropTarget>
+          </View>
+          <View
+            accessible
+            accessibilityActions={[
+              { name: 'decrement', label: '上一张图片' },
+              { name: 'increment', label: '下一张图片' }
+            ]}
+            accessibilityLabel={`图片预览，第 ${activeIndex + 1} 张，共 ${previewCount} 张`}
+            accessibilityRole="adjustable"
+            accessibilityValue={{
+              min: 1,
+              max: previewCount,
+              now: activeIndex + 1,
+              text: `第 ${activeIndex + 1} 张，共 ${previewCount} 张`
+            }}
+            pointerEvents="none"
+            style={componentStyles.accessibilityPager}
+            onAccessibilityAction={handleAccessibilityAction}
+          />
+          {chromeVisible ? (
+            <>
+              <View pointerEvents="box-none" style={[styles.imagePreviewTopBar, { top: Math.max(insets.top, 12) }]}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="保存图片"
-                  accessibilityState={{ busy: saving, disabled: saving }}
-                  disabled={saving}
-                  style={[styles.imagePreviewTextButton, saving && componentStyles.disabledButton]}
-                  onPress={() => {
-                    void handleSave();
-                  }}
+                  accessibilityLabel="关闭图片预览"
+                  style={styles.imagePreviewClose}
+                  onPress={closePreview}
                 >
-                  <Text style={styles.imagePreviewButtonText}>{saving ? '保存中…' : '保存'}</Text>
+                  <NavigationGlass variant="media" />
+                  <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
                 </Pressable>
+                <View style={styles.imagePreviewCounter}>
+                  <NavigationGlass variant="media" />
+                  <Text accessibilityLiveRegion="polite" style={styles.imagePreviewCount}>
+                    {activeIndex + 1}/{previewCount}
+                  </Text>
+                </View>
+                <View style={componentStyles.chromeSpacer} />
               </View>
-            ) : null}
-          </>
-        ) : null}
-      </GestureHandlerRootView>
+              {onSave ? (
+                <View
+                  pointerEvents="box-none"
+                  style={[componentStyles.bottomBar, { bottom: Math.max(insets.bottom, 16) }]}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="保存图片"
+                    accessibilityState={{ busy: saving, disabled: saving }}
+                    disabled={saving}
+                    style={[styles.imagePreviewTextButton, saving && componentStyles.disabledButton]}
+                    onPress={() => {
+                      void handleSave();
+                    }}
+                  >
+                    <NavigationGlass variant="media" />
+                    <Text style={styles.imagePreviewButtonText}>{saving ? '保存中…' : '保存'}</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </>
+          ) : null}
+        </GestureHandlerRootView>
+      </NavigationBackdropProvider>
     </Modal>
   );
 }
@@ -932,13 +944,25 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       justifyContent: 'space-between'
     },
     imagePreviewCount: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '600' },
+    imagePreviewCounter: {
+      minHeight: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+      borderRadius: readerRadii.control,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255, 255, 255, 0.18)'
+    },
     imagePreviewTextButton: {
       alignItems: 'center',
       justifyContent: 'center',
       minWidth: 58,
       height: 44,
-      borderRadius: 22,
-      backgroundColor: 'rgba(255, 255, 255, 0.14)'
+      borderRadius: readerRadii.control,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255, 255, 255, 0.18)'
     },
     imagePreviewButtonText: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '700' },
     imagePreviewClose: {
@@ -946,8 +970,10 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       justifyContent: 'center',
       width: 44,
       height: 44,
-      borderRadius: 22,
-      backgroundColor: 'rgba(255, 255, 255, 0.14)'
+      borderRadius: readerRadii.pill,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255, 255, 255, 0.18)'
     },
     imagePreviewScroll: { flex: 1, width: '100%' },
     imagePreviewState: {
@@ -957,7 +983,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignItems: 'center',
       justifyContent: 'center',
       gap: 8,
-      borderRadius: 10,
+      borderRadius: readerRadii.surface,
       backgroundColor: 'rgba(0, 0, 0, 0.58)',
       paddingHorizontal: 14,
       paddingVertical: 11

@@ -21,7 +21,13 @@ import {
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  alphaColor,
+  fontFamilyValue,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { YAOHUO_FACE_ITEMS, yaohuoFaceImageUrl } from './expressionCatalogs';
 
 type FormatAction = 'bold' | 'italic' | 'link' | 'image' | 'quote' | 'code' | 'list';
@@ -119,7 +125,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     toolbar: {
       backgroundColor: neutralSurface,
       borderColor: neutralBorder,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       minHeight: 48,
       width: '100%'
@@ -130,7 +136,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignItems: 'center',
       alignSelf: 'flex-start',
       backgroundColor: neutralSurface,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       flexDirection: 'row',
       gap: 6,
       paddingHorizontal: 9,
@@ -147,7 +153,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     facePanel: {
       backgroundColor: neutralSurface,
       borderColor: neutralBorder,
-      borderRadius: 10,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       maxHeight: 238
     },
@@ -156,7 +162,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignItems: 'center',
       backgroundColor: theme.surface,
       borderColor: neutralBorder,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center',
       gap: 4,
@@ -170,7 +176,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     input: {
       backgroundColor: theme.surface,
       borderColor: neutralBorder,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.ink,
       fontFamily,

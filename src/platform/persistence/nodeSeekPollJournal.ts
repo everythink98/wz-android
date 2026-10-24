@@ -185,6 +185,7 @@ async function accountDatabase(identityKey: string) {
 export function readNodeSeekPollJournalEntry(identityKey: string, localId: string, fingerprint?: string) {
   return enqueue(async () => {
     const db = await accountDatabase(identityKey);
+    assertUsable();
     return readEntry(db, identityKey, localId, fingerprint);
   });
 }

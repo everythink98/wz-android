@@ -5,7 +5,13 @@ import { normalizeNodeSeekStardustRefId, type NodeSeekStardustReceive } from '@/
 import type { NodeSeekStardustStatus } from '@/sources/nodeseek/stardust';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  alphaColor,
+  fontFamilyValue,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { topicActionDecisionMessage } from '../actions/topicActionDecision';
 import type { TopicActionsController } from '../actions/useTopicActionsController';
 import { Avatar } from '@/ui/avatar/Avatar';
@@ -19,7 +25,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignSelf: 'stretch',
       backgroundColor: alphaColor(theme.favorite, theme.dark ? 0.08 : 0.035),
       borderColor: alphaColor(theme.favorite, theme.dark ? 0.32 : 0.38),
-      borderRadius: 14,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       gap: 10,
       marginVertical: 8,

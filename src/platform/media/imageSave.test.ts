@@ -107,32 +107,43 @@ describe('image library saving', () => {
     expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
   });
 
-  it('records permission failure without exporting the image URL', async () => {
-    const lines: string[] = [];
-    setDiagnosticWriter((line) => {
-      lines.push(line);
-    });
+  it.each(['remote', 'data'] as const)(
+    'records denied write permission for a %s image and releases its file',
+    async (kind) => {
+      platform.Version = 29;
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
+        granted: false
+      } as MediaLibrary.PermissionResponse);
+
+      const uri =
+        kind === 'remote' ? 'https://cdn.example.com/private-title-91827.jpg' : 'data:image/png;base64,abc123';
+      await expect(saveImageUriToLibrary(uri, publicMediaOptions)).rejects.toThrow('没有图片保存权限');
+      expect(MediaLibrary.requestPermissionsAsync).toHaveBeenCalledWith(true, ['photo']);
+      expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+      if (kind === 'remote') expect(native.releaseDownload).toHaveBeenCalledWith('download-1');
+      else
+        expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });
+
+      const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(events[0]).toMatchObject({ area: 'media', operation: 'save-image', phase: 'intent', channel: kind });
+      expect(events.at(-1)).toMatchObject({ phase: 'finish', outcome: 'blocked', reason: 'permission_denied' });
+      expect(JSON.stringify(events)).not.toContain('private-title-91827');
+      expect(JSON.stringify(events)).not.toContain('abc123');
+    }
+  );
+
+  it.each([30, 35])('saves data images on Android %i without photo access and releases the file', async (version) => {
+    platform.Version = version;
     vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
       granted: false
     } as MediaLibrary.PermissionResponse);
-
-    await expect(
-      saveImageUriToLibrary('https://cdn.example.com/private-title-91827.jpg', publicMediaOptions)
-    ).rejects.toThrow('没有图片保存权限');
-
-    const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(events).toEqual([
-      expect.objectContaining({ area: 'media', operation: 'save-image', phase: 'intent', channel: 'remote' }),
-      expect.objectContaining({ phase: 'credential', isGranted: false }),
-      expect.objectContaining({ phase: 'finish', outcome: 'blocked', reason: 'permission_denied' })
-    ]);
-    expect(JSON.stringify(events)).not.toContain('private-title-91827');
-  });
-
-  it('saves data images and removes the temporary file afterwards', async () => {
     await saveImageUriToLibrary('data:image/png;base64,abc123', publicMediaOptions);
 
-    expect(MediaLibrary.requestPermissionsAsync).toHaveBeenCalledWith(false, ['photo']);
+    expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', {
       encoding: FileSystem.EncodingType.Base64
     });
@@ -140,8 +151,13 @@ describe('image library saving', () => {
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });
   });
 
-  it('passes the native file directly to the media library and releases it afterwards', async () => {
+  it.each([30, 35])('saves remote images on Android %i without photo access and releases the file', async (version) => {
+    platform.Version = version;
+    vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
+      granted: false
+    } as MediaLibrary.PermissionResponse);
     await saveImageUriToLibrary('https://cdn.example.com/photo.jpg', publicMediaOptions);
+    expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
     expect(native.download).toHaveBeenCalledWith('download-1', 'https://cdn.example.com/photo.jpg', expect.any(Object));
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
@@ -193,6 +209,20 @@ describe('image library saving', () => {
         }
       })
     ).rejects.toThrow('stale identity');
+    expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+    expect(native.releaseDownload).toHaveBeenCalledWith('download-1');
+  });
+
+  it('releases the downloaded image when the session expires during write permission', async () => {
+    platform.Version = 29;
+    const controller = new AbortController();
+    vi.mocked(MediaLibrary.requestPermissionsAsync).mockImplementationOnce(async () => {
+      controller.abort();
+      return { granted: true } as MediaLibrary.PermissionResponse;
+    });
+    await expect(
+      saveImageUriToLibrary('https://cdn.example.com/photo.jpg', { ...publicMediaOptions, signal: controller.signal })
+    ).rejects.toThrow('取消');
     expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
     expect(native.releaseDownload).toHaveBeenCalledWith('download-1');
   });
@@ -249,7 +279,8 @@ describe('image library saving', () => {
       }
     );
 
-    it('requests write-only permission for the legacy Android factory', async () => {
+    it.each(['android', 'ios'])('requests write-only permission for the legacy %s factory', async (os) => {
+      platform.OS = os;
       platform.Version = 29;
       await saveLocalImageFileToLibrary(uri, () => undefined);
       expect(MediaLibrary.requestPermissionsAsync).toHaveBeenCalledWith(true, ['photo']);

@@ -1,7 +1,7 @@
+import { AppSwitch as Switch } from '@/ui/controls/InputControls';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AccessibilityInfo,
-  Switch,
   Text,
   View,
   type AccessibilityActionEvent,
@@ -141,6 +141,7 @@ export function ContentSourcesPanel({
 }) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const enabledCount = preferences.filter((preference) => preference.enabled).length;
+  const expandedRef = useCommittedRef(expanded);
   const preferencesRef = useCommittedRef(preferences);
   const onChangeRef = useCommittedRef(onChange);
   const hostSourcesRef = useRef(preferences.map(({ source }) => source));
@@ -163,16 +164,26 @@ export function ContentSourcesPanel({
     setDragPreview(null);
   }, []);
 
-  const resetDragAndHost = useCallback(() => {
+  const resetDrag = useCallback(() => {
     dragGenerationRef.current += 1;
     cancelDrag();
-    hostSourcesRef.current = preferencesRef.current.map(({ source }) => source);
-    rowLayoutsRef.current.clear();
-    rowCenters.value = [];
     dragActiveIndex.value = -1;
     dragTargetIndex.value = -1;
     dragTranslationY.value = 0;
-  }, [cancelDrag, dragActiveIndex, dragTargetIndex, dragTranslationY, preferencesRef, rowCenters]);
+  }, [cancelDrag, dragActiveIndex, dragTargetIndex, dragTranslationY]);
+
+  const resetDragAndHost = useCallback(() => {
+    resetDrag();
+    const nextHostSources = preferencesRef.current.map(({ source }) => source);
+    if (
+      nextHostSources.length === hostSourcesRef.current.length &&
+      nextHostSources.every((source, index) => source === hostSourcesRef.current[index])
+    )
+      return;
+    hostSourcesRef.current = nextHostSources;
+    rowLayoutsRef.current.clear();
+    rowCenters.value = [];
+  }, [preferencesRef, resetDrag, rowCenters]);
 
   const applyScreenReaderMode = useCallback(
     (enabled: boolean) => {
@@ -204,8 +215,8 @@ export function ContentSourcesPanel({
 
   useEffect(() => {
     if (expanded) return;
-    resetDragAndHost();
-  }, [expanded, preferenceIdentity, resetDragAndHost]);
+    resetDrag();
+  }, [expanded, preferenceIdentity, resetDrag]);
 
   useEffect(() => {
     const session = dragSessionRef.current;
@@ -225,6 +236,7 @@ export function ContentSourcesPanel({
       : null;
 
   const move = (index: number, offset: -1 | 1) => {
+    if (!expandedRef.current) return;
     const current = preferencesRef.current;
     const nextIndex = index + offset;
     if (nextIndex < 0 || nextIndex >= current.length) return;
@@ -232,7 +244,8 @@ export function ContentSourcesPanel({
   };
 
   const beginDrag = (source: Source, expectedOriginIndex: number, centers: number[], generation: number) => {
-    if (screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation) return;
+    if (!expandedRef.current || screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation)
+      return;
     const current = preferencesRef.current;
     const originIndex = current.findIndex((preference) => preference.source === source);
     if (originIndex !== expectedOriginIndex || !hasValidRowCenters(centers, current.length)) {
@@ -252,7 +265,8 @@ export function ContentSourcesPanel({
   };
 
   const updateDragTarget = (source: Source, targetIndex: number, generation: number) => {
-    if (screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation) return;
+    if (!expandedRef.current || screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation)
+      return;
     const session = dragSessionRef.current;
     if (
       !session ||
@@ -268,7 +282,8 @@ export function ContentSourcesPanel({
   };
 
   const finishDrag = (source: Source, success: boolean, targetIndex: number, generation: number) => {
-    if (screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation) return;
+    if (!expandedRef.current || screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation)
+      return;
     const session = dragSessionRef.current;
     const currentPreferenceIdentity = preferencesRef.current
       .map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`)
@@ -289,11 +304,7 @@ export function ContentSourcesPanel({
     }
     onChangeRef.current(reorderedPreferences(session.preferences, session.originIndex, targetIndex));
   };
-  const visibleHostSources = expanded
-    ? usePreferenceNativeOrder
-      ? preferences.map(({ source }) => source)
-      : hostSources
-    : [];
+  const visibleHostSources = usePreferenceNativeOrder ? preferences.map(({ source }) => source) : hostSources;
 
   return (
     <ExpandablePanel
@@ -314,7 +325,7 @@ export function ContentSourcesPanel({
           const first = index === 0;
           const last = index === preferences.length - 1;
           const dragGestureConfig: PanGestureConfig = {
-            enabled: screenReaderEnabled === false,
+            enabled: expanded && screenReaderEnabled === false,
             activateAfterLongPress: DRAG_ACTIVATION_DELAY_MS,
             onActivate: () => {
               'worklet';
@@ -409,15 +420,15 @@ export function ContentSourcesPanel({
                   accessibilityRole="switch"
                   accessibilityState={{ checked: preference.enabled }}
                   value={preference.enabled}
-                  trackColor={{ false: theme.lineStrong, true: theme.primarySoft }}
-                  thumbColor={preference.enabled ? theme.primary : theme.surface}
-                  onValueChange={(enabled) =>
+
+                  onValueChange={(enabled) => {
+                    if (!expandedRef.current) return;
                     onChange(
                       preferences.map((candidate) =>
                         candidate.source === preference.source ? { ...candidate, enabled } : candidate
                       )
-                    )
-                  }
+                    );
+                  }}
                 />
                 <PanGestureBoundary config={dragGestureConfig}>
                   <View

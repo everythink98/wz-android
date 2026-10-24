@@ -139,7 +139,7 @@ export function SiteLoginHost({
       {visible && !webViewBlockMessage && !page.needsRemount ? (
         <View style={styles.flex} pointerEvents={checking ? 'none' : 'auto'}>
           <WebView
-            style={styles.flex}
+            style={styles.webView}
             key={`${site}-login-${page.key}`}
             ref={webViewRef}
             source={{

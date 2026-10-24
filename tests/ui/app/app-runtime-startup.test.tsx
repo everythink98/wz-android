@@ -40,11 +40,14 @@ const mockUseNotificationsRuntime =
   >();
 let mockActualReader = false;
 let mockActualAccount = false;
+let mockActualNetwork = false;
 let mockActualNotifications = false;
 let mockStableBoundaries = false;
 let mockUpdateProgress: AppUpdateDownloadProgress | null = null;
 let mockNetworkReady = false;
 const mockNetworkFetcher = jest.fn<Fetcher>();
+const mockEnsureNetworkProxyReady = jest.fn<() => Promise<void>>();
+const mockApplyNetworkProxy = jest.fn<() => Promise<unknown>>();
 const mockLoadReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
 const mockImportReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
 const mockCommitReader = jest.fn<(command: ReaderCommand) => Promise<ReaderChange>>();
@@ -124,17 +127,28 @@ jest.mock('@/app/useReaderRuntime', () => ({
   }
 }));
 
+jest.mock('@/platform/network/networkProxy', () => ({
+  ...jest.requireActual<typeof import('@/platform/network/networkProxy')>('@/platform/network/networkProxy'),
+  applyNetworkProxy: () => mockApplyNetworkProxy()
+}));
+
 jest.mock('@/platform/network/useNetworkProxyRuntime', () => ({
-  useNetworkProxyRuntime: () => {
+  useNetworkProxyRuntime: (
+    options: Parameters<typeof import('@/platform/network/useNetworkProxyRuntime').useNetworkProxyRuntime>[0]
+  ) => {
+    if (mockActualNetwork)
+      return jest
+        .requireActual<typeof import('@/platform/network/useNetworkProxyRuntime')>(
+          '@/platform/network/useNetworkProxyRuntime'
+        )
+        .useNetworkProxyRuntime({ ...options, baseFetcher: mockNetworkFetcher });
     const ReactModule = require('react') as typeof React;
     const value = {
       activeProfile: null,
       applyError: '',
       applyStatus: 'loading',
       deleteProxyProfile: jest.fn(),
-      ensureNetworkProxyReady: jest.fn(async () => {
-        throw new Error('代理状态读取中。');
-      }),
+      ensureNetworkProxyReady: mockEnsureNetworkProxyReady,
       loaded: mockNetworkReady,
       networkProxyFetcher: mockNetworkFetcher,
       proxyState: { enabled: false, activeId: null, profiles: [] },
@@ -161,6 +175,7 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
         .useAccountRuntime(options);
     return {
       center: {
+        linuxDoCredit: { open: jest.fn(), connectSilently: jest.fn(), busy: false },
         account: {
           linuxDoLevelBusy: false,
           linuxDoLevelError: '',
@@ -295,11 +310,16 @@ describe('app runtime startup', () => {
   beforeEach(() => {
     mockActualReader = false;
     mockActualAccount = false;
+    mockActualNetwork = false;
     mockActualNotifications = false;
     mockStableBoundaries = false;
     mockUpdateProgress = null;
     mockNetworkReady = false;
+    mockApplyNetworkProxy.mockReset().mockResolvedValue({ ok: true });
     mockNetworkFetcher.mockReset().mockRejectedValue(new Error('代理状态读取中。'));
+    mockEnsureNetworkProxyReady.mockReset().mockImplementation(async () => {
+      if (!mockNetworkReady) throw new Error('代理状态读取中。');
+    });
     mockReaderData = undefined;
     mockReaderDataLoaded = true;
     mockSessionsReady = true;
@@ -991,6 +1011,72 @@ describe('app runtime startup', () => {
     expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ deferSecondary: false }));
     expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
     expect(mockUseAppUpdateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ autoCheck: true }));
+  });
+
+  it('keeps the initial aggregate feed budget after shared network preparation through the real account gateway', async () => {
+    jest.useFakeTimers();
+    mockActualAccount = true;
+    mockActualNetwork = true;
+    const secureStoreRead = jest.spyOn(SecureStore, 'getItemAsync').mockResolvedValue(null);
+    mockReaderData = createEmptyReaderData();
+    mockReaderData.settings.contentSources = mockReaderData.settings.contentSources.map((entry) => ({
+      ...entry,
+      enabled: entry.source === 'v2ex'
+    }));
+    let releasePreparation!: () => void;
+    const preparation = new Promise<void>((resolve) => {
+      releasePreparation = resolve;
+    });
+    mockApplyNetworkProxy.mockReturnValue(preparation);
+    mockNetworkFetcher.mockImplementation(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 4_000));
+      return new Response(
+        '<div class="cell item"><a class="topic-link" href="/t/901#reply0">Fresh topic</a><a class="node" href="/go/create">Create</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>'
+      );
+    });
+    const hook = await renderHook(() => useAppRuntime());
+    let pending: ReturnType<ReadGateway['getFeed']> | undefined;
+    let settled = false;
+    try {
+      await waitFor(() => expect(hook.result.current.routes).not.toBeNull());
+      await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        pending = hook.result.current.routes!.feedRouteRuntime.account.readGateway.getFeed({ source: 'all', limit: 1 });
+        void pending.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          }
+        );
+        await jest.advanceTimersByTimeAsync(4_999);
+      });
+      expect(settled).toBe(false);
+      expect(mockNetworkFetcher).not.toHaveBeenCalled();
+      await act(async () => jest.advanceTimersByTimeAsync(1));
+      expect(settled).toBe(false);
+      expect(mockNetworkFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2_400);
+        releasePreparation();
+        await jest.advanceTimersByTimeAsync(4_000);
+      });
+      await expect(pending).resolves.toMatchObject({
+        errors: {},
+        items: [expect.objectContaining({ source: 'v2ex', id: '901', title: 'Fresh topic' })]
+      });
+      expect(mockNetworkFetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        releasePreparation();
+        await jest.advanceTimersByTimeAsync(5_000);
+        await pending;
+      });
+      await hook.unmount();
+      secureStoreRead.mockRestore();
+      jest.useRealTimers();
+    }
   });
 
   it('loads Search categories even before the initial Feed is visible', async () => {

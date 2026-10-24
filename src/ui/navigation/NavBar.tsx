@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { Bell, Home, MoreHorizontal, Search, type LucideIcon } from 'lucide-react-native';
+import { Bell, Home, UserRound, Search, type LucideIcon } from 'lucide-react-native';
 import type { MainTabParamList } from './appRouteTypes';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
@@ -8,7 +8,7 @@ export const tabNavItems: { value: keyof MainTabParamList; label: string; icon: 
   { value: 'feed', label: '首页', icon: Home },
   { value: 'search', label: '搜索', icon: Search },
   { value: 'notifications', label: '消息', icon: Bell },
-  { value: 'more', label: '更多', icon: MoreHorizontal }
+  { value: 'more', label: '我的', icon: UserRound }
 ];
 
 export function TabBarIcon({
@@ -29,7 +29,7 @@ export function TabBarIcon({
     <View style={styles.navItem}>
       <View style={styles.navIconPill}>
         <View style={styles.navIconWrap}>
-          <Icon size={21} color={color} strokeWidth={focused ? 2.1 : 1.7} />
+          <Icon size={24} color={color} strokeWidth={focused ? 2.2 : 1.7} />
           {showBadge ? <View style={styles.navBadge} /> : null}
         </View>
       </View>
@@ -65,9 +65,9 @@ export function createNavBarStyles(theme: ReaderTheme, settings: ReaderStyleSett
       color: theme.muted,
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: 10,
-      fontWeight: '600',
+      fontWeight: '500',
       letterSpacing: 0
     },
-    navTextActive: { color: theme.primary, fontWeight: '700' }
+    navTextActive: { color: theme.primary, fontWeight: '600' }
   });
 }

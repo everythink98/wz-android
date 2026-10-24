@@ -419,7 +419,7 @@ export function useNetworkProxyRuntime({
   );
 
   const ensureNetworkProxyReady = useCallback(async () => {
-    if (!loadedRef.current || applyStatusRef.current === 'applying') {
+    while (!loadedRef.current || applyStatusRef.current === 'applying') {
       await readyPromiseRef.current;
     }
     const current = proxyStateRef.current;

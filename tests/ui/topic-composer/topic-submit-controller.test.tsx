@@ -26,6 +26,7 @@ import type { TopicCreationSource } from '@/domain/forum/topicComposer';
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   markAccountSessionMigrationCompleted,
   saveAccountSessionSnapshot
@@ -53,7 +54,10 @@ jest.mock('react-native-webview', () => {
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual<typeof import('@/platform/network/managedCookies')>('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
-  readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: 'fixture=synthetic' }))
+  readManagedCookieHeader: jest.fn(async (url: string) => ({
+    status: 'ok',
+    header: url.startsWith('https://linux.do/') ? '_t=fixture-auth; _rt=fixture-runtime' : 'fixture=synthetic'
+  }))
 }));
 
 const mockDatabases = new Map<string, DatabaseSync>();
@@ -260,7 +264,8 @@ async function ready(test: Awaited<ReturnType<typeof setup>>) {
 function snapshot(markdown: string, validationIssues: ComposerSnapshot['validationIssues'] = []): ComposerSnapshot {
   return { markdown, validationIssues, mode: 'source', revision: 3, isEmpty: false, pendingNodeSeekPolls: [] };
 }
-beforeEach(() => {
+beforeEach(async () => {
+  await AsyncStorage.clear();
   mockSqlFailure = '';
   mockDraftSaveGate = undefined;
   appQueryClient.clear();
@@ -292,6 +297,7 @@ async function setupAccountChain(source: TopicCreationSource, failureStatus: num
   let writes = 0;
   let probes = 0;
   const fetcher: Fetcher = async (input, init) => {
+    if (input === 'https://linux.do/cdn-cgi/trace') return new Response('ip=192.0.2.17\nhttp=h2\n');
     if (
       browserFetchIntentFromInit(init)?.owner === 'account' ||
       (source === 'yaohuo' && input.endsWith('/wapindex.aspx?sid=-2'))
@@ -428,6 +434,20 @@ describe('写入账号恢复接线', () => {
       });
       await waitFor(() => expect(test.view.getByTestId('login-webview')).toBeTruthy());
       expect(test.chain().account.hosts.surfaces[source]).toBe(true);
+      if (source === 'linuxdo')
+        await fireEvent(test.view.getByTestId('login-webview'), 'message', {
+          nativeEvent: {
+            url: 'https://linux.do',
+            data: JSON.stringify({
+              type: 'linuxdo-webview',
+              documentKey: 'https://linux.do/latest:1234',
+              userAgent: 'Saved fixture browser UA',
+              status: 'logged-in',
+              hasChallengeMarker: false,
+              hasSessionInitialization: true
+            })
+          }
+        });
       await fireEvent.press(test.view.getByText('检测登录'));
       await waitFor(() => expect(test.chain().account.read.accountSessionViewModels[source].isLoggedIn).toBe(true));
       await waitFor(() => expect(test.chain().account.hosts.surfaces[source]).toBe(false));

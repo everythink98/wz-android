@@ -9,8 +9,9 @@ const MIGRATION_STORAGE_KEY = 'account-session.migration.v1';
 const operations = createKeyedSerialRunner<string>();
 
 type StoredAccountIdentity = Pick<UserIdentity, 'avatar' | 'displayName' | 'id' | 'source' | 'url' | 'username'>;
-type StoredAccountSessionV1 =
-  { version: 1; state: 'authenticated'; identity: StoredAccountIdentity } | { version: 1; state: 'anonymous' };
+type StoredAccountSessionV1 = (
+  { version: 1; state: 'authenticated'; identity: StoredAccountIdentity } | { version: 1; state: 'anonymous' }
+) & { handoffPending?: true };
 
 function storageKey(site: SessionSite) {
   return `${STORAGE_KEY_PREFIX}${site}`;
@@ -47,8 +48,16 @@ function snapshotFromStored(value: unknown, site: SessionSite): AccountSessionSn
   if (!value || typeof value !== 'object') return null;
   const stored = value as Partial<StoredAccountSessionV1>;
   if (stored.version !== 1) return null;
+  const pending = stored.handoffPending === true ? { handoffPending: true as const } : {};
   if (stored.state === 'anonymous') {
-    return { site, status: 'anonymous', cookieSummary: [], isVerifying: false, identityTrust: 'none' };
+    return {
+      site,
+      status: 'anonymous',
+      cookieSummary: [],
+      isVerifying: false,
+      identityTrust: stored.handoffPending ? 'unknown' : 'none',
+      ...pending
+    };
   }
   if (stored.state !== 'authenticated') return null;
   const identity = cleanIdentity(stored.identity, site);
@@ -58,7 +67,8 @@ function snapshotFromStored(value: unknown, site: SessionSite): AccountSessionSn
         status: 'logged-in',
         cookieSummary: [],
         isVerifying: false,
-        identityTrust: 'confirmed',
+        identityTrust: stored.handoffPending ? 'unknown' : 'confirmed',
+        ...pending,
         currentUser: { ...identity }
       }
     : null;
@@ -83,6 +93,7 @@ export function loadAccountSessionSnapshot(site: SessionSite) {
       finishDiagnosticTrace(trace, raw && !snapshot ? 'partial' : 'success', {
         source: site,
         state: snapshot ? 'restored' : raw ? 'invalid' : 'missing',
+        isRecovery: snapshot?.handoffPending === true,
         ...(raw && !snapshot ? { reason: 'invalid_response' } : {})
       });
       return snapshot;
@@ -97,7 +108,31 @@ export function loadAccountSessionSnapshot(site: SessionSite) {
   });
 }
 
-export function saveAccountSessionSnapshot(snapshot: AccountSessionSnapshot) {
+export function markAccountSessionHandoffPending(site: SessionSite) {
+  return operations.run(site, async () => {
+    const trace = beginDiagnosticTrace('session', 'save', { source: site, store: 'account-session', isRecovery: true });
+    try {
+      const raw = await AsyncStorage.getItem(storageKey(site));
+      let snapshot: AccountSessionSnapshot | null = null;
+      try {
+        snapshot = raw ? snapshotFromStored(JSON.parse(raw), site) : null;
+      } catch {
+        /* Damaged identity stays anonymous. */
+      }
+      const identity = cleanIdentity(snapshot?.currentUser, site);
+      const record: StoredAccountSessionV1 = identity
+        ? { version: 1, state: 'authenticated', identity, handoffPending: true }
+        : { version: 1, state: 'anonymous', handoffPending: true };
+      await AsyncStorage.setItem(storageKey(site), JSON.stringify(record));
+      finishDiagnosticTrace(trace, 'success', { source: site, state: 'persisted', isRecovery: true });
+    } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { source: site, reason: 'storage_error' });
+      throw error;
+    }
+  });
+}
+
+export function saveAccountSessionSnapshot(snapshot: AccountSessionSnapshot, completeHandoff?: () => boolean) {
   return operations.run(snapshot.site, async () => {
     const trace = beginDiagnosticTrace('session', 'save', { source: snapshot.site, store: 'account-session' });
     const record = recordFromSnapshot(snapshot);
@@ -107,6 +142,19 @@ export function saveAccountSessionSnapshot(snapshot: AccountSessionSnapshot) {
     }
     try {
       markDiagnosticStage(trace, 'persist', { state: 'started' });
+      const raw = await AsyncStorage.getItem(storageKey(snapshot.site));
+      // Ordinary account saves cannot complete a handoff owned by a still-open page.
+      let pending = snapshot.handoffPending === true;
+      try {
+        pending ||= raw ? snapshotFromStored(JSON.parse(raw), snapshot.site)?.handoffPending === true : false;
+      } catch {
+        /* Replace damaged records with the confirmed identity. */
+      }
+      if (completeHandoff && !completeHandoff()) {
+        finishDiagnosticTrace(trace, 'stale', { source: snapshot.site, reason: 'superseded' });
+        return false;
+      }
+      if (pending && !completeHandoff) record.handoffPending = true;
       await AsyncStorage.setItem(storageKey(snapshot.site), JSON.stringify(record));
       finishDiagnosticTrace(trace, 'success', { source: snapshot.site, state: 'persisted' });
       return true;

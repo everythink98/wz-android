@@ -1,11 +1,17 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
 import React from 'react';
-import { StatusBar, StyleSheet } from 'react-native';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
 import { ReadingSettingsScreen } from '@/features/more/ReadingSettingsScreen';
 import { TopicMenu } from '@/features/topic/components/TopicMenu';
+import {
+  NavigationBackdropProvider,
+  NavigationBackdropTarget,
+  NavigationGlass,
+  NavigationGlassGroup
+} from '@/ui/navigation/NavigationGlass';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 
@@ -32,6 +38,87 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
 describe('Topic and More controls', () => {
+  it('retains a mounted backdrop until replacement and clears only the current unmounted target', async () => {
+    const content = (firstMounted: boolean, firstActive: boolean, secondMounted: boolean) => (
+      <NavigationBackdropProvider>
+        {firstMounted ? (
+          <NavigationBackdropTarget key="first" active={firstActive}>
+            <View />
+          </NavigationBackdropTarget>
+        ) : null}
+        {secondMounted ? (
+          <NavigationBackdropTarget key="second" active>
+            <View />
+          </NavigationBackdropTarget>
+        ) : null}
+        <NavigationGlassGroup>
+          <View />
+        </NavigationGlassGroup>
+      </NavigationBackdropProvider>
+    );
+    const view = await render(content(true, true, false));
+    const firstTarget: unknown = view.getByTestId('navigation-glass-control').props.blurTarget?.current;
+    expect(firstTarget).toBeTruthy();
+
+    await view.rerender(content(true, false, false));
+    expect(view.getByTestId('navigation-glass-control').props.blurTarget?.current === firstTarget).toBe(true);
+
+    await view.rerender(content(true, false, true));
+    const secondTarget: unknown = view.getByTestId('navigation-glass-control').props.blurTarget?.current;
+    expect(secondTarget).toBeTruthy();
+    expect(secondTarget === firstTarget).toBe(false);
+
+    await view.rerender(content(false, false, true));
+    expect(view.getByTestId('navigation-glass-control').props.blurTarget?.current === secondTarget).toBe(true);
+
+    await view.rerender(content(false, false, false));
+    const fallback = view.getByTestId('navigation-glass-control');
+    expect(fallback.props.blurTarget).toBeUndefined();
+    expect(StyleSheet.flatten(fallback.props.style).backgroundColor).toBe(theme.surface);
+  });
+
+  it('keeps nested backdrop cleanup isolated from the parent page', async () => {
+    const content = (innerMounted: boolean) => (
+      <NavigationBackdropProvider>
+        <NavigationBackdropTarget active>
+          <View />
+        </NavigationBackdropTarget>
+        <NavigationGlass />
+        <NavigationBackdropProvider>
+          {innerMounted ? (
+            <NavigationBackdropTarget active>
+              <View />
+            </NavigationBackdropTarget>
+          ) : null}
+          <NavigationGlassGroup>
+            <View />
+          </NavigationGlassGroup>
+        </NavigationBackdropProvider>
+      </NavigationBackdropProvider>
+    );
+    const view = await render(content(true));
+    const parentTarget: unknown = view.getByTestId('navigation-glass').props.blurTarget?.current;
+    const innerTarget: unknown = view.getByTestId('navigation-glass-control').props.blurTarget?.current;
+    expect(parentTarget).toBeTruthy();
+    expect(innerTarget).toBeTruthy();
+    expect(innerTarget === parentTarget).toBe(false);
+
+    await view.rerender(content(false));
+    expect(view.getByTestId('navigation-glass-control').props.blurTarget).toBeUndefined();
+    expect(view.getByTestId('navigation-glass').props.blurTarget?.current === parentTarget).toBe(true);
+  });
+
+  it('uses a readable fallback for navigation controls without a page backdrop', async () => {
+    const view = await render(
+      <NavigationGlassGroup round>
+        <View />
+      </NavigationGlassGroup>
+    );
+    expect(StyleSheet.flatten(view.getByTestId('navigation-glass-control').props.style).backgroundColor).toBe(
+      theme.surface
+    );
+  });
+
   it('keeps reading controls close to the native header even with a tall status bar', async () => {
     const statusBarHeight = jest.replaceProperty(StatusBar, 'currentHeight', 64);
     try {
@@ -57,19 +144,33 @@ describe('Topic and More controls', () => {
     const runTopicMenuAction = jest.fn((action: () => void) => action());
     const topicUrl = 'https://www.v2ex.com/t/1';
     const view = await render(
-      <TopicMenu
-        visible
-        styles={styles}
-        topicUrl={topicUrl}
-        onOpenOriginal={onOpenOriginal}
-        onOpenReadingSettings={onOpenReadingSettings}
-        onRefreshTopic={onRefreshTopic}
-        onRefreshWholeTopic={onRefreshWholeTopic}
-        onRequestClose={onRequestClose}
-        onShareTopic={onShareTopic}
-        runTopicMenuAction={runTopicMenuAction}
-      />
+      <NavigationBackdropProvider>
+        <NavigationBackdropTarget active>
+          <View />
+        </NavigationBackdropTarget>
+        <TopicMenu
+          visible
+          styles={styles}
+          topicUrl={topicUrl}
+          onOpenOriginal={onOpenOriginal}
+          onOpenReadingSettings={onOpenReadingSettings}
+          onRefreshTopic={onRefreshTopic}
+          onRefreshWholeTopic={onRefreshWholeTopic}
+          onRequestClose={onRequestClose}
+          onShareTopic={onShareTopic}
+          runTopicMenuAction={runTopicMenuAction}
+        />
+      </NavigationBackdropProvider>
     );
+
+    expect(view.getByTestId('navigation-glass-surface').props.blurTarget.current).toBeTruthy();
+    const modals = view.root?.queryAll((node) => /Modal/i.test(String(node.type))) ?? [];
+    expect(
+      modals.map((node) => ({
+        statusBarTranslucent: node.props.statusBarTranslucent,
+        navigationBarTranslucent: node.props.navigationBarTranslucent
+      }))
+    ).toEqual([{ statusBarTranslucent: true, navigationBarTranslucent: true }]);
 
     await fireEvent.press(view.getByText('分享'));
     expect(view.queryByText('分享正文图片')).toBeNull();

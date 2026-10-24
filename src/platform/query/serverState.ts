@@ -27,7 +27,7 @@ export const forumQueryKeys = {
     readPlanScope
   }: {
     source: import('@/domain/session/siteSessionState').SessionSite;
-    kind: 'overview' | 'attendance' | 'credits' | 'stardust-credits';
+    kind: 'overview' | 'attendance' | 'credits' | 'stardust-credits' | 'ldc-account' | 'ldc-transactions';
     userId: string;
     sessionEpoch: number;
     readPlanScope: string;

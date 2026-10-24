@@ -5,6 +5,50 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import { sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 
 describe('forum catalog runtime', () => {
+  it('leaves preparation and source deadlines to the gateway instead of canceling catalogs at five seconds', async () => {
+    jest.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    const readGateway = {
+      getReadPlan: () => ({ state: 'ready', lane: 'public', transport: 'native-no-cookie', cacheScope: 'public:omit' }),
+      getCategories: jest.fn(({ signal }: { signal: AbortSignal }) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve({ items: [{ source: 'v2ex', id: 'tech', name: '技术' }], errors: {} }),
+            11_400
+          );
+          signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(new Error('aborted'));
+            },
+            { once: true }
+          );
+        });
+      })
+    } as unknown as ReadGateway;
+    const hook = await renderHook(
+      () => useForumCatalogRuntime({ active: true, enabledFeedSources: ['v2ex'], readGateway }),
+      { wrapper: QueryTestWrapper }
+    );
+    try {
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(7_400);
+      });
+      expect(requestSignal?.aborted).toBe(false);
+      expect(hook.result.current.settled).toBe(false);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(4_001);
+      });
+      expect(hook.result.current.categories).toEqual([{ source: 'v2ex', id: 'tech', name: '技术' }]);
+      expect(hook.result.current.settled).toBe(true);
+    } finally {
+      await act(async () => hook.unmount());
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps post metadata ready while deferring unrelated catalogs until the first Feed is visible', async () => {
     const getCategories = jest.fn(async ({ source }: { source: Source }) => ({
       items: [{ source, id: 'general', name: `${source} category` }],

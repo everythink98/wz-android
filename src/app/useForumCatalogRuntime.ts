@@ -6,7 +6,6 @@ import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPoli
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
-import { readWithinAggregateSourceBudget } from '@/sources/readAggregation';
 
 type ForumCatalogRuntimeOptions = {
   active: boolean;
@@ -39,9 +38,7 @@ export function useForumCatalogRuntime({
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
           const trace = beginDiagnosticTrace('feed', 'categories', { source });
           try {
-            const data = await readWithinAggregateSourceBudget(source, signal, (sourceSignal) =>
-              readGateway.getCategories({ source, signal: sourceSignal }, { readPlanScope: plan.cacheScope, trace })
-            );
+            const data = await readGateway.getCategories({ source, signal }, { readPlanScope: plan.cacheScope, trace });
             const error = Object.values(data.errors || {}).find(Boolean);
             if (error) throw Object.assign(new Error(error.message), error);
             finishDiagnosticTrace(trace, 'success', { source, itemCount: data.items.length });

@@ -178,6 +178,22 @@ describe('Topic card visible behavior', () => {
     expect(onOpenTopic).toHaveBeenCalledWith(topic);
   });
 
+  it('gives colliding tag labels distinct foregrounds and backgrounds in the topic list', async () => {
+    const tags = ['A', 'I', 'Q'];
+    const view = await render(
+      <TopicCard
+        topic={{ ...topic, tags }}
+        readerState={{ favorite: false, listDensity: 'standard', read: false }}
+        onOpenTopic={jest.fn()}
+      />
+    );
+    const foregrounds = tags.map((tag) => StyleSheet.flatten(view.getByText(tag).props.style).color);
+    const backgrounds = tags.map((tag) => StyleSheet.flatten(view.getByText(tag).parent?.props.style).backgroundColor);
+
+    expect(new Set(foregrounds).size).toBe(tags.length);
+    expect(new Set(backgrounds).size).toBe(tags.length);
+  });
+
   it('hides density-dependent content and keeps a trailing local action separate', async () => {
     const onOpenTopic = jest.fn();
     const onTrailingAction = jest.fn();
@@ -380,8 +396,9 @@ describe('App theme propagation to real topic cards', () => {
     };
 
     await update({ theme: 'dark' });
-    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: '#F1F1F1' });
-    expect(view.getByTestId('navigation-theme')).toHaveStyle({ color: '#F1F1F1' });
+    const darkInk = createTheme({ theme: 'dark' }).ink;
+    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: darkInk });
+    expect(view.getByTestId('navigation-theme')).toHaveStyle({ color: darkInk });
     await update({ fontFamily: 'serif' });
     expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ fontFamily: 'serif' });
     await update({ listDensity: 'loose' });

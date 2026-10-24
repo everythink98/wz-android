@@ -19,7 +19,7 @@ import type {
   ForumContentPart
 } from '@/domain/forum/topicContentSplit';
 import { ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
-import { fontFamilyValue, lineHeightMultiplier } from '@/ui/theme/tokens';
+import { fontFamilyValue, lineHeightMultiplier, readerRadii } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from '../styles';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
@@ -102,7 +102,7 @@ function CodeBlock({
 }) {
   const { settings, theme } = useReaderThemeStyles(createTopicStyles);
   const terminal = row.variant === 'terminal';
-  const radius = terminal ? 10 : 8;
+  const radius = readerRadii.content;
   const copy = () => {
     if (row.copyText === undefined) return;
     void Clipboard.setStringAsync(row.copyText)
@@ -209,8 +209,8 @@ function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, {
                 alignItems: 'center',
                 backgroundColor: active ? theme.surface : theme.surface2,
                 borderColor: theme.line,
-                borderTopLeftRadius: index === 0 ? 8 : 0,
-                borderTopRightRadius: index === row.tabs.length - 1 ? 8 : 0,
+                borderTopLeftRadius: index === 0 ? readerRadii.content : 0,
+                borderTopRightRadius: index === row.tabs.length - 1 ? readerRadii.content : 0,
                 borderWidth: StyleSheet.hairlineWidth,
                 justifyContent: 'center',
                 marginRight: index === row.tabs.length - 1 ? 0 : -StyleSheet.hairlineWidth,
@@ -314,7 +314,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
             alignSelf: 'stretch',
             backgroundColor: theme.surface,
             borderColor: theme.line,
-            borderRadius: 8,
+            borderRadius: readerRadii.content,
             borderWidth: StyleSheet.hairlineWidth,
             marginBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
             padding: 8
@@ -369,7 +369,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
           {
             backgroundColor: palette.backgroundColor,
             borderColor: palette.borderColor,
-            borderRadius: 8,
+            borderRadius: readerRadii.content,
             borderWidth: StyleSheet.hairlineWidth,
             marginBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
             marginTop: 0,

@@ -1,17 +1,9 @@
+import { AppSwitch as Switch } from '@/ui/controls/InputControls';
+import { ActivityIndicator } from 'react-native-paper';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  PixelRatio,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View
-} from 'react-native';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
+import { Image, PixelRatio, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { ChevronDown } from 'lucide-react-native';
@@ -254,6 +246,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onRetrySource: (source: NotificationSource) => void;
 }) {
   const { settings, styles, theme } = useReaderThemeStyles(createNotificationStyles);
+  const bottomBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const listRef = useRef<FlashListRef<ForumNotification>>(null);
   const pressNotification = useLatestCallback(onItemPress);
   const renderNotification = useCallback(
@@ -381,10 +374,10 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           if (nextSource && nextSource !== source) onChangeSource(nextSource);
         }}
       />
-      {source !== 'all' && categories.length ? (
-        <View style={styles.categoryRail}>
+      {source !== 'all' && (categories.length > 0 || loading) ? (
+        <View testID="notification-category-strip" style={styles.categoryStrip}>
           <PillRail
-            variant="pills"
+            variant="tabs"
             items={categories.map((category) => ({ value: category.id, label: category.label }))}
             resetScrollKey={source}
             value={categoryId}
@@ -402,8 +395,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
             accessibilityLabel="只看未读"
             accessibilityState={{ checked: unreadOnly }}
             value={unreadOnly}
-            trackColor={{ false: theme.lineStrong, true: theme.primarySoft }}
-            thumbColor={unreadOnly ? theme.primary : theme.surface}
+
             onValueChange={onChangeUnreadOnly}
           />
         </View>
@@ -470,7 +462,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
         accessibilityLabel="消息列表"
         testID={outcome ? `notification-outcome-${outcome}-${source}` : undefined}
         style={styles.screen}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: bottomBarHeight + 24 }]}
         data={visibleItems}
         extraData={settings}
         keyExtractor={(item) => `${item.source}:${item.id}`}
@@ -583,7 +575,7 @@ export function NotificationSettingsScreen({
   onToggleGlobal: (enabled: boolean) => void;
   onToggleSource: (source: NotificationSource, enabled: boolean) => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
+  const { styles } = useReaderThemeStyles(createNotificationStyles);
   const onPageLayout = useStartupPageLayout();
   return (
     <ScrollView
@@ -615,8 +607,7 @@ export function NotificationSettingsScreen({
             accessibilityState={{ busy, disabled: busy }}
             disabled={busy}
             value={state.globalEnabled}
-            trackColor={{ false: theme.lineStrong, true: theme.primarySoft }}
-            thumbColor={state.globalEnabled ? theme.primary : theme.surface}
+
             onValueChange={onToggleGlobal}
           />
         </View>
@@ -631,8 +622,7 @@ export function NotificationSettingsScreen({
               accessibilityState={{ busy, disabled: busy }}
               disabled={busy}
               value={state.sources[source].intentEnabled}
-              trackColor={{ false: theme.lineStrong, true: theme.primarySoft }}
-              thumbColor={state.sources[source].intentEnabled ? theme.primary : theme.surface}
+
               onValueChange={(enabled) => onToggleSource(source, enabled)}
             />
           </View>

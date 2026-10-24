@@ -280,6 +280,14 @@ function Harness({
 }
 
 describe('Create topic screen', () => {
+  it('leaves sheet header spacing to the frame instead of adding a second inset', async () => {
+    const view = await render(<Harness initialDraft={draftFor('nodeseek')} />);
+    await openTopicMore(view);
+    let heading = view.getByLabelText('关闭发帖选项');
+    while (!within(heading).queryByText('附件与草稿')) heading = heading.parent!;
+    expect(StyleSheet.flatten(heading.props.style)?.marginBottom ?? 0).toBe(0);
+  });
+
   it('locks the site and respects independent title, body and tag permissions while editing', async () => {
     const draft = draftFor('linuxdo');
     draft.edit = {
@@ -1341,6 +1349,8 @@ describe('Create topic screen', () => {
     );
     await press(view.getByLabelText('标签 1'));
     await waitFor(() => expect(view.getByRole('checkbox', { name: '标签 技术' })).toBeChecked());
+    const selectedTag = within(view.getByLabelText('移除标签 技术')).getByText('技术');
+    expect(StyleSheet.flatten(selectedTag.props.style).marginRight).toBeGreaterThanOrEqual(48);
     expect(view.getByRole('checkbox', { name: '标签 交流' })).toBeDisabled();
     await press(view.getByLabelText('移除标签 技术'));
     await waitFor(() => expect(view.getByRole('checkbox', { name: '标签 交流' })).toBeEnabled());

@@ -126,7 +126,7 @@ function AccountCenterScenario({
     <AccountCenterPanel
       credentials={credentials}
       enabledSessionSources={enabledSessionSources}
-      expanded
+      active
       nodeSeekUserId={nodeSeekUserId}
       sessions={sessions}
       siteContent={{}}
@@ -134,19 +134,17 @@ function AccountCenterScenario({
       styles={styles}
       theme={theme}
       onCommand={noopAsync}
-      onExpandedChange={noop}
     />
   );
 }
 
 function NodeSeekServicesScenario() {
-  const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
+  const { theme } = useReaderThemeStyles(createMoreScreenStyles);
   return (
     <NodeSeekServicesPanel
       apiKeyBusy={false}
       apiKeySaved={false}
       recoveryThreshold={2}
-      styles={styles}
       theme={theme}
       onAuthorizeApiKey={noop}
       onClearApiKey={noop}
@@ -259,7 +257,7 @@ function LinuxDoLevelScenario() {
   );
 }
 
-function LinuxDoVerificationScenario({ state }: { state: 'checking' | 'result' }) {
+function LinuxDoVerificationScenario({ state }: { state: 'checking' | 'result' | 'completed' | 'blocked' }) {
   const { styles } = useReaderThemeStyles(createAccountHostStyles);
   const webViewRef = useRef<WebView | null>(null);
   const [visible, setVisible] = useState(true);
@@ -272,15 +270,22 @@ function LinuxDoVerificationScenario({ state }: { state: 'checking' | 'result' }
     >
       <LinuxDoVerifyModal
         recoveryPanel={{
-          phase: state,
+          phase: state === 'checking' ? 'checking' : 'result',
           dedicated: true,
           results:
             state === 'checking'
               ? [{ kind: 'reading', outcome: 'pending' }]
-              : [
-                  { kind: 'page', outcome: 'completed' },
-                  { kind: 'reading', outcome: 'stale' }
-                ]
+              : state === 'completed'
+                ? [
+                    { kind: 'page', outcome: 'completed' },
+                    { kind: 'reading', outcome: 'completed' }
+                  ]
+                : state === 'blocked'
+                  ? [{ kind: 'page', outcome: 'verification-required' }]
+                  : [
+                      { kind: 'page', outcome: 'completed' },
+                      { kind: 'reading', outcome: 'stale' }
+                    ]
         }}
         checking={state === 'checking'}
         credentialAttempt={0}
@@ -412,6 +417,24 @@ export const accountVisualScenarios: readonly VisualScenarioDefinition[] = [
     title: '安全验证·部分恢复与过期',
     note: '仅渲染页面已恢复、阅读请求过期的 App 结果；不连接网站或恢复真实请求。',
     render: () => <LinuxDoVerificationScenario state="result" />
+  },
+  {
+    capabilityIds: ['ACCOUNT-02'],
+    id: 'account.verification.completed',
+    kind: 'rendered',
+    tags: ['account', 'linuxdo', 'verification', 'completed', 'large-text'],
+    title: '安全验证·访问与同步均已恢复',
+    note: '仅渲染已完成结果，不连接网站或恢复真实请求。',
+    render: () => <LinuxDoVerificationScenario state="completed" />
+  },
+  {
+    capabilityIds: ['ACCOUNT-02'],
+    id: 'account.verification.blocked',
+    kind: 'rendered',
+    tags: ['account', 'linuxdo', 'verification', 'blocked', 'large-text'],
+    title: '安全验证·仍需验证',
+    note: '仅渲染站点仍拦截的结果与重试入口，不打开网站。',
+    render: () => <LinuxDoVerificationScenario state="blocked" />
   },
   {
     capabilityIds: ['ACCOUNT-02', 'ACCOUNT-03'],

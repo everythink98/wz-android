@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { memo, Profiler, useMemo, type ProfilerOnRenderCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Animated, StyleSheet, Vibration, View } from 'react-native';
+import { Animated, Dimensions, StyleSheet, Vibration, View } from 'react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { ThumbsUp } from 'lucide-react-native';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import { QueryTestWrapper } from '../QueryTestWrapper';
@@ -471,6 +472,29 @@ describe('LinuxDo native post interactions', () => {
       await view.unmount();
     }
   );
+  it.each(['top', 'bottom'] as const)(
+    'keeps the reaction picker inside the %s safe edge without writing',
+    async (edge) => {
+      const wrapper = ({ children }: { children: React.ReactNode }) => (
+        <QueryTestWrapper>
+          <SafeAreaInsetsContext.Provider value={{ top: 64, bottom: 34, left: 0, right: 0 }}>
+            {children}
+          </SafeAreaInsetsContext.Provider>
+        </QueryTestWrapper>
+      );
+      const height = Dimensions.get('window').height;
+      const view = await render(<Harness />, { wrapper });
+      await fireEvent(view.getByLabelText('主帖点赞'), 'longPress', {
+        nativeEvent: { pageX: 120, pageY: edge === 'top' ? 100 : height - 10 }
+      });
+      await waitFor(() => expect(view.getByLabelText('反应 bili_057')).toBeTruthy());
+      expect(view.getByLabelText('关闭表情反应').parent?.children[1]).toHaveStyle({
+        top: edge === 'top' ? 72 : height - 34 - 210
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  );
+
   it.each(['主帖点赞', '评论点赞'])(
     'opens reactions with one short vibration and no write on long press of %s',
     async (label) => {

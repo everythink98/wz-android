@@ -4,7 +4,7 @@ import { Button, Chip, List, Searchbar } from 'react-native-paper';
 import { CheckCircle2, CheckSquare2, Circle, Search, Square, X } from 'lucide-react-native';
 import type { TopicTag } from '@/domain/forum/topicComposer';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import type { useTopicComposerController } from './useTopicComposerController';
 import type { useTopicTagSearch } from './useTopicTagSearch';
 
@@ -12,7 +12,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     root: { flexShrink: 1, gap: 8 },
-    search: { backgroundColor: theme.surface2, borderRadius: 12 },
+    search: { backgroundColor: theme.surface2, borderRadius: readerRadii.control },
     input: {
       minHeight: 48,
       fontSize: 14 * settings.fontScale,
@@ -38,7 +38,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     error: { color: theme.danger, fontSize: 13 * settings.fontScale, fontFamily },
     list: { flex: 1 },
-    row: { paddingVertical: 0, paddingRight: 16, marginBottom: 4, borderRadius: 10 },
+    row: { paddingVertical: 0, paddingRight: 16, marginBottom: 4, borderRadius: readerRadii.control },
     rowContainer: { minHeight: 48, marginVertical: 0, paddingVertical: 8, alignItems: 'center' },
     selected: { backgroundColor: theme.primarySoft },
     selectedText: { color: theme.primary, fontWeight: '600' },
@@ -47,7 +47,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     chips: { flexGrow: 0, flexShrink: 0 },
     chipRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     chip: { minHeight: 48, justifyContent: 'center', backgroundColor: theme.primarySoft },
-    chipText: { marginRight: 22 },
+    chipText: { marginRight: 56 },
     chipClose: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
     empty: { paddingVertical: 24, textAlign: 'center' },
     footer: { borderTopColor: theme.line, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 12 },

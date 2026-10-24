@@ -5,6 +5,7 @@ import type { Topic, UserReference } from '@/domain/forum/models';
 const navigation = vi.hoisted(() => ({
   dispatch: vi.fn(),
   getCurrentRoute: vi.fn(),
+  navigate: vi.fn(),
   isReady: vi.fn(() => true)
 }));
 
@@ -20,6 +21,7 @@ import {
   isNativeStackScreen,
   navigateAppScreen,
   navigateMainTab,
+  openLibraryRoute,
   pushTopicRoute,
   pushUserRoute,
   shouldUpdateAppRootScreen
@@ -47,6 +49,7 @@ describe('route change projection', () => {
 describe('navigation commands', () => {
   beforeEach(() => {
     navigation.dispatch.mockClear();
+    navigation.navigate.mockClear();
     navigation.isReady.mockReturnValue(true);
     navigation.getCurrentRoute.mockReturnValue({ key: 'feed', name: 'feed' });
   });
@@ -60,7 +63,15 @@ describe('navigation commands', () => {
   });
 
   it('leaves hardware back to every native stack route', () => {
-    for (const name of ['Topic', 'User', 'Library', 'NotificationDetail', 'NotificationSettings', 'ReadingSettings']) {
+    for (const name of [
+      'Topic',
+      'User',
+      'Library',
+      'NotificationDetail',
+      'NotificationSettings',
+      'ReadingSettings',
+      'LinuxDoCredit'
+    ]) {
       navigation.getCurrentRoute.mockReturnValue({ key: name, name });
       expect(isNativeStackScreen()).toBe(true);
     }
@@ -81,6 +92,20 @@ describe('navigation commands', () => {
       [{ type: 'PUSH', payload: { name: 'Topic', params: { topic } } }],
       [{ type: 'PUSH', payload: { name: 'User', params: { user } } }]
     ]);
+  });
+
+  it('opens each Library collection through the existing native route', () => {
+    for (const tab of ['favorites', 'users', 'history'] as const) {
+      expect(openLibraryRoute(tab)).toBe(true);
+    }
+    expect(navigation.navigate.mock.calls).toEqual([
+      ['Library', { initialTab: 'favorites' }],
+      ['Library', { initialTab: 'users' }],
+      ['Library', { initialTab: 'history' }]
+    ]);
+    navigation.isReady.mockReturnValue(false);
+    expect(openLibraryRoute('history')).toBe(false);
+    expect(navigation.navigate).toHaveBeenCalledTimes(3);
   });
 
   it('pops MainTabs without stacking another tab host', () => {

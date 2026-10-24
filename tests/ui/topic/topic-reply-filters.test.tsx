@@ -1,10 +1,13 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { inactivePostInteractionActions } from '../topicInteractionFixture';
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   PixelRatio,
+  Dimensions,
+  DeviceEventEmitter,
+  TextInput as NativeTextInput,
   ScrollView,
   StyleSheet,
   Text,
@@ -35,7 +38,7 @@ import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
-import { createTheme } from '@/ui/theme/tokens';
+import { createTheme, readerRadii } from '@/ui/theme/tokens';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import { decideTopicAction, type TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
@@ -45,6 +48,7 @@ import {
   topicListItemKey,
   topicListItemType,
   topicListReadingFloor,
+  topicListReadingRevision,
   type TopicListItem
 } from '@/features/topic/model/topicListModel';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
@@ -74,6 +78,9 @@ const mockScrollToIndex = jest.fn();
 const mockScrollToOffset = jest.fn();
 const mockGetLayout = jest.fn<(index: number) => { x: number; y: number; width: number; height: number } | undefined>();
 const mockGetFirstItemOffset = jest.fn<() => number>();
+const mockMeasureTopicViewport = jest.fn<View['measureInWindow']>();
+const mockNativeTopicViewport = { measureInWindow: mockMeasureTopicViewport };
+const mockTopicScrollView = { getNativeScrollRef: () => mockNativeTopicViewport };
 const mockCompileForumContent = jest.fn();
 const mockAvatarLifecycle = jest.fn<(event: 'mount' | 'unmount', uri: string | undefined) => void>();
 const mockAvatarComponentLifecycle = jest.fn<(event: 'mount' | 'unmount') => void>();
@@ -95,12 +102,19 @@ let mockFlashListLayoutReady = true;
 let mockRecycledReplySlot = false;
 let mockRealViewportCells = false;
 beforeEach(() => {
+  mockGetLayout.mockReset();
+  mockGetFirstItemOffset.mockReset();
+  jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => callback(220, 200, 80, 36));
   mockRecycledReplySlot = false;
   mockRealViewportCells = false;
   mockViewportReplyInputs.clear();
   mockViewportAdmissions.clear();
   mockViewportBodyInstances.clear();
   mockAvatarComponentLifecycle.mockClear();
+});
+
+afterEach(() => {
+  jest.mocked(View.prototype.measureInWindow).mockRestore();
 });
 const replyListDragEvent = {
   nativeEvent: {
@@ -162,6 +176,7 @@ jest.mock('@shopify/flash-list', () => {
         style?: React.ComponentProps<typeof View>['style'];
         importantForAccessibility?: React.ComponentProps<typeof View>['importantForAccessibility'];
         accessibilityElementsHidden?: boolean;
+        onTouchStart?: React.ComponentProps<typeof View>['onTouchStart'];
         [key: string]: unknown;
       },
       ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: (options: unknown) => void }>
@@ -204,7 +219,8 @@ jest.mock('@shopify/flash-list', () => {
           return result;
         },
         getLayout: (index: number) => mockGetLayout(index) || { x: 0, y: index * 900, width: 320, height: 900 },
-        getFirstItemOffset: () => mockGetFirstItemOffset()
+        getFirstItemOffset: () => mockGetFirstItemOffset(),
+        getNativeScrollRef: () => mockTopicScrollView
       }));
       lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
       lastFlashListItemKeys = data.map((item, index) => keyExtractor?.(item, index) ?? String(index));
@@ -235,7 +251,8 @@ jest.mock('@shopify/flash-list', () => {
           testID,
           style: props.style,
           importantForAccessibility: props.importantForAccessibility,
-          accessibilityElementsHidden: props.accessibilityElementsHidden
+          accessibilityElementsHidden: props.accessibilityElementsHidden,
+          onTouchStart: props.onTouchStart
         },
         ListHeaderComponent,
         ...renderedCells.map(({ item, index }, slot) =>
@@ -379,6 +396,7 @@ jest.mock('lucide-react-native', () => {
     Lightbulb: Icon,
     List: Icon,
     MoreHorizontal: Icon,
+    UserRound: Icon,
     Maximize2: Icon,
     Minimize2: Icon,
     Quote: Icon,
@@ -902,7 +920,7 @@ function TopicFilterHarness({
   topicError?: SourceErrorInfo | null;
   topicFavorite?: boolean;
   topicBusy?: boolean;
-  targetReply?: { commentId?: number; floor?: number; pageHint?: number };
+  targetReply?: Extract<TopicLocationTarget, { kind: 'reply' }>['target'];
   targetReplyRequestId?: number;
   yaohuoVisualBookmarked?: boolean;
 } = {}) {
@@ -1328,6 +1346,185 @@ describe('Topic reply filters', () => {
   );
 
   it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
+    'keeps %s reply search above the keyboard through empty results and repeated keyboard layouts',
+    async (source) => {
+      const detail = { ...topic, source };
+      const view = await render(<TopicFilterHarness selectedTopic={detail} topicDetail={detail} />);
+      const viewport = () => view.getByTestId('topic-keyboard-viewport');
+      const layout = (height: number) =>
+        fireEvent(viewport(), 'layout', {
+          persist: () => undefined,
+          nativeEvent: { layout: { x: 0, y: 80, width: 400, height } }
+        });
+      const showKeyboard = (screenY: number) =>
+        act(() =>
+          DeviceEventEmitter.emit('keyboardDidShow', {
+            duration: 0,
+            easing: 'keyboard',
+            endCoordinates: { height: 800 - screenY, width: 400, screenX: 0, screenY }
+          })
+        );
+      try {
+        await layout(720);
+        await fireEvent(view.getByLabelText('评论内查找'), 'focus');
+        for (let cycle = 0; cycle < 2; cycle += 1) {
+          await showKeyboard(500);
+          expect(80 + StyleSheet.flatten(viewport().props.style).height).toBe(500);
+          await layout(420);
+          await fireEvent.changeText(view.getByLabelText('评论内查找'), 'no-matching-reply-zz123');
+          expect(view.queryAllByText(/^reply-/)).toHaveLength(0);
+          expect(80 + StyleSheet.flatten(viewport().props.style).height).toBe(500);
+          await showKeyboard(450);
+          expect(80 + StyleSheet.flatten(viewport().props.style).height).toBe(450);
+          await layout(370);
+          await fireEvent.press(view.getByLabelText('清空查找'));
+          expect(view.getAllByText(/^reply-/)).toHaveLength(3);
+          expect(80 + StyleSheet.flatten(viewport().props.style).height).toBe(450);
+          await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+          expect(StyleSheet.flatten(viewport().props.style).height).toBeUndefined();
+          await layout(720);
+        }
+        await fireEvent(view.getByLabelText('评论内查找'), 'blur');
+        await showKeyboard(500);
+        expect(StyleSheet.flatten(viewport().props.style).height).toBeUndefined();
+      } finally {
+        await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+        await view.unmount();
+      }
+    }
+  );
+
+  it('leaves keyboard avoidance to the reply editor after opening it from a still-focused search', async () => {
+    const detail = { ...topic, source: 'nodeseek' as const };
+    function Harness() {
+      const session = useTopicSessionController({ notify: () => undefined, topic: detail });
+      return (
+        <TopicFilterHarness
+          selectedTopic={detail}
+          topicDetail={detail}
+          sessionOverride={session}
+          canUseNodeSeekActions
+        />
+      );
+    }
+    const view = await render(<Harness />);
+    const viewport = () => view.getByTestId('topic-keyboard-viewport');
+    try {
+      await fireEvent(viewport(), 'layout', {
+        persist: () => undefined,
+        nativeEvent: { layout: { x: 0, y: 80, width: 400, height: 720 } }
+      });
+      await fireEvent(view.getByLabelText('评论内查找'), 'focus');
+      await fireEvent.press(view.getByLabelText('写回复'));
+      expect(mockReplyComposerSheet.mock.lastCall?.[0].visible).toBe(true);
+      mockScrollToOffset.mockClear();
+      await act(() =>
+        DeviceEventEmitter.emit('keyboardDidShow', {
+          duration: 0,
+          easing: 'keyboard',
+          endCoordinates: { height: 300, width: 400, screenX: 0, screenY: 500 }
+        })
+      );
+      expect(StyleSheet.flatten(viewport().props.style).height).toBeUndefined();
+      await act(() => lastFlashListProps.onContentSizeChange(400, 800));
+      expect(mockScrollToOffset).not.toHaveBeenCalled();
+    } finally {
+      await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+      await view.unmount();
+    }
+  });
+
+  it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
+    'reveals %s search with no replies after the keyboard viewport settles',
+    async (source) => {
+      const detail = { ...topic, source, replyCount: 0, replies: [] };
+      const measurements: Parameters<View['measureInWindow']>[0][] = [];
+      jest.mocked(View.prototype.measureInWindow).mockImplementation((callback) => measurements.push(callback));
+      const measureLayout = jest
+        .spyOn(View.prototype, 'measureLayout')
+        .mockImplementation((_relative, callback) => callback(0, 640, 368, 52));
+      mockMeasureTopicViewport.mockImplementation((callback) => callback(0, 80, 400, 420));
+      mockScrollToOffset.mockImplementation(() => undefined);
+      const view = await render(<TopicFilterHarness selectedTopic={detail} topicDetail={detail} topicReplies={[]} />);
+      const layoutList = (height: number) =>
+        act(() => lastFlashListProps.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height } } }));
+      const showKeyboard = () =>
+        act(() =>
+          DeviceEventEmitter.emit('keyboardDidShow', {
+            duration: 0,
+            easing: 'keyboard',
+            endCoordinates: { height: 300, width: 400, screenX: 0, screenY: 500 }
+          })
+        );
+      try {
+        expect(view.getByText('暂无回复')).toBeTruthy();
+        await layoutList(720);
+        await act(() =>
+          lastFlashListProps.onScroll({
+            nativeEvent: {
+              ...replyListScrollEvent(180).nativeEvent,
+              layoutMeasurement: { width: 400, height: 720 }
+            }
+          })
+        );
+        await fireEvent(view.getByLabelText('评论内查找'), 'focus');
+        mockScrollToOffset.mockClear();
+        await showKeyboard();
+        await layoutList(420);
+        // Focus has moved native content to 240 while the list still reports 190.
+        await act(() =>
+          lastFlashListProps.onScroll({
+            nativeEvent: {
+              ...replyListScrollEvent(190).nativeEvent,
+              layoutMeasurement: { width: 400, height: 420 }
+            }
+          })
+        );
+        await act(() => measurements.splice(0).forEach((measure) => measure(16, 480, 368, 52)));
+        expect(mockScrollToOffset).toHaveBeenCalledTimes(1);
+        expect(mockScrollToOffset).toHaveBeenLastCalledWith({ animated: false, offset: 284 });
+
+        mockScrollToOffset.mockClear();
+        await act(() => lastFlashListProps.onContentSizeChange(400, 800));
+        await act(() => measurements.splice(0).forEach((measure) => measure(16, 400, 368, 52)));
+        expect(mockScrollToOffset).not.toHaveBeenCalled();
+
+        await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+        await layoutList(720);
+        expect(measurements).toHaveLength(0);
+        await showKeyboard();
+        await layoutList(420);
+        await act(() => measurements.splice(0).forEach((measure) => measure(16, 480, 368, 52)));
+        expect(mockScrollToOffset).toHaveBeenLastCalledWith({ animated: false, offset: 284 });
+
+        mockScrollToOffset.mockClear();
+        await act(() => lastFlashListProps.onContentSizeChange(400, 800));
+        await fireEvent(view.getByLabelText('评论内查找'), 'blur');
+        await act(() => measurements.splice(0).forEach((measure) => measure(16, 480, 368, 52)));
+        expect(mockScrollToOffset).not.toHaveBeenCalled();
+
+        await fireEvent(view.getByLabelText('评论内查找'), 'focus');
+        await act(() => lastFlashListProps.onContentSizeChange(400, 800));
+        await view.rerender(
+          <TopicFilterHarness active={false} selectedTopic={detail} topicDetail={detail} topicReplies={[]} />
+        );
+        await act(() => measurements.splice(0).forEach((measure) => measure(16, 480, 368, 52)));
+        expect(mockScrollToOffset).not.toHaveBeenCalled();
+        await view.rerender(<TopicFilterHarness selectedTopic={detail} topicDetail={detail} topicReplies={[]} />);
+        measureLayout.mockImplementation((_relative, callback) => callback(0, 640, 368, 60));
+        await act(() => measurements.splice(0).forEach((measure) => measure(16, 480, 368, 60)));
+        expect(mockScrollToOffset).toHaveBeenLastCalledWith({ animated: false, offset: 292 });
+      } finally {
+        measureLayout.mockRestore();
+        mockMeasureTopicViewport.mockReset();
+        mockScrollToOffset.mockReset();
+        await act(() => DeviceEventEmitter.emit('keyboardDidHide', {}));
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
     'reuses %s search text through real debounced input and releases it on route/scope changes',
     async (source) => {
       jest.useFakeTimers();
@@ -1362,7 +1559,12 @@ describe('Topic reply filters', () => {
         );
       }
       const view = await render(<Harness />);
+      const blur = jest.spyOn(NativeTextInput.prototype, 'blur').mockImplementation(() => undefined);
       try {
+        expect(lastFlashListProps.keyboardShouldPersistTaps).toBe('handled');
+        expect(lastFlashListProps.keyboardDismissMode).toBe('on-drag');
+        expect(view.getByRole('search', { name: '评论内查找' })).toBeTruthy();
+        expect(view.queryByLabelText('清空查找')).toBeNull();
         const query = async (value: string) => {
           await fireEvent.changeText(view.getByLabelText('评论内查找'), value);
           await act(async () => jest.advanceTimersByTime(180));
@@ -1393,10 +1595,25 @@ describe('Topic reply filters', () => {
         await view.rerender(<Harness epoch={1} id="another-topic" />);
         expect(bodyCalls() - beforeReturn).toBe(replies.length);
         expect(view.getByLabelText('评论内查找').props.value).toBe('Needle -ignored');
+        blur.mockClear();
+        const list = view.getByTestId('topic-detail-loaded');
+        const touchInput = { nativeEvent: { identifier: 1 } };
+        // RNTL dispatches one handler; forward the same event to simulate native bubbling.
+        await fireEvent(view.getByLabelText('评论内查找'), 'touchStart', touchInput);
+        await fireEvent(list, 'touchStart', touchInput);
+        expect(blur).not.toHaveBeenCalled();
+        const touchClear = { nativeEvent: { identifier: 2 } };
+        await fireEvent(view.getByLabelText('清空查找'), 'touchStart', touchClear);
+        await fireEvent(list, 'touchStart', touchClear);
+        expect(blur).not.toHaveBeenCalled();
+        await fireEvent(list, 'touchStart', { nativeEvent: { identifier: 3 } });
+        expect(blur).toHaveBeenCalledTimes(1);
+        expect(view.getByLabelText('评论内查找').props.value).toBe('Needle -ignored');
         await fireEvent.press(view.getByLabelText('清空查找'));
         await act(async () => jest.advanceTimersByTime(180));
         expect(view.getAllByText(/^reply-/)).toHaveLength(3);
       } finally {
+        blur.mockRestore();
         await view.unmount();
         normalize.mockRestore();
         jest.useRealTimers();
@@ -1484,15 +1701,18 @@ describe('Topic reply filters', () => {
       />
     );
     mockScrollToOffset.mockClear();
+    mockScrollToIndex.mockClear();
     const view = await render(tree(0));
     expect(mockScrollToOffset).not.toHaveBeenCalled();
+    await act(() => lastFlashListProps.onScroll(replyListScrollEvent(4000)));
     await view.rerender(tree(1, { kind: 'opening' }));
-    await waitFor(() => expect(mockScrollToOffset).toHaveBeenCalledWith({ animated: true, offset: 0 }));
-    const count = mockScrollToOffset.mock.calls.length;
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledWith({ animated: false, index: 0, viewOffset: 0 }));
+    expect(mockScrollToOffset).not.toHaveBeenCalled();
+    const count = mockScrollToIndex.mock.calls.length;
     await view.rerender(tree(1, { kind: 'opening' }));
-    expect(mockScrollToOffset).toHaveBeenCalledTimes(count);
+    expect(mockScrollToIndex).toHaveBeenCalledTimes(count);
     await view.rerender(tree(2, { kind: 'opening' }));
-    await waitFor(() => expect(mockScrollToOffset).toHaveBeenCalledTimes(count + 1));
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(count + 1));
     expect(onLocateReply).not.toHaveBeenCalled();
   });
   it('shows a Yaohuo site notice without fabricated content or reply tools', async () => {
@@ -1563,12 +1783,19 @@ describe('Topic reply filters', () => {
       );
       const view = await render(tree(false));
       expect(view.getByLabelText('写回复')).toBeTruthy();
+      expect(
+        within(view.getByLabelText('写回复')).getByTestId('navigation-glass').props.blurTarget.current
+      ).toBeTruthy();
+      expect(within(view.getByTestId('topic-glass-content')).queryByLabelText('写回复')).toBeNull();
+      expect(view.queryAllByTestId('navigation-glass-control')).toHaveLength(0);
+      expect(within(view.getByTestId('topic-glass-content')).queryByTestId('navigation-glass-control')).toBeNull();
       expect(view.getAllByLabelText('回复')).toHaveLength(sourceReplies.length);
 
       await view.rerender(tree(true));
 
       expect(view.getByText('已关闭')).toBeTruthy();
       expect(view.queryByLabelText('写回复')).toBeNull();
+      expect(view.queryByTestId('navigation-glass')).toBeNull();
       expect(view.queryAllByLabelText('回复')).toHaveLength(0);
       expect(view.getByText(/Still readable opening/)).toBeTruthy();
       expect(view.getByText(/second needle/)).toBeTruthy();
@@ -1762,7 +1989,7 @@ describe('Topic reply filters', () => {
     ).toHaveLength(0);
     const registrationCount = onImagePreviewDescriptors.mock.calls.length;
 
-    await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), 'needle');
+    await fireEvent.changeText(view.getByLabelText('评论内查找'), 'needle');
     await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
     await fireEvent.press(view.getByLabelText('倒序'));
     await act(() => lastFlashListProps.onViewableItemsChanged({ viewableItems: [] }));
@@ -2435,6 +2662,7 @@ describe('Topic reply filters', () => {
     'inactive route',
     'bottom clamp',
     'already aligned',
+    'projected position',
     'late row layout'
   ])('confirms only the current visible reply after %s', async (change) => {
     jest.useFakeTimers({ doNotFake: ['performance'] });
@@ -2444,6 +2672,7 @@ describe('Topic reply filters', () => {
     let logicalOffset = 0;
     let pendingNativeTarget = 0;
     let timestamp = 0;
+    let precedingHeightChange = 0;
     let targetMeasured = change !== 'late row layout';
     const layouts = () => {
       let y = 0;
@@ -2453,7 +2682,7 @@ describe('Topic reply filters', () => {
             ? 0
             : change === 'bottom clamp' && index >= lastReplyListIndex(2)
               ? 100
-              : 900;
+              : 900 + (index === 0 ? precedingHeightChange : 0);
         const layout = { x: 0, y, width: 320, height };
         y += height;
         return layout;
@@ -2462,7 +2691,7 @@ describe('Topic reply filters', () => {
     const tree = (floor: number, requestId: number, active = true) => (
       <TopicFilterHarness
         active={active}
-        targetReply={{ floor }}
+        targetReply={{ floor, readingResume: change === 'projected position' }}
         targetReplyRequestId={requestId}
         readingEntry={{
           ready: true,
@@ -2470,7 +2699,7 @@ describe('Topic reply filters', () => {
           windowReady: true,
           windowLoaded: jest.fn(),
           anchor: undefined,
-          location: { kind: 'reply', target: { floor } },
+          location: { kind: 'reply', target: { floor, readingResume: change === 'projected position' } },
           baseline: undefined,
           highest: undefined,
           positioned,
@@ -2501,8 +2730,8 @@ describe('Topic reply filters', () => {
         setOffsetProjectionEnabled: () => undefined,
         setScrollDirection: () => undefined,
         computeVisibleIndices: () => ({
-          startIndex: Math.floor(logicalOffset / 900),
-          endIndex: Math.floor(logicalOffset / 900)
+          startIndex: layouts().findIndex((row) => row.y + row.height > logicalOffset),
+          endIndex: layouts().findLastIndex((row) => row.y < logicalOffset + 800)
         })
       };
       const hook = await renderHook(() =>
@@ -2530,6 +2759,7 @@ describe('Topic reply filters', () => {
         await act(() => {
           nativeOffset = layouts()[lastReplyListIndex(2)].y;
           logicalOffset = nativeOffset;
+          hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset());
           lastFlashListProps.onScroll({
             nativeEvent: { ...replyListDragEvent.nativeEvent, contentOffset: { x: 0, y: nativeOffset } }
           });
@@ -2552,6 +2782,21 @@ describe('Topic reply filters', () => {
       });
       const floor = change === 'new target' ? 3 : 2;
       const targetIndex = lastReplyListIndex(floor);
+      if (change === 'projected position') {
+        await act(() => {
+          precedingHeightChange = 1000;
+          nativeOffset = pendingNativeTarget;
+          if (hook.result.current.acceptScrollOffset(nativeOffset, ++timestamp, manager.getMaxScrollOffset())) {
+            logicalOffset = nativeOffset;
+            hook.result.current.computeFirstVisibleIndexForOffsetCorrection();
+            lastFlashListProps.onScroll({
+              nativeEvent: { ...replyListDragEvent.nativeEvent, contentOffset: { x: 0, y: nativeOffset } }
+            });
+          }
+          hook.result.current.applyOffsetCorrection();
+        });
+        expect(pendingNativeTarget).toBe(layouts()[targetIndex].y);
+      }
       expect(layouts()[targetIndex].y - nativeOffset).toBeGreaterThanOrEqual(800);
       expect(positioned).not.toHaveBeenCalled();
       expect(
@@ -2584,7 +2829,7 @@ describe('Topic reply filters', () => {
         await view.rerender(tree(2, 1));
         expect(positioned).toHaveBeenCalledTimes(1);
       }
-      if (change !== 'inactive route')
+      if (change !== 'inactive route' && change !== 'projected position')
         expect(
           StyleSheet.flatten(
             view.getByTestId(`reply-floor-${floor}`, { includeHiddenElements: true }).parent?.parent?.props.style
@@ -2598,6 +2843,59 @@ describe('Topic reply filters', () => {
       mockGetFirstItemOffset.mockReset();
       mockFlashListLayoutReady = true;
       jest.useRealTimers();
+    }
+  });
+
+  it('finishes a resume at the native pixel boundary of a reply', async () => {
+    mockFlashListLayoutReady = false;
+    mockScrollToIndex.mockImplementation(() => undefined);
+    mockGetFirstItemOffset.mockReturnValue(17.904762268066406);
+    mockGetLayout.mockReturnValue({ x: 0, y: 1787.047619047619, width: 320, height: 240.38095238095238 });
+    const round = jest
+      .spyOn(PixelRatio, 'roundToNearestPixel')
+      .mockImplementation((value) => Math.round(value * 2.625) / 2.625);
+    const positioned = jest.fn();
+    const location: TopicLocationTarget = { kind: 'reply', target: { floor: 2, readingResume: true } };
+    const entry = {
+      ready: true,
+      positionReady: false,
+      windowReady: true,
+      windowLoaded: jest.fn(),
+      anchor: undefined,
+      location,
+      baseline: undefined,
+      highest: undefined,
+      positioned,
+      failed: jest.fn()
+    };
+    try {
+      const view = await render(<TopicFilterHarness location={location} readingEntry={entry} />);
+      const row = (lastFlashListProps.data as TopicListItem[])[lastReplyListIndex(2)];
+      await view.rerender(
+        <TopicFilterHarness
+          location={location}
+          readingEntry={{
+            ...entry,
+            anchor: { floor: 2, rowKey: row.key, revision: topicListReadingRevision(row), offset: 240.380940391904 }
+          }}
+        />
+      );
+      await act(() => {
+        lastFlashListProps.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 798.09521484375 } } });
+        lastFlashListProps.onLoad({ elapsedTimeInMs: 0 });
+      });
+      expect(positioned).not.toHaveBeenCalled();
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(2046.3333740234375)));
+      expect(positioned).not.toHaveBeenCalled();
+      await act(() => lastFlashListProps.onScroll(replyListScrollEvent(2045.3333740234375)));
+      expect(positioned).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    } finally {
+      round.mockRestore();
+      mockScrollToIndex.mockReset();
+      mockGetLayout.mockReset();
+      mockGetFirstItemOffset.mockReset();
+      mockFlashListLayoutReady = true;
     }
   });
 
@@ -3808,7 +4106,7 @@ describe('Topic reply filters', () => {
     expect(replyItem).toBeDefined();
     expect(lastFlashListProps.getItemType(replyItem)).toBe('reply:codeBlock');
     expect(view.getAllByTestId('topic-code-frame')).toHaveLength(1);
-    const rendered = JSON.stringify(view.toJSON());
+    const rendered = JSON.stringify(view.toJSON(), ['children', 'props', 'testID']);
     expect(rendered.indexOf('target-author')).toBeLessThan(rendered.indexOf('code-line-01'));
     expect(rendered.indexOf('code-line-01')).toBeLessThan(rendered.indexOf('code-line-52'));
   });
@@ -4139,7 +4437,7 @@ describe('Topic reply filters', () => {
         topicReplies={[currentReply]}
       />
     );
-    const rendered = JSON.stringify(view.toJSON());
+    const rendered = JSON.stringify(view.toJSON(), ['children', 'props', 'testID']);
 
     expect(rendered).toContain('current same-topic body');
     expect(rendered).not.toContain('stale cached body');
@@ -4176,7 +4474,7 @@ describe('Topic reply filters', () => {
     );
     const checkCard = () => {
       expect(view.getByTestId('topic-accepted-answer')).toHaveStyle({
-        borderRadius: 8,
+        borderRadius: readerRadii.content,
         borderBottomWidth: StyleSheet.hairlineWidth
       });
       expect(lastFlashListItemTypes.filter((type) => type.startsWith('topicAcceptedAnswer'))).toEqual([
@@ -4201,7 +4499,7 @@ describe('Topic reply filters', () => {
     }
     await fireEvent.press(view.getByLabelText('收起已采纳答案'));
     expect(view.getByTestId('topic-accepted-answer')).toHaveStyle({
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       borderBottomWidth: StyleSheet.hairlineWidth
     });
     expect(view.queryByText(/accepted preview/)).toBeNull();
@@ -4539,7 +4837,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('CyrilXu')).toBeTruthy();
     expect(view.getByText(/采纳答案正文/)).toBeTruthy();
     expect(view.getByText('查看完整答案 · #2')).toBeTruthy();
-    const rendered = JSON.stringify(view.toJSON());
+    const rendered = JSON.stringify(view.toJSON(), ['children', 'props', 'testID']);
     expect(rendered.indexOf('提问正文')).toBeLessThan(rendered.indexOf('topic-accepted-answer'));
     expect(rendered.indexOf('topic-accepted-answer')).toBeLessThan(rendered.indexOf('回复列表'));
 
@@ -4680,14 +4978,14 @@ describe('Topic reply filters', () => {
     );
 
     await fireEvent.press(view.getByLabelText('只看楼主'));
-    await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), '不会命中答案');
+    await fireEvent.changeText(view.getByLabelText('评论内查找'), '不会命中答案');
     expect(view.getByTestId('active-filter').props.children).toBe('author');
     expect(view.getByLabelText('查看完整解决方案，第 2 楼')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
 
     await waitFor(() => expect(view.getByTestId('active-filter').props.children).toBe('all'));
-    await waitFor(() => expect(view.getByPlaceholderText('评论内查找').props.value).toBe(''));
+    await waitFor(() => expect(view.getByLabelText('评论内查找').props.value).toBe(''));
     await waitFor(() => {
       const acceptedReplyIndex = lastReplyListIndex(2);
       expect(acceptedReplyIndex).toBeGreaterThan(-1);
@@ -4962,15 +5260,14 @@ describe('Topic reply filters', () => {
       <TopicFilterHarness canUseNodeSeekActions selectedTopic={nodeSeekTopic} topicDetail={nodeSeekTopic} />
     );
 
-    const rendered = JSON.stringify(view.toJSON());
-    const beforeIndex = rendered.indexOf('投票前正文');
-    const pollIndex = rendered.indexOf('topic-poll-nodeseek');
-    const afterIndex = rendered.indexOf('投票后正文');
-    expect(beforeIndex).toBeGreaterThanOrEqual(0);
-    expect(pollIndex).toBeGreaterThan(beforeIndex);
-    expect(afterIndex).toBeGreaterThan(pollIndex);
-    expect(view.getAllByTestId('topic-html-block-deferred')).toHaveLength(2);
-    expect(view.getAllByTestId('topic-poll-nodeseek')).toHaveLength(1);
+    const blocks = view.getAllByTestId(/^(topic-html-block-deferred|topic-poll-nodeseek)$/);
+    expect(blocks.map((block) => block.props.testID)).toEqual([
+      'topic-html-block-deferred',
+      'topic-poll-nodeseek',
+      'topic-html-block-deferred'
+    ]);
+    expect(within(blocks[0]).getByText(/投票前正文/)).toBeTruthy();
+    expect(within(blocks[2]).getByText(/投票后正文/)).toBeTruthy();
   });
 
   it('shows the V2EX topic vote count without exposing a vote action', async () => {
@@ -5053,6 +5350,8 @@ describe('Topic reply filters', () => {
   });
 
   it('hides the topic reply action while reading down and reveals it on a deliberate upward scroll', async () => {
+    // Measure scrolling after the unrelated emoji catalog is ready.
+    appQueryClient.setQueryData(forumQueryKeys.emojiUrls('linuxdo'), {});
     const writableTopic: TopicDetail = { ...topic, source: 'linuxdo', url: 'https://linux.do/t/1' };
     const screen = (item = writableTopic) => (
       <TopicFilterHarness canUseLinuxDoActions selectedTopic={item} topicDetail={item} />
@@ -5346,6 +5645,32 @@ describe('Topic reply filters', () => {
     expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true, viewPosition: 0 }));
   });
 
+  it.each(['above', 'below'] as const)(
+    'waits for reply order placement %s the trigger and ignores measurements from an inactive route',
+    async (side) => {
+      const measurements: Parameters<View['measureInWindow']>[0][] = [];
+      jest.mocked(View.prototype.measureInWindow).mockImplementation((callback) => measurements.push(callback));
+      const view = await render(<TopicFilterHarness />);
+      const { height, width } = Dimensions.get('window');
+      const y = side === 'above' ? height - 100 : 200;
+
+      await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+      expect(view.queryByLabelText('关闭回复排序菜单')).toBeNull();
+      await act(() => measurements[0](220, y, 80, 36));
+      expect(view.getByLabelText('关闭回复排序菜单').parent?.children[1]).toHaveStyle({
+        right: Math.max(8, width - 300),
+        ...(side === 'above' ? { bottom: 104 } : { top: 240 })
+      });
+
+      await fireEvent.press(view.getByLabelText('关闭回复排序菜单'));
+      await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+      await view.rerender(<TopicFilterHarness active={false} />);
+      await act(() => measurements[1](220, y, 80, 36));
+      await view.rerender(<TopicFilterHarness />);
+      expect(view.queryByLabelText('关闭回复排序菜单')).toBeNull();
+    }
+  );
+
   it('scales the reply order control, menu and boundary with reader text size', async () => {
     const settings = { ...readerData.settings, fontScale: 1.3 };
     const value = { settings, theme: createTheme(settings) };
@@ -5473,7 +5798,7 @@ describe('Topic reply filters', () => {
       await view.rerender(tree(true, { kind: 'opening' }));
       expect(lastFlashListItemTypes).toContain('topicHeader');
       expect(lastFlashListItemTypes.some((type) => type.startsWith('topicContent'))).toBe(true);
-      expect(mockScrollToOffset).toHaveBeenCalledWith({ animated: true, offset: 0 });
+      expect(mockScrollToIndex).toHaveBeenCalledWith({ animated: false, index: 0, viewOffset: 0 });
       await view.rerender(tree(false));
       expect(lastFlashListItemTypes.some((type) => type.startsWith('topicContent'))).toBe(true);
     }

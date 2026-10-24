@@ -1,9 +1,17 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Modal, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { List } from 'react-native-paper';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { NavigationGlass } from '@/ui/navigation/NavigationGlass';
+import {
+  readerRadii,
+  type ReaderStyleSettings,
+  alphaColor,
+  fontFamilyValue,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
@@ -16,26 +24,26 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     menu: {
       overflow: 'hidden',
-      backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       elevation: 4
     },
     item: {
-      minHeight: 42,
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 9,
+      minHeight: 48,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
+      paddingLeft: 12,
+      paddingRight: 12,
+      justifyContent: 'center',
       paddingVertical: 8
     },
     itemCompact: {
-      minHeight: 38,
+      minHeight: 44,
       paddingVertical: 6
     },
+    row: { marginVertical: 0, alignItems: 'center', gap: 9 },
+    content: { paddingLeft: 0 },
     itemSelected: {
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.06)
     },
@@ -46,7 +54,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       color: theme.ink,
       fontFamily: fontFamilyValue(settings.fontFamily),
       fontSize: Math.round(14 * settings.fontScale),
-      fontWeight: '600'
+      lineHeight: Math.round(20 * settings.fontScale),
+      includeFontPadding: false,
+      fontWeight: '500'
     },
     textCompact: {
       fontSize: Math.round(13 * settings.fontScale),
@@ -74,7 +84,14 @@ export function PopupMenu({
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
   return (
-    <Modal transparent visible={visible} animationType="fade" onRequestClose={onRequestClose}>
+    <Modal
+      transparent
+      statusBarTranslucent
+      navigationBarTranslucent
+      visible={visible}
+      animationType="fade"
+      onRequestClose={onRequestClose}
+    >
       <View style={styles.layer} onTouchStart={recordUserInteraction} onTouchMove={recordUserInteraction}>
         <Pressable
           accessibilityRole="button"
@@ -82,7 +99,10 @@ export function PopupMenu({
           style={styles.dismiss}
           onPress={onRequestClose}
         />
-        <View style={[styles.menu, placementStyle]}>{children}</View>
+        <View style={[styles.menu, placementStyle]}>
+          <NavigationGlass variant="surface" />
+          {children}
+        </View>
       </View>
     </Modal>
   );
@@ -106,16 +126,19 @@ export function PopupMenuItem({
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const Icon = icon;
   return (
-    <Pressable
+    <List.Item
       hitSlop={TOUCH_HIT_SLOP}
       accessibilityRole="menuitem"
       accessibilityLabel={label}
       accessibilityState={selected ? { selected: true } : undefined}
       style={[styles.item, compact && styles.itemCompact, selected && styles.itemSelected, last && styles.itemLast]}
+      containerStyle={styles.row}
+      contentStyle={styles.content}
+      title={label}
+      titleStyle={[styles.text, compact && styles.textCompact, selected && styles.textSelected]}
+      titleNumberOfLines={0}
+      left={Icon ? () => <Icon size={17} color={theme.ink} strokeWidth={1.8} accessible={false} /> : undefined}
       onPress={onPress}
-    >
-      {Icon ? <Icon size={17} color={theme.ink} strokeWidth={1.8} /> : null}
-      <Text style={[styles.text, compact && styles.textCompact, selected && styles.textSelected]}>{label}</Text>
-    </Pressable>
+    />
   );
 }

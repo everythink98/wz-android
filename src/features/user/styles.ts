@@ -1,5 +1,5 @@
 import { StyleSheet } from 'react-native';
-import { type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
 
 export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
@@ -7,7 +7,6 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const topicRowBackground = theme.surface;
-  const radiusMd = 14;
   return StyleSheet.create({
     actions: {
       alignItems: 'center',
@@ -28,7 +27,7 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: Math.round(17 * listFontScale),
-      fontWeight: '600',
+      fontWeight: '500',
       letterSpacing: 0,
       lineHeight: Math.round(24 * listFontScale)
     },
@@ -39,7 +38,7 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: radiusMd,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -116,9 +115,9 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       justifyContent: 'center',
       minHeight: 48,
       minWidth: 48,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 10,
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      borderRadius: readerRadii.control,
       borderWidth: 1,
       borderColor: theme.dark ? theme.primary : theme.primaryStrong,
       backgroundColor: theme.dark ? theme.primary : theme.primaryStrong
@@ -127,6 +126,7 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       borderColor: theme.line,
       backgroundColor: theme.surface
     },
+    followButtonContent: { minHeight: 46, paddingHorizontal: 12 },
     followButtonText: {
       color: theme.onPrimary,
       fontFamily: appFontFamily,
@@ -192,7 +192,7 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
     },
     screen: {
       flex: 1,
-      backgroundColor: theme.background
+      backgroundColor: theme.surface
     },
     timeText: {
       flexShrink: 0,
@@ -239,14 +239,14 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 11,
-      fontWeight: '600',
+      fontWeight: '400',
       includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: 'transparent',
       borderColor: theme.line,
-      borderRadius: 7,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
+      borderRadius: readerRadii.badge,
+      borderWidth: 0,
+      paddingHorizontal: 0,
       paddingVertical: 3,
       textAlignVertical: 'center'
     },
@@ -261,14 +261,14 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 11,
-      fontWeight: '700',
+      fontWeight: '600',
       includeFontPadding: false,
       lineHeight: 16,
-      backgroundColor: theme.surface2,
+      backgroundColor: 'transparent',
       borderColor: theme.line,
-      borderRadius: 7,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
+      borderRadius: readerRadii.badge,
+      borderWidth: 0,
+      paddingHorizontal: 0,
       paddingVertical: 3,
       textAlignVertical: 'center'
     },

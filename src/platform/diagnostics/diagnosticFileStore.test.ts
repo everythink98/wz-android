@@ -675,6 +675,7 @@ describe('diagnostic file store', () => {
       poolId: '3c4d5e',
       dispatcherId: '4d5e6f',
       connectionId: '5e6f70',
+      socketLocalPort: 41022,
       elapsedMs: 43,
       queuedCount: 0,
       runningCount: 1,
@@ -685,6 +686,14 @@ describe('diagnostic file store', () => {
       cookie: `session=${secret}`,
       message: secret
     });
+    for (const [index, socketLocalPort] of [1, 65535, -1, 0, 65536, 1.5, '443', null, NaN, Infinity].entries()) {
+      boundary.nativeEvents.push({
+        timeMs: 1_786_199_367_280 + index,
+        operation: 'request',
+        phase: 'connection-acquired',
+        socketLocalPort
+      });
+    }
     boundary.nativeEvents.push({
       timeMs: 1_786_199_367_268,
       operation: 'rotate-read-runtime',
@@ -818,6 +827,9 @@ describe('diagnostic file store', () => {
       .slice(1)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     const rotationEvents = exportedEvents.filter((event) => event.operation === 'rotate-read-runtime');
+    expect(
+      exportedEvents.flatMap((event) => event.socketLocalPort ?? []).sort((a, b) => Number(a) - Number(b))
+    ).toEqual([1, 41022, 65535]);
     expect(rotationEvents.map((event) => event.phase)).toEqual(['intent', 'apply', 'apply', 'finish']);
     expect(new Set(rotationEvents.map((event) => event.traceId))).toEqual(new Set(['trace-42']));
     expect(rotationEvents.filter((event) => event.phase === 'finish')).toHaveLength(1);

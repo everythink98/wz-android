@@ -68,7 +68,10 @@ jest.mock('react-native-webview', () => {
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
-  readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: 'test-session=fixture' }))
+  readManagedCookieHeader: jest.fn(async (url: string) => ({
+    status: 'ok',
+    header: url.startsWith('https://linux.do/') ? '_t=fixture-auth; _rt=fixture-runtime' : 'test-session=fixture'
+  }))
 }));
 
 const mockLoadReader = jest.fn<Promise<ReaderState>, []>();
@@ -315,6 +318,7 @@ describe('notification runtime', () => {
       if (url.endsWith('/session/current.json'))
         return restored ? new Response('{"current_user":{"username":"alice"}}') : accountResponse.promise;
       if (url.endsWith('/latest')) return new Response('<html></html>');
+      if (url === 'https://linux.do/cdn-cgi/trace') return new Response('ip=192.0.2.17\nhttp=h2\n');
       if (url.includes('/t/201'))
         return restored
           ? new Response(
@@ -434,7 +438,20 @@ describe('notification runtime', () => {
       expect(account.hosts.linuxDoVerificationVisible).toBe(true);
       expect(fetcher.mock.calls.filter(([url]) => url.includes('/t/201'))).toHaveLength(1);
       restored = true;
-      await fireEvent.press(view.getByLabelText('关闭'));
+      await fireEvent(view.getByTestId('notification-login-webview'), 'message', {
+        nativeEvent: {
+          url: 'https://linux.do',
+          data: JSON.stringify({
+            type: 'linuxdo-webview',
+            documentKey: 'https://linux.do/latest:1234',
+            userAgent: 'Saved fixture browser UA',
+            status: 'logged-in',
+            hasChallengeMarker: false,
+            hasSessionInitialization: true
+          })
+        }
+      });
+      await fireEvent.press(view.getByText('检测登录'));
       await waitFor(() => expect(account.hosts.linuxDoVerificationVisible).toBe(false));
       await waitFor(() => expect(view.getByText('恢复后的正文')).toBeTruthy());
       expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);

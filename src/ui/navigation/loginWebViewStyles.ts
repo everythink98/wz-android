@@ -1,81 +1,91 @@
 import { StyleSheet } from 'react-native';
-import { type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
+import {
+  alphaColor,
+  readerRadii,
+  type ReaderStyleSettings,
+  type ReaderTheme,
+  fontFamilyValue
+} from '@/ui/theme/tokens';
 
 export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     loginWebViewModal: {
       flex: 1,
-      backgroundColor: theme.background
+      backgroundColor: theme.surface
+    },
+    loginWebViewChrome: {
+      zIndex: 1,
+      backgroundColor: theme.surface,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
     loginWebViewHeader: {
       alignItems: 'center',
-      borderBottomColor: theme.line,
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'space-between',
-      paddingLeft: 16,
+      minHeight: 64,
+      paddingLeft: 20,
       paddingRight: 8,
-      paddingVertical: 4,
+      paddingVertical: 8,
       backgroundColor: theme.surface
     },
     loginWebViewTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(15 * settings.fontScale),
+      fontSize: Math.round(17 * settings.fontScale),
       fontWeight: '600'
     },
     loginWebViewTitleBlock: {
       flex: 1,
-      gap: 2
+      gap: 3,
+      paddingVertical: 2
     },
     loginWebViewSubtitle: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: Math.round(11 * settings.fontScale)
+      fontSize: Math.round(12 * settings.fontScale),
+      lineHeight: Math.round(18 * settings.fontScale)
     },
     loginWebViewToolbar: {
       flexGrow: 0,
       flexShrink: 0,
-      backgroundColor: theme.surface,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
+      backgroundColor: theme.surface
     },
     toolbarContent: {
       paddingHorizontal: 12,
-      paddingBottom: 4
+      paddingBottom: 8
     },
     action: {
-      minHeight: 48,
       minWidth: 48,
       maxWidth: '100%',
-      paddingHorizontal: 8,
-      paddingVertical: 5,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      borderRadius: 6
+      borderRadius: 0,
+      backgroundColor: 'transparent'
     },
     actionPrimary: {
-      backgroundColor: theme.primaryStrong
+      backgroundColor: theme.primaryStrong,
+      borderRadius: readerRadii.control
     },
-    actionIcon: {
-      paddingHorizontal: 0
+    iconAction: {
+      width: 48,
+      height: 48,
+      margin: 0,
+      borderRadius: 0,
+      backgroundColor: 'transparent'
     },
-    actionDimmed: {
-      opacity: 0.5
+    actionContent: {
+      minHeight: 48
     },
-    actionIndicator: {
-      width: 16,
-      height: 16
-    },
-    actionText: {
-      flexShrink: 1,
-      textAlign: 'center',
+    actionLabel: {
       fontFamily: appFontFamily,
-      fontSize: Math.round(13 * settings.fontScale),
-      fontWeight: '600'
+      fontSize: Math.round(14 * settings.fontScale),
+      lineHeight: Math.round(20 * settings.fontScale),
+      includeFontPadding: false,
+      fontWeight: '500',
+      letterSpacing: 0,
+      marginHorizontal: 8,
+      marginVertical: 10
     },
     loginWebViewBody: {
       flex: 1,
@@ -83,7 +93,8 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
     },
     loginWebViewFooter: {
       flexShrink: 0,
-      padding: 16,
+      paddingHorizontal: 20,
+      paddingVertical: 12,
       gap: 12,
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -92,7 +103,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
     footerActions: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8
+      gap: 12
     },
     primaryAction: {
       flex: 1
@@ -100,35 +111,40 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
     loading: {
       position: 'absolute',
       zIndex: 1,
-      top: 14,
-      alignSelf: 'center',
-      maxWidth: '90%',
+      top: 12,
+      left: 20,
+      right: 20,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
       backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: 10,
+      borderColor: alphaColor(theme.primary, 0.18),
+      borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
-      elevation: 1,
       paddingHorizontal: 12,
-      paddingVertical: 8
+      paddingVertical: 10
     },
     loadingText: {
       flexShrink: 1,
-      color: theme.muted,
+      color: theme.dark ? theme.primary : theme.primaryStrong,
       fontFamily: appFontFamily,
-      fontSize: Math.round(12 * settings.fontScale)
+      fontSize: Math.round(12 * settings.fontScale),
+      lineHeight: Math.round(18 * settings.fontScale)
     },
     errorBox: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
       gap: 8,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 14,
+      marginHorizontal: 20,
+      marginBottom: 12,
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.08 : 0.035),
+      borderColor: alphaColor(theme.danger, 0.12),
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
     errorText: {
+      flex: 1,
       color: theme.danger,
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * settings.fontScale),
@@ -138,7 +154,7 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSty
       alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'nowrap',
-      gap: 4
+      gap: 12
     }
   });
 }

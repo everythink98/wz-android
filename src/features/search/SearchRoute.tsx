@@ -6,7 +6,7 @@ import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 
 import { openForumSearchCustomTab } from '@/platform/android/forumSearchCustomTab';
 import { errorMessage } from '@/platform/network/errors';
-import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
+import { dispatchFocusedRoute, manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import type { SearchListItem } from './listItems';
 import { SearchScreen } from './SearchScreen';
@@ -76,10 +76,13 @@ export function SearchRoute() {
   );
   const changeSearchSource = useLatestCallback(controller.setSearchSource);
   const openTopic = useCallback(
-    (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
+    (topic: Topic) => dispatchFocusedRoute(navigation, StackActions.push('Topic', { topic })),
     [navigation]
   );
-  const manageContentSources = useCallback(() => navigation.dispatch(manageContentSourcesAction()), [navigation]);
+  const manageContentSources = useCallback(
+    () => dispatchFocusedRoute(navigation, manageContentSourcesAction()),
+    [navigation]
+  );
   return (
     <SearchScreen
       busy={controller.searchBusy}

@@ -94,106 +94,143 @@ describe('session controller browser flow', () => {
     else delete NativeModules.NetworkProxyModule;
   });
 
-  it('rejects a stale private read before handing a native challenge to the NodeSeek browser', async () => {
-    const direct = Promise.withResolvers<Response>();
-    const defaultFetcher = jest.fn<typeof fetch>(async (_url, init) => {
-      prepareRequestToSend(init);
-      return direct.promise;
-    });
-    const hook = await renderSessionController(defaultFetcher);
-    const controller = new AbortController();
-    const stale = Object.assign(new Error('账号状态已变化'), { reason: 'private-access-stale' });
-    let current = true;
-    let settled: Response | Error | undefined;
-    const fetcher = withRequestBeforeSend(hook.result.current.nodeSeekFetchWithWebViewFallback, () => {
-      if (!current) throw stale;
-    });
-    let request!: Promise<Response | Error>;
-    try {
-      await act(async () => {
-        request = fetcher(
-          'https://www.nodeseek.com/api/notification/unread-count',
-          withBrowserFetchIntent({ signal: controller.signal }, { owner: 'account', priority: 'background' })
-        ).then(
-          (response) => (settled = response),
-          (error: Error) => (settled = error)
-        );
-      });
-      expect(defaultFetcher).toHaveBeenCalledTimes(1);
-      await act(async () => {
-        current = false;
-        direct.resolve(new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }));
-      });
-      await waitFor(() => expect(settled || hook.result.current.hiddenBrowserFetchRequests.nodeSeek).toBeTruthy());
-
-      expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek).toBeNull();
-      await expect(request).resolves.toBe(stale);
-    } finally {
-      await act(async () => controller.abort());
-      await request;
-      await hook.unmount();
-    }
-  });
-
-  it.each(['identity', 'abort'] as const)(
-    'skips a queued NodeSeek private read after %s and continues with the next allowed read',
-    async (change) => {
+  it.each<['nodeseek' | 'linuxdo', 'private-access-stale' | 'source-disabled']>([
+    ['nodeseek', 'private-access-stale'],
+    ['nodeseek', 'source-disabled'],
+    ['linuxdo', 'private-access-stale'],
+    ['linuxdo', 'source-disabled']
+  ])(
+    'rejects a private %s read revoked by %s before handing a native challenge to its browser',
+    async (site, reason) => {
+      const direct = Promise.withResolvers<Response>();
       const defaultFetcher = jest.fn<typeof fetch>(async (_url, init) => {
         prepareRequestToSend(init);
-        return new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } });
+        return direct.promise;
       });
       const hook = await renderSessionController(defaultFetcher);
-      const controllers = Array.from({ length: 3 }, () => new AbortController());
-      const urls = ['held', 'private', 'allowed'].map((part) => `https://www.nodeseek.com/api/notification/${part}`);
-      const stale = Object.assign(new Error('账号状态已变化'), { reason: 'private-access-stale' });
+      const controller = new AbortController();
+      const stale = Object.assign(new Error(reason === 'source-disabled' ? '内容源已停用' : '账号状态已变化'), {
+        reason,
+        source: site
+      });
       let current = true;
-      const protectedFetcher = withRequestBeforeSend(hook.result.current.nodeSeekFetchWithWebViewFallback, () => {
+      let settled: Response | Error | undefined;
+      const browser = site === 'linuxdo' ? 'linuxDo' : 'nodeSeek';
+      const siteFetcher =
+        site === 'linuxdo'
+          ? hook.result.current.forumFetchWithWebViewFallback
+          : hook.result.current.nodeSeekFetchWithWebViewFallback;
+      const fetcher = withRequestBeforeSend(siteFetcher, () => {
         if (!current) throw stale;
       });
-      const requests: Promise<Response | Error>[] = [];
-      const start = (index: number) =>
-        (index === 1 ? protectedFetcher : hook.result.current.nodeSeekFetchWithWebViewFallback)(
-          urls[index]!,
-          withBrowserFetchIntent({ signal: controllers[index]!.signal }, { owner: 'account', priority: 'background' })
-        ).catch((error: Error) => error);
+      let request!: Promise<Response | Error>;
       try {
         await act(async () => {
-          requests.push(start(0));
+          request = fetcher(
+            site === 'linuxdo'
+              ? 'https://linux.do/notifications.json'
+              : 'https://www.nodeseek.com/api/notification/unread-count',
+            withBrowserFetchIntent({ signal: controller.signal }, { owner: 'account', priority: 'background' })
+          ).then(
+            (response) => (settled = response),
+            (error: Error) => (settled = error)
+          );
         });
-        await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[0]));
+        expect(defaultFetcher).toHaveBeenCalledTimes(1);
         await act(async () => {
-          requests.push(start(1), start(2));
+          current = false;
+          direct.resolve(new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }));
         });
-        expect(defaultFetcher).toHaveBeenCalledTimes(3);
-        expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[0]);
-        await act(async () => {
-          if (change === 'identity') current = false;
-          else controllers[1]!.abort();
-          const active = hook.result.current.hiddenBrowserFetchRequests.nodeSeek!;
-          await hook.result.current.completeNodeSeekBrowserFetch({ ...active, html: '{"held":true}' });
-        });
+        await waitFor(() => expect(settled || hook.result.current.hiddenBrowserFetchRequests[browser]).toBeTruthy());
 
-        expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(urls[2]);
-        await expect(requests[1]).resolves.toEqual(change === 'identity' ? stale : new Error('请求已取消'));
-        if (change === 'identity') await expect(requests[1]).resolves.toBe(stale);
-        await act(async () => {
-          const active = hook.result.current.hiddenBrowserFetchRequests.nodeSeek!;
-          await hook.result.current.completeNodeSeekBrowserFetch({ ...active, html: '{"allowed":true}' });
-        });
-        await expect(
-          requests[0]!.then((response) => (response instanceof Response ? response.json() : response))
-        ).resolves.toEqual({ held: true });
-        await expect(
-          requests[2]!.then((response) => (response instanceof Response ? response.json() : response))
-        ).resolves.toEqual({ allowed: true });
-        expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek).toBeNull();
+        expect(hook.result.current.hiddenBrowserFetchRequests[browser]).toBeNull();
+        await expect(request).resolves.toBe(stale);
       } finally {
-        await act(async () => controllers.forEach((controller) => controller.abort()));
-        await Promise.all(requests);
+        await act(async () => controller.abort());
+        await request;
         await hook.unmount();
       }
     }
   );
+
+  it.each<['nodeseek' | 'linuxdo', 'identity' | 'abort' | 'disabled']>([
+    ['nodeseek', 'identity'],
+    ['nodeseek', 'abort'],
+    ['nodeseek', 'disabled'],
+    ['linuxdo', 'identity'],
+    ['linuxdo', 'abort'],
+    ['linuxdo', 'disabled']
+  ])('skips a queued %s private read after %s and continues with the next allowed read', async (site, change) => {
+    const defaultFetcher = jest.fn<typeof fetch>(async (_url, init) => {
+      prepareRequestToSend(init);
+      return new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } });
+    });
+    const hook = await renderSessionController(defaultFetcher);
+    const controllers = Array.from({ length: 3 }, () => new AbortController());
+    const urls = ['held', 'private', 'allowed'].map((part) =>
+      site === 'linuxdo'
+        ? `https://linux.do/notifications.json?fixture=${part}`
+        : `https://www.nodeseek.com/api/notification/${part}`
+    );
+    const browser = site === 'linuxdo' ? 'linuxDo' : 'nodeSeek';
+    const siteFetcher =
+      site === 'linuxdo'
+        ? hook.result.current.forumFetchWithWebViewFallback
+        : hook.result.current.nodeSeekFetchWithWebViewFallback;
+    const complete = async (body: string) => {
+      const active = hook.result.current.hiddenBrowserFetchRequests[browser]!;
+      if (site === 'linuxdo') await hook.result.current.completeLinuxDoBrowserFetch({ ...active, body });
+      else await hook.result.current.completeNodeSeekBrowserFetch({ ...active, html: body });
+    };
+    const stale = Object.assign(new Error(change === 'disabled' ? '内容源已停用' : '账号状态已变化'), {
+      reason: change === 'disabled' ? 'source-disabled' : 'private-access-stale',
+      source: site
+    });
+    let current = true;
+    const protectedFetcher = withRequestBeforeSend(siteFetcher, () => {
+      if (!current) throw stale;
+    });
+    const requests: Promise<Response | Error>[] = [];
+    const start = (index: number) =>
+      (index === 1 ? protectedFetcher : siteFetcher)(
+        urls[index]!,
+        withBrowserFetchIntent({ signal: controllers[index]!.signal }, { owner: 'account', priority: 'background' })
+      ).catch((error: Error) => error);
+    try {
+      await act(async () => {
+        requests.push(start(0));
+      });
+      await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests[browser]?.url).toBe(urls[0]));
+      await act(async () => {
+        requests.push(start(1), start(2));
+      });
+      expect(defaultFetcher).toHaveBeenCalledTimes(3);
+      expect(hook.result.current.hiddenBrowserFetchRequests[browser]?.url).toBe(urls[0]);
+      await act(async () => {
+        if (change === 'abort') controllers[1]!.abort();
+        else current = false;
+        await complete('{"held":true}');
+      });
+
+      expect(hook.result.current.hiddenBrowserFetchRequests[browser]?.url).toBe(urls[2]);
+      await expect(requests[1]).resolves.toEqual(change === 'abort' ? new Error('请求已取消') : stale);
+      if (change !== 'abort') await expect(requests[1]).resolves.toBe(stale);
+      await act(async () => {
+        await complete('{"allowed":true}');
+      });
+      await expect(
+        requests[0]!.then((response) => (response instanceof Response ? response.json() : response))
+      ).resolves.toEqual({ held: true });
+      await expect(
+        requests[2]!.then((response) => (response instanceof Response ? response.json() : response))
+      ).resolves.toEqual({ allowed: true });
+      expect(hook.result.current.hiddenBrowserFetchRequests[browser]).toBeNull();
+    } finally {
+      await act(async () => controllers.forEach((controller) => controller.abort()));
+      await Promise.all(requests);
+      await hook.unmount();
+    }
+  });
 
   it.each([403, 404])(
     'uses the current NodeSeek document status after an earlier %i and ignores late events from an old request',

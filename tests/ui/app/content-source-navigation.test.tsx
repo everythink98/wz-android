@@ -11,8 +11,16 @@ import { DefaultTheme } from '@react-navigation/native';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
-import { navigateMainTab, navigationRef, pushTopicRoute } from '@/app/appNavigation';
-import type { FeedSource, Topic } from '@/domain/forum/models';
+import {
+  navigateMainTab,
+  navigationRef,
+  openLibraryRoute,
+  openLinuxDoCreditRoute,
+  openNodeSeekCreditsRoute,
+  pushTopicRoute,
+  pushUserRoute
+} from '@/app/appNavigation';
+import type { FeedSource, Topic, UserIdentity, UserReference } from '@/domain/forum/models';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
@@ -42,6 +50,7 @@ jest.mock('lucide-react-native', () => {
     Bell: Icon,
     Home: Icon,
     MoreHorizontal: Icon,
+    UserRound: Icon,
     Search: Icon,
     Settings: Icon,
     Star: Icon
@@ -84,19 +93,28 @@ function mockManagementEntry(label: string, onPress: () => void) {
 
 let mockFeedScreenMountCount = 0;
 let mockFeedLoadMoreCallbacks: ((() => void) | undefined)[] = [];
+let mockFeedOpenTopic: ((topic: Topic) => void) | undefined;
+let mockSearchOpenTopic: ((topic: Topic) => void) | undefined;
+let mockLibraryOpenTopic: ((topic: Topic) => void) | undefined;
+let mockLibraryOpenUser: ((user: UserReference) => void) | undefined;
+let mockMoreAccount: MoreRouteRuntimeValue['account'] | undefined;
+let mockMoreLibrary: MoreRouteRuntimeValue['library'] | undefined;
 function mockFeedScreen({
   feedSource,
   onFeedSourceChange,
   onLoadMore,
-  onManageContentSources
+  onManageContentSources,
+  onOpenTopic
 }: {
   feedSource?: FeedSource;
   onFeedSourceChange?: (source: FeedSource) => void;
   onLoadMore?: () => void;
   onManageContentSources: () => void;
+  onOpenTopic: (topic: Topic) => void;
 }) {
   const [mount] = React.useState(() => ++mockFeedScreenMountCount);
   mockFeedLoadMoreCallbacks.push(onLoadMore);
+  mockFeedOpenTopic = onOpenTopic;
   return (
     <>
       {mockManagementEntry('首页', onManageContentSources)}
@@ -109,22 +127,48 @@ function mockFeedScreen({
 
 jest.mock('@/features/feed/FeedScreen', () => ({ FeedScreen: mockFeedScreen }));
 jest.mock('@/features/search/SearchScreen', () => ({
-  SearchScreen: ({ onManageContentSources }: { onManageContentSources: () => void }) =>
-    mockManagementEntry('搜索', onManageContentSources)
+  SearchScreen: ({
+    onManageContentSources,
+    onOpenTopic
+  }: {
+    onManageContentSources: () => void;
+    onOpenTopic: (topic: Topic) => void;
+  }) => {
+    mockSearchOpenTopic = onOpenTopic;
+    return mockManagementEntry('搜索', onManageContentSources);
+  }
 }));
 jest.mock('@/features/library/LibraryScreen', () => ({
-  LibraryScreen: ({ onManageContentSources }: { onManageContentSources: () => void }) =>
-    mockManagementEntry('收藏', onManageContentSources)
+  LibraryScreen: ({
+    onManageContentSources,
+    onOpenTopic,
+    onOpenUser
+  }: {
+    onManageContentSources: () => void;
+    onOpenTopic: (topic: Topic) => void;
+    onOpenUser: (user: UserReference) => void;
+  }) => {
+    mockLibraryOpenTopic = onOpenTopic;
+    mockLibraryOpenUser = onOpenUser;
+    return mockManagementEntry('收藏', onManageContentSources);
+  }
 }));
 function mockMoreScreen({
+  account,
   contentSourcesExpanded,
   onContentSourcesExpandedChange,
   utilities
 }: {
+  account: MoreRouteRuntimeValue['account'];
   contentSourcesExpanded: boolean;
   onContentSourcesExpandedChange: (expanded: boolean) => void;
-  utilities: { settings: { visible: boolean; changeVisible: (visible: boolean) => void } };
+  utilities: {
+    library: MoreRouteRuntimeValue['library'];
+    settings: { visible: boolean; changeVisible: (visible: boolean) => void };
+  };
 }) {
+  mockMoreAccount = account;
+  mockMoreLibrary = utilities.library;
   return (
     <>
       <Pressable
@@ -215,7 +259,21 @@ const libraryRuntime = {
   topicStateIndex
 } as LibraryRouteRuntimeValue;
 const moreRuntime = {
-  account: { surfaces: { closeAll: jest.fn() } },
+  account: {
+    surfaces: { closeAll: jest.fn() },
+    center: {
+      command: (command: Parameters<MoreRouteRuntimeValue['account']['center']['command']>[0]) => {
+        if (command.type === 'open-user') pushUserRoute(command.user, command.initialTab);
+      },
+      openCredits: (currency: Parameters<MoreRouteRuntimeValue['account']['center']['openCredits']>[0]) => {
+        openNodeSeekCreditsRoute({ identityKey: 'nodeseek:7', userId: '7', currency });
+      },
+      openLinuxDoCredit: () => {
+        openLinuxDoCreditRoute({ identityKey: 'linuxdo:7', userId: '7', username: 'alice' });
+      }
+    }
+  },
+  library: { open: openLibraryRoute },
   diagnostics: { getCurrentScreen: () => 'more', metadata: {} },
   notify: jest.fn(),
   notifications: {},
@@ -298,6 +356,7 @@ function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: Feed
           getNotificationsRoute={() => EmptyRoute}
           getReadingSettingsRoute={() => EmptyRoute}
           getNodeSeekCreditsRoute={() => EmptyRoute}
+          getLinuxDoCreditRoute={() => EmptyRoute}
           getSearchRoute={() => SearchTab}
           getTopicRoute={() => TopicScreen}
           getUserRoute={() => EmptyRoute}
@@ -315,6 +374,12 @@ describe('content-source management navigation', () => {
   beforeEach(() => {
     mockFeedScreenMountCount = 0;
     mockFeedLoadMoreCallbacks = [];
+    mockFeedOpenTopic = undefined;
+    mockSearchOpenTopic = undefined;
+    mockLibraryOpenTopic = undefined;
+    mockLibraryOpenUser = undefined;
+    mockMoreAccount = undefined;
+    mockMoreLibrary = undefined;
     jest.mocked(useFeedController).mockReturnValue({
       activeFeedState: {
         hasMore: false,
@@ -336,6 +401,89 @@ describe('content-source management navigation', () => {
   afterEach(async () => {
     await cleanup();
   });
+
+  it.each(['user', 'credits', 'ldc', 'library'] as const)(
+    'ignores queued More %s shortcuts after leaving and restores them on return',
+    async (destination) => {
+      const view = await render(<Navigator />);
+      try {
+        await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+        await act(() => navigateMainTab('more'));
+        const account = mockMoreAccount!;
+        const library = mockMoreLibrary!;
+        const user: UserIdentity = {
+          source: 'nodeseek',
+          id: '7',
+          username: 'alice',
+          url: 'https://www.nodeseek.com/space/7'
+        };
+        const open = () =>
+          destination === 'user'
+            ? account.center.command({ type: 'open-user', user })
+            : destination === 'credits'
+              ? account.center.openCredits('coin')
+              : destination === 'ldc'
+                ? account.center.openLinuxDoCredit()
+                : library.open('favorites');
+        await act(() => {
+          open();
+          open();
+          library.open('history');
+        });
+        expect(navigationRef.getRootState()?.routes.map((route) => route.name)).toEqual([
+          'MainTabs',
+          destination === 'user'
+            ? 'User'
+            : destination === 'credits'
+              ? 'NodeSeekCredits'
+              : destination === 'ldc'
+                ? 'LinuxDoCredit'
+                : 'Library'
+        ]);
+        if (destination === 'library')
+          expect(navigationRef.getCurrentRoute()?.params).toEqual({ initialTab: 'favorites' });
+        await act(() => navigationRef.goBack());
+        await act(() => open());
+        expect(navigationRef.getRootState()?.routes).toHaveLength(2);
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
+
+  it.each(['feed', 'search', 'library-topic', 'library-user'] as const)(
+    'ignores queued different-card navigation from %s until the source route is focused again',
+    async (source) => {
+      await render(<Navigator />);
+      await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+      if (source === 'search') await act(() => navigateMainTab('search'));
+      if (source.startsWith('library')) await act(() => navigationRef.navigate('Library'));
+      const initialKeys = navigationRef.getRootState()?.routes.map((route) => route.key) ?? [];
+      const openTopic =
+        source === 'feed' ? mockFeedOpenTopic : source === 'search' ? mockSearchOpenTopic : mockLibraryOpenTopic;
+      const openUser = mockLibraryOpenUser;
+      const open = (id: string) =>
+        source === 'library-user'
+          ? openUser!({ source: 'yaohuo', id, username: `user${id}`, url: `https://yaohuo.me/user-${id}.html` })
+          : openTopic!({ ...disabledTopic, id });
+      await act(() => {
+        open('42');
+        open('43');
+        open('44');
+      });
+      const routes = navigationRef.getRootState()?.routes;
+      expect(routes).toHaveLength(initialKeys.length + 1);
+      expect(routes?.at(-1)?.params).toEqual(
+        source === 'library-user'
+          ? { user: expect.objectContaining({ id: '42' }) }
+          : { topic: expect.objectContaining({ id: '42' }) }
+      );
+      await act(() => navigationRef.goBack());
+      expect(navigationRef.getRootState()?.routes.map((route) => route.key)).toEqual(initialKeys);
+      await act(() => open('43'));
+      expect(navigationRef.getRootState()?.routes).toHaveLength(initialKeys.length + 1);
+    }
+  );
 
   it.each(['Library', 'feed'] as const)('preserves inline appearance when returning from %s', async (destination) => {
     const view = await render(<Navigator />);

@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
-import { StatusBar as NativeStatusBar, StyleSheet, Text, View } from 'react-native';
+import { StatusBar as NativeStatusBar, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
 export function createScreenTopBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     bar: {
+      zIndex: 1,
       alignItems: 'center',
       flexDirection: 'row',
       gap: 6,
@@ -16,27 +17,32 @@ export function createScreenTopBarStyles(theme: ReaderTheme, settings: ReaderSty
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
+    actions: { alignItems: 'center', flexDirection: 'row', gap: 4 },
     title: {
       flex: 1,
       color: theme.ink,
       fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: 13,
-      fontWeight: '600',
+      fontSize: Math.round(14 * settings.fontScale),
+      fontWeight: '500',
       letterSpacing: 0,
       textAlign: 'left'
-    },
-    actions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexShrink: 0,
-      gap: 4
     }
   });
 }
 
-export function ScreenTopBar({ children }: { children: ReactNode }) {
+export function ScreenTopBar({
+  children,
+  onLayout
+}: {
+  children: ReactNode;
+  onLayout?: (event: LayoutChangeEvent) => void;
+}) {
   const { styles } = useReaderThemeStyles(createScreenTopBarStyles);
-  return <View style={styles.bar}>{children}</View>;
+  return (
+    <View style={styles.bar} onLayout={onLayout}>
+      {children}
+    </View>
+  );
 }
 
 export function ScreenTopBarTitle({ children }: { children: ReactNode }) {

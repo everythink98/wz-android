@@ -19,6 +19,60 @@ function message(type: string, payload: unknown) {
 afterEach(() => setDiagnosticWriter(null));
 
 describe('StructuredReplyComposer', () => {
+  it.each(['background', 'inactive', 'hidden'] as const)(
+    'preserves pending initialization through %s and keeps a foreground timeout',
+    async (interruption) => {
+      jest.useFakeTimers();
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      const previous = jest.mocked(AppState.addEventListener).mock.calls.length;
+      const tree = (visible: boolean) => (
+        <StructuredReplyComposer
+          actionBusy={false}
+          content="保留本机草稿"
+          initialMode="rich"
+          intent={{ kind: 'reply', site: 'linuxdo', topicId: 'pending-init' }}
+          pendingNodeSeekPolls={[]}
+          presentation="sheet"
+          visible={visible}
+          onSnapshot={jest.fn()}
+        />
+      );
+      try {
+        const view = await render(tree(true));
+        const webView = view.getByTestId('structured-composer-webview');
+        await fireEvent(webView, 'loadEnd');
+        await act(() => jest.advanceTimersByTime(800));
+        const onAppState = jest
+          .mocked(AppState.addEventListener)
+          .mock.calls.slice(previous)
+          .find(([event]) => event === 'change')?.[1];
+        if (interruption === 'hidden') await view.rerender(tree(false));
+        else await act(() => onAppState?.(interruption));
+        await act(() => jest.advanceTimersByTime(5000));
+        expect(view.queryByText('编辑器启动超时，可重载后继续')).toBeNull();
+        expect(lines.map((line) => JSON.parse(line))).not.toContainEqual(
+          expect.objectContaining({ operation: 'composer-init', outcome: 'failure' })
+        );
+        if (interruption === 'hidden') await view.rerender(tree(true));
+        else await act(() => onAppState?.('active'));
+        await act(() => jest.advanceTimersByTime(1000));
+        expect(view.queryByText('编辑器启动超时，可重载后继续')).toBeNull();
+        expect(view.getByTestId('structured-composer-webview')).toBe(webView);
+        await act(() => jest.advanceTimersByTime(501));
+        expect(view.getByText('编辑器启动超时，可重载后继续')).toBeTruthy();
+        await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+        expect(view.queryByText('编辑器启动超时，可重载后继续')).toBeNull();
+        expect(webView.props.source.html).toContain('保留本机草稿');
+        await view.unmount();
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
+
   it('rejects a snapshot request immediately when the editor reports an oversized draft', async () => {
     const ref = createRef<StructuredReplyComposerHandle>();
     const view = await render(

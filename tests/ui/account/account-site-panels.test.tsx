@@ -2,8 +2,9 @@ import { projectTestAccountSessions, testAccountUser } from '../../helpers/accou
 import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
 import React, { type ComponentProps } from 'react';
-import { AppState, Text, View, type AppStateStatus } from 'react-native';
+import { AppState, BackHandler, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
 import { LinuxDoVerifyModal } from '@/features/account/components/LinuxDoVerifyModal';
+import { createAccountHostStyles } from '@/features/account/accountHostStyles';
 import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import { ShieldCheck } from 'lucide-react-native';
 import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
@@ -14,6 +15,7 @@ import { NodeSeekAttendancePanel, NodeSeekServicesPanel } from '@/features/more/
 import type { NodeSeekAttendanceBoard } from '@/domain/forum/accountData';
 import { createSiteSessionStates, type SessionSite, type SiteSessionStatus } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTestStyles as createStyles } from '../styleFixture';
 
 let mockLoginWebViewProps: Record<string, any> = {};
@@ -30,7 +32,7 @@ afterEach(() => {
 
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
-  useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
+  useSafeAreaInsets: () => ({ bottom: 24, left: 0, right: 0, top: 52 })
 }));
 
 jest.mock('lucide-react-native', () => {
@@ -41,8 +43,12 @@ jest.mock('lucide-react-native', () => {
     KeyRound: Icon,
     LogOut: Icon,
     ShieldCheck: Icon,
+    CircleAlert: Icon,
+    CircleCheck: Icon,
+    Clock3: Icon,
     CheckCircle: Icon,
     CalendarCheck: Icon,
+    Check: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,
     ChevronUp: Icon,
@@ -104,6 +110,7 @@ jest.mock('react-native-webview', () => {
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
+const accountHostStyles = createAccountHostStyles(theme, readerData.settings);
 
 function session(site: SessionSite, status: SiteSessionStatus) {
   const states = createSiteSessionStates();
@@ -238,7 +245,7 @@ function nodeSeekProps(
     onSetLoading: jest.fn(),
     onWebViewState: jest.fn(),
     session: session('nodeseek', 'anonymous'),
-    styles,
+    styles: accountHostStyles,
     visible: false,
     webViewBlockMessage: '',
     webViewRef: { current: null },
@@ -267,7 +274,7 @@ function yaohuoProps(
     onWebViewState: jest.fn(),
     prompt: '登录后返回本页检测状态',
     session: session('yaohuo', 'anonymous'),
-    styles,
+    styles: accountHostStyles,
     visible: true,
     webViewBlockMessage: '',
     webViewRef: { current: null },
@@ -302,13 +309,36 @@ function linuxDoVerifyProps(
     onSetLoadingLinuxDoPage: jest.fn(),
     onShowLinuxDoPanelChange: jest.fn(),
     showLinuxDoPanel: true,
-    styles,
+    styles: accountHostStyles,
     webViewBlockMessage: '',
     ...overrides
   };
 }
 
 describe('Account site panels', () => {
+  it.each(['light', 'dark'] as const)('uses the %s surface before login documents paint', async (mode) => {
+    const settings = { ...readerData.settings, theme: mode };
+    const theme = createTheme(settings);
+    const styles = createAccountHostStyles(theme, settings);
+    for (const site of ['nodeseek', 'yaohuo', 'linuxdo'] as const) {
+      const view = await render(
+        <ReaderStyleProvider value={{ settings, theme }}>
+          {site === 'linuxdo' ? (
+            <LinuxDoVerifyModal {...linuxDoVerifyProps({ styles })} />
+          ) : (
+            <SiteLoginHost {...nodeSeekProps({ site, styles, visible: true })} />
+          )}
+        </ReaderStyleProvider>
+      );
+      expect(StyleSheet.flatten(mockLoginWebViewProps.style)).toMatchObject({
+        flex: 1,
+        backgroundColor: theme.surface
+      });
+      expect(view.root?.queryAll((node) => String(node.type) === 'Modal')[0]?.props.backdropColor).toBe(theme.surface);
+      await view.unmount();
+    }
+  });
+
   it('offers both attendance modes only for a confirmed unsigned board and shows the reward after signing', async () => {
     const board: NodeSeekAttendanceBoard = {
       source: 'nodeseek',
@@ -433,6 +463,13 @@ describe('Account site panels', () => {
     );
     const view = await render(modal());
 
+    const nativeModals = view.root?.queryAll((node) => String(node.type) === 'Modal');
+    expect(
+      nativeModals?.map((node) => ({
+        statusBarTranslucent: node.props.statusBarTranslucent,
+        navigationBarTranslucent: node.props.navigationBarTranslucent
+      }))
+    ).toEqual([{ statusBarTranslucent: true, navigationBarTranslucent: true }]);
     expect(view.getByText('正在打开登录页')).toBeTruthy();
     expect(view.getByText('页面加载失败')).toBeTruthy();
     await fireEvent.press(view.getByText('重试登录页'));
@@ -643,6 +680,18 @@ describe('Account site panels', () => {
   });
 
   it('validates and routes the NodeImage key without opening a real login page', async () => {
+    jest.spyOn(View.prototype, 'measureInWindow').mockImplementation((callback) => callback(40, 200, 180, 240));
+    const backHandlers = new Set<Parameters<typeof BackHandler.addEventListener>[1]>();
+    jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
+      backHandlers.add(handler);
+      return {
+        remove: () => {
+          backHandlers.delete(handler);
+        }
+      };
+    });
+    const onScreenBack = jest.fn(() => true);
+    BackHandler.addEventListener('hardwareBackPress', onScreenBack);
     const onAuthorizeNodeImageApiKey = jest.fn();
     const onSaveNodeImageApiKey = jest.fn();
     const onRecoveryThresholdChange = jest.fn();
@@ -652,7 +701,6 @@ describe('Account site panels', () => {
         apiKeyBusy={false}
         apiKeySaved={false}
         recoveryThreshold={1}
-        styles={styles}
         theme={theme}
         onAuthorizeApiKey={onAuthorizeNodeImageApiKey}
         onClearApiKey={jest.fn()}
@@ -665,8 +713,27 @@ describe('Account site panels', () => {
     expect(view.getByText('读取通道自愈阈值')).toBeTruthy();
     expect(view.queryByLabelText('获取 / 恢复授权', { includeHiddenElements: true })).toBeNull();
     expect(view.queryByLabelText('NodeImage API Key 输入', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByLabelText('3 次')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '读取通道自愈阈值' }));
+    await waitFor(() => expect(view.getByLabelText('3 次')).toBeTruthy());
+    expect(StyleSheet.flatten(view.getByTestId('menu-view').props.style).top).toBe(440);
     await fireEvent.press(view.getByLabelText('3 次'));
     expect(onRecoveryThresholdChange).toHaveBeenCalledWith(3);
+    await waitFor(() => expect(view.queryByLabelText('3 次')).toBeNull());
+    await fireEvent.press(view.getByRole('button', { name: '读取通道自愈阈值' }));
+    await waitFor(() => expect(view.getByLabelText('关闭次数选择', { includeHiddenElements: true })).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('关闭次数选择', { includeHiddenElements: true }));
+    expect(onRecoveryThresholdChange).toHaveBeenCalledTimes(1);
+    await fireEvent.press(view.getByRole('button', { name: '读取通道自愈阈值' }));
+    await waitFor(() => expect(view.getByLabelText('5 次')).toBeTruthy());
+    await act(() => {
+      for (const handler of [...backHandlers].reverse()) {
+        if (handler({ type: 'hardwareBackPress', timeStamp: 0 })) break;
+      }
+    });
+    expect(onScreenBack).not.toHaveBeenCalled();
+    expect(view.queryByLabelText('5 次')).toBeNull();
+    expect(onRecoveryThresholdChange).toHaveBeenCalledTimes(1);
 
     await fireEvent.press(view.getByText('NodeImage 授权'));
     expect(view.queryByLabelText('NodeImage API Key 输入', { includeHiddenElements: true })).toBeNull();
@@ -675,16 +742,16 @@ describe('Account site panels', () => {
     await fireEvent.press(view.getByLabelText('手动粘贴备用'));
     expect(view.getByLabelText('保存 Key').props.accessibilityState.disabled).toBe(true);
     expect(view.getByLabelText('NodeImage API Key 输入')).toBeTruthy();
-    await fireEvent.changeText(view.getByPlaceholderText('NodeImage API Key'), 'local-test-key');
+    await fireEvent.changeText(view.getByLabelText('NodeImage API Key 输入'), 'local-test-key');
     expect(view.getByLabelText('保存 Key').props.accessibilityState.disabled).toBe(false);
     await fireEvent.press(view.getByLabelText('保存 Key'));
     expect(onSaveNodeImageApiKey).toHaveBeenCalledWith('local-test-key');
-    expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('local-test-key');
+    expect(view.getByLabelText('NodeImage API Key 输入').props.value).toBe('local-test-key');
     await fireEvent.press(view.getByLabelText('收起手动备用'));
     expect(view.queryByLabelText('NodeImage API Key 输入')).toBeNull();
     await fireEvent.press(view.getByLabelText('手动粘贴备用'));
-    expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('');
-    await fireEvent.changeText(view.getByPlaceholderText('NodeImage API Key'), 'local-test-key');
+    expect(view.getByLabelText('NodeImage API Key 输入').props.value).toBe('');
+    await fireEvent.changeText(view.getByLabelText('NodeImage API Key 输入'), 'local-test-key');
     await view.rerender(panel(false));
     expect(view.queryByLabelText('NodeImage API Key 输入')).toBeNull();
     await view.rerender(panel());
@@ -692,7 +759,7 @@ describe('Account site panels', () => {
     expect(view.queryByLabelText('手动粘贴备用')).toBeNull();
     await fireEvent.press(view.getByText('NodeImage 授权'));
     await fireEvent.press(view.getByLabelText('手动粘贴备用'));
-    expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('');
+    expect(view.getByLabelText('NodeImage API Key 输入').props.value).toBe('');
   });
 
   it('settles the App-owned NodeSeek WebView flow and detects only after the user asks', async () => {
@@ -746,6 +813,47 @@ describe('Account site panels', () => {
     );
     expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
   });
+
+  it.each(['manual', 'recovery'] as const)(
+    'keeps the current Linux.do document alive while %s login initialization finishes',
+    async (entry) => {
+      const props = linuxDoVerifyProps({
+        loadingLinuxDoPage: false,
+        recoveryPanel:
+          entry === 'recovery'
+            ? { phase: 'web', dedicated: false, results: [{ kind: 'reading', outcome: 'pending' }] }
+            : undefined
+      });
+      const view = await render(<LinuxDoVerifyModal {...props} />);
+      const webView = view.getByTestId('mock-login-webview');
+      const mounts = mockLoginWebViewMountCount;
+
+      await view.rerender(<LinuxDoVerifyModal {...props} checking />);
+
+      expect(view.getByTestId('mock-login-webview')).toBe(webView);
+      expect(mockLoginWebViewMountCount).toBe(mounts);
+      expect(view.queryByText(entry === 'recovery' ? '正在确认访问是否恢复' : '正在确认登录状态')).toBeNull();
+      const disabledActions = ['正在检测…', '刷新页面', ...(entry === 'manual' ? ['清除登录'] : [])];
+      for (const label of disabledActions) {
+        const action = view.getByLabelText(label);
+        expect(action.props.accessibilityState.disabled).toBe(true);
+        await fireEvent.press(action);
+      }
+      expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
+      expect(props.onResetLinuxDoWebView).not.toHaveBeenCalled();
+      expect(props.onClearLinuxDoCookie).not.toHaveBeenCalled();
+      expect(view.getByLabelText('关闭').props.accessibilityState.disabled).toBe(false);
+
+      await view.rerender(<LinuxDoVerifyModal {...props} />);
+      expect(view.getByTestId('mock-login-webview')).toBe(webView);
+      expect(mockLoginWebViewMountCount).toBe(mounts);
+      expect(view.getByLabelText('刷新页面').props.accessibilityState.disabled).toBe(false);
+
+      await view.rerender(<LinuxDoVerifyModal {...props} checking mountLinuxDoWebView={false} />);
+      expect(view.queryByTestId('mock-login-webview')).toBeNull();
+      expect(view.getByText(entry === 'recovery' ? '正在确认访问是否恢复' : '正在确认登录状态')).toBeTruthy();
+    }
+  );
 
   it('opens the working challenge directly and returns only after its document probe', async () => {
     const props = linuxDoVerifyProps({
@@ -857,6 +965,23 @@ describe('Account site panels', () => {
     expect(props.onRetryRecovery).toHaveBeenCalledTimes(1);
     await view.rerender(<LinuxDoVerifyModal {...props} loginFormMode />);
     expect(view.queryByLabelText('网站验证')).toBeNull();
+    await view.rerender(
+      <LinuxDoVerifyModal
+        {...props}
+        recoveryPanel={{
+          phase: 'result',
+          dedicated: true,
+          results: [
+            { kind: 'page', outcome: 'completed' },
+            { kind: 'reading', outcome: 'stale' }
+          ]
+        }}
+      />
+    );
+    expect(view.getByText('检测结果')).toBeTruthy();
+    expect(view.queryByText('验证已完成')).toBeNull();
+    expect(view.getByText('已恢复')).toBeTruthy();
+    expect(view.getByText('请求已过期，请返回原页面重试。')).toBeTruthy();
   });
 
   it.each(['pending', 'completed', 'failed', 'stale'] as const)(
@@ -870,6 +995,9 @@ describe('Account site panels', () => {
       expect(props.onRetryRecovery).not.toHaveBeenCalled();
       expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
       expect(view.getByLabelText(outcome === 'pending' ? '重新验证' : '返回原页面')).toBeTruthy();
+      expect(
+        view.getByText(outcome === 'pending' ? '等待继续检测' : outcome === 'completed' ? '验证已完成' : '检测结果')
+      ).toBeTruthy();
     }
   );
 

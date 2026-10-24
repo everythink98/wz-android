@@ -6,6 +6,7 @@ import {
   loadAccountSessionMigrationCompleted,
   loadAccountSessionSnapshot,
   markAccountSessionMigrationCompleted,
+  markAccountSessionHandoffPending,
   saveAccountSessionSnapshot
 } from './accountSessionStore';
 
@@ -25,6 +26,52 @@ vi.mock('@react-native-async-storage/async-storage', () => {
 const asyncStorage = AsyncStorage as typeof AsyncStorage & { __store: Map<string, string> };
 
 describe('account session store', () => {
+  it('retains the saved identity and pending handoff across ordinary account saves until current completion', async () => {
+    const snapshot: AccountSessionSnapshot = {
+      site: 'linuxdo',
+      status: 'logged-in',
+      cookieSummary: [],
+      isVerifying: false,
+      identityTrust: 'confirmed',
+      currentUser: { source: 'linuxdo', id: '7', username: 'alice', url: 'https://linux.do/u/alice' }
+    };
+    await saveAccountSessionSnapshot(snapshot);
+    await markAccountSessionHandoffPending('linuxdo');
+    await saveAccountSessionSnapshot(snapshot);
+    await expect(loadAccountSessionSnapshot('linuxdo')).resolves.toMatchObject({
+      handoffPending: true,
+      identityTrust: 'unknown',
+      currentUser: { id: '7' }
+    });
+    await expect(saveAccountSessionSnapshot(snapshot, () => false)).resolves.toBe(false);
+    await expect(loadAccountSessionSnapshot('linuxdo')).resolves.toMatchObject({ handoffPending: true });
+    vi.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('storage failure'));
+    await expect(saveAccountSessionSnapshot(snapshot, () => true)).rejects.toThrow('storage failure');
+    await expect(loadAccountSessionSnapshot('linuxdo')).resolves.toMatchObject({ handoffPending: true });
+    await saveAccountSessionSnapshot(snapshot, () => true);
+    await expect(loadAccountSessionSnapshot('linuxdo')).resolves.toEqual(snapshot);
+  });
+
+  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+    'retains interrupted anonymous %s handoffs without inventing an identity',
+    async (site) => {
+      await markAccountSessionHandoffPending(site);
+      await expect(loadAccountSessionSnapshot(site)).resolves.toMatchObject({
+        status: 'anonymous',
+        identityTrust: 'unknown',
+        handoffPending: true
+      });
+      await saveAccountSessionSnapshot(
+        { site, status: 'anonymous', identityTrust: 'none', cookieSummary: [], isVerifying: false },
+        () => true
+      );
+      await expect(loadAccountSessionSnapshot(site)).resolves.toMatchObject({
+        status: 'anonymous',
+        identityTrust: 'none'
+      });
+      expect((await loadAccountSessionSnapshot(site))?.handoffPending).toBeUndefined();
+    }
+  );
   it('records snapshot restore and persistence failures without identity contents', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {

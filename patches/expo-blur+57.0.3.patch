@@ -1,0 +1,102 @@
+diff --git a/node_modules/expo-blur/android/build.gradle b/node_modules/expo-blur/android/build.gradle
+index 56c71d5..d241662 100644
+--- a/node_modules/expo-blur/android/build.gradle
++++ b/node_modules/expo-blur/android/build.gradle
+@@ -16,4 +16,8 @@ android {
+ 
+ dependencies {
+   implementation 'com.github.Dimezis:BlurView:version-3.1.0'
++
++  testImplementation 'junit:junit:4.13.2'
++  testImplementation 'org.robolectric:robolectric:4.16'
++  testImplementation 'org.mockito:mockito-inline:3.12.4'
+ }
+diff --git a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurTargetView.kt b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurTargetView.kt
+index 7089679..c8a777d 100644
+--- a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurTargetView.kt
++++ b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurTargetView.kt
+@@ -109,6 +109,23 @@ class ExpoBlurTargetView(context: Context, appContext: AppContext) : ExpoView(co
+     return blurTargetView.indexOfChild(child)
+   }
+ 
++  // Screens traverses the proxied children; their real parent must retain them during pop.
++  override fun startViewTransition(view: View) {
++    if (view === blurTargetView) {
++      super.startViewTransition(view)
++    } else {
++      blurTargetView.startViewTransition(view)
++    }
++  }
++
++  override fun endViewTransition(view: View) {
++    if (view === blurTargetView) {
++      super.endViewTransition(view)
++    } else {
++      blurTargetView.endViewTransition(view)
++    }
++  }
++
+   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+     val width = MeasureSpec.getSize(widthMeasureSpec)
+     val height = MeasureSpec.getSize(heightMeasureSpec)
+diff --git a/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurTargetViewTest.kt b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurTargetViewTest.kt
+new file mode 100644
+index 0000000..af5664d
+--- /dev/null
++++ b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurTargetViewTest.kt
+@@ -0,0 +1,55 @@
++package expo.modules.blur
++
++import android.graphics.Bitmap
++import android.graphics.Canvas
++import android.view.View
++import android.view.ViewGroup
++import expo.modules.kotlin.AppContext
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.mockito.Mockito.mock
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [28, 35], manifest = Config.NONE)
++class ExpoBlurTargetViewTest {
++  @Test
++  fun removedContentStaysDrawnUntilTheRemovalTransitionEnds() {
++    val context = RuntimeEnvironment.getApplication()
++    val target = ExpoBlurTargetView(context, mock(AppContext::class.java))
++    var draws = 0
++    val child = object : View(context) {
++      init {
++        setWillNotDraw(false)
++      }
++      override fun onDraw(canvas: Canvas) {
++        draws += 1
++      }
++    }
++    target.addView(child, ViewGroup.LayoutParams(80, 80))
++    val exact = View.MeasureSpec.makeMeasureSpec(80, View.MeasureSpec.EXACTLY)
++    target.measure(exact, exact)
++    target.layout(0, 0, 80, 80)
++    child.measure(exact, exact)
++    child.layout(0, 0, 80, 80)
++    val bitmap = Bitmap.createBitmap(80, 80, Bitmap.Config.ARGB_8888)
++    val canvas = Canvas(bitmap)
++    target.draw(canvas)
++    assertTrue("The child must be drawable before removal", draws > 0)
++    target.startViewTransition(child)
++    target.removeView(child)
++    assertEquals(0, target.childCount)
++    val beforeTransitionDraw = draws
++    target.draw(canvas)
++    assertTrue("The outgoing content must stay drawn during the native pop animation", draws > beforeTransitionDraw)
++    target.endViewTransition(child)
++    val afterTransitionDraw = draws
++    target.draw(canvas)
++    assertEquals("Ending the transition must release the removed content", afterTransitionDraw, draws)
++    bitmap.recycle()
++  }
++}

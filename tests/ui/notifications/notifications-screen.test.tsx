@@ -868,6 +868,21 @@ describe('notification screens', () => {
     expect(view.getByText('逐条打开后已读')).toBeTruthy();
   });
 
+  it('keeps the category strip in place while a selected source loads its categories', async () => {
+    const props = listProps();
+    const view = await render(<NotificationsScreen {...props} source="nodeseek" categories={[]} loading />);
+    const strip = view.getByTestId('notification-category-strip');
+    const categories = [{ id: 'all', label: '所有通知' }];
+    await view.rerender(<NotificationsScreen {...props} source="nodeseek" categories={categories} categoryId="all" />);
+    expect(view.getByTestId('notification-category-strip')).toBe(strip);
+    expect(view.getByTestId('notification-category-all')).toBeTruthy();
+    await view.rerender(<NotificationsScreen {...props} source="linuxdo" categories={[]} loading />);
+    expect(view.getByTestId('notification-category-strip')).toBe(strip);
+    expect(view.queryByTestId('notification-category-all')).toBeNull();
+    await view.rerender(<NotificationsScreen {...props} source="all" />);
+    expect(view.queryByTestId('notification-category-strip')).toBeNull();
+  });
+
   it('renders adapter-owned categories only for a selected source', async () => {
     const onChangeCategory = jest.fn();
     const categories = [

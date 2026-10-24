@@ -33,12 +33,14 @@ export function avatarInitial(name?: string) {
 
 export function Avatar({
   contentSource,
+  large,
   name,
   small,
   tiny,
   uri
 }: {
   contentSource: Source | null;
+  large?: boolean;
   name?: string;
   small?: boolean;
   tiny?: boolean;
@@ -88,8 +90,10 @@ export function Avatar({
   }, [imageRetryCount, loadSvgFallback, uri]);
 
   return (
-    <View style={[styles.avatar, tiny ? styles.tiny : small ? styles.small : styles.topic]}>
-      <Text style={[styles.text, (small || tiny) && styles.smallText]}>{avatarInitial(name)}</Text>
+    <View style={[styles.avatar, tiny ? styles.tiny : small ? styles.small : large ? styles.large : styles.topic]}>
+      <Text style={[styles.text, large && styles.largeText, (small || tiny) && styles.smallText]}>
+        {avatarInitial(name)}
+      </Text>
       {svgXml ? (
         <View style={StyleSheet.absoluteFill}>
           <SvgXml xml={svgXml} width="100%" height="100%" />
@@ -125,6 +129,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     small: { width: 32, height: 32, borderRadius: 16 },
     tiny: { width: 24, height: 24, borderRadius: 12 },
     topic: { width: 42, height: 42, borderRadius: 21 },
+    large: { width: 56, height: 56, borderRadius: 28 },
     image: { width: '100%', height: '100%' },
     text: {
       color: theme.primary,
@@ -132,6 +137,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       fontSize: 13,
       fontWeight: '700'
     },
-    smallText: { fontSize: 11 }
+    smallText: { fontSize: 11 },
+    largeText: { fontSize: 22 }
   });
 }

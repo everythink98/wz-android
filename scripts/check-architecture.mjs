@@ -32,6 +32,7 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/library/LibraryRouteRuntime',
   '@/features/more/MoreRoute',
   '@/features/more/NodeSeekCreditsRoute',
+  '@/features/more/LinuxDoCreditRoute',
   '@/features/more/MoreRouteRuntime',
   '@/features/notifications/NotificationRoute',
   '@/features/notifications/NotificationRouteRuntime',
@@ -71,6 +72,7 @@ const ACCOUNT_RUNTIME_CENTER_CAPABILITIES = new Set([
   'credentials',
   'handleAccountCenterCommand',
   'nodeImage',
+  'linuxDoCredit',
   'webLoginUserId'
 ]);
 const ACCOUNT_RUNTIME_HOST_CAPABILITIES = new Set([

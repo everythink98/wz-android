@@ -7,7 +7,8 @@ import {
   useRef,
   useState,
   type ReactNode,
-  type ComponentProps
+  type ComponentProps,
+  type ComponentRef
 } from 'react';
 import {
   FlatList,
@@ -17,7 +18,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   Vibration,
   View,
   useWindowDimensions,
@@ -25,7 +25,9 @@ import {
   type LayoutChangeEvent,
   type LayoutRectangle
 } from 'react-native';
+import { AppTextInput as TextInput } from '@/ui/controls/InputControls';
 import { Image as ExpoImage } from 'expo-image';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useFlashListContext, useLayoutState } from '@shopify/flash-list';
 import { ChevronDown, Rocket, Smile, X } from 'lucide-react-native';
@@ -39,7 +41,13 @@ import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { alphaColor, fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  readerRadii,
+  alphaColor,
+  fontFamilyValue,
+  type ReaderStyleSettings,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
@@ -77,7 +85,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       paddingLeft: 4,
       paddingRight: 8,
       paddingVertical: 3,
-      borderRadius: 16,
+      borderRadius: readerRadii.surface,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line,
       maxWidth: '100%',
@@ -96,7 +104,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     rocket: {
       width: 32,
       height: 32,
-      borderRadius: 16,
+      borderRadius: readerRadii.pill,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line,
       alignItems: 'center',
@@ -117,7 +125,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       fontFamily: fontFamilyValue(settings.fontFamily)
     },
     choices: { flexDirection: 'row', flexWrap: 'wrap' },
-    choice: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+    choice: {
+      width: 44,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: readerRadii.control
+    },
     selected: { backgroundColor: alphaColor(theme.primary, theme.dark ? 0.25 : 0.12) },
     choiceLabel: {
       fontSize: Math.round(11 * settings.fontScale),
@@ -127,10 +141,20 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     heading: { flex: 1, minWidth: 0, gap: 4 },
-    sheet: { backgroundColor: theme.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18 },
+    sheet: {
+      backgroundColor: theme.surface,
+      borderTopLeftRadius: readerRadii.sheet,
+      borderTopRightRadius: readerRadii.sheet
+    },
     sheetLayer: { zIndex: 30, elevation: 30 },
     sheetContent: { gap: 12, paddingHorizontal: 16, paddingTop: 9 },
-    handle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 999, backgroundColor: theme.lineStrong },
+    handle: {
+      alignSelf: 'center',
+      width: 36,
+      height: 4,
+      borderRadius: readerRadii.pill,
+      backgroundColor: theme.lineStrong
+    },
     composer: { flexShrink: 1, gap: 16, paddingTop: 4 },
     emojiPicker: { flexShrink: 1, gap: 8 },
     input: {
@@ -140,14 +164,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       backgroundColor: theme.surface2,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.line,
-      borderRadius: 12,
+      borderRadius: readerRadii.control,
       paddingHorizontal: 12,
       paddingVertical: 12,
       minHeight: 56
     },
     searchInput: { minHeight: 48, paddingVertical: 8, fontSize },
     catalog: { maxHeight: 208 },
-    catalogChoice: { width: '16.666666%', minHeight: 48, borderRadius: 10, padding: 4 },
+    catalogChoice: { width: '16.666666%', minHeight: 48, borderRadius: readerRadii.control, padding: 4 },
     error: {
       color: theme.danger,
       fontSize,
@@ -510,7 +534,8 @@ export function LinuxDoPostInteractionsProvider({
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const { width, height } = useWindowDimensions();
-  const inputRef = useRef<TextInput>(null);
+  const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const [picker, setPicker] = useState<{ postId: number; x: number; y: number } | null>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiQuery, setEmojiQuery] = useState('');
@@ -647,7 +672,7 @@ export function LinuxDoPostInteractionsProvider({
           position: 'absolute',
           width: Math.min(300, width - 32),
           left: Math.max(16, Math.min((picker?.x || width / 2) - 150, width - 316)),
-          top: Math.max(32, Math.min((picker?.y || height / 2) - 160, height - 210))
+          top: Math.max(32, safeTop + 8, Math.min((picker?.y || height / 2) - 160, height - safeBottom - 210))
         }}
       >
         <View style={styles.picker}>
@@ -723,7 +748,6 @@ export function LinuxDoPostInteractionsProvider({
                   placeholderTextColor={theme.muted}
                   value={content}
                   onChangeText={actions.changeBoostContent}
-                  style={styles.input}
                   autoFocus
                   maxLength={1000}
                   editable={boostDecision?.reason !== 'pending'}
@@ -739,7 +763,6 @@ export function LinuxDoPostInteractionsProvider({
                       placeholder="搜索表情名称"
                       value={emojiQuery}
                       onChangeText={setEmojiQuery}
-                      style={[styles.input, styles.searchInput]}
                       placeholderTextColor={theme.muted}
                     />
                     <FlatList

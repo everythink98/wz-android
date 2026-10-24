@@ -11,7 +11,8 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderStyleSet
       gap: 8
     },
     content: {
-      flex: 1
+      flex: 1,
+      backgroundColor: theme.surface
     },
     flex: {
       flex: 1

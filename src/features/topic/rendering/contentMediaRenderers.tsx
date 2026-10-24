@@ -1,12 +1,13 @@
+import { ActivityIndicator } from 'react-native-paper';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { CustomBlockRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
@@ -216,7 +217,7 @@ const embedStyles = StyleSheet.create({
   },
   linkCard: {
     alignSelf: 'stretch',
-    borderRadius: 8,
+    borderRadius: readerRadii.content,
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 12,
     marginTop: 8,
@@ -242,7 +243,7 @@ const embedStyles = StyleSheet.create({
     flexDirection: 'row'
   },
   linkCardThumbnail: {
-    borderRadius: 4,
+    borderRadius: readerRadii.badge,
     height: 58,
     marginRight: 10,
     width: 92
@@ -264,7 +265,7 @@ const embedStyles = StyleSheet.create({
   videoFrame: {
     alignSelf: 'stretch',
     aspectRatio: 16 / 9,
-    borderRadius: 8,
+    borderRadius: readerRadii.content,
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 12,
     marginTop: 8,
@@ -317,7 +318,7 @@ export function createIframeRenderer({
         onShouldStartLoadWithRequest={(request) => shouldAllowBilibiliWebViewNavigation(request.url)}
         source={{ uri: embedUrl }}
         setSupportMultipleWindows={false}
-        style={embedStyles.webView}
+        style={[embedStyles.webView, embedStyles.transparentWebView]}
         testID={`topic-video-embed-${lease.attemptId}`}
       />
     );

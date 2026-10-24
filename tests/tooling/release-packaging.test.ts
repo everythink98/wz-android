@@ -160,7 +160,7 @@ describe('Android release packaging guards', () => {
 
     expect(buildProperties?.[1]?.android?.buildReactNativeFromSource).toBe(true);
     expect(pkg.expo.autolinking.android.buildFromSource).toEqual(
-      expect.arrayContaining(['expo-document-picker', 'expo-image', 'expo-video'])
+      expect.arrayContaining(['expo-blur', 'expo-document-picker', 'expo-image', 'expo-video'])
     );
   });
 

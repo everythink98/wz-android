@@ -12,11 +12,13 @@ import type { ReaderPage } from '@/platform/storage/readerDatabase';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Source } from '@/domain/forum/sourceCatalog';
+import type { LibraryTab } from '@/domain/forum/feed';
 
 let mockScreen: ComponentProps<typeof LibraryScreen>;
 let mockFocused = true;
+let mockInitialTab: LibraryTab | undefined;
 const mockListFrames: { testID?: string; data: unknown[]; onEndReached?: () => void }[] = [];
-const mockNavigation = { dispatch: jest.fn() };
+const mockNavigation = { dispatch: jest.fn(), isFocused: () => mockFocused };
 jest.mock('react-native-gesture-handler', () => ({
   ...jest.requireActual<typeof import('react-native-gesture-handler')>('react-native-gesture-handler'),
   ScrollView: (require('react-native') as typeof import('react-native')).ScrollView
@@ -52,6 +54,7 @@ jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native'),
   useIsFocused: () => mockFocused,
   useNavigation: () => mockNavigation,
+  useRoute: () => ({ name: 'Library', params: { initialTab: mockInitialTab } }),
   useScrollToTop: jest.fn(),
   StackActions: { push: jest.fn() }
 }));
@@ -102,6 +105,7 @@ beforeEach(() => {
   query.mockReset();
   categoryQuery.mockReset().mockResolvedValue(localCategories);
   mockFocused = true;
+  mockInitialTab = undefined;
   mockListFrames.length = 0;
   mockNavigation.dispatch.mockClear();
 });
@@ -109,6 +113,24 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 describe('Library route database query lifecycle', () => {
+  it.each<{ tab: LibraryTab; collection: Parameters<typeof queryReaderPage>[0]['collection'] }>([
+    { tab: 'favorites', collection: 'favorites' },
+    { tab: 'users', collection: 'followedUsers' },
+    { tab: 'history', collection: 'history' }
+  ])('opens the $tab shortcut with only its own collection query', async ({ tab, collection }) => {
+    mockInitialTab = tab;
+    query.mockResolvedValue({ records: [], total: 0, visibleTotal: 0 });
+    const view = await mount();
+    try {
+      await waitFor(() => expect(view.getByTestId(`library-${tab}-ready`)).toBeTruthy());
+      expect(mockScreen.libraryTab).toBe(tab);
+      expect(query.mock.calls.map(([request]) => request.collection)).toEqual([collection]);
+    } finally {
+      await view.unmount();
+      view.client.clear();
+    }
+  });
+
   it('preserves a retained-source category through a cold source-scope read, failure and retry', async () => {
     let failCategories!: (error: Error) => void;
     query.mockResolvedValue(page('kept'));

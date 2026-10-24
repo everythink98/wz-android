@@ -1,5 +1,6 @@
+import { ActivityIndicator } from 'react-native-paper';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
 import { VideoView, createVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useReleasingSharedObjectWithLifecycle } from 'expo-modules-core';
@@ -21,7 +22,7 @@ import {
   useReadNetworkRuntimeSnapshot,
   type ReadNetworkRuntimeSnapshot
 } from '@/platform/network/readNetworkRuntime';
-import type { ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 1;
@@ -460,7 +461,7 @@ const styles = StyleSheet.create({
   frame: {
     alignSelf: 'stretch',
     aspectRatio: DEFAULT_VIDEO_ASPECT_RATIO,
-    borderRadius: 8,
+    borderRadius: readerRadii.content,
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 12,
     marginTop: 8,

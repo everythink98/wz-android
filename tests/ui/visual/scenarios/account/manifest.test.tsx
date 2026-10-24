@@ -21,7 +21,11 @@ describe('account visual scenarios', () => {
     ['checking', 'light', '正在检测…'],
     ['checking', 'dark', '正在检测…'],
     ['result', 'light', '返回原页面'],
-    ['result', 'dark', '返回原页面']
+    ['result', 'dark', '返回原页面'],
+    ['completed', 'light', '返回原页面'],
+    ['completed', 'dark', '返回原页面'],
+    ['blocked', 'light', '重新验证'],
+    ['blocked', 'dark', '重新验证']
   ] as const)(
     'renders the %s verification state in %s with large text and no website',
     async (state, theme, action) => {
@@ -36,13 +40,21 @@ describe('account visual scenarios', () => {
       );
       expect(view.getByText('linux.do 安全验证')).toBeTruthy();
       expect(view.queryByTestId('mock-webview')).toBeNull();
-      expect(view.getByRole('button', { name: action }).props.accessibilityState).toEqual({
+      expect(view.getByRole('button', { name: action }).props.accessibilityState).toMatchObject({
         busy: state === 'checking',
         disabled: state === 'checking'
       });
       if (state === 'result') {
+        expect(view.getByText('检测结果')).toBeTruthy();
         expect(view.getByText('已恢复')).toBeTruthy();
         expect(view.getByText('请求已过期，请返回原页面重试。')).toBeTruthy();
+      } else if (state === 'completed') {
+        expect(view.getByText('验证已完成')).toBeTruthy();
+        expect(view.getByText('已恢复')).toBeTruthy();
+        expect(view.getByText('已同步')).toBeTruthy();
+      } else if (state === 'blocked') {
+        expect(view.getByText('还需要一次验证')).toBeTruthy();
+        expect(view.getByText('仍被站点拦截')).toBeTruthy();
       }
       await fireEvent.press(view.getByRole('button', { name: '关闭' }));
       expect(view.queryByText('linux.do 安全验证')).toBeNull();

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 
@@ -17,11 +17,288 @@ import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { createLinuxDoWebViewFallbackFetcher } from '@/sources/linuxdo/browserFallback';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
-import { RequestCanceledError } from '@/platform/network/request';
+import { prepareRequestToSend, RequestCanceledError, withAbortableTimeout } from '@/platform/network/request';
 import type { Fetcher } from '@/platform/network/request';
 import type { SessionSource, Source } from '@/domain/forum/sourceCatalog';
+import { getDefaultAndroidWebViewUserAgent } from '@/platform/android/androidWebViewUserAgent';
+import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
 
 afterEach(() => setDiagnosticWriter(null));
+
+describe('bounded source preparation', () => {
+  beforeEach(() => {
+    vi.mocked(recoverReadNetworkRuntime).mockClear();
+    vi.mocked(getDefaultAndroidWebViewUserAgent).mockClear();
+  });
+
+  const page =
+    '<div class="cell item"><a class="topic-link" href="/t/901#reply0">Fresh topic</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>';
+  const anonymousSession = (source: SessionSource) => ({
+    source,
+    authenticated: false,
+    authSurfaceOpen: false,
+    identityKey: '',
+    identityTrust: 'confirmed' as const,
+    sessionEpoch: 0,
+    sourceEnabled: true
+  });
+
+  it('automatically reads fresh posts after slow network preparation without consuming the source budget', async () => {
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    const ready = new Promise<void>((resolve) => setTimeout(resolve, 7_400));
+    const send = vi.fn(async (_input: string, init?: RequestInit) => {
+      await withAbortableTimeout(() => new Promise<void>((resolve) => setTimeout(resolve, 4_000)), {
+        signal: init?.signal
+      });
+      return new Response(page);
+    });
+    // Match the production fetcher: initialization is shared, then the final send guard runs.
+    const fetcher: Fetcher = async (input, init) => {
+      await ready;
+      return send(input, prepareRequestToSend(init));
+    };
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      beforeRequest: () => ready,
+      getEnabledSources: () => ['v2ex'],
+      nodeSeekUserAgent: () => 'saved',
+      readSessionRuntimeSnapshot: anonymousSession
+    });
+    const request = gateway.getFeed({ source: 'all', signal: abort.signal });
+    try {
+      await vi.advanceTimersByTimeAsync(7_399);
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(4_001);
+      expect(await request).toMatchObject({ items: [{ source: 'v2ex', id: '901' }], errors: {} });
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      abort.abort();
+      await Promise.allSettled([request]);
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['feed', 'categories'] as const)(
+    'ends %s preparation without runtime recovery and ignores late readiness',
+    async (operation) => {
+      vi.useFakeTimers();
+      let complete!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const send = vi.fn(async () => new Response(page));
+      const fetcher: Fetcher = async (_input, init) => {
+        await ready;
+        prepareRequestToSend(init);
+        return send();
+      };
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        beforeRequest: () => ready,
+        getEnabledSources: () => ['nodeseek'],
+        nodeSeekUserAgent: () => 'saved',
+        readSessionRuntimeSnapshot: anonymousSession
+      });
+      let settled = false;
+      const request = (
+        operation === 'feed' ? gateway.getFeed({ source: 'all' }) : gateway.getCategories({ source: 'nodeseek' })
+      ).then(
+        (result) => {
+          settled = true;
+          return result;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        }
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect.soft(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await request).toMatchObject(
+          operation === 'feed'
+            ? { items: [], errors: { nodeseek: { reason: 'preparation_timeout', retryable: true } } }
+            : { reason: 'preparation_timeout', retryable: true }
+        );
+      } finally {
+        complete();
+        await vi.advanceTimersByTimeAsync(0);
+        await request;
+        expect(send).not.toHaveBeenCalled();
+        expect(recoverReadNetworkRuntime).not.toHaveBeenCalled();
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it.each(
+    (['feed', 'categories'] as const).flatMap((operation) =>
+      (['network', 'user-agent'] as const).flatMap((stage) =>
+        (['cancel', 'epoch', 'disabled', 'surface'] as const).map((change) => ({ operation, stage, change }))
+      )
+    )
+  )('does not fetch $operation after $change during $stage preparation', async ({ operation, stage, change }) => {
+    vi.useFakeTimers();
+    const ready = Promise.withResolvers<void>();
+    const userAgent = Promise.withResolvers<string>();
+    vi.mocked(getDefaultAndroidWebViewUserAgent).mockReturnValue(userAgent.promise);
+    let epoch = 1;
+    let enabled = true;
+    let surface = false;
+    const beforeRequest = vi.fn(() => (stage === 'network' ? ready.promise : Promise.resolve()));
+    const fetcher = vi.fn(async () => new Response('unexpected transport'));
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      beforeRequest,
+      getEnabledSources: () => (enabled ? ['nodeseek'] : []),
+      nodeSeekUserAgent: () => '',
+      readSessionRuntimeSnapshot: (source) => ({
+        ...anonymousSession(source),
+        authenticated: true,
+        authSurfaceOpen: surface,
+        identityKey: 'nodeseek:7',
+        sessionEpoch: epoch,
+        sourceEnabled: enabled
+      })
+    });
+    const controller = new AbortController();
+    let settled = false;
+    const request = (
+      operation === 'feed'
+        ? gateway.getFeed({ source: 'all', signal: controller.signal })
+        : gateway.getCategories({ source: 'nodeseek', signal: controller.signal })
+    ).catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(beforeRequest).toHaveBeenCalledTimes(1);
+      expect(getDefaultAndroidWebViewUserAgent).toHaveBeenCalledTimes(stage === 'user-agent' ? 1 : 0);
+      expect(settled).toBe(false);
+      expect(fetcher).not.toHaveBeenCalled();
+      if (change === 'cancel') {
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(settled).toBe(true);
+      } else if (change === 'epoch') epoch++;
+      else if (change === 'disabled') enabled = false;
+      else surface = true;
+      ready.resolve();
+      userAgent.resolve('native-provider-user-agent');
+      await expect(request).resolves.toMatchObject({ message: '请求已取消' });
+      if (stage === 'network') expect(getDefaultAndroidWebViewUserAgent).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+      ready.resolve();
+      userAgent.resolve('native-provider-user-agent');
+      await request;
+      vi.mocked(getDefaultAndroidWebViewUserAgent).mockResolvedValue('native-provider-user-agent');
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['local-categories', 'blocked-feed', 'buffered-feed'] as const)(
+    'does not prepare the network for %s',
+    async (operation) => {
+      const beforeRequest = vi.fn(async () => {
+        throw new Error('unexpected preparation');
+      });
+      const fetcher = vi.fn(async () => new Response('unexpected transport'));
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        beforeRequest,
+        getEnabledSources: () => (operation === 'buffered-feed' ? ['v2ex'] : ['yaohuo']),
+        nodeSeekUserAgent: () => 'saved',
+        readSessionRuntimeSnapshot: anonymousSession
+      });
+      const buffered: Topic = {
+        source: 'v2ex',
+        id: '901',
+        title: 'Buffered topic',
+        author: 'neo',
+        url: 'https://www.v2ex.com/t/901',
+        createdAt: '2026-05-20T00:00:00Z'
+      };
+      const cursor = encodeURIComponent(JSON.stringify({ buffers: { v2ex: [buffered] }, nextPages: { v2ex: 2 } }));
+      const result =
+        operation === 'local-categories'
+          ? await gateway.getCategories({ source: 'yaohuo' })
+          : await gateway.getFeed({
+              source: 'all',
+              ...(operation === 'buffered-feed' ? { page: 2, limit: 1, cursor } : {})
+            });
+      if (operation === 'local-categories') expect(result.items.length).toBeGreaterThan(0);
+      else expect(result.items).toEqual(operation === 'buffered-feed' ? [buffered] : []);
+      expect(beforeRequest).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps single-source feeds on their existing path without the preparation hook', async () => {
+    const beforeRequest = vi.fn(async () => {
+      throw new Error('unexpected preparation');
+    });
+    const fetcher = vi.fn(async () => new Response(page));
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      beforeRequest,
+      getEnabledSources: () => ['v2ex'],
+      nodeSeekUserAgent: () => 'saved',
+      readSessionRuntimeSnapshot: anonymousSession
+    });
+    await expect(gateway.getFeed({ source: 'v2ex', limit: 1 })).resolves.toMatchObject({
+      items: [{ id: '901' }],
+      errors: {}
+    });
+    expect(beforeRequest).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('limits a remote single-source catalog at the source layer after readiness', async () => {
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    const ready = new Promise<void>((resolve) => setTimeout(resolve, 7_400));
+    const send = vi.fn((_input: string, init?: RequestInit) =>
+      withAbortableTimeout(() => new Promise<Response>(() => undefined), { signal: init?.signal })
+    );
+    const fetcher: Fetcher = async (input, init) => {
+      await ready;
+      return send(input, prepareRequestToSend(init));
+    };
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      beforeRequest: () => ready,
+      nodeSeekUserAgent: () => 'saved',
+      readSessionRuntimeSnapshot: anonymousSession
+    });
+    let failure: unknown;
+    const request = gateway.getCategories({ source: 'v2ex', signal: abort.signal }).catch((error: unknown) => {
+      failure = error;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(12_399);
+      expect(failure).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(failure).toMatchObject({ reason: 'aggregate_timeout' });
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      abort.abort();
+      await request;
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('source gateway reads', () => {
   it('reads interaction settings through the managed topic lane and discards unrelated bootstrap data', async () => {

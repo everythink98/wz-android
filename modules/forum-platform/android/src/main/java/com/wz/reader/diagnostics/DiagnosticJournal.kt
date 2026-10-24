@@ -409,6 +409,7 @@ object DiagnosticJournal {
     val output = mutableMapOf<String, Any>()
     for ((key, value) in fields) {
       when {
+        key == "socketLocalPort" && value is Int && value in 1..65535 -> output[key] = value
         value is Boolean && key in setOf("hasDiscoursePresent", "hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked", "hasCfClearance", "hasStoredCfClearance", "isCfClearanceCurrent", "isLoginCookieCurrent", "didCfClearanceChange") -> output[key] = value
         value is String && networkEnums[key]?.contains(value) == true -> output[key] = value
         value is Number && key in networkNumbers && value.toDouble().isFinite() && value.toDouble() in 0.0..1_000_000_000.0 -> output[key] = value

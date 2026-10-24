@@ -1,6 +1,8 @@
+import { AppTextInput as TextInput } from '@/ui/controls/InputControls';
+import { Button, Checkbox } from 'react-native-paper';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import type { SearchStyles } from './styles';
@@ -30,20 +32,27 @@ function FilterChoiceGroup({
   const options = items.map((item) => {
     const selected = value === item.value;
     return (
-      <Pressable
+      <Button
         key={`${title}-${item.value}-${item.label}`}
         accessibilityRole="button"
         accessibilityState={{ selected }}
-        style={[styles.searchFilterOption, selected && styles.searchFilterOptionActive]}
+        style={[
+          styles.searchFilterOption,
+          selected && styles.searchFilterOptionActive,
+          { paddingHorizontal: 0, paddingVertical: 0 }
+        ]}
+        mode="text"
+        compact
+        contentStyle={{ minHeight: 36, paddingHorizontal: 11, paddingVertical: 3 }}
+        labelStyle={[
+          styles.searchFilterOptionText,
+          selected && styles.searchFilterOptionTextActive,
+          { marginHorizontal: 0, marginVertical: 0 }
+        ]}
         onPress={() => onChange(item.value)}
       >
-        <Text
-          numberOfLines={1}
-          style={[styles.searchFilterOptionText, selected && styles.searchFilterOptionTextActive]}
-        >
-          {item.label}
-        </Text>
-      </Pressable>
+        {item.label}
+      </Button>
     );
   });
 
@@ -83,7 +92,6 @@ function FilterTextField({
 }) {
   return (
     <View style={styles.searchFilterField}>
-      <Text style={styles.searchFilterLabel}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
         style={styles.input}
@@ -111,15 +119,15 @@ function FilterCheckbox({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <Pressable
-      accessibilityRole="checkbox"
+    <Checkbox.Item
+      label={label}
+      status={checked ? 'checked' : 'unchecked'}
+      labelMaxFontSizeMultiplier={0}
       accessibilityLabel={label}
-      accessibilityState={{ checked }}
       style={[styles.searchFilterOption, checked && styles.searchFilterOptionActive]}
+      labelStyle={[styles.searchFilterOptionText, checked && styles.searchFilterOptionTextActive]}
       onPress={() => onChange(!checked)}
-    >
-      <Text style={[styles.searchFilterOptionText, checked && styles.searchFilterOptionTextActive]}>{label}</Text>
-    </Pressable>
+    />
   );
 }
 
@@ -140,6 +148,7 @@ function FilterNumberField({
     <TextInput
       accessibilityLabel={label}
       style={[styles.input, styles.flex]}
+      label={label.includes('最小') ? '最小' : '最大'}
       value={value === null ? '' : String(value)}
       onChange={recordUserInteraction}
       onChangeText={(nextValue) => {

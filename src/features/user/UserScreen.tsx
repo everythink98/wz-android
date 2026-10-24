@@ -1,15 +1,8 @@
+import { ActivityIndicator, Button } from 'react-native-paper';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  Text,
-  View,
-  useWindowDimensions,
-  type ListRenderItem
-} from 'react-native';
+import { FlatList, Pressable, Text, View, useWindowDimensions, type ListRenderItem } from 'react-native';
 import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react-native';
 import type { SourceErrorInfo, Topic, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
@@ -19,6 +12,7 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText } from '@/ui/controls/FeedbackStates';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
+import { NavigationBackdropProvider, NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
@@ -91,18 +85,11 @@ function topicFromUserReply(reply: UserReplyActivity): Topic {
     source: reply.source,
     id: reply.topicId,
     title: reply.topicTitle || '查看原帖',
-    author: reply.author || '',
-    authorId: reply.authorId,
-    authorAvatar: reply.authorAvatar,
-    authorUrl: reply.authorUrl,
+    author: '',
     categoryId: reply.categoryId,
     category: reply.category,
     url: reply.topicUrl || reply.url,
-    createdAt: reply.createdAt || '',
-    lastReplyAt: reply.createdAt || '',
-    displayTimeText: reply.displayTimeText,
-    replyCount: reply.floor || 0,
-    excerpt: reply.excerpt
+    createdAt: ''
   };
 }
 
@@ -216,6 +203,7 @@ export const UserScreen = memo(function UserScreen({
   const activityData = userTab === 'topics' ? profile?.topics : profile?.replies;
   const retryActivity = userTab === 'topics' ? onRetryTopics : onRetryReplies;
   const [bioExpanded, setBioExpanded] = useState(false);
+  const [topBarHeight, setTopBarHeight] = useState(0);
   const userIdentity = user ? `${user.source}:${user.id || user.username}` : '';
   const displayName = user?.displayName || user?.username || user?.id || '用户';
   const userSubtitle = user
@@ -329,28 +317,41 @@ export const UserScreen = memo(function UserScreen({
     const actions = profile ? (
       <View style={styles.profileActions}>
         {onPrivateMessage ? (
-          <Pressable
+          <Button
             accessibilityRole="button"
             accessibilityLabel="私信"
+            mode="outlined"
+            hitSlop={TOUCH_HIT_SLOP}
+            contentStyle={styles.followButtonContent}
+            labelStyle={[
+              styles.followButtonText,
+              styles.followButtonTextSelected,
+              { marginVertical: 0, marginHorizontal: 0 }
+            ]}
             style={[styles.followButton, styles.followButtonSelected, isNodeSeek && { minWidth: actionMinWidth }]}
             onPress={onPrivateMessage}
           >
-            <Text style={[styles.followButtonText, styles.followButtonTextSelected]}>私信</Text>
-          </Pressable>
+            私信
+          </Button>
         ) : null}
-        <Pressable
+        <Button
           hitSlop={TOUCH_HIT_SLOP}
           accessibilityRole="button"
           accessibilityLabel={followed ? '已关注' : '关注'}
+          mode={followed ? 'outlined' : 'contained'}
+          contentStyle={styles.followButtonContent}
+          labelStyle={[
+            styles.followButtonText,
+            followed && styles.followButtonTextSelected,
+            { marginVertical: 0, marginHorizontal: 0 }
+          ]}
           accessibilityHint={followed ? '再次点击取消本机关注' : '在本机关注这个用户'}
           accessibilityState={{ selected: followed }}
           style={[styles.followButton, { minWidth: actionMinWidth }, followed && styles.followButtonSelected]}
           onPress={() => onToggleFollow(profile)}
         >
-          <Text style={[styles.followButtonText, followed && styles.followButtonTextSelected]}>
-            {followed ? '已关注' : '关注'}
-          </Text>
-        </Pressable>
+          {followed ? '已关注' : '关注'}
+        </Button>
       </View>
     ) : null;
     const stats = profileStats.length ? (
@@ -501,92 +502,104 @@ export const UserScreen = memo(function UserScreen({
   }
 
   return (
-    <View style={styles.screen} onLayout={onPageLayout}>
-      <ScreenTopBar>
-        <IconButton icon={ChevronLeft} compact ghost label="返回" onPress={onBack} />
-        <ScreenTopBarTitle>
-          {sourceLabel(user.source)} · {user.displayName || user.username || user.id}
-        </ScreenTopBarTitle>
-        <ScreenTopBarActions>
-          <View style={styles.toolbarAction}>
-            <IconButton iconOnly ghost icon={RefreshCw} iconSize={20} label="刷新" loading={busy} onPress={onRefresh} />
-          </View>
-          {user.url ? (
+    <NavigationBackdropProvider>
+      <View style={styles.screen} onLayout={onPageLayout}>
+        <ScreenTopBar onLayout={(event) => setTopBarHeight(event.nativeEvent.layout.height)}>
+          <IconButton icon={ChevronLeft} iconSize={24} iconOnly ghost label="返回" onPress={onBack} />
+          <ScreenTopBarTitle>
+            {sourceLabel(user.source)} · {user.displayName || user.username || user.id}
+          </ScreenTopBarTitle>
+          <ScreenTopBarActions>
             <View style={styles.toolbarAction}>
               <IconButton
                 iconOnly
                 ghost
-                icon={ExternalLink}
+                icon={RefreshCw}
                 iconSize={20}
-                label="原站"
-                onPress={() => onOpenOriginal(user.url)}
+                label="刷新"
+                loading={busy}
+                onPress={onRefresh}
               />
             </View>
-          ) : null}
-        </ScreenTopBarActions>
-      </ScreenTopBar>
-      <FlatList
-        overScrollMode="never"
-        testID={profile ? 'user-screen-loaded' : undefined}
-        key={userIdentity}
-        ref={listRef}
-        style={styles.content}
-        contentContainerStyle={styles.userContentInner}
-        data={listItems}
-        keyExtractor={userListItemKey}
-        ListHeaderComponent={profileHeader}
-        stickyHeaderIndices={profile ? USER_STICKY_HEADER_INDICES : undefined}
-        // Keep native clipping disabled before the async profile adds its sticky rail.
-        removeClippedSubviews={false}
-        keyboardShouldPersistTaps="handled"
-        ListFooterComponent={
-          <>
-            {profile && activityError ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{activityError.message}</Text>
-                {retryActivity ? (
-                  <AppButton
-                    label={userTab === 'topics' ? '重试主题' : '重试回复'}
-                    disabled={activityBusy}
-                    onPress={retryActivity}
-                  />
+            {user.url ? (
+              <View style={styles.toolbarAction}>
+                <IconButton
+                  iconOnly
+                  ghost
+                  icon={ExternalLink}
+                  iconSize={20}
+                  label="原站"
+                  onPress={() => onOpenOriginal(user.url)}
+                />
+              </View>
+            ) : null}
+          </ScreenTopBarActions>
+        </ScreenTopBar>
+        <NavigationBackdropTarget active testID="user-glass-content" topInset={topBarHeight}>
+          <FlatList
+            overScrollMode="never"
+            testID={profile ? 'user-screen-loaded' : undefined}
+            key={userIdentity}
+            ref={listRef}
+            style={styles.content}
+            contentContainerStyle={styles.userContentInner}
+            data={listItems}
+            keyExtractor={userListItemKey}
+            ListHeaderComponent={profileHeader}
+            stickyHeaderIndices={profile ? USER_STICKY_HEADER_INDICES : undefined}
+            // Keep native clipping disabled before the async profile adds its sticky rail.
+            removeClippedSubviews={false}
+            keyboardShouldPersistTaps="handled"
+            ListFooterComponent={
+              <>
+                {profile && activityError ? (
+                  <View style={styles.errorBox}>
+                    <Text style={styles.errorText}>{activityError.message}</Text>
+                    {retryActivity ? (
+                      <AppButton
+                        label={userTab === 'topics' ? '重试主题' : '重试回复'}
+                        disabled={activityBusy}
+                        onPress={retryActivity}
+                      />
+                    ) : null}
+                  </View>
+                ) : profile && activityBusy && !activityData ? (
+                  <View style={styles.emptyActivity}>
+                    <ActivityIndicator accessibilityLabel={userTab === 'topics' ? '正在读取主题' : '正在读取回复'} />
+                  </View>
+                ) : profile && activityData && !activityData.length ? (
+                  <View style={styles.emptyActivity}>
+                    <EmptyText
+                      text={userTab === 'replies' ? '这个用户暂时没有可显示的回复' : '这个用户暂时没有可显示的主题'}
+                    />
+                  </View>
                 ) : null}
-              </View>
-            ) : profile && activityBusy && !activityData ? (
-              <View style={styles.emptyActivity}>
-                <ActivityIndicator accessibilityLabel={userTab === 'topics' ? '正在读取主题' : '正在读取回复'} />
-              </View>
-            ) : profile && activityData && !activityData.length ? (
-              <View style={styles.emptyActivity}>
-                <EmptyText
-                  text={userTab === 'replies' ? '这个用户暂时没有可显示的回复' : '这个用户暂时没有可显示的主题'}
-                />
-              </View>
-            ) : null}
-            {(userTab === 'replies' ? profile?.hasMoreReplies : profile?.hasMoreTopics) ? (
-              <View style={styles.actions}>
-                <AppButton
-                  label={
-                    (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)
-                      ? '正在加载...'
-                      : userTab === 'replies'
-                        ? '加载更多回复'
-                        : '加载更多主题'
-                  }
-                  disabled={busy || (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)}
-                  onPress={requestUserTopicLoadMore}
-                />
-              </View>
-            ) : null}
-          </>
-        }
-        onContentSizeChange={completePendingScrollReset}
-        onEndReached={handleEndReached}
-        onEndReachedThreshold={0.5}
-        onMomentumScrollBegin={armAutoLoad}
-        onScrollBeginDrag={armAutoLoad}
-        renderItem={renderItem}
-      />
-    </View>
+                {(userTab === 'replies' ? profile?.hasMoreReplies : profile?.hasMoreTopics) ? (
+                  <View style={styles.actions}>
+                    <AppButton
+                      label={
+                        (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)
+                          ? '正在加载...'
+                          : userTab === 'replies'
+                            ? '加载更多回复'
+                            : '加载更多主题'
+                      }
+                      disabled={busy || (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)}
+                      onPress={requestUserTopicLoadMore}
+                    />
+                  </View>
+                ) : null}
+              </>
+            }
+            onContentSizeChange={completePendingScrollReset}
+            onEndReached={handleEndReached}
+            onEndReachedThreshold={0.5}
+            onMomentumScrollBegin={armAutoLoad}
+            onScrollBeginDrag={armAutoLoad}
+            renderItem={renderItem}
+          />
+        </NavigationBackdropTarget>
+      </View>
+    </NavigationBackdropProvider>
   );
 });

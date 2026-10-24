@@ -8,9 +8,10 @@ import { NetworkProxyModal } from '@/features/more/components/NetworkProxyModal'
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 
+let mockBottomInset = 0;
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 })
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: mockBottomInset, left: 0 })
 }));
 
 jest.mock('lucide-react-native', () => {
@@ -59,10 +60,17 @@ function proxyModal(overrides: Partial<React.ComponentProps<typeof NetworkProxyM
 }
 
 afterEach(() => {
+  mockBottomInset = 0;
   jest.restoreAllMocks();
 });
 
 describe('Network proxy modal', () => {
+  it.each(['light', 'dark'] as const)('matches the %s page background throughout its transition', async (mode) => {
+    const theme = createTheme({ theme: mode });
+    const view = await render(proxyModal({ theme }));
+    expect(view.root?.queryAll((node) => String(node.type) === 'Modal')[0]?.props.backdropColor).toBe(theme.background);
+  });
+
   it('exposes an explicit direct-connection reset after proxy recovery fails', async () => {
     const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
     const view = await render(
@@ -99,9 +107,10 @@ describe('Network proxy modal', () => {
     const view = await render(proxyModal({ onUpsertProfile }));
 
     await fireEvent.press(view.getByText('添加代理'));
-    await fireEvent.changeText(view.getByPlaceholderText('名称'), '公司代理');
-    await fireEvent.changeText(view.getByPlaceholderText('服务器'), '127.0.0.1');
-    await fireEvent.changeText(view.getByPlaceholderText('端口'), '1080');
+    await fireEvent.changeText(view.getByLabelText('名称'), '公司代理');
+    await fireEvent.changeText(view.getByLabelText('服务器'), '127.0.0.1');
+    await fireEvent.changeText(view.getByLabelText('端口'), '1080');
+    await fireEvent.changeText(view.getByLabelText('密码'), ' ');
     await fireEvent.press(view.getByLabelText('确定'));
 
     await waitFor(() => {
@@ -112,12 +121,14 @@ describe('Network proxy modal', () => {
         name: '公司代理',
         protocol: 'socks5',
         host: '127.0.0.1',
-        port: 1080
+        port: 1080,
+        password: ' '
       })
     );
-    expect(view.getByPlaceholderText('名称').props.value).toBe('公司代理');
-    expect(view.getByPlaceholderText('服务器').props.value).toBe('127.0.0.1');
-    expect(view.getByPlaceholderText('端口').props.value).toBe('1080');
+    expect(view.getByLabelText('名称').props.value).toBe('公司代理');
+    expect(view.getByLabelText('服务器').props.value).toBe('127.0.0.1');
+    expect(view.getByLabelText('端口').props.value).toBe('1080');
+    expect(view.getByLabelText('密码').props.value).toBe(' ');
     expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
   });
 
@@ -130,23 +141,23 @@ describe('Network proxy modal', () => {
       const view = await render(proxyModal({ onUpsertProfile }));
 
       await fireEvent.press(view.getByText('添加代理'));
-      await fireEvent.changeText(view.getByPlaceholderText('名称'), '旧表单');
-      await fireEvent.changeText(view.getByPlaceholderText('服务器'), '127.0.0.1');
-      await fireEvent.changeText(view.getByPlaceholderText('端口'), '1080');
+      await fireEvent.changeText(view.getByLabelText('名称'), '旧表单');
+      await fireEvent.changeText(view.getByLabelText('服务器'), '127.0.0.1');
+      await fireEvent.changeText(view.getByLabelText('端口'), '1080');
       await fireEvent.press(view.getByLabelText('确定'));
       expect(onUpsertProfile).toHaveBeenCalledTimes(1);
 
       await view.rerender(proxyModal({ visible: false, onUpsertProfile }));
       await view.rerender(proxyModal({ visible: true, onUpsertProfile }));
       await fireEvent.press(view.getByText('添加代理'));
-      await fireEvent.changeText(view.getByPlaceholderText('名称'), '新表单草稿');
+      await fireEvent.changeText(view.getByLabelText('名称'), '新表单草稿');
       await act(async () => {
         if (outcome === 'success') saving.resolve();
         else saving.reject(new Error('旧保存失败'));
         await Promise.resolve();
       });
 
-      expect(view.getByPlaceholderText('名称').props.value).toBe('新表单草稿');
+      expect(view.getByLabelText('名称').props.value).toBe('新表单草稿');
       expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
       expect(alert).not.toHaveBeenCalled();
       expect(onUpsertProfile).toHaveBeenCalledTimes(1);
@@ -163,22 +174,22 @@ describe('Network proxy modal', () => {
     const view = await render(proxyModal({ onUpsertProfile }));
     try {
       await fireEvent.press(view.getByText('添加代理'));
-      await fireEvent.changeText(view.getByPlaceholderText('名称'), '旧表单');
-      await fireEvent.changeText(view.getByPlaceholderText('服务器'), '127.0.0.1');
-      await fireEvent.changeText(view.getByPlaceholderText('端口'), '1080');
+      await fireEvent.changeText(view.getByLabelText('名称'), '旧表单');
+      await fireEvent.changeText(view.getByLabelText('服务器'), '127.0.0.1');
+      await fireEvent.changeText(view.getByLabelText('端口'), '1080');
       await fireEvent.press(view.getByLabelText('确定'));
 
       await view.rerender(proxyModal({ visible: false, onUpsertProfile }));
       await view.rerender(proxyModal({ visible: true, onUpsertProfile }));
       await fireEvent.press(view.getByText('添加代理'));
-      await fireEvent.changeText(view.getByPlaceholderText('名称'), '本次表单');
-      await fireEvent.changeText(view.getByPlaceholderText('服务器'), '127.0.0.2');
-      await fireEvent.changeText(view.getByPlaceholderText('端口'), '8080');
+      await fireEvent.changeText(view.getByLabelText('名称'), '本次表单');
+      await fireEvent.changeText(view.getByLabelText('服务器'), '127.0.0.2');
+      await fireEvent.changeText(view.getByLabelText('端口'), '8080');
       await fireEvent.press(view.getByLabelText('确定'));
       expect(onUpsertProfile).toHaveBeenCalledTimes(2);
 
       await act(async () => oldSave.resolve());
-      expect(view.getByPlaceholderText('名称').props.value).toBe('本次表单');
+      expect(view.getByLabelText('名称').props.value).toBe('本次表单');
       expect(view.getByLabelText('保存中').props.accessibilityState.disabled).toBe(true);
       await fireEvent.press(view.getByLabelText('保存中'));
       expect(onUpsertProfile).toHaveBeenCalledTimes(2);
@@ -186,7 +197,7 @@ describe('Network proxy modal', () => {
       await act(async () => currentSave.resolve());
       expect(view.queryByPlaceholderText('名称')).toBeNull();
       await fireEvent.press(view.getByText('添加代理'));
-      expect(view.getByPlaceholderText('名称').props.value).toBe('');
+      expect(view.getByLabelText('名称').props.value).toBe('');
       expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
     } finally {
       await act(async () => {
@@ -270,9 +281,9 @@ describe('Network proxy modal', () => {
 
     await fireEvent.press(view.getAllByLabelText('编辑代理')[1]);
     expect(view.getByText('编辑代理')).toBeTruthy();
-    expect(view.getByPlaceholderText('名称').props.value).toBe('备用代理');
-    expect(view.getByPlaceholderText('服务器').props.value).toBe('proxy.example.com');
-    await fireEvent.changeText(view.getByPlaceholderText('名称'), '家庭代理');
+    expect(view.getByLabelText('名称').props.value).toBe('备用代理');
+    expect(view.getByLabelText('服务器').props.value).toBe('proxy.example.com');
+    await fireEvent.changeText(view.getByLabelText('名称'), '家庭代理');
     await fireEvent.press(view.getByLabelText('确定'));
 
     await waitFor(() => {
@@ -322,27 +333,31 @@ describe('Network proxy modal', () => {
     expect(view.getByRole('switch').props.value).toBe(true);
   });
 
-  it('clears the proxy draft inset when the Android keyboard hides', async () => {
-    let showKeyboard: ((event: { endCoordinates: { height: number } }) => void) | undefined;
-    let hideKeyboard: (() => void) | undefined;
-    jest.spyOn(Keyboard, 'addListener').mockImplementation((event, listener) => {
-      if (event === 'keyboardDidShow') showKeyboard = listener as typeof showKeyboard;
-      if (event === 'keyboardDidHide') hideKeyboard = listener as typeof hideKeyboard;
-      return { remove: jest.fn() } as never;
-    });
-    const view = await render(proxyModal());
+  it.each([0, 24, 48])(
+    'uses Android keyboard height once and releases it with a %s dp system bottom inset',
+    async (bottom) => {
+      mockBottomInset = bottom;
+      let showKeyboard: ((event: { endCoordinates: { height: number } }) => void) | undefined;
+      let hideKeyboard: (() => void) | undefined;
+      jest.spyOn(Keyboard, 'addListener').mockImplementation((event, listener) => {
+        if (event === 'keyboardDidShow') showKeyboard = listener as typeof showKeyboard;
+        if (event === 'keyboardDidHide') hideKeyboard = listener as typeof hideKeyboard;
+        return { remove: jest.fn() } as never;
+      });
+      const view = await render(proxyModal());
 
-    await fireEvent.press(view.getByText('添加代理'));
-    await act(async () => {
-      showKeyboard?.({ endCoordinates: { height: 240 } });
-    });
-    expect(StyleSheet.flatten(view.getByText('新增代理').parent?.parent?.props.style).marginBottom).toBe(240);
+      await fireEvent.press(view.getByText('添加代理'));
+      await act(async () => {
+        showKeyboard?.({ endCoordinates: { height: 240 } });
+      });
+      expect(StyleSheet.flatten(view.getByTestId('modal-sheet').props.style).marginBottom).toBe(240);
 
-    await act(async () => {
-      hideKeyboard?.();
-    });
-    expect(StyleSheet.flatten(view.getByText('新增代理').parent?.parent?.props.style).marginBottom).toBeUndefined();
-  });
+      await act(async () => {
+        hideKeyboard?.();
+      });
+      expect(StyleSheet.flatten(view.getByTestId('modal-sheet').props.style).marginBottom).toBeUndefined();
+    }
+  );
 
   it('deletes selected profiles only after destructive confirmation', async () => {
     const onDeleteProfile = jest.fn(async (_id: string) => undefined);

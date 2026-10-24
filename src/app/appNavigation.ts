@@ -3,6 +3,7 @@ import type { UserActivityTab, UserReference } from '@/domain/forum/models';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { Screen } from '@/ui/navigation/types';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+import type { LibraryTab } from '@/domain/forum/feed';
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
@@ -16,7 +17,7 @@ function appScreenForRouteName(routeName?: string): Screen {
   if (routeName === 'User') return 'user';
   if (routeName === 'Library') return 'library';
   if (routeName === 'NotificationDetail' || routeName === 'NotificationSettings') return 'notifications';
-  if (routeName === 'NodeSeekCredits') return 'more';
+  if (routeName === 'NodeSeekCredits' || routeName === 'LinuxDoCredit') return 'more';
   if (routeName === 'search' || routeName === 'more' || routeName === 'notifications') return routeName;
   return 'feed';
 }
@@ -38,10 +39,15 @@ export function navigateAppScreen(screen: Screen) {
   if (currentAppRoute().screen === screen) return true;
   if (screen === 'topic' || screen === 'user') return false;
   if (screen === 'library') {
-    navigationRef.navigate('Library');
-    return true;
+    return openLibraryRoute();
   }
   navigateMainTab(screen);
+  return true;
+}
+
+export function openLibraryRoute(initialTab: LibraryTab = 'favorites') {
+  if (!navigationRef.isReady()) return false;
+  navigationRef.navigate('Library', { initialTab });
   return true;
 }
 
@@ -55,6 +61,7 @@ export function isNativeStackScreen() {
     routeName === 'NotificationDetail' ||
     routeName === 'NotificationSettings' ||
     routeName === 'NodeSeekCredits' ||
+    routeName === 'LinuxDoCredit' ||
     routeName === 'ReadingSettings'
   );
 }
@@ -74,6 +81,12 @@ export function pushUserRoute(user: UserReference, initialTab?: UserActivityTab)
 export function openNodeSeekCreditsRoute(destination: RootStackParamList['NodeSeekCredits']) {
   if (!navigationRef.isReady()) return false;
   navigationRef.dispatch(StackActions.push('NodeSeekCredits', destination));
+  return true;
+}
+
+export function openLinuxDoCreditRoute(destination: RootStackParamList['LinuxDoCredit']) {
+  if (!navigationRef.isReady()) return false;
+  navigationRef.dispatch(StackActions.push('LinuxDoCredit', destination));
   return true;
 }
 

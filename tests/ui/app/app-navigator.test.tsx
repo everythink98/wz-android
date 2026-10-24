@@ -11,6 +11,7 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   navigateMainTab,
   navigationRef,
+  openLinuxDoCreditRoute,
   openNodeSeekCreditsRoute,
   openNotificationsRoute,
   pushTopicRoute,
@@ -23,6 +24,7 @@ import { OriginalImageUpgradeBoundary, useOriginalImageUpgradeEnabled } from '@/
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { Screen } from '@/ui/navigation/types';
 import type { MoreBadgeState } from '@/ui/navigation/moreBadge';
+import { NavigationBackdropTarget } from '@/ui/navigation/NavigationGlass';
 import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 import { createTestStyles as createStyles } from '../styleFixture';
@@ -34,6 +36,7 @@ jest.mock('lucide-react-native', () => {
     Bell: Icon,
     Home: Icon,
     MoreHorizontal: Icon,
+    UserRound: Icon,
     Search: Icon,
     Settings: Icon,
     Star: Icon
@@ -77,7 +80,12 @@ function StatefulTab({ label }: { label: string }) {
 }
 
 function FeedTab() {
-  return <StatefulTab label="首页" />;
+  const active = useIsFocused();
+  return (
+    <NavigationBackdropTarget active={active}>
+      <StatefulTab label="首页" />
+    </NavigationBackdropTarget>
+  );
 }
 
 function SearchTab() {
@@ -89,13 +97,14 @@ function LibraryTab() {
 }
 
 function MoreTab() {
+  const active = useIsFocused();
   return (
-    <View>
-      <StatefulTab label="更多" />
+    <NavigationBackdropTarget active={active}>
+      <StatefulTab label="我的" />
       <Pressable accessibilityLabel="打开收藏" onPress={() => navigationRef.navigate('Library')}>
         <Text>打开收藏</Text>
       </Pressable>
-    </View>
+    </NavigationBackdropTarget>
   );
 }
 
@@ -109,6 +118,10 @@ function NotificationsRoute() {
 
 function CreditsRoute({ route }: NativeStackScreenProps<RootStackParamList, 'NodeSeekCredits'>) {
   return <Text>{`${route.params.currency === 'stardust' ? '星辰' : '鸡腿'}流水 ${route.params.identityKey}`}</Text>;
+}
+
+function LinuxDoCreditTestRoute({ route }: NativeStackScreenProps<RootStackParamList, 'LinuxDoCredit'>) {
+  return <Text>{`LDC 收支 ${route.params.identityKey}`}</Text>;
 }
 
 function NotificationDetailRoute() {
@@ -240,6 +253,7 @@ function Navigator({
       getNotificationsRoute={() => NotificationsRoute}
       getReadingSettingsRoute={() => ReadingSettingsRoute}
       getNodeSeekCreditsRoute={() => CreditsRoute}
+      getLinuxDoCreditRoute={() => LinuxDoCreditTestRoute}
       getSearchRoute={() => SearchTab}
       getTopicRoute={() => StatefulTopicRoute}
       getUserRoute={() => StatefulUserRoute}
@@ -272,6 +286,51 @@ async function renderNavigator(moreHasBadge = false) {
 }
 
 describe('App navigator UI state', () => {
+  it.each(['feed', 'search'] as const)(
+    'keeps the departing %s bottom bar backdrop mounted while a topic covers it',
+    async (route) => {
+      const view = await renderNavigator();
+      await fireEvent.press(view.getByTestId(`main-tab-${route}`));
+      const glass = view.getByTestId('navigation-glass');
+      const target: unknown = glass.props.blurTarget?.current;
+      const tab = view.getByTestId(`main-tab-${route}`);
+      expect(target).toBeTruthy();
+
+      await act(async () => {
+        expect(pushTopicRoute({ topic: topicA })).toBe(true);
+      });
+      await waitFor(() => expect(view.getByText('Topic A')).toBeTruthy());
+
+      expect(view.getByTestId(`main-tab-${route}`, { includeHiddenElements: true })).toBe(tab);
+      const coveredGlass = view.getByTestId('navigation-glass', { includeHiddenElements: true });
+      expect({
+        sameTarget: coveredGlass.props.blurTarget?.current === target,
+        sameGlass: coveredGlass === glass
+      }).toEqual({ sameTarget: true, sameGlass: true });
+
+      await act(async () => navigationRef.goBack());
+      expect(view.getByTestId('navigation-glass')).toBe(glass);
+      expect(view.getByTestId('navigation-glass').props.blurTarget?.current).toBe(target);
+    }
+  );
+
+  it('blurs each focused tab behind the same bottom bar and reuses its content when returning', async () => {
+    const view = await renderNavigator();
+    const targets = new Map<string, unknown>();
+    for (const route of ['feed', 'search', 'notifications', 'more', 'notifications', 'search', 'more', 'feed']) {
+      await fireEvent.press(view.getByTestId(`main-tab-${route}`));
+      const glass = view.getByTestId('navigation-glass');
+      expect(glass.props.blurMethod).toBe('dimezisBlurViewSdk31Plus');
+      const target: unknown = glass.props.blurTarget?.current;
+      expect(target).toBeTruthy();
+      if (targets.has(route)) expect(target).toBe(targets.get(route));
+      else {
+        expect([...targets.values()]).not.toContain(target);
+        targets.set(route, target);
+      }
+    }
+  });
+
   it('keeps four primary tabs and returns from the collection to the same More instance', async () => {
     const view = await renderNavigator();
     expect(view.getAllByTestId(/^main-tab-/).map((tab) => tab.props.testID)).toEqual([
@@ -283,7 +342,7 @@ describe('App navigator UI state', () => {
     expect(view.queryByTestId('main-tab-library')).toBeNull();
     expect(view.getByTestId('main-tab-notifications')).toBeTruthy();
     await fireEvent.press(view.getByTestId('main-tab-more'));
-    await fireEvent.changeText(view.getByLabelText('更多状态'), '保留更多状态');
+    await fireEvent.changeText(view.getByLabelText('我的状态'), '保留我的状态');
     const moreKey = navigationRef.getCurrentRoute()!.key;
     await fireEvent.press(view.getByLabelText('打开收藏'));
     expect(navigationRef.getCurrentRoute()?.name).toBe('Library');
@@ -294,7 +353,7 @@ describe('App navigator UI state', () => {
     expect(view.getByLabelText('收藏状态').props.value).toBe('收藏筛选');
     await act(async () => navigationRef.goBack());
     expect(navigationRef.getCurrentRoute()?.key).toBe(moreKey);
-    expect(view.getByLabelText('更多状态').props.value).toBe('保留更多状态');
+    expect(view.getByLabelText('我的状态').props.value).toBe('保留我的状态');
     await fireEvent.press(view.getByTestId('main-tab-notifications'));
     expect(view.getByText('消息页面')).toBeTruthy();
     expect(navigationRef.getRootState()?.routes).toHaveLength(1);
@@ -304,8 +363,8 @@ describe('App navigator UI state', () => {
     const view = await render(<Navigator />);
     await waitFor(() => expect(navigationRef.isReady()).toBe(true));
     await fireEvent.press(view.getByTestId('main-tab-more'));
-    await waitFor(() => expect(view.getByLabelText('更多状态')).toBeTruthy());
-    await fireEvent.changeText(view.getByLabelText('更多状态'), 'expanded-nodeseek');
+    await waitFor(() => expect(view.getByLabelText('我的状态')).toBeTruthy());
+    await fireEvent.changeText(view.getByLabelText('我的状态'), 'expanded-nodeseek');
     await act(async () => {
       pushUserRoute(user, 'replies');
     });
@@ -313,7 +372,7 @@ describe('App navigator UI state', () => {
     await act(async () => {
       navigationRef.goBack();
     });
-    await waitFor(() => expect(view.getByLabelText('更多状态').props.value).toBe('expanded-nodeseek'));
+    await waitFor(() => expect(view.getByLabelText('我的状态').props.value).toBe('expanded-nodeseek'));
     await act(async () => {
       openNodeSeekCreditsRoute({ identityKey: 'nodeseek:42', userId: '42' });
     });
@@ -321,13 +380,19 @@ describe('App navigator UI state', () => {
     await act(async () => {
       navigationRef.goBack();
     });
-    await waitFor(() => expect(view.getByLabelText('更多状态').props.value).toBe('expanded-nodeseek'));
+    await waitFor(() => expect(view.getByLabelText('我的状态').props.value).toBe('expanded-nodeseek'));
     await act(async () => {
       openNodeSeekCreditsRoute({ identityKey: 'nodeseek:42', userId: '42', currency: 'stardust' });
     });
     await waitFor(() => expect(view.getByText('星辰流水 nodeseek:42')).toBeTruthy());
     await act(async () => navigationRef.goBack());
-    await waitFor(() => expect(view.getByLabelText('更多状态').props.value).toBe('expanded-nodeseek'));
+    await waitFor(() => expect(view.getByLabelText('我的状态').props.value).toBe('expanded-nodeseek'));
+    await act(async () => {
+      openLinuxDoCreditRoute({ identityKey: 'linuxdo:alice', userId: 'alice', username: 'alice' });
+    });
+    await waitFor(() => expect(view.getByText('LDC 收支 linuxdo:alice')).toBeTruthy());
+    await act(async () => navigationRef.goBack());
+    await waitFor(() => expect(view.getByLabelText('我的状态').props.value).toBe('expanded-nodeseek'));
   });
   const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 
@@ -518,10 +583,10 @@ describe('App navigator UI state', () => {
   });
 
   it.each<[MoreBadgeState, string, string]>([
-    ['none', '更多', '消息'],
-    ['update', '更多，有可用更新', '消息'],
-    ['messages', '更多', '消息，有新消息'],
-    ['both', '更多，有可用更新', '消息，有新消息']
+    ['none', '我的', '消息'],
+    ['update', '我的，有可用更新', '消息'],
+    ['messages', '我的', '消息，有新消息'],
+    ['both', '我的，有可用更新', '消息，有新消息']
   ])(
     'keeps %s update and unread badges on their own destinations',
     async (moreBadgeState, moreLabel, messagesLabel) => {
@@ -548,7 +613,7 @@ describe('App navigator UI state', () => {
 
     await view.rerender(<Navigator moreBadgeState="update" />);
     expect(view.getByLabelText('消息')).toBeTruthy();
-    expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();
+    expect(view.getByLabelText('我的，有可用更新')).toBeTruthy();
     expect(hasBadge('notifications')).toBe(false);
     expect(hasBadge('more')).toBe(true);
 
@@ -617,7 +682,7 @@ describe('App navigator UI state', () => {
       { route: 'feed', label: '首页' },
       { route: 'search', label: '搜索' },
       { route: 'notifications', label: '消息' },
-      { route: 'more', label: '更多' }
+      { route: 'more', label: '我的' }
     ];
     const expectFocusedTab = async (focusedLabel: string | null) => {
       await waitFor(() => {
@@ -642,7 +707,7 @@ describe('App navigator UI state', () => {
     expect(view.getByText('首页页面')).toBeTruthy();
     expect(view.queryByText('搜索页面', { includeHiddenElements: true })).toBeNull();
     expect(view.queryByText('消息页面', { includeHiddenElements: true })).toBeNull();
-    expect(view.queryByText('更多页面', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByText('我的页面', { includeHiddenElements: true })).toBeNull();
 
     for (const { route, label } of tabs) {
       await fireEvent.press(view.getByTestId(`main-tab-${route}`));
@@ -660,7 +725,7 @@ describe('App navigator UI state', () => {
     await waitFor(() => expect(view.getByText('Topic A')).toBeTruthy());
     await expectFocusedTab(null);
     await act(async () => navigationRef.goBack());
-    await expectFocusedTab('更多');
+    await expectFocusedTab('我的');
   });
 
   it('keeps tab and native route state owned by their mounted route instances', async () => {
@@ -676,7 +741,7 @@ describe('App navigator UI state', () => {
     await waitFor(() => expect(view.getByText('首页回顶 1')).toBeTruthy());
     await fireEvent.press(view.getByTestId('main-tab-search'));
     await waitFor(() => expect(view.getByLabelText('搜索状态').props.value).toBe('search-state'));
-    expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();
+    expect(view.getByLabelText('我的，有可用更新')).toBeTruthy();
 
     await act(async () => {
       expect(pushTopicRoute({ topic: topicA })).toBe(true);

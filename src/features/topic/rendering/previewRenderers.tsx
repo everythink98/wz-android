@@ -1,6 +1,6 @@
+import { ActivityIndicator } from 'react-native-paper';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
-  ActivityIndicator,
   Image as NativeImage,
   PixelRatio,
   Pressable,
@@ -38,7 +38,7 @@ import {
   isInlineForumImage
 } from '@/domain/forum/forumContentMedia';
 import { inlineForumImageAlignmentStyle, inlineForumImageAttachmentSize } from '@/platform/media/inlineMedia';
-import type { ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
@@ -521,7 +521,7 @@ function AdmittedPreviewImageBlock({
       alignItems: 'center' as const,
       backgroundColor: frameBackgroundColor,
       borderColor: frameBorderColor,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center' as const,
       overflow: 'hidden' as const
@@ -560,7 +560,7 @@ function AdmittedPreviewImageBlock({
     >
       <View
         testID="topic-image-frame"
-        style={[{ borderRadius: 10, overflow: 'hidden' as const }, imageState.dimensions]}
+        style={[{ borderRadius: readerRadii.content, overflow: 'hidden' as const }, imageState.dimensions]}
       >
         {!loadFailed ? (
           <ExpoImage
@@ -622,7 +622,7 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
       alignSelf: props.alignment,
       backgroundColor: props.frameBackgroundColor,
       borderColor: props.frameBorderColor,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center' as const,
       overflow: 'hidden' as const
@@ -840,7 +840,7 @@ function ManagedMixedForumImage({
     {
       backgroundColor: frameBackgroundColor,
       borderColor: frameBorderColor,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       overflow: 'hidden' as const,
       position: 'relative' as const

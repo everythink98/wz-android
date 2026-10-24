@@ -7,6 +7,17 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 class DiagnosticLogStoreTest {
+  @Test fun retainsOnlyValidSocketLocalPortsWithoutAddresses() {
+    for (port in listOf(1, 49152, 65535)) {
+      assertEquals(mapOf("socketLocalPort" to port), DiagnosticJournal.safeNetworkFields(mapOf(
+        "socketLocalPort" to port, "localAddress" to "192.0.2.10", "ip" to "192.0.2.11"
+      )))
+    }
+    for (value in listOf(-1, 0, 65536, 1.5, Double.NaN, "49152")) {
+      assertTrue(DiagnosticJournal.safeNetworkFields(mapOf("socketLocalPort" to value)).isEmpty())
+    }
+  }
+
   @Test fun retainsRequestWriteFailurePhasesForPostRestartDiagnostics() {
     val phases = listOf("request-headers-start", "request-headers-end", "request-failed", "connection-write-stalled")
     assertEquals(phases, phases.map { phase ->

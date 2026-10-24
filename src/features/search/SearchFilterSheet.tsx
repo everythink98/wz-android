@@ -1,7 +1,7 @@
 import type { SearchStyles } from './styles';
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Pressable, ScrollView, type ScrollViewProps, Text, useWindowDimensions, View } from 'react-native';
-import { ChevronDown, SlidersHorizontal, X } from 'lucide-react-native';
+import { ChevronDown, SlidersHorizontal } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '@/domain/forum/models';
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { sourceLabel } from '@/domain/forum/presentation';
@@ -16,8 +16,7 @@ import {
 } from '@/domain/forum/searchFilters';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
-import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
+import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { DiscourseFilterPickers, useDiscourseFilterPickers } from './DiscourseFilterPickers';
 import { hasDiscourseAdvancedFilters, SearchFilterForm } from './SearchFilterForm';
@@ -213,22 +212,13 @@ export function SearchFilterSheet({
         <ChevronDown size={16} color={theme.muted} strokeWidth={1.7} />
       </Pressable>
       <ModalSheetFrame backdropLabel="关闭筛选" visible={visible} onRequestClose={() => setVisible(false)}>
-        <View style={styles.searchFilterHeader}>
-          <View style={styles.flex}>
-            <Text style={styles.searchFilterTitle}>筛选</Text>
-            <Text style={styles.meta}>{sourceLabel(source)}</Text>
-          </View>
-          <Pressable
-            testID="search-filter-close"
-            accessibilityRole="button"
-            accessibilityLabel="关闭筛选"
-            hitSlop={TOUCH_HIT_SLOP}
-            style={styles.searchInlineButton}
-            onPress={() => setVisible(false)}
-          >
-            <X size={18} color={theme.muted} strokeWidth={2} />
-          </Pressable>
-        </View>
+        <ModalSheetHeader
+          title="筛选"
+          subtitle={sourceLabel(source)}
+          closeLabel="关闭筛选"
+          closeTestID="search-filter-close"
+          onClose={() => setVisible(false)}
+        />
         <SearchFilterBody
           scrollOffsetRef={scrollOffsetRef}
           style={[styles.searchFilterBody, filterBodyStyle]}

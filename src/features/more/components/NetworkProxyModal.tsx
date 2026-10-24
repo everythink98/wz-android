@@ -1,3 +1,4 @@
+import { AppSwitch as Switch, AppTextInput as TextInput } from '@/ui/controls/InputControls';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { MoreStyles } from '../styles';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -8,9 +9,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
-  TextInput,
   useWindowDimensions,
   View
 } from 'react-native';
@@ -19,8 +18,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText } from '@/ui/controls/FeedbackStates';
 import { SettingRail } from '@/ui/controls/SelectionControls';
-import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
+import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   createNetworkProxyProfile,
   validateNetworkProxyProfile,
@@ -161,7 +160,8 @@ export function NetworkProxyModal({
       return;
     }
     const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
-      setDraftKeyboardInset(Math.max(0, event.endCoordinates.height - insets.bottom));
+      // React Native already excludes the system navigation bar from this height.
+      setDraftKeyboardInset(Math.max(0, event.endCoordinates.height));
     });
     const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
       Keyboard.dismiss();
@@ -171,7 +171,7 @@ export function NetworkProxyModal({
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [draftMode, insets.bottom]);
+  }, [draftMode]);
 
   useEffect(() => {
     if (pendingEnabled !== null && proxyState.enabled === pendingEnabled && applyStatus !== 'applying') {
@@ -318,7 +318,12 @@ export function NetworkProxyModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={selecting ? () => setSelectedIds([]) : onClose}>
+    <Modal
+      visible={visible}
+      backdropColor={pageColor}
+      animationType="slide"
+      onRequestClose={selecting ? () => setSelectedIds([]) : onClose}
+    >
       <View
         onTouchStart={recordUserInteraction}
         onTouchMove={recordUserInteraction}
@@ -383,10 +388,9 @@ export function NetworkProxyModal({
             <Switch
               accessibilityLabel="使用代理"
               disabled={switchDisabled}
-              ios_backgroundColor={theme.lineStrong}
+
               style={{ opacity: switchDisabled ? 0.72 : 1 }}
-              thumbColor={theme.surface}
-              trackColor={{ false: theme.lineStrong, true: accentBaseColor }}
+
               value={displayedEnabled}
               onValueChange={toggleEnabled}
             />
@@ -511,9 +515,12 @@ export function NetworkProxyModal({
           visible={draftMode !== null}
           onRequestClose={closeDraft}
         >
-          <View style={styles.searchFilterHeader}>
-            <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
-          </View>
+          <ModalSheetHeader
+            title={draftMode === 'edit' ? '编辑代理' : '新增代理'}
+            closeLabel="关闭代理编辑"
+            closeDisabled={busy}
+            onClose={closeDraft}
+          />
           <ScrollView
             overScrollMode="never"
             style={[styles.searchFilterBody, { maxHeight: Math.max(320, Math.round(height * 0.58)) }]}
@@ -622,7 +629,6 @@ function ProxyInput({
 }) {
   return (
     <View style={[styles.stack, style]}>
-      <Text style={styles.panelTitle}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
         autoCapitalize={autoCapitalize}
@@ -654,7 +660,7 @@ const proxyStyles = StyleSheet.create({
   },
   headerIcon: {
     alignItems: 'center',
-    borderRadius: 20,
+    borderRadius: readerRadii.pill,
     height: 40,
     justifyContent: 'center',
     width: 40
@@ -664,7 +670,7 @@ const proxyStyles = StyleSheet.create({
     marginHorizontal: 8
   },
   card: {
-    borderRadius: 10,
+    borderRadius: readerRadii.surface,
     overflow: 'hidden',
     paddingHorizontal: 16,
     paddingVertical: 14
@@ -686,7 +692,7 @@ const proxyStyles = StyleSheet.create({
   },
   proxyRow: {
     alignItems: 'center',
-    borderRadius: 10,
+    borderRadius: readerRadii.control,
     flexDirection: 'row',
     gap: 12,
     marginHorizontal: -10,
@@ -696,7 +702,7 @@ const proxyStyles = StyleSheet.create({
   },
   checkCircle: {
     alignItems: 'center',
-    borderRadius: 14,
+    borderRadius: readerRadii.pill,
     borderWidth: 1.5,
     height: 28,
     justifyContent: 'center',
@@ -715,7 +721,7 @@ const proxyStyles = StyleSheet.create({
     minWidth: 0
   },
   currentBadge: {
-    borderRadius: 999,
+    borderRadius: readerRadii.pill,
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 7,
     paddingVertical: 2
@@ -733,7 +739,7 @@ const proxyStyles = StyleSheet.create({
   },
   infoButton: {
     alignItems: 'center',
-    borderRadius: 18,
+    borderRadius: readerRadii.pill,
     height: 36,
     justifyContent: 'center',
     width: 36

@@ -8,7 +8,7 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { focusManager, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
-import type { SourceErrorInfo, Topic, TopicLocationTarget } from '@/domain/forum/models';
+import type { SourceErrorInfo, Topic, TopicLocationTarget, UserReference } from '@/domain/forum/models';
 import { isRecord } from '@/domain/forum/html';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource, sourceCatalog } from '@/domain/forum/sourceCatalog';
@@ -687,6 +687,7 @@ export function NotificationsRoute({
       onChangeUnreadOnly={setUnreadOnly}
       onItemPress={(notification) => {
         if (
+          !navigation.isFocused() ||
           !runtime.enabledNotificationSources.includes(notification.source) ||
           !runtime.activeSources.includes(notification.source)
         ) {
@@ -1221,6 +1222,9 @@ function EnabledNotificationDetailRoute({
     [canAccessSource, detailQuery.data]
   );
   const actorInHeader = Boolean(detailQuery.data?.messages && actorUser && item.source !== 'linuxdo');
+  const openActor = useLatestCallback((user: UserReference) => {
+    if (navigation.isFocused()) navigation.navigate('User', { user });
+  });
   const policyAwaitingRead = policySubmittedAcceptance !== undefined && policy?.accepted !== policySubmittedAcceptance;
   useEffect(() => {
     setPolicyBusy(false);
@@ -1276,15 +1280,18 @@ function EnabledNotificationDetailRoute({
       title: canAccessSource && detailQuery.data?.messages ? detailQuery.data.title : '消息详情',
       headerTitle:
         actorInHeader && actorUser
-          ? () => (
-              <NotificationContactTitle
-                user={actorUser}
-                onPress={() => navigation.navigate('User', { user: actorUser })}
-              />
-            )
+          ? () => <NotificationContactTitle user={actorUser} onPress={() => openActor(actorUser)} />
           : undefined
     });
-  }, [actorInHeader, actorUser, canAccessSource, detailQuery.data?.messages, detailQuery.data?.title, navigation]);
+  }, [
+    actorInHeader,
+    actorUser,
+    canAccessSource,
+    detailQuery.data?.messages,
+    detailQuery.data?.title,
+    navigation,
+    openActor
+  ]);
   useEffect(
     () => () => {
       cancelReply();
@@ -1781,6 +1788,7 @@ function EnabledNotificationDetailRoute({
     }
   }, [canAccessSource, detailQuery.data?.reply, gateway, identityKey, item.source, runtime.composer]);
   const openTopic = useLatestCallback((linkedTopic?: Topic, linkedLocation?: TopicLocationTarget) => {
+    if (!navigation.isFocused()) return;
     const topic = linkedTopic || targetTopic;
     if (topic) navigation.navigate('Topic', { topic, location: linkedTopic ? linkedLocation : location });
   });
@@ -1831,7 +1839,7 @@ function EnabledNotificationDetailRoute({
       policyError={policyError}
       policyStatus={policyStatus}
       onSetPolicyAcceptance={setPolicyAcceptance}
-      onOpenActor={(user) => navigation.navigate('User', { user })}
+      onOpenActor={openActor}
       actorUser={actorUser}
       actorInHeader={actorInHeader}
       routeActive={routeFocused}

@@ -83,7 +83,7 @@
 
 ## 开发
 
-准备 Node.js 22（`>=22.22.2 <23`）、Android SDK、Java 构建环境，以及模拟器或已开启 USB 调试的 Android 手机。已有数据的设备必须先按[覆盖安装流程](docs/operator-runbook.md#覆盖安装)核对安装身份。
+推荐 Node.js 24 LTS 的最新补丁（最低 24.15.0，`.nvmrc` 跟随 24 系列），兼容 Node.js 22.22.2 及以上的 22 系列和 Node.js 26；具体范围以 `package.json` 的 `engines.node` 为准，CI 验证这三条版本线及 24 的最低支持版本，并严格检查依赖的 Node 版本要求。`.nvmrc` 不会自动切换当前终端的 Node，执行命令前需确认 `node -v` 在支持范围内。另需 Android SDK、Java 构建环境，以及模拟器或已开启 USB 调试的 Android 手机。已有数据的设备必须先按[覆盖安装流程](docs/operator-runbook.md#覆盖安装)核对安装身份。
 
 使用仓库锁文件安装依赖，运行检查后启动 Android 构建：
 
@@ -103,7 +103,7 @@ npm run android
 | --- | --- |
 | [交接说明](docs/handoff.md) | 接手顺序、事实来源与文档整理 |
 | [产品章程](docs/product-charter.md) | 产品目标、取舍和功能准入 |
-| [设计约束](PRODUCT.md) | 品牌、视觉和无障碍要求 |
+| [设计指南](DESIGN.md) | 已确认的视觉取舍、组件复用、配色、毛玻璃与页面规范 |
 | [产品地图](docs/product-map.md) | 当前产品行为、入口、共享实现边界与能力 ID |
 | [架构说明](docs/architecture.md) | 实现结构与数据边界 |
 | [测试标准](docs/testing-standard.md) | 测试归属、证据层、隔离和验证强度 |

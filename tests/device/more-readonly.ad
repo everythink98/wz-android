@@ -6,15 +6,39 @@ env APP_ID=com.wz.reader
 open ${APP_ID} --relaunch
 wait id="main-tab-more" 60000
 press id="main-tab-more"
-wait text="关于阅坛" 10000
+wait text="我的" 10000
+wait stable 1500 15000
+
+press id="account-site-nodeseek"
+press label="站点设置"
+wait id="account-site-settings" 10000
+wait text="自动填入" 10000
+press label="站点设置"
+wait label="站点设置" 10000
+
+press id="account-site-linuxdo"
+press label="站点设置"
+wait id="account-site-settings" 10000
+press label="站点设置"
+wait label="站点设置" 10000
+
+press id="account-site-yaohuo"
+press label="站点设置"
+wait id="account-site-settings" 10000
+press label="站点设置"
+wait label="站点设置" 10000
+press id="account-site-nodeseek"
 
 press "label=\"展开内容源\""
+wait stable 500 10000
+scroll down 0.3
 wait "label=\"V2EX 内容源开关\"" 10000
 wait "label=\"linux.do 内容源开关\"" 10000
 wait "label=\"NodeSeek 内容源开关\"" 10000
 wait "label=\"妖火 内容源开关\"" 10000
 wait id="content-source-drag-v2ex" 10000
 press label="收起内容源"
+scroll bottom
 
 press text="服务器代理"
 wait text="使用代理" 10000
@@ -22,17 +46,20 @@ back --system
 wait text="关于阅坛" 10000
 
 find "label=\"展开问题诊断\"" click
+scroll bottom
 wait label="生成并分享诊断日志" 10000
 press label="收起问题诊断"
 wait label="展开问题诊断" 10000
 
 find "label=\"展开备份 / 恢复\"" click
+scroll bottom
 wait label="导出备份文件" 10000
 wait label="选择备份文件恢复" 10000
 press label="收起备份 / 恢复"
 wait "label=\"展开备份 / 恢复\"" 10000
 
+scroll top
 find "label=\"展开外观\"" click
-scroll down
+scroll down 0.3
 wait label="主题" 10000
 wait label="字号" 10000

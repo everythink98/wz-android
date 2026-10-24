@@ -19,7 +19,12 @@ import { useAppLifecycleRuntime } from './useAppLifecycleRuntime';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
 import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRouteRuntime';
 import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
-import { navigateAppScreen, openNodeSeekCreditsRoute, openNotificationsRoute } from './appNavigation';
+import {
+  openLibraryRoute,
+  openNodeSeekCreditsRoute,
+  openLinuxDoCreditRoute,
+  openNotificationsRoute
+} from './appNavigation';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -82,6 +87,7 @@ export function useAppRuntime() {
 
   const accountRuntime = useAccountRuntime({
     appActive,
+    beforeRequest: ensureNetworkProxyReady,
     enabledSources,
     fetcher: networkProxyFetcher,
     loginNavigation: lifecycle.loginNavigation,
@@ -487,6 +493,22 @@ export function useAppRuntime() {
         statusBusy: accountRuntime.read.statusBusy
       },
       center: {
+        linuxDoCredit: {
+          open: accountRuntime.center.linuxDoCredit.open,
+          connectSilently: accountRuntime.center.linuxDoCredit.connectSilently,
+          busy: accountRuntime.center.linuxDoCredit.busy
+        },
+        openLinuxDoCredit: () => {
+          const session = accountRuntime.read.accountSessionViewModels.linuxdo;
+          const user = session.currentUser;
+          if (user && session.canWrite && session.identityTrust === 'confirmed') {
+            openLinuxDoCreditRoute({
+              identityKey: `linuxdo:${user.id}`,
+              userId: user.id,
+              username: user.username || user.id
+            });
+          }
+        },
         openCredits: (currency) => {
           const user = accountRuntime.read.accountSessionViewModels.nodeseek.currentUser;
           if (user && accountRuntime.read.accountSessionViewModels.nodeseek.canWrite) {
@@ -533,6 +555,9 @@ export function useAppRuntime() {
       accountRuntime.read.accountSessionViewModels,
       accountRuntime.read.statusBusy,
       moreAccountCommand,
+      accountRuntime.center.linuxDoCredit.open,
+      accountRuntime.center.linuxDoCredit.connectSilently,
+      accountRuntime.center.linuxDoCredit.busy,
       accountRuntime.center.credentials.credentialSummaries,
       accountRuntime.center.credentials.pendingCredentialFillSite,
       accountRuntime.center.account.linuxDoLevelBusy,
@@ -557,8 +582,8 @@ export function useAppRuntime() {
 
   const moreLibraryRuntime = useMemo<MoreRouteRuntimeValue['library']>(
     () => ({
-      open: () => {
-        navigateAppScreen('library');
+      open: (tab) => {
+        openLibraryRoute(tab);
       }
     }),
     []

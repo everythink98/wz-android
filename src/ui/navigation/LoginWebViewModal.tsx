@@ -1,8 +1,9 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import type { ReactNode } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
-import { X, type LucideIcon } from 'lucide-react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { type ReactNode } from 'react';
+import { Modal, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Button, IconButton } from 'react-native-paper';
+import { CircleAlert, X, type LucideIcon } from 'lucide-react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createLoginWebViewStyles } from './loginWebViewStyles';
 
@@ -28,32 +29,46 @@ export function LoginWebViewAction({
   onPress: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createLoginWebViewStyles);
-  const color = primary ? theme.onPrimary : danger ? theme.danger : theme.ink;
+  const actionColor = displayLabel ? (theme.dark ? theme.primary : theme.primaryStrong) : theme.ink;
+  const color = primary ? theme.onPrimary : danger ? theme.danger : actionColor;
+  const handlePress = () => {
+    recordUserInteraction();
+    onPress();
+  };
+  if (!displayLabel) {
+    return (
+      <IconButton
+        testID={testID}
+        accessibilityLabel={label}
+        accessibilityState={{ disabled: disabled || loading, busy: loading }}
+        disabled={disabled || loading}
+        loading={loading}
+        icon={({ color, size }) => <Icon size={size} strokeWidth={1.8} color={color} accessible={false} />}
+        iconColor={color}
+        size={20}
+        style={styles.iconAction}
+        onPress={handlePress}
+      />
+    );
+  }
   return (
-    <Pressable
+    <Button
       testID={testID}
-      accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: disabled || loading, busy: loading }}
       disabled={disabled || loading}
-      onPress={() => {
-        recordUserInteraction();
-        onPress();
-      }}
-      style={[
-        styles.action,
-        primary && styles.actionPrimary,
-        !displayLabel && styles.actionIcon,
-        (disabled || loading) && styles.actionDimmed
-      ]}
+      loading={loading}
+      mode={primary ? 'contained' : 'text'}
+      compact
+      icon={({ color }) => <Icon size={16} strokeWidth={1.8} color={color} accessible={false} />}
+      textColor={color}
+      style={[styles.action, primary && styles.actionPrimary]}
+      contentStyle={styles.actionContent}
+      labelStyle={[styles.actionLabel, { color }]}
+      onPress={handlePress}
     >
-      {loading ? (
-        <ActivityIndicator size="small" color={color} accessible={false} style={styles.actionIndicator} />
-      ) : (
-        <Icon size={16} strokeWidth={1.8} color={color} accessible={false} />
-      )}
-      {displayLabel ? <Text style={[styles.actionText, { color }]}>{displayLabel}</Text> : null}
-    </Pressable>
+      {displayLabel}
+    </Button>
   );
 }
 
@@ -85,59 +100,70 @@ export function LoginWebViewModal({
   onClose: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createLoginWebViewStyles);
-  const insets = useSafeAreaInsets();
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View
-        onTouchStart={recordUserInteraction}
-        onTouchMove={recordUserInteraction}
-        style={[styles.loginWebViewModal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-      >
-        <View style={styles.loginWebViewHeader}>
-          <View style={styles.loginWebViewTitleBlock}>
-            <Text style={styles.loginWebViewTitle}>{title}</Text>
-            <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text>
-          </View>
-          <LoginWebViewAction label="关闭" displayLabel="" icon={X} onPress={onClose} />
-        </View>
-        {actions ? (
-          <ScrollView
-            overScrollMode="never"
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.loginWebViewToolbar}
-            contentContainerStyle={styles.toolbarContent}
-          >
-            <View style={styles.actions}>{actions}</View>
-          </ScrollView>
-        ) : null}
-        {error ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
-        <View style={styles.loginWebViewBody}>
-          {loading ? (
-            <View pointerEvents="none" style={styles.loading}>
-              <ActivityIndicator color={theme.primary} />
-              <Text style={styles.loadingText}>{loadingText}</Text>
+    <Modal
+      visible={visible}
+      backdropColor={theme.surface}
+      animationType="slide"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
+      <SafeAreaProvider style={styles.loginWebViewModal}>
+        <SafeAreaView
+          onTouchStart={recordUserInteraction}
+          onTouchMove={recordUserInteraction}
+          style={styles.loginWebViewModal}
+        >
+          <View style={styles.loginWebViewChrome}>
+            <View style={styles.loginWebViewHeader}>
+              <View style={styles.loginWebViewTitleBlock}>
+                <Text style={styles.loginWebViewTitle}>{title}</Text>
+                <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text>
+              </View>
+              <LoginWebViewAction label="关闭" displayLabel="" icon={X} onPress={onClose} />
             </View>
-          ) : null}
-          {children}
-        </View>
-        {footer || primaryAction || refreshAction ? (
-          <View style={styles.loginWebViewFooter}>
-            {footer}
-            {primaryAction || refreshAction ? (
-              <View style={styles.footerActions}>
-                {primaryAction ? <View style={styles.primaryAction}>{primaryAction}</View> : null}
-                {refreshAction}
+            {actions ? (
+              <ScrollView
+                overScrollMode="never"
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.loginWebViewToolbar}
+                contentContainerStyle={styles.toolbarContent}
+              >
+                <View style={styles.actions}>{actions}</View>
+              </ScrollView>
+            ) : null}
+            {error ? (
+              <View style={styles.errorBox} accessibilityLiveRegion="polite">
+                <CircleAlert size={18} strokeWidth={1.8} color={theme.danger} accessible={false} />
+                <Text style={styles.errorText}>{error}</Text>
               </View>
             ) : null}
           </View>
-        ) : null}
-      </View>
+          <View style={styles.loginWebViewBody} testID="login-webview-content">
+            {loading ? (
+              <View pointerEvents="none" style={styles.loading} accessibilityLiveRegion="polite">
+                <ActivityIndicator size="small" color={theme.primary} accessible={false} />
+                <Text style={styles.loadingText}>{loadingText}</Text>
+              </View>
+            ) : null}
+            {children}
+          </View>
+          {footer || primaryAction || refreshAction ? (
+            <View style={styles.loginWebViewFooter}>
+              {footer}
+              {primaryAction || refreshAction ? (
+                <View style={styles.footerActions}>
+                  {primaryAction ? <View style={styles.primaryAction}>{primaryAction}</View> : null}
+                  {refreshAction}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

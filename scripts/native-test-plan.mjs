@@ -47,6 +47,7 @@ export const nativeTestTasks = {
       'DiagnosticLogStoreTest',
       'ManagedCookieResponsesTest',
       'NetworkProxyRuntimeTest',
+      'NetworkProxyProfileTest',
       'NetworkUserAgentTest',
       'SvgRendererPolicyTest',
       'BackupExportTest',
@@ -104,6 +105,12 @@ export const nativeTestTasks = {
     args: ['--tests', 'expo.modules.filesystem.DownloadResponseTest'],
     reports: 'node_modules/expo-file-system/android/build/test-results/testDebugUnitTest',
     classes: ['expo.modules.filesystem.DownloadResponseTest']
+  },
+  ':expo-blur:testDebugUnitTest': {
+    related: (file) => file.startsWith('patches/expo-blur+'),
+    args: ['--tests', 'expo.modules.blur.ExpoBlurTargetViewTest'],
+    reports: 'node_modules/expo-blur/android/build/test-results/testDebugUnitTest',
+    classes: ['expo.modules.blur.ExpoBlurTargetViewTest']
   },
   ':expo-image:testDebugUnitTest': {
     related: (file) => file.startsWith('patches/expo-image+'),

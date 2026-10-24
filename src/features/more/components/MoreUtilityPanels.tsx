@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Text, View } from 'react-native';
-import { Bug, DatabaseBackup, Server, Settings, Star } from 'lucide-react-native';
+import { useCallback, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
+import { Bug, DatabaseBackup, History, Server, Settings, Star, Users } from 'lucide-react-native';
+import type { LibraryTab } from '@/domain/forum/feed';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
 import { AppButton } from '@/ui/controls/ButtonControls';
@@ -9,6 +10,7 @@ import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createMoreScreenStyles } from '../styles';
 import { AppearancePanel } from './AppearancePanel';
 import { NetworkProxyModal } from './NetworkProxyModal';
+import { ContentSourcesPanel } from './ContentSourcesPanel';
 
 function appearanceSummary(settings: ReaderSettings) {
   const themeLabel = settings.theme === 'dark' ? '深色' : '浅色';
@@ -19,7 +21,7 @@ function appearanceSummary(settings: ReaderSettings) {
 
 export type MoreUtilityCapabilities = {
   library: {
-    open: () => void;
+    open: (tab?: LibraryTab) => void;
   };
   backup: {
     recovery: boolean;
@@ -54,98 +56,142 @@ export type MoreUtilityCapabilities = {
   };
 };
 
-export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilities }) {
+export function MoreUtilityPanels({
+  runtime,
+  contentSourcesExpanded,
+  onContentSourcesExpandedChange
+}: {
+  runtime: MoreUtilityCapabilities;
+  contentSourcesExpanded: boolean;
+  onContentSourcesExpandedChange: (expanded: boolean) => void;
+}) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
+  const updateSettings = runtime.settings.update;
+  const changeContentSources = useCallback(
+    (contentSources: ReaderSettings['contentSources']) => updateSettings({ contentSources }),
+    [updateSettings]
+  );
 
   return (
     <>
-      <View testID="more-library-row" style={styles.groupList}>
-        <MenuButton icon={Star} label="收藏" value="" onPress={runtime.library.open} />
+      <View testID="more-library-row" style={styles.libraryShortcuts}>
+        {(
+          [
+            { tab: 'favorites', label: '收藏', icon: Star },
+            { tab: 'users', label: '关注', icon: Users },
+            { tab: 'history', label: '历史', icon: History }
+          ] satisfies { tab: LibraryTab; label: string; icon: typeof Star }[]
+        ).map(({ tab, label, icon: Icon }) => (
+          <Pressable
+            key={tab}
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            accessibilityHint={
+              tab === 'users' ? '查看本机关注的用户' : tab === 'history' ? '查看浏览历史' : '查看本机收藏的帖子'
+            }
+            style={styles.libraryShortcut}
+            onPress={() => runtime.library.open(tab)}
+          >
+            <Icon size={21} color={theme.primary} strokeWidth={1.7} />
+            <Text style={styles.libraryShortcutLabel}>{label}</Text>
+          </Pressable>
+        ))}
       </View>
-      <View style={styles.groupList}>
-        <MenuButton icon={Server} label="服务器代理" value={runtime.proxy.summary} onPress={runtime.proxy.open} />
-      </View>
-      <NetworkProxyModal
-        activeProfile={runtime.proxy.activeProfile}
-        applyError={runtime.proxy.applyError}
-        applyStatus={runtime.proxy.applyStatus}
-        proxyState={runtime.proxy.state}
-        styles={styles}
-        theme={theme}
-        visible={runtime.proxy.visible}
-        onClose={runtime.proxy.close}
-        onDeleteProfile={runtime.proxy.deleteProfile}
-        onSelectProfile={runtime.proxy.selectProfile}
-        onSetEnabled={runtime.proxy.setEnabled}
-        onTestProfile={runtime.proxy.testProfile}
-        onUpsertProfile={runtime.proxy.upsertProfile}
-      />
-      <ExpandablePanel
-        quiet
-        title="问题诊断"
-        meta={runtime.diagnostics.busy ? '正在生成' : undefined}
-        icon={Bug}
-        expanded={diagnosticExpanded}
-        onExpandedChange={setDiagnosticExpanded}
-      >
-        <View style={styles.stack}>
-          <Text style={styles.meta}>
-            日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。
-          </Text>
-          <AppButton
-            label={runtime.diagnostics.busy ? '正在生成' : '生成并分享诊断日志'}
-            disabled={runtime.diagnostics.busy}
-            onPress={runtime.diagnostics.exportLog}
+      <View style={styles.settingsSection}>
+        <Text style={styles.settingsSectionLabel}>设置</Text>
+        <ContentSourcesPanel
+          expanded={contentSourcesExpanded}
+          preferences={runtime.settings.value.contentSources}
+          onChange={changeContentSources}
+          onExpandedChange={onContentSourcesExpandedChange}
+        />
+        <ExpandablePanel
+          quiet
+          title="外观"
+          meta={appearanceSummary(runtime.settings.value)}
+          icon={Settings}
+          expanded={runtime.settings.visible}
+          onExpandedChange={runtime.settings.changeVisible}
+        >
+          <AppearancePanel
+            settings={runtime.settings.value}
+            showSettingsPanel={runtime.settings.visible}
+            styles={styles}
+            theme={theme}
+            onUpdateSettings={runtime.settings.update}
           />
+        </ExpandablePanel>
+      </View>
+      <View style={styles.settingsSection}>
+        <View style={styles.groupList}>
+          <MenuButton icon={Server} label="服务器代理" value={runtime.proxy.summary} onPress={runtime.proxy.open} />
         </View>
-      </ExpandablePanel>
-      {runtime.backup.recovery ? (
-        <Text accessibilityRole="alert" style={styles.meta}>
-          本机资料读取失败，来源访问已暂停。请导入备份恢复；原设置、凭据和通知意图会保留。
-        </Text>
-      ) : null}
-      <ExpandablePanel
-        quiet
-        title="备份 / 恢复"
-        meta={runtime.backup.busy ? '处理中' : undefined}
-        icon={DatabaseBackup}
-        expanded={backupExpanded}
-        onExpandedChange={setBackupExpanded}
-      >
-        <View style={styles.stack}>
-          <View style={styles.actions}>
-            <AppButton
-              label={runtime.backup.busy ? '处理中' : '导出备份文件'}
-              disabled={runtime.backup.busy || runtime.backup.recovery}
-              onPress={runtime.backup.exportFile}
-            />
-            <AppButton
-              label="选择备份文件恢复"
-              variant="ghost"
-              disabled={runtime.backup.busy}
-              onPress={runtime.backup.importFile}
-            />
-          </View>
-        </View>
-      </ExpandablePanel>
-      <ExpandablePanel
-        quiet
-        title="外观"
-        meta={appearanceSummary(runtime.settings.value)}
-        icon={Settings}
-        expanded={runtime.settings.visible}
-        onExpandedChange={runtime.settings.changeVisible}
-      >
-        <AppearancePanel
-          settings={runtime.settings.value}
-          showSettingsPanel={runtime.settings.visible}
+        <NetworkProxyModal
+          activeProfile={runtime.proxy.activeProfile}
+          applyError={runtime.proxy.applyError}
+          applyStatus={runtime.proxy.applyStatus}
+          proxyState={runtime.proxy.state}
           styles={styles}
           theme={theme}
-          onUpdateSettings={runtime.settings.update}
+          visible={runtime.proxy.visible}
+          onClose={runtime.proxy.close}
+          onDeleteProfile={runtime.proxy.deleteProfile}
+          onSelectProfile={runtime.proxy.selectProfile}
+          onSetEnabled={runtime.proxy.setEnabled}
+          onTestProfile={runtime.proxy.testProfile}
+          onUpsertProfile={runtime.proxy.upsertProfile}
         />
-      </ExpandablePanel>
+        <ExpandablePanel
+          quiet
+          title="问题诊断"
+          meta={runtime.diagnostics.busy ? '正在生成' : undefined}
+          icon={Bug}
+          expanded={diagnosticExpanded}
+          onExpandedChange={setDiagnosticExpanded}
+        >
+          <View style={styles.stack}>
+            <Text style={styles.meta}>
+              日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。
+            </Text>
+            <AppButton
+              label={runtime.diagnostics.busy ? '正在生成' : '生成并分享诊断日志'}
+              disabled={runtime.diagnostics.busy}
+              onPress={runtime.diagnostics.exportLog}
+            />
+          </View>
+        </ExpandablePanel>
+        {runtime.backup.recovery ? (
+          <Text accessibilityRole="alert" style={styles.meta}>
+            本机资料读取失败，来源访问已暂停。请导入备份恢复；原设置、凭据和通知意图会保留。
+          </Text>
+        ) : null}
+        <ExpandablePanel
+          quiet
+          title="备份 / 恢复"
+          meta={runtime.backup.busy ? '处理中' : undefined}
+          icon={DatabaseBackup}
+          expanded={backupExpanded}
+          onExpandedChange={setBackupExpanded}
+        >
+          <View style={styles.stack}>
+            <View style={styles.actions}>
+              <AppButton
+                label={runtime.backup.busy ? '处理中' : '导出备份文件'}
+                disabled={runtime.backup.busy || runtime.backup.recovery}
+                onPress={runtime.backup.exportFile}
+              />
+              <AppButton
+                label="选择备份文件恢复"
+                variant="ghost"
+                disabled={runtime.backup.busy}
+                onPress={runtime.backup.importFile}
+              />
+            </View>
+          </View>
+        </ExpandablePanel>
+      </View>
     </>
   );
 }

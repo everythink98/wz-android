@@ -1187,6 +1187,13 @@ describe('Image preview', () => {
     );
 
     expect(view.getByText('2/3')).toBeTruthy();
+    const glass = view.getAllByTestId('navigation-glass-media');
+    expect(glass).toHaveLength(3);
+    expect(glass[0].props.blurTarget.current).toBeTruthy();
+    for (const surface of glass) {
+      expect(surface.props.blurTarget.current).toBe(glass[0].props.blurTarget.current);
+    }
+    expect(within(view.getByTestId('image-preview-glass-content')).queryByLabelText('关闭图片预览')).toBeNull();
     expect(view.queryByLabelText('上一张图片')).toBeNull();
     expect(view.queryByLabelText('下一张图片')).toBeNull();
     await swipePreviewNext(view);
@@ -1198,9 +1205,11 @@ describe('Image preview', () => {
     await fireEvent(view.getByTestId('preview-zoom-2'), 'tap', {});
     expect(view.queryByLabelText('关闭图片预览')).toBeNull();
     expect(view.queryByLabelText('保存图片')).toBeNull();
+    expect(view.queryAllByTestId('navigation-glass-media')).toHaveLength(0);
     await fireEvent(view.getByTestId('preview-zoom-2'), 'tap', {});
     expect(view.getByLabelText('关闭图片预览')).toBeTruthy();
     expect(view.getByLabelText('保存图片')).toBeTruthy();
+    expect(view.getAllByTestId('navigation-glass-media')).toHaveLength(3);
   });
 
   it.each(['v2ex', null] as const)(

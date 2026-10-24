@@ -137,12 +137,26 @@ export function useAccountStatusController({
   }, []);
 
   const [hydrated, setHydrated] = useState(false);
+  const settleAccountSessionHandoff = useCallback(
+    (source: StatusSource, error?: string) => {
+      commitAccountSnapshot(source, (current) => ({
+        ...current,
+        handoffPending: error ? true : undefined,
+        lastError: error || current.lastError
+      }));
+    },
+    [commitAccountSnapshot]
+  );
   const [restoredAccounts, setRestoredAccounts] = useState<{
     migrationCompleted: boolean;
     stored: readonly (readonly [SessionSource, AccountSessionSnapshot | null])[];
     trace: DiagnosticTrace;
   } | null>(null);
   const hydrationStartedRef = useRef(false);
+  const interruptedSources = useMemo(
+    () => restoredAccounts?.stored.filter(([, snapshot]) => snapshot?.handoffPending).map(([source]) => source) || [],
+    [restoredAccounts]
+  );
   // Diagnostic aggregation must not change the public reconciliation result or identity rules.
   const persistenceFailedResultsRef = useRef(new WeakSet<AccountReconcileResult>());
 
@@ -189,14 +203,16 @@ export function useAccountStatusController({
       if (!enabledSourcesRef.current.has(event.site)) return false;
       const terminalEvent = eventConfirmsTerminalIdentity(event);
       if (terminalEvent) supersedeProbe(event.site);
-      const { next, previous } = commitAccountSnapshot(event.site, (current) =>
-        accountSessionSnapshotFromEvent(current, event)
-      );
+      const { next, previous } = commitAccountSnapshot(event.site, (current) => {
+        const updated = accountSessionSnapshotFromEvent(current, event);
+        if (event.type === 'cleared') delete updated.handoffPending;
+        return updated;
+      });
       if (accountSessionIdentityKey(previous) !== accountSessionIdentityKey(next)) {
         onAccountStatusChanged(event.site);
       }
       if (terminalEvent && (next.identityTrust === 'confirmed' || next.identityTrust === 'none')) {
-        void saveAccountSessionSnapshot(next).catch(() => {
+        void saveAccountSessionSnapshot(next, event.type === 'cleared' ? () => true : undefined).catch(() => {
           commitAccountSnapshot(event.site, (current) => ({
             ...current,
             lastError: `${sourceCatalog[event.site].label} 账号状态已更新，但本机保存失败。`
@@ -640,8 +656,10 @@ export function useAccountStatusController({
     beginAccountIdentityCheck,
     beginAccountSessionClear,
     hydrated,
+    interruptedSources,
     reconcileAccountStatus,
     refreshAccountStatus,
-    statusBusy
+    statusBusy,
+    settleAccountSessionHandoff
   };
 }

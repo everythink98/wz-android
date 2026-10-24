@@ -5,7 +5,7 @@ import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { YaohuoReplyComposer } from '@/ui/composer/YaohuoReplyComposer';
 import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import type { ReaderStyleSettings, ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 import { StructuredReplyComposer, type StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import type {
   ComposerPresentation,
@@ -20,8 +20,8 @@ function createStyles(theme: ReaderTheme, _settings: ReaderStyleSettings) {
   return StyleSheet.create({
     background: {
       backgroundColor: theme.surface,
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18
+      borderTopLeftRadius: readerRadii.sheet,
+      borderTopRightRadius: readerRadii.sheet
     },
     container: { zIndex: 30, elevation: 30 },
     content: { alignItems: 'stretch', paddingHorizontal: 0, paddingTop: 0 }

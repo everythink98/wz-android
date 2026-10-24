@@ -1,6 +1,7 @@
+import { ActivityIndicator } from 'react-native-paper';
 import type { MoreScreenStyles } from '../styles';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';

@@ -77,6 +77,11 @@ const profile: UserProfile = {
       topicUrl: 'https://linux.do/t/reply-topic',
       url: 'https://linux.do/t/reply-topic/2',
       author: 'alice',
+      authorId: 'reply-author',
+      authorAvatar: 'https://example.com/reply-author.png',
+      authorUrl: 'https://linux.do/u/alice',
+      createdAt: '2026-07-15T06:00:00.000Z',
+      displayTimeText: '刚刚',
       floor: 2,
       excerpt: '回复摘要'
     }
@@ -189,10 +194,10 @@ describe('User screen behavior', () => {
     const onPrivateMessage = jest.fn<() => void>();
     const view = await render(userScreen({ profile: { ...profile, source: 'nodeseek' }, onPrivateMessage }));
     const button = view.getByRole('button', { name: '私信' });
-    const buttonStyle = StyleSheet.flatten(button.props.style);
+    const buttonStyle = StyleSheet.flatten(button.parent?.props.style);
     expect(buttonStyle.minHeight).toBeGreaterThanOrEqual(48);
     expect(buttonStyle.minWidth).toBeGreaterThanOrEqual(48);
-    expect(StyleSheet.flatten(view.getByRole('button', { name: '关注' }).props.style).minWidth).toBe(
+    expect(StyleSheet.flatten(view.getByRole('button', { name: '关注' }).parent?.props.style).minWidth).toBe(
       buttonStyle.minWidth
     );
     await fireEvent.press(button);
@@ -336,7 +341,7 @@ describe('User screen behavior', () => {
     const notice = view.getByText('linux.do 登录已失效，请重新登录。');
     expect(view.getByText('Alice')).toBeTruthy();
     const retry = view.getByLabelText('重试');
-    expect(retry.parent).toBe(notice.parent);
+    expect(notice.parent?.queryAll((node) => node === retry)).toHaveLength(1);
     await fireEvent.press(retry);
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
@@ -430,7 +435,16 @@ describe('User screen behavior', () => {
     expect(view.getByText('回复所在主题')).toBeTruthy();
     expect(view.getByText('回复摘要')).toBeTruthy();
     await fireEvent.press(view.getByText('回复所在主题'));
-    expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ id: 'reply-topic', source: 'linuxdo' }));
+    expect(onOpenTopic).toHaveBeenCalledWith({
+      source: 'linuxdo',
+      id: 'reply-topic',
+      title: '回复所在主题',
+      author: '',
+      createdAt: '',
+      categoryId: undefined,
+      category: undefined,
+      url: 'https://linux.do/t/reply-topic'
+    });
     await fireEvent.press(view.getByLabelText('加载更多回复'));
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
   });

@@ -2,6 +2,7 @@ import { StyleSheet } from 'react-native';
 import type { ComponentProps } from 'react';
 import type RenderHTML from 'react-native-render-html';
 import {
+  readerRadii,
   alphaColor,
   fontFamilyValue,
   lineHeightMultiplier,
@@ -101,7 +102,7 @@ export function buildHtmlRenderingStyles({
       color: linkColor
     },
     img: {
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       marginBottom: 8,
       marginTop: 6
     },
@@ -133,14 +134,14 @@ export function buildHtmlRenderingStyles({
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: 8,
+      borderRadius: readerRadii.content,
       marginBottom: 10,
       marginTop: 10,
       padding: 12
     },
     code: {
       backgroundColor: theme.surface2,
-      borderRadius: 4,
+      borderRadius: readerRadii.badge,
       fontFamily: 'monospace',
       fontSize: Math.round(14 * settings.fontScale),
       paddingHorizontal: 4,
@@ -150,7 +151,7 @@ export function buildHtmlRenderingStyles({
       backgroundColor: theme.surface2,
       borderBottomWidth: 2,
       borderColor: theme.lineStrong,
-      borderRadius: 4,
+      borderRadius: readerRadii.badge,
       borderWidth: 1,
       fontFamily: 'monospace',
       paddingHorizontal: 5,
@@ -232,7 +233,7 @@ export function buildHtmlRenderingStyles({
     'forum-attachment': {
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       borderWidth: StyleSheet.hairlineWidth,
       marginBottom: 12,
       marginTop: 8,

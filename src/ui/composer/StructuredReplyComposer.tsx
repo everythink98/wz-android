@@ -34,7 +34,7 @@ import {
 } from './structuredComposerBridge';
 import { ComposerToolbar } from './ComposerToolbar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
@@ -75,14 +75,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignItems: 'center',
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: readerRadii.control,
       borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       padding: 2
     },
     modeButton: {
       alignItems: 'center',
-      borderRadius: 8,
+      borderRadius: readerRadii.control,
       justifyContent: 'center',
       minHeight: 48,
       minWidth: 48
@@ -433,15 +433,28 @@ export const StructuredReplyComposer = forwardRef<
         invalidatePanelHandoff();
     }, [actionBusy, dismissPanels, invalidatePanelHandoff, readOnly, ready, rendererGone, submitting, visible]);
 
+    const scheduleInitializationTimeout = useCallback(
+      (state = AppState.currentState) => {
+        if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
+        readyTimerRef.current = null;
+        const trace = initializationTraceRef.current;
+        if (!trace || !initializingRef.current || !visible || state === 'background' || state === 'inactive') return;
+        readyTimerRef.current = setTimeout(() => {
+          finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
+          setLocalError('编辑器启动超时，可重载后继续');
+        }, 1500);
+      },
+      [visible]
+    );
     const watchInitialization = useCallback(() => {
-      const trace = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
-      initializationTraceRef.current = trace;
-      if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
-      readyTimerRef.current = setTimeout(() => {
-        finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
-        setLocalError('编辑器启动超时，可重载后继续');
-      }, 1500);
-    }, [intent.site, mode]);
+      initializationTraceRef.current = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
+      scheduleInitializationTimeout();
+    }, [intent.site, mode, scheduleInitializationTimeout]);
+    useEffect(() => {
+      scheduleInitializationTimeout();
+      const subscription = AppState.addEventListener('change', scheduleInitializationTimeout);
+      return () => subscription.remove();
+    }, [scheduleInitializationTimeout]);
 
     const sendInit = useCallback(() => {
       if (!modeLoaded) return;

@@ -10,6 +10,7 @@ import type { DiscourseReadingRuntime } from '@/platform/query/discourseReadingR
 export function useSessionReadGateway({
   reading,
   anonymousFetcher,
+  beforeRequest,
   fetcher,
   getEnabledSources,
   linuxDoUserAgentRef,
@@ -20,6 +21,7 @@ export function useSessionReadGateway({
 }: {
   reading?: DiscourseReadingRuntime;
   anonymousFetcher: Fetcher;
+  beforeRequest?: () => Promise<void>;
   fetcher: Fetcher;
   getEnabledSources: () => readonly Source[];
   linuxDoUserAgentRef: { current: string };
@@ -33,6 +35,7 @@ export function useSessionReadGateway({
       createReadGateway({
         reading,
         anonymousFetcher,
+        beforeRequest,
         fetcher,
         getEnabledSources,
         linuxDoUserAgent: () => linuxDoUserAgentRef.current,
@@ -44,6 +47,7 @@ export function useSessionReadGateway({
     [
       reading,
       anonymousFetcher,
+      beforeRequest,
       fetcher,
       getEnabledSources,
       linuxDoUserAgentRef,

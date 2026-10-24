@@ -10,7 +10,7 @@ import {
   RELEASE_SIGNING_ENV_NAMES,
   RELEASE_REQUIRED_TRACKED_INPUTS,
   assertCleanReleaseCheckout,
-  assertReleaseNode22,
+  assertReleaseNodeVersion,
   assertTrackedReleaseInputs,
   parseJavaVersionOutput,
   releaseEnvironment,
@@ -332,7 +332,7 @@ function gradleWrapperVersion() {
 const configuredReleaseEnv = loadReleaseEnvFile();
 ordinaryChildEnv = unsignedReleaseChildEnv(process.env, configuredReleaseEnv);
 try {
-  assertReleaseNode22(process.versions.node);
+  assertReleaseNodeVersion(process.versions.node);
 } catch (error) {
   failReleasePreflight(error);
 }

@@ -38,11 +38,11 @@ afterEach(() => {
 });
 
 describe('Avatar image fallback', () => {
-  it('does not probe SVG when the native bitmap succeeds', async () => {
+  it('does not probe SVG when the large native bitmap succeeds', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
 
     const view = await render(
-      <Avatar contentSource="nodeseek" name="Alice" uri="https://www.nodeseek.com/avatar/58159.png" />
+      <Avatar large contentSource="nodeseek" name="Alice" uri="https://www.nodeseek.com/avatar/58159.png" />
     );
 
     expect(view.getByTestId('native-avatar')).toBeTruthy();

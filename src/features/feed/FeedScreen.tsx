@@ -1,7 +1,7 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createFeedStyles } from './styles';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   Pressable,
   Text,
@@ -11,6 +11,7 @@ import {
   type NativeSyntheticEvent
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { RefreshControl, ScrollView } from 'react-native-gesture-handler';
 import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
 import { ChevronDown, SquarePen } from 'lucide-react-native';
@@ -47,6 +48,7 @@ import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
+import { NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
 
@@ -110,6 +112,12 @@ export const FeedScreen = memo(function FeedScreen({
   onRefresh: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createFeedStyles);
+  const bottomBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
+  const screenActive = active;
+  const [sourceHeaderHeight, setSourceHeaderHeight] = useState(
+    styles.feedFixedHeader.paddingTop + styles.feedSourceTab.minHeight
+  );
+  const [secondaryHeaderHeight, setSecondaryHeaderHeight] = useState(46);
   const internalListRef = useRef<FlashListRef<Topic>>(null);
   const listRef = scrollRef || internalListRef;
   const renderedSourceRef = useRef({ source: feedSource, hasList: false });
@@ -184,7 +192,11 @@ export const FeedScreen = memo(function FeedScreen({
   const feedTabOptions = useMemo(() => ({ labelStyle: styles.feedSourceLabel }), [styles.feedSourceLabel]);
   const renderFeedTabBar = useCallback(
     (props: TabBarProps<{ key: string }>) => (
-      <View style={styles.feedFixedHeader}>
+      <View
+        testID="feed-primary-header"
+        style={styles.feedFixedHeader}
+        onLayout={(event) => setSourceHeaderHeight(event.nativeEvent.layout.height)}
+      >
         <TabBar
           {...props}
           scrollEnabled
@@ -389,7 +401,7 @@ export const FeedScreen = memo(function FeedScreen({
   const feedFilterMenu = filterMenuOpen ? (
     <PopupMenu
       accessibilityLabel="关闭列表筛选菜单"
-      placementStyle={styles.linuxDoFilterMenu}
+      placementStyle={[styles.linuxDoFilterMenu, { top: sourceHeaderHeight + secondaryHeaderHeight }]}
       visible
       onRequestClose={closeFeedFilterMenu}
     >
@@ -410,11 +422,14 @@ export const FeedScreen = memo(function FeedScreen({
     readingFilter !== 'all' || Boolean(categoryFilter) || feedSource !== 'all' ? '当前筛选没有匹配主题' : '暂无主题';
   const renderFeedLoadingScene = useCallback(
     () => (
-      <View style={styles.content}>
+      <View
+        testID="feed-loading-scene"
+        style={[styles.content, { paddingTop: sourceHeaderHeight + secondaryHeaderHeight }]}
+      >
         <LoadingState text="正在读取主题..." />
       </View>
     ),
-    [styles]
+    [styles, sourceHeaderHeight, secondaryHeaderHeight]
   );
   const renderFeedContent = useCallback(
     ({ route }: { route: { key: string } }) => {
@@ -437,7 +452,13 @@ export const FeedScreen = memo(function FeedScreen({
             }
             ref={listRef}
             style={styles.content}
-            contentContainerStyle={styles.feedListContentInner}
+            contentContainerStyle={[
+              styles.feedListContentInner,
+              {
+                paddingTop: sourceHeaderHeight + secondaryHeaderHeight,
+                paddingBottom: Math.max(96, bottomBarHeight + 16)
+              }
+            ]}
             data={visibleFeedItems}
             keyExtractor={topicKey}
             keyboardShouldPersistTaps="handled"
@@ -450,6 +471,7 @@ export const FeedScreen = memo(function FeedScreen({
                   onRefresh={onRefresh}
                   colors={[theme.primary]}
                   tintColor={theme.primary}
+                  progressViewOffset={sourceHeaderHeight + secondaryHeaderHeight}
                 />
               )
             }
@@ -468,6 +490,12 @@ export const FeedScreen = memo(function FeedScreen({
                       message="尚未启用内容源"
                       actionLabel="前往更多管理"
                       onAction={onManageContentSources}
+                    />
+                  ) : feedOutcomeKind === 'error' || feedOutcomeKind === 'auth' ? (
+                    <RecoverableEmptyState
+                      message={feedOutcomeKind === 'auth' ? '需要登录或验证，请完成后重试。' : '主题读取失败，请重试。'}
+                      actionLabel="重试"
+                      onAction={onRefresh}
                     />
                   ) : (
                     <EmptyText text={feedEmptyText} />
@@ -494,6 +522,7 @@ export const FeedScreen = memo(function FeedScreen({
     },
     [
       busy,
+      bottomBarHeight,
       allSourcesDisabled,
       enabledFeedSourceItems,
       feedEmptyText,
@@ -515,6 +544,8 @@ export const FeedScreen = memo(function FeedScreen({
       renderTopicSeparator,
       requestFeedLoadMore,
       styles,
+      sourceHeaderHeight,
+      secondaryHeaderHeight,
       theme,
       visibleFeedItems
     ]
@@ -535,9 +566,15 @@ export const FeedScreen = memo(function FeedScreen({
       const categoryItems = feedCategoryItems(categories, routeSource);
       return (
         <View style={styles.content}>
+          <NavigationBackdropTarget active={screenActive && active}>
+            {renderFeedContent({ route })}
+          </NavigationBackdropTarget>
           <View
             testID={`feed-secondary-${routeSource}`}
-            style={styles.feedSecondaryHeader}
+            style={[styles.feedSecondaryHeader, { top: sourceHeaderHeight }]}
+            onLayout={(event) => {
+              if (active) setSecondaryHeaderHeight(event.nativeEvent.layout.height);
+            }}
             pointerEvents={active ? 'auto' : 'none'}
             accessibilityElementsHidden={!active}
             importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
@@ -587,18 +624,19 @@ export const FeedScreen = memo(function FeedScreen({
               </View>
             )}
           </View>
-          {renderFeedContent({ route })}
         </View>
       );
     },
     [
       enabledFeedSourceItems,
+      screenActive,
       feedSource,
       categoryFilter,
       feedFilter,
       feedFilters,
       categories,
       styles,
+      sourceHeaderHeight,
       readingFilter,
       changeReadingFilter,
       changeCategoryFilter,
@@ -631,12 +669,22 @@ export const FeedScreen = memo(function FeedScreen({
         <Animated.View
           testID="feed-create-topic-action"
           needsOffscreenAlphaCompositing
-          style={[styles.feedFloatingActions, createActionAnimation]}
+          style={[
+            styles.feedFloatingActions,
+            { bottom: Math.max(styles.feedFloatingActions.bottom, bottomBarHeight + 16) },
+            createActionAnimation
+          ]}
           pointerEvents={createActionHidden ? 'none' : 'box-none'}
           accessibilityElementsHidden={createActionHidden}
           importantForAccessibility={createActionHidden ? 'no-hide-descendants' : 'auto'}
         >
-          <FloatingIconButton icon={SquarePen} label="发帖" disabled={createActionHidden} onPress={onCreateTopic} />
+          <FloatingIconButton
+            backdrop={<NavigationGlass accent />}
+            icon={SquarePen}
+            label="发帖"
+            disabled={createActionHidden}
+            onPress={onCreateTopic}
+          />
         </Animated.View>
       ) : null}
     </View>

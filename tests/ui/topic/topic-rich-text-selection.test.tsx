@@ -180,7 +180,12 @@ jest.mock('expo-modules-core', () => {
     ReactModule.useImperativeHandle(ref, () => ({ cancelSelection: mockCancelNativeSelection }), []);
     return ReactModule.createElement(NativeView, props, props.children);
   });
-  return { ...actual, requireNativeViewManager: jest.fn(() => NativeSelectionView) };
+  return {
+    ...actual,
+    requireNativeViewManager: jest.fn((name: string) =>
+      name === 'ForumContentSelection' ? NativeSelectionView : actual.requireNativeViewManager(name)
+    )
+  };
 });
 
 function SelectionRow({ children, item }: { children: ReactNode; item: TopicSelectionItem }) {
@@ -559,6 +564,8 @@ function ProductionContentList({
   }, []);
   return (
     <TopicContentList
+      commentSearchFocused={false}
+      onCommentSearchFocusChange={() => undefined}
       active={active}
       readingPaused={readingPaused}
       actions={{
@@ -1167,7 +1174,7 @@ describe('topic rich-text selection', () => {
       });
       mockReadingList.onLoad();
     });
-    const rendered = JSON.stringify(screen.toJSON());
+    const rendered = JSON.stringify(screen.toJSON(), (key, value) => (key === 'ref' ? undefined : value));
     const markers = [
       'first terminal output',
       'explanation before image',
@@ -1731,7 +1738,7 @@ describe('topic rich-text selection', () => {
     ]) {
       expect(manifest).not.toContain(excluded);
     }
-    const renderedTree = JSON.stringify(screen.toJSON());
+    const renderedTree = JSON.stringify(screen.toJSON(), (key, value) => (key === 'ref' ? undefined : value));
     const markers = [...renderedTree.matchAll(/"nativeID":"(topic-selection-[^"]+)"/g)].map((match) => match[1]);
     expect(markers.sort()).toEqual(nativeRows.map((row) => row.nativeId).sort());
     const nativeMarkers = screen.container.queryAll((node) => markers.includes(node.props.nativeID));

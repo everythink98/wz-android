@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { render } from '@testing-library/react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
 jest.mock('@shopify/flash-list', () => {
   const React = require('react') as typeof import('react');
@@ -40,8 +41,6 @@ jest.mock('expo-video', () => ({
   useVideoPlayer: () => ({ pause: jest.fn(), play: jest.fn(), playing: false })
 }));
 
-jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
-
 import { visualScenarioCatalog, VisualScenarioView } from './catalog';
 
 describe('visual scenario catalog', () => {
@@ -74,6 +73,10 @@ describe('visual scenario catalog', () => {
         <VisualScenarioView appearance={{ theme }} id={id} />
       </GestureHandlerRootView>
     );
+    if (id.startsWith('write.composer.')) {
+      const editor = id.includes('.yaohuo.') ? 'yaohuo-reply-composer-toolbar' : 'structured-composer-webview';
+      expect(view.getByTestId(editor, { includeHiddenElements: true })).toBeTruthy();
+    }
     await view.unmount();
   });
 
@@ -97,4 +100,20 @@ describe('visual scenario catalog', () => {
       }
     }
   );
+
+  it('keeps the proxy gallery modal clear of its parent safe area', async () => {
+    const view = await render(
+      <GestureHandlerRootView>
+        <SafeAreaInsetsContext.Provider value={{ top: 32, right: 0, bottom: 24, left: 0 }}>
+          <VisualScenarioView id="more.proxy.failed" />
+        </SafeAreaInsetsContext.Provider>
+      </GestureHandlerRootView>
+    );
+    const modalContent = view.getByText('服务器代理').parent?.parent;
+    expect(modalContent).toHaveStyle({
+      paddingTop: 32,
+      paddingBottom: 24
+    });
+    await view.unmount();
+  });
 });

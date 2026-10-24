@@ -1216,11 +1216,12 @@ private class ReadNetworkEventListener(
     acquiredConnection = connection
     record(
       "connection-acquired",
-      mapOf(
-        "connectionId" to opaqueNetworkIdentity(connection),
-        "addressFamily" to readNetworkAddressFamily(connection.route().socketAddress.address),
-        "protocol" to connection.protocol().toString()
-      )
+      buildMap {
+        put("connectionId", opaqueNetworkIdentity(connection))
+        put("addressFamily", readNetworkAddressFamily(connection.route().socketAddress.address))
+        put("protocol", connection.protocol().toString())
+        connection.socket().localPort.takeIf { it in 1..65535 }?.let { put("socketLocalPort", it) }
+      }
     )
   }
 

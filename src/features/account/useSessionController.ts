@@ -94,6 +94,7 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   httpErrorStatus?: number;
   credentialGeneration?: number;
   browserFetchIntent?: BrowserFetchIntent;
+  beforeSend?: () => void;
   settled?: boolean;
 };
 
@@ -552,6 +553,9 @@ export function useSessionController({
           },
           credentialGeneration: linuxDoCredentialGateRef.current.generation,
           browserFetchIntent,
+          beforeSend: () => {
+            prepareRequestToSend(init);
+          },
           abortSignal: init?.signal || undefined
         };
         request.abortHandler = () => {

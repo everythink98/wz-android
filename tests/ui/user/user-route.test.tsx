@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { NavigationContainer } from '@react-navigation/native';
-import type { UserProfile } from '@/domain/forum/models';
+import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import type { Topic, UserProfile } from '@/domain/forum/models';
+import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
 import { UserScreen } from '@/features/user/UserScreen';
 import { useUserController } from '@/features/user/useUserController';
-import { render } from '../render';
+import { act, render } from '../render';
 
 jest.mock('@/features/user/useUserController');
 jest.mock('@/features/user/UserScreen', () => ({ UserScreen: jest.fn(() => null) }));
@@ -59,12 +61,52 @@ function setProfile(value: UserProfile | null) {
 }
 
 const screenProps = () => jest.mocked(UserScreen).mock.calls.at(-1)![0];
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 describe('NodeSeek profile private conversation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     setProfile(profile);
   });
+
+  it.each(['topic', 'private-message'] as const)(
+    'ignores queued %s navigation after leaving the profile and permits revisiting after return',
+    async (destination) => {
+      const navigationRef = createNavigationContainerRef<RootStackParamList>();
+      const view = await render(
+        <UserRouteRuntimeProvider value={runtime()}>
+          <NavigationContainer ref={navigationRef}>
+            <Stack.Navigator initialRouteName="User">
+              <Stack.Screen name="User" component={UserRoute} initialParams={{ user: profile }} />
+              <Stack.Screen name="Topic">{() => null}</Stack.Screen>
+              <Stack.Screen name="NotificationDetail">{() => null}</Stack.Screen>
+            </Stack.Navigator>
+          </NavigationContainer>
+        </UserRouteRuntimeProvider>
+      );
+      const props = screenProps();
+      const topic: Topic = {
+        source: 'nodeseek',
+        id: '42',
+        title: 'Reply target',
+        author: 'writer',
+        createdAt: '2026-10-24T00:00:00Z',
+        url: 'https://www.nodeseek.com/post-42-1'
+      };
+      const open = destination === 'topic' ? () => props.onOpenTopic(topic) : props.onPrivateMessage!;
+      const expectedRoute = destination === 'topic' ? 'Topic' : 'NotificationDetail';
+      await act(() => {
+        open();
+        open();
+        props.onOpenTopic({ ...topic, id: '43' });
+      });
+      expect(navigationRef.getRootState()?.routes.map((route) => route.name)).toEqual(['User', expectedRoute]);
+      await act(() => navigationRef.goBack());
+      await act(() => open());
+      expect(navigationRef.getRootState()?.routes.map((route) => route.name)).toEqual(['User', expectedRoute]);
+      await view.unmount();
+    }
+  );
 
   it('passes the requested reply activity from the profile route to its screen', async () => {
     await render(
@@ -80,6 +122,29 @@ describe('NodeSeek profile private conversation', () => {
     expect(screenProps().initialTab).toBe('replies');
   });
 
+  it('does not open a login surface from a captured private-message action after losing focus', async () => {
+    const value = runtime('', false);
+    let focused = true;
+    const view = await render(
+      <UserRouteRuntimeProvider value={value}>
+        <NavigationContainer>
+          <UserRoute
+            navigation={{ goBack: jest.fn(), isFocused: () => focused } as never}
+            route={{ key: 'user', name: 'User', params: { user: profile } }}
+          />
+        </NavigationContainer>
+      </UserRouteRuntimeProvider>
+    );
+    const open = screenProps().onPrivateMessage!;
+    focused = false;
+    open();
+    expect(value.account.requestNodeSeekVerification).not.toHaveBeenCalled();
+    focused = true;
+    open();
+    expect(value.account.requestNodeSeekVerification).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
   it('opens a transient conversation with the resolved UID and latest account, preserving the profile stack', async () => {
     const push = jest.fn();
     const firstRuntime = runtime();
@@ -87,7 +152,7 @@ describe('NodeSeek profile private conversation', () => {
       <UserRouteRuntimeProvider value={value}>
         <NavigationContainer>
           <UserRoute
-            navigation={{ push, goBack: jest.fn() } as never}
+            navigation={{ push, goBack: jest.fn(), isFocused: () => true } as never}
             route={{ key: 'user', name: 'User', params: { user: { ...profile, id: undefined } } }}
           />
         </NavigationContainer>

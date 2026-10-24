@@ -724,7 +724,13 @@ describe('Android release evidence guards', () => {
     const notificationsReplay = readFileSync(path.join(deviceDir, 'notifications-readonly.ad'), 'utf8');
     const libraryReplay = readFileSync(path.join(deviceDir, 'library-return.ad'), 'utf8');
     expect(accountReplay).not.toMatch(/服务器代理|问题诊断|备份 \/ 恢复|外观/);
-    expect(moreReplay).not.toMatch(/account-site-|查看等级|刷新等级|linuxdo-level-settled/);
+    expect(moreReplay).not.toMatch(/查看等级|刷新等级|linuxdo-level-settled/);
+    for (const site of ['nodeseek', 'linuxdo', 'yaohuo']) {
+      expect(moreReplay).toContain(
+        `press id="account-site-${site}"\npress label="站点设置"\nwait id="account-site-settings" 10000`
+      );
+    }
+    expect(moreReplay.match(/press label="站点设置"/g)).toHaveLength(6);
     expect(moreReplay).toMatch(
       /内容源[\s\S]*content-source-drag-v2ex[\s\S]*服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/
     );
@@ -737,10 +743,10 @@ describe('Android release evidence guards', () => {
       expect(moreReplay).toContain(`wait "label=\\"${label} 内容源开关\\"" 10000`);
     }
     expect(moreReplay).toMatch(
-      /find "label=\\"展开外观\\"" click\s+scroll down\s+wait label="主题" 10000\s+wait label="字号" 10000/
+      /find "label=\\"展开外观\\"" click\s+scroll down 0\.3\s+wait label="主题" 10000\s+wait label="字号" 10000/
     );
     expect(notificationsReplay).toContain('press id="main-tab-notifications"');
-    expect(libraryReplay).toContain('find "role=button label=\\"收藏\\"" click');
+    expect(libraryReplay).toContain('press "role=button label=\\"收藏\\""');
     for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo']) {
       expect(notificationsReplay).toContain(`notification-source-${source}`);
       for (const outcome of ['data', 'empty', 'partial', 'error', 'auth']) {

@@ -1454,13 +1454,18 @@ class NetworkProxyRuntimeTest {
     assertTrue("response resources must eventually release the runtime", client.dispatcher.executorService.isShutdown)
   }
 
-  private fun withImageServer(received: MutableList<String>? = null, action: (String) -> Unit) {
+  private fun withImageServer(
+    received: MutableList<String>? = null,
+    peerPorts: MutableList<Int>? = null,
+    action: (String) -> Unit
+  ) {
     val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     val executor = Executors.newCachedThreadPool()
     executor.execute {
       try {
         while (!server.isClosed) {
           val socket = server.accept()
+          peerPorts?.add(socket.port)
           executor.execute {
             socket.use {
               try {
@@ -1487,7 +1492,8 @@ class NetworkProxyRuntimeTest {
   @Test
   fun ordinaryRequestsKeepDiagnosticIdentityAndNeverSendMarkersToServer() {
     val received = java.util.Collections.synchronizedList(mutableListOf<String>())
-    withImageServer(received) { url ->
+    val peerPorts = java.util.Collections.synchronizedList(mutableListOf<Int>())
+    withImageServer(received, peerPorts) { url ->
       val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
       val request = Request.Builder().url(url)
         .header("X-WZ-Diagnostic-Session", "session-test-91830")
@@ -1506,6 +1512,9 @@ class NetworkProxyRuntimeTest {
       assertTrue(events.all { it.fields["appSessionId"] == "session-test-91830" })
       assertEquals(2, events.count { it.fields["phase"] == "call-start" })
       assertEquals(2, events.count { it.fields["phase"] == "call-end" })
+      val connections = events.filter { it.fields["phase"] == "connection-acquired" }
+      assertEquals(peerPorts, connections.map { it.fields["socketLocalPort"] })
+      assertEquals(peerPorts, connections.map { DiagnosticJournal.safeNetworkFields(it.fields)["socketLocalPort"] })
       client.newCall(request.newBuilder().header("X-WZ-Diagnostic-Request", "private-token").build())
         .execute().use { assertNull(it.request.tag(RequestDiagnosticTag::class.java)) }
       assertFalse(received.any { it.contains("private-token") || it.contains("X-WZ-Diagnostic", ignoreCase = true) })

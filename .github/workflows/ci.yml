@@ -10,24 +10,34 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22.22.2', '24.15.0', '24', '26']
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.22.2
+          node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --engine-strict
       - run: npm run verify
+      - run: npx expo export --platform android --output-dir .codex-tmp/ci-export
+        env:
+          NODE_ENV: production
       - run: npx expo prebuild --platform android --clean --no-install
+        if: matrix.node-version == '24'
         env:
           NODE_ENV: production
       - run: node scripts/run-related-native-tests.mjs --base "$NATIVE_BASE"
+        if: matrix.node-version == '24'
         env:
           NATIVE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           NODE_ENV: production
       - run: ./gradlew :app:compileReleaseKotlin --no-daemon --console=plain
+        if: matrix.node-version == '24'
         working-directory: android
         env:
           NODE_ENV: production

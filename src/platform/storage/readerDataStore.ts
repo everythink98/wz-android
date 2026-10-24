@@ -28,12 +28,13 @@ import {
 const DATABASE_NAME = 'reader-data.db';
 const LEGACY_KEYS = ['reader-data', 'reader-settings'];
 let databasePromise: Promise<SQLiteDatabase> | undefined;
-const { enqueue, transaction } = createSqliteExecutor(
+const { enqueue, transaction, assertUsable } = createSqliteExecutor(
   '本机资料事务状态不明，请重新启动后恢复。',
   '本机资料事务无法确认，已停止修改。'
 );
 
 async function connect() {
+  assertUsable();
   const db = await openDatabaseAsync(DATABASE_NAME, { useNewConnection: true });
   try {
     await db.execAsync('PRAGMA busy_timeout = 3000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
@@ -229,6 +230,7 @@ export function readHistoryReplyBaseline(
 ): Promise<Pick<Topic, 'replyCount' | 'replyWatermark'> | undefined> {
   return enqueue(async () => {
     const db = await database();
+    assertUsable();
     const row = await db.getFirstAsync<{ value: string }>(
       "SELECT value FROM reader_records WHERE kind='history' AND key=?",
       key
@@ -287,6 +289,7 @@ export function loadReaderSettings() {
     const owned = databasePromise !== undefined;
     const db = owned ? await databasePromise! : await connect();
     try {
+      assertUsable();
       const meta = await readReaderMeta(db);
       if (meta) {
         if (!['ready', 'cleanup_pending'].includes(meta.status)) throw new Error('本机资料状态不完整。');

@@ -1,15 +1,16 @@
+import { ActivityIndicator, Searchbar } from 'react-native-paper';
+import { AppSwitch } from '@/ui/controls/InputControls';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createSearchStyles, type SearchStyles } from './styles';
 import { SearchFilterSheet } from './SearchFilterSheet';
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import {
-  ActivityIndicator,
   Keyboard,
   Platform,
   Pressable,
   Text,
-  TextInput,
   View,
   requireNativeComponent,
   type ColorValue,
@@ -38,10 +39,9 @@ import {
 } from '@/domain/forum/searchFilters';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton } from '@/ui/controls/ButtonControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -73,17 +73,17 @@ function SearchInputField({
 }) {
   const submitDisabled = busy || !query.trim();
   const submitSearch = () => {
-    if (!submitDisabled) {
-      onSearch();
-    }
+    if (!submitDisabled) onSearch();
   };
   return (
-    <View style={styles.searchInputShell}>
-      <Search size={18} color={theme.muted} strokeWidth={1.9} style={styles.searchInputIcon} />
-      <TextInput
+    <View style={styles.searchInputRow}>
+      <Searchbar
         testID="search-query"
         accessibilityLabel="搜索关键词"
-        style={styles.searchInput}
+        searchAccessibilityLabel="搜索"
+        icon={() => <Search size={18} color={theme.muted} strokeWidth={1.9} accessible={false} />}
+        style={styles.searchInputShell}
+        inputStyle={styles.searchInput}
         value={query}
         onChange={recordUserInteraction}
         onChangeText={onQueryChange}
@@ -93,34 +93,31 @@ function SearchInputField({
         autoCorrect={false}
         returnKeyType="search"
         onSubmitEditing={submitSearch}
+        onIconPress={submitSearch}
+        right={() =>
+          query ? (
+            <IconButton
+              label="清空搜索关键词"
+              icon={X}
+              iconSize={18}
+              iconOnly
+              ghost
+              onPress={() => onQueryChange('')}
+            />
+          ) : null
+        }
       />
-      {query ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="清空搜索关键词"
-          hitSlop={TOUCH_HIT_SLOP}
-          style={styles.searchInlineButton}
-          onPress={() => onQueryChange('')}
-        >
-          <X size={16} color={theme.muted} strokeWidth={2.2} />
-        </Pressable>
-      ) : null}
-      <Pressable
+      <AppButton
         testID="search-submit"
-        accessibilityRole="button"
         accessibilityLabel="提交搜索"
-        accessibilityState={{ disabled: submitDisabled }}
+        label="搜索"
+        variant="primary"
         disabled={submitDisabled}
-        hitSlop={TOUCH_HIT_SLOP}
-        style={[styles.searchInlineButton, styles.searchSubmitInlineButton, submitDisabled && styles.buttonDisabled]}
         onPress={submitSearch}
-      >
-        <Search size={17} color={theme.primary} strokeWidth={2} />
-      </Pressable>
+      />
     </View>
   );
 }
-
 function LinuxDoAiControl({
   state,
   styles,
@@ -152,22 +149,13 @@ function LinuxDoAiControl({
       </Text>
       {state.status === 'loading' ? <ActivityIndicator size="small" color={theme.primary} /> : null}
       {state.status === 'error' ? <AppButton compact label="重试 AI 搜索" variant="ghost" onPress={onRetry} /> : null}
-      <Pressable
-        accessibilityRole="switch"
+      <AppSwitch
         accessibilityLabel="AI 搜索"
         accessibilityState={{ checked: state.enabled, disabled }}
         disabled={disabled}
-        style={[
-          styles.searchFilterOption,
-          state.enabled && styles.searchFilterOptionActive,
-          disabled && styles.buttonDisabled
-        ]}
-        onPress={onToggle}
-      >
-        <Text style={[styles.searchFilterOptionText, state.enabled && styles.searchFilterOptionTextActive]}>
-          {state.enabled ? '开启' : '关闭'}
-        </Text>
-      </Pressable>
+        value={state.enabled}
+        onValueChange={onToggle}
+      />
     </View>
   );
 }
@@ -250,6 +238,7 @@ export const SearchScreen = memo(function SearchScreen({
 }) {
   const { settings, styles, theme } = useReaderThemeStyles(createSearchStyles);
   const internalListRef = useRef<FlashListRef<SearchListItem> | null>(null);
+  const bottomBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const listRef = scrollRef || internalListRef;
   const autoLoadArmedRef = useRef(false);
   const pendingAutoLoadRef = useRef<{
@@ -330,13 +319,15 @@ export const SearchScreen = memo(function SearchScreen({
   );
   const renderTopicCard = useCallback(
     (item: Topic, testID?: string) => (
-      <MemoizedTopicCard
-        highlightQuery={query}
-        readerState={getTopicListItemStateFromIndex(topicStateIndex, item)}
-        testID={testID}
-        topic={item}
-        onOpenTopic={onOpenTopic}
-      />
+      <View style={styles.searchTopicRow}>
+        <MemoizedTopicCard
+          highlightQuery={query}
+          readerState={getTopicListItemStateFromIndex(topicStateIndex, item)}
+          testID={testID}
+          topic={item}
+          onOpenTopic={onOpenTopic}
+        />
+      </View>
     ),
     [onOpenTopic, query, styles, theme, topicStateIndex]
   );
@@ -853,7 +844,7 @@ export const SearchScreen = memo(function SearchScreen({
             : undefined
         }
         style={styles.content}
-        contentContainerStyle={styles.contentInner}
+        contentContainerStyle={[styles.contentInner, { paddingBottom: Math.max(96, bottomBarHeight + 16) }]}
         data={listItems}
         extraData={settings}
         keyExtractor={keySearchListItem}

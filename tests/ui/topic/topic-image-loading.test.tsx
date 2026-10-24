@@ -14,7 +14,7 @@ import {
   parseForumContentHtml
 } from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createTheme } from '@/ui/theme/tokens';
+import { createTheme, readerRadii } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import type { MediaReferrerContext, MediaReferrerPolicy, TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -823,6 +823,11 @@ describe('topic block image loading', () => {
     await view.rerender(<NodeSeekIframeHarness webViewBlockMessage="" />);
     expect(view.queryByText('代理未生效')).toBeNull();
     expect(mockWebView).toHaveBeenCalled();
+    expect(mockWebView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        style: expect.arrayContaining([expect.objectContaining({ backgroundColor: 'transparent' })])
+      })
+    );
   });
 
   it('does not let whitespace-only art consume the remaining media permit', async () => {
@@ -1438,9 +1443,9 @@ describe('topic block image loading', () => {
     expect(retriedImage.recyclingKey).toBe(firstImage.recyclingKey);
     expect(retriedImage.source).not.toBe(firstImage.source);
     await loadAndDisplayImage(firstImage, { height: 600, width: 400 });
-    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     await loadAndDisplayImage(retriedImage, { height: 600, width: 400 });
-    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
   });
 
   it('resets the loading body-image deadline before a runtime rotation remount', async () => {
@@ -1512,7 +1517,7 @@ describe('topic block image loading', () => {
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
     expect(latestImageProps(imageUrl).recyclingKey).toBe(displayedImage.recyclingKey);
-    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
   });
 
   it('ignores an original-image display callback after its renderer unmounts', async () => {
@@ -2207,7 +2212,7 @@ describe('topic block image loading', () => {
     );
     expect(originalProps.placeholder).toBeUndefined();
     expect(screen.getByTestId('expo-image')).toBeTruthy();
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     const dimensionsBeforeUpgrade = StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style);
 
     await act(() => originalProps.onDisplay?.());
@@ -2328,7 +2333,7 @@ describe('topic block image loading', () => {
 
     expect(screen.queryByTestId('topic-image-original')).toBeNull();
     expect(screen.queryByText('测试图片')).toBeNull();
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
 
     await act(() =>
       markOriginalImageDisplayed(
@@ -2342,7 +2347,7 @@ describe('topic block image loading', () => {
 
   it('keeps one loading indicator until the native image is displayed', async () => {
     const screen = await render(<TopicImageHarness />);
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
       height: 240,
       width: 320
@@ -2358,9 +2363,9 @@ describe('topic block image loading', () => {
       height: 480,
       width: 320
     });
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     await act(() => imageProps.onDisplay?.());
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
   });
 
   it('bounds a large cooked image to its table-cell content width', async () => {
@@ -2389,7 +2394,7 @@ describe('topic block image loading', () => {
     const image = view.getByTestId('topic-image-frame');
     await view.rerender(<TopicImageHarness webViewBlockMessage="代理状态切换中" />);
     expect(view.getByTestId('topic-image-frame') === image).toBe(true);
-    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
   });
 
   it.each([
@@ -2434,13 +2439,13 @@ describe('topic block image loading', () => {
     const screen = await render(<TopicImageHarness onOpenImagePreview={firstPreviewAction} />);
 
     await loadAndDisplayImage(latestImageProps(imageUrl));
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
 
     const displayedSource = latestImageProps(imageUrl).source;
     await screen.rerender(<TopicImageHarness onOpenImagePreview={latestPreviewAction} />);
     expect(latestImageProps(imageUrl).source).toBe(displayedSource);
 
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     fireEvent.press(screen.getByLabelText('测试图片'));
     expect(latestPreviewAction).toHaveBeenCalledWith(imageUrl, { height: 240, width: 320 }, undefined);
     expect(firstPreviewAction).not.toHaveBeenCalled();
@@ -2577,7 +2582,7 @@ describe('topic block image loading', () => {
       height: 240,
       width: 320
     });
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     await act(() =>
       firstImageProps.onLoad?.({
         cacheType: 'memory',
@@ -2588,7 +2593,7 @@ describe('topic block image loading', () => {
       height: 480,
       width: 320
     });
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
 
     mockSourceHeaders = { Cookie: 'session=two' };
     await screen.rerender(<TopicImageHarness attributes={{ alt: 'Android 事件顺序图片', src: lateImageUrl }} />);
@@ -2633,7 +2638,7 @@ describe('topic block image loading', () => {
       height: 80,
       width: 320
     });
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
   });
 
   it('isolates block-image dimensions by final Referer', async () => {
@@ -2710,7 +2715,7 @@ describe('topic block image loading', () => {
     const screen = await render(<TopicImageHarness />);
     const firstImageProps = latestImageProps(imageUrl);
     await loadAndDisplayImage(firstImageProps);
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
 
     mockExpoImageProps.mockClear();
     mockSourceHeaders = { Cookie: 'session=two' };
@@ -2719,11 +2724,11 @@ describe('topic block image loading', () => {
     const secondImageProps = latestImageProps(imageUrl);
     expect(secondImageProps.source?.headers).toEqual(expect.objectContaining({ Cookie: 'session=two' }));
     expect(secondImageProps.recyclingKey).not.toBe(firstImageProps.recyclingKey);
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     await loadAndDisplayImage(firstImageProps, { height: 240, width: 320 });
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     await loadAndDisplayImage(secondImageProps, { height: 300, width: 320 });
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
   });
 
   it('changes the same image request identity when the media epoch changes', async () => {
@@ -2809,7 +2814,7 @@ describe('topic block image loading', () => {
     expect(screen.getByText('0:00 / 4:18')).toBeTruthy();
     expect(StyleSheet.flatten(screen.getByTestId('forum-content-audio-frame').props.style)).toMatchObject({
       backgroundColor: theme.surface2,
-      borderRadius: 14,
+      borderRadius: readerRadii.surface,
       gap: 8,
       minHeight: 82,
       paddingHorizontal: 10,
@@ -3294,7 +3299,7 @@ describe('topic block image loading', () => {
         props.onLayout({ nativeEvent: { layout: { width, height } } });
       });
     await act(() => player.emit('playToEnd'));
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     await layout(0, 180);
     expect(player.replaceAsync).not.toHaveBeenCalled();
     await layout(320, 180);
@@ -3317,15 +3322,15 @@ describe('topic block image loading', () => {
     const screen = await render(tree());
     await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
 
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     expect(screen.queryByLabelText('播放视频')).toBeNull();
 
     mockVideoStatus = 'readyToPlay';
     await screen.rerender(tree());
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     const videoProps = mockVideoView.mock.calls.at(-1)?.[0] as { onFirstFrameRender?: () => void };
     await act(() => videoProps.onFirstFrameRender?.());
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     expect(mockVideoView.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({ fullscreenOptions: { enable: true }, nativeControls: true })
     );
@@ -3337,16 +3342,16 @@ describe('topic block image loading', () => {
     await act(() => player.emit('playToEnd'));
     mockVideoStatus = 'idle';
     await screen.rerender(tree());
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
 
     await act(() => player.emit('playingChange', { isPlaying: true }));
     mockVideoStatus = 'loading';
     await screen.rerender(tree());
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     mockVideoStatus = 'readyToPlay';
     await screen.rerender(tree());
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
   });
 
@@ -3690,7 +3695,7 @@ describe('topic block image loading', () => {
     const currentImageProps = latestImageProps(imageUrl);
     await act(() => staleImageProps.onError?.({ error: 'old request failed' }));
 
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     expect(screen.queryByText('测试图片')).toBeNull();
     expect(currentImageProps.source?.headers).toEqual(expect.objectContaining({ Cookie: 'session=two' }));
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -3718,7 +3723,9 @@ describe('topic block image loading', () => {
       height: 480,
       width: 320
     });
-    expect(secondScreen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(secondScreen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(
+      1
+    );
   });
 
   it('keeps decoded long-image geometry when its media lease is revoked before passive effects', async () => {
@@ -3941,7 +3948,7 @@ describe('topic block image loading', () => {
 
     try {
       await waitFor(() => expect(screen.getByText('测试图片')).toBeTruthy());
-      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+      expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
       expect(screen.queryByTestId('expo-image')).toBeNull();
       expect(diagnosticLines.map((line) => JSON.parse(line))).toContainEqual(
         expect.objectContaining({
@@ -3985,7 +3992,7 @@ describe('topic block image loading', () => {
       );
       const stalledImageProps = latestImageProps(timeoutImageUrl);
 
-      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+      expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
       expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
         height: 240,
         width: 320
@@ -3993,7 +4000,7 @@ describe('topic block image loading', () => {
       await act(async () => {
         jest.advanceTimersByTime(60_000);
       });
-      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+      expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
       expect(screen.getByText('图片加载失败，点按重试')).toBeTruthy();
       expect(screen.queryByTestId('expo-image')).toBeNull();
       await act(() =>
@@ -4044,7 +4051,7 @@ describe('topic block image loading', () => {
       await act(() => latestImageProps(svgImageUrl).onError?.({ error: 'Cannot load SVG from stream' }));
 
       await waitFor(() => expect(latestImageProps('file:///cache/complex-svg-poster.png')).toBeTruthy());
-      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+      expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
       await loadAndDisplayImage(latestImageProps('file:///cache/complex-svg-poster.png'), { height: 1025, width: 920 });
       await fireEvent.press(screen.getByLabelText('测试图片'));
       const encodedSvg = String(mockRenderSvgPoster.mock.calls.at(-1)?.[0] || '');
@@ -4055,7 +4062,7 @@ describe('topic block image loading', () => {
         { height: 1025, width: 920 },
         'file:///cache/complex-svg-poster.png'
       );
-      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+      expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
       expect(screen.queryByText('测试图片')).toBeNull();
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally {
@@ -4250,7 +4257,7 @@ describe('topic block image loading', () => {
       await act(() => secondPosterProps.onError?.({ error: 'rebuilt poster still unreadable' }));
       await waitFor(() => expect(screen.getByText('测试图片')).toBeTruthy());
       expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2);
-      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+      expect(screen.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
     } finally {
       fetchSpy.mockRestore();
     }
@@ -4346,7 +4353,7 @@ describe('topic block image loading', () => {
     expect(mockExpoImageProps).not.toHaveBeenCalled();
     expect(view.queryByTestId('topic-inline-image')).toBeNull();
     expect(StyleSheet.flatten(view.getByTestId('topic-image-idle').props.style)).toMatchObject({
-      borderRadius: 10,
+      borderRadius: readerRadii.content,
       height: 240,
       marginBottom: 8,
       marginTop: 6,
@@ -4424,7 +4431,7 @@ describe('topic block image loading', () => {
         marginTop: 6
       });
       expect(StyleSheet.flatten(view.getByTestId('topic-image-frame').props.style)).toMatchObject({
-        borderRadius: 10,
+        borderRadius: readerRadii.content,
         height: 240,
         width: 320
       });
@@ -4500,7 +4507,7 @@ describe('topic block image loading', () => {
       await act(() => automaticRetry.onError?.({ error: 'automatic retry failed' }));
       const errorFrame = await waitFor(() => view.getByLabelText('图片加载失败，点按重试'));
       expect(StyleSheet.flatten(errorFrame.props.style)).toMatchObject({
-        borderRadius: 10,
+        borderRadius: readerRadii.content,
         height: 240,
         marginBottom: 8,
         marginTop: 6,
@@ -4509,7 +4516,7 @@ describe('topic block image loading', () => {
       await fireEvent.press(errorFrame);
       await waitFor(() => expect(view.getByTestId('topic-image-frame')).toBeTruthy());
       expect(StyleSheet.flatten(view.getByTestId('topic-image-frame').props.style)).toMatchObject({
-        borderRadius: 10,
+        borderRadius: readerRadii.content,
         height: 240,
         width: 320
       });

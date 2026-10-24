@@ -1,14 +1,15 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
-import { CalendarCheck, Image as ImageIcon } from 'lucide-react-native';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
+import { BackHandler, StyleSheet, Text, View } from 'react-native';
+import { CalendarCheck, Check, ChevronDown } from 'lucide-react-native';
+import { Button, Divider, List, Menu, TextInput } from 'react-native-paper';
 import type { NodeSeekAttendanceBoard, NodeSeekCheckInState } from '@/domain/forum/accountData';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { ExpandableContent, MenuButton } from '@/ui/controls/ExpandableControls';
-import { SettingRail } from '@/ui/controls/SelectionControls';
+import { DisclosureChevron, ExpandableContent } from '@/ui/controls/ExpandableControls';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { MoreScreenStyles } from '../styles';
+import { createMoreSiteSettingStyles } from '../accountStyles';
 
 function createAttendanceStyles(theme: ReaderTheme) {
   return StyleSheet.create({
@@ -28,7 +29,6 @@ export function NodeSeekServicesPanel({
   apiKeyBusy,
   apiKeySaved,
   recoveryThreshold,
-  styles,
   theme,
   onAuthorizeApiKey,
   onClearApiKey,
@@ -39,7 +39,6 @@ export function NodeSeekServicesPanel({
   apiKeyBusy: boolean;
   apiKeySaved: boolean;
   recoveryThreshold: number;
-  styles: MoreScreenStyles;
   theme: ReaderTheme;
   onAuthorizeApiKey: () => void;
   onClearApiKey: () => void;
@@ -48,37 +47,115 @@ export function NodeSeekServicesPanel({
 }) {
   const [expansion, setExpansion] = useState<DisclosureState>('unopened');
   const [manualExpansion, setManualExpansion] = useState<DisclosureState>('unopened');
+  const [thresholdMenuOpen, setThresholdMenuOpen] = useState(false);
   const [draft, setDraft] = useState('');
-  const keyInput = useRef<TextInput>(null);
+  const keyInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const { styles: settingStyles } = useReaderThemeStyles(createMoreSiteSettingStyles);
   const expanded = expansion === 'expanded';
   const manualEntry = manualExpansion === 'expanded';
+  const openThresholdMenu = () => {
+    recordUserInteraction();
+    keyInput.current?.blur();
+    setThresholdMenuOpen(true);
+  };
+  const thresholdButton = (
+    <Button
+      mode="outlined"
+      compact
+      accessibilityLabel="读取通道自愈阈值"
+      accessibilityState={{ expanded: thresholdMenuOpen }}
+      accessibilityHint={`当前 ${recoveryThreshold} 次，点按选择`}
+      icon={({ color, size }) => <ChevronDown color={color} size={size} />}
+      style={settingStyles.button}
+      contentStyle={settingStyles.buttonContent}
+      labelStyle={settingStyles.buttonLabel}
+      onPress={openThresholdMenu}
+    >
+      {recoveryThreshold} 次
+    </Button>
+  );
+
+  useEffect(() => {
+    if (!thresholdMenuOpen) return;
+    // Paper's dismiss listener does not consume Android Back.
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setThresholdMenuOpen(false);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [thresholdMenuOpen]);
 
   useEffect(() => {
     if (!active) {
       keyInput.current?.blur();
       setExpansion('unopened');
       setManualExpansion('unopened');
+      setThresholdMenuOpen(false);
       setDraft('');
     }
   }, [active]);
 
   return (
     <>
-      <View style={styles.stack}>
-        <SettingRail
-          title="读取通道自愈阈值"
-          items={[1, 2, 3, 4, 5].map((value) => ({ value: String(value), label: `${value} 次` }))}
-          value={String(recoveryThreshold)}
-          onChange={(value) => onRecoveryThresholdChange(Number(value))}
-        />
-        <Text style={styles.meta}>直连失败但 WebView 成功时，累计到阈值后重建通道。</Text>
-      </View>
-      <MenuButton
-        nested
-        icon={ImageIcon}
-        label="NodeImage 授权"
-        value={apiKeySaved ? '已授权' : '未授权'}
-        expanded={expanded}
+      <List.Item
+        title="读取通道自愈阈值"
+        accessible={false}
+        onPress={openThresholdMenu}
+        description="直连失败但网页可正常读取时，累计到阈值后重建通道。"
+        titleNumberOfLines={2}
+        descriptionNumberOfLines={3}
+        style={settingStyles.row}
+        containerStyle={settingStyles.rowContainer}
+        contentStyle={settingStyles.rowContent}
+        titleStyle={settingStyles.title}
+        descriptionStyle={settingStyles.description}
+        right={() =>
+          thresholdMenuOpen ? (
+            <Menu
+              visible
+              onDismiss={() => setThresholdMenuOpen(false)}
+              anchorPosition="bottom"
+              statusBarHeight={0}
+              overlayAccessibilityLabel="关闭次数选择"
+              contentStyle={settingStyles.menu}
+              anchor={thresholdButton}
+            >
+              {[1, 2, 3, 4, 5].map((value) => (
+                <Menu.Item
+                  key={value}
+                  title={`${value} 次`}
+                  accessibilityLabel={`${value} 次`}
+                  accessibilityState={{ selected: value === recoveryThreshold }}
+                  trailingIcon={
+                    value === recoveryThreshold ? ({ color, size }) => <Check color={color} size={size} /> : undefined
+                  }
+                  titleStyle={settingStyles.title}
+                  onPress={() => {
+                    recordUserInteraction();
+                    setThresholdMenuOpen(false);
+                    onRecoveryThresholdChange(value);
+                  }}
+                />
+              ))}
+            </Menu>
+          ) : (
+            thresholdButton
+          )
+        }
+      />
+      <Divider style={settingStyles.divider} />
+      <List.Item
+        title="NodeImage 授权"
+        description={apiKeySaved ? '已授权' : '用于 NodeSeek 图片上传'}
+        accessibilityRole="button"
+        accessibilityLabel={`NodeImage 授权，${apiKeySaved ? '已授权' : '未授权'}`}
+        accessibilityState={{ expanded }}
+        style={settingStyles.row}
+        containerStyle={settingStyles.rowContainer}
+        contentStyle={settingStyles.rowContent}
+        titleStyle={settingStyles.title}
+        descriptionStyle={settingStyles.description}
+        right={() => <DisclosureChevron expanded={expanded} color={theme.muted} />}
         onPress={() => {
           setExpansion((value) => (value === 'expanded' ? 'collapsed' : 'expanded'));
           if (expanded) {
@@ -89,48 +166,93 @@ export function NodeSeekServicesPanel({
         }}
       />
       {expansion !== 'unopened' ? (
-        <ExpandableContent expanded={expanded} style={styles.stack}>
-          <Text style={styles.meta}>用于 NodeSeek 图片上传，可自动授权或手动填入 Key。</Text>
-          <View style={styles.actions}>
-            <AppButton label="获取 / 恢复授权" disabled={apiKeyBusy} onPress={onAuthorizeApiKey} />
-            <AppButton label="清除 Key" variant="ghost" disabled={apiKeyBusy || !apiKeySaved} onPress={onClearApiKey} />
-            <AppButton
-              label={manualEntry ? '收起手动备用' : '手动粘贴备用'}
-              variant="ghost"
+        <ExpandableContent expanded={expanded} style={settingStyles.section}>
+          <View style={settingStyles.actions}>
+            <Button
+              mode="contained"
+              compact
+              style={settingStyles.button}
+              contentStyle={settingStyles.buttonContent}
+              labelStyle={settingStyles.buttonLabel}
+              accessibilityLabel="获取 / 恢复授权"
+              disabled={apiKeyBusy}
               onPress={() => {
-                setManualExpansion((value) => (value === 'expanded' ? 'collapsed' : 'expanded'));
-                if (manualEntry) {
-                  keyInput.current?.blur();
-                  setDraft('');
-                }
+                recordUserInteraction();
+                onAuthorizeApiKey();
               }}
-            />
+            >
+              获取 / 恢复授权
+            </Button>
+            <Button
+              compact
+              textColor={theme.danger}
+              style={settingStyles.button}
+              contentStyle={settingStyles.buttonContent}
+              labelStyle={settingStyles.buttonLabel}
+              accessibilityLabel="清除 Key"
+              disabled={apiKeyBusy || !apiKeySaved}
+              onPress={() => {
+                recordUserInteraction();
+                onClearApiKey();
+              }}
+            >
+              清除 Key
+            </Button>
           </View>
+          <List.Item
+            title="手动粘贴 Key"
+            description="自动授权不可用时使用"
+            accessibilityRole="button"
+            accessibilityLabel={manualEntry ? '收起手动备用' : '手动粘贴备用'}
+            accessibilityState={{ expanded: manualEntry }}
+            style={settingStyles.row}
+            containerStyle={settingStyles.rowContainer}
+            contentStyle={settingStyles.rowContent}
+            titleStyle={settingStyles.title}
+            descriptionStyle={settingStyles.description}
+            right={() => <DisclosureChevron expanded={manualEntry} color={theme.muted} />}
+            onPress={() => {
+              setManualExpansion((value) => (value === 'expanded' ? 'collapsed' : 'expanded'));
+              if (manualEntry) {
+                keyInput.current?.blur();
+                setDraft('');
+              }
+            }}
+          />
           {manualExpansion !== 'unopened' ? (
-            <ExpandableContent expanded={manualEntry} style={styles.stack}>
+            <ExpandableContent expanded={manualEntry} style={settingStyles.section}>
               <TextInput
                 ref={keyInput}
+                variant="outlined"
+                label="NodeImage API Key"
                 accessibilityLabel="NodeImage API Key 输入"
+                aria-label="NodeImage API Key 输入"
                 autoCapitalize="none"
                 autoComplete="off"
                 autoCorrect={false}
                 placeholder="NodeImage API Key"
                 placeholderTextColor={theme.muted}
                 secureTextEntry
-                style={styles.input}
+                style={settingStyles.input}
                 value={draft}
                 onChange={recordUserInteraction}
                 onChangeText={setDraft}
               />
-              <View style={styles.actions}>
-                <AppButton
-                  label={apiKeyBusy ? '保存中' : '保存 Key'}
-                  disabled={apiKeyBusy || !draft.trim()}
-                  onPress={() => {
-                    onSaveApiKey(draft);
-                  }}
-                />
-              </View>
+              <Button
+                mode="contained"
+                compact
+                accessibilityLabel={apiKeyBusy ? '保存中' : '保存 Key'}
+                style={settingStyles.button}
+                contentStyle={settingStyles.buttonContent}
+                labelStyle={settingStyles.buttonLabel}
+                disabled={apiKeyBusy || !draft.trim()}
+                onPress={() => {
+                  recordUserInteraction();
+                  onSaveApiKey(draft);
+                }}
+              >
+                {apiKeyBusy ? '保存中' : '保存 Key'}
+              </Button>
             </ExpandableContent>
           ) : null}
         </ExpandableContent>

@@ -23,7 +23,7 @@
 
 命令定义以 `package.json` 为准。首次开发按以下顺序准备：
 
-1. 准备 Node.js 22（`>=22.22.2 <23`）。
+1. 推荐 Node.js 24 LTS 的最新补丁，最低 24.15.0，`.nvmrc` 跟随 24 系列；兼容范围为 `package.json` 的 `engines.node`（22.22.2 及以上的 22 系列、24.15.0 及以上的 24 系列、26 系列）。CI 在三条版本线及 24 的最低支持版本执行严格 engines 安装、完整 JS 门禁和 Android bundle 导出，原生检查使用最新的 24 系列。`.nvmrc` 不会自动切换当前终端；使用便携 Node 时须将其目录放到本次命令的 PATH 首位，让 npm 与 Gradle 调用相同版本，并核对 `node -v`。
 2. 执行 `npm ci`，安装锁文件中的依赖。postinstall 随后自动应用源码补丁并构建 Composer。
 3. 启动 Android 前，准备 SDK 和 Java 环境，并按下文核对安装身份。
 
@@ -143,7 +143,7 @@ node scripts/check-reader-scroll-boundaries.mjs '<main-session>' '<ignored-evide
 
 ## Android 覆盖安装、Replay 与 Smoke
 
-关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态任务表覆盖 forum-platform、selection、App、ReactAndroid、Expo FileSystem 和 Expo Image 六类 JVM owner；App 通过 `tests/native/composer-keyboard.gradle` 挂入 Composer 与系统选图 IO 测试。每个预期测试类必须有本次新鲜报告、非跳过用例且零失败/错误；邻近测试通过不能替代缺席 owner。runner 输出每项耗时；selection 不能只编译 App。CI 使用 Node `22.22.2` 验证最低支持版本。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
+关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态任务表覆盖 forum-platform、selection、App、ReactAndroid、Expo FileSystem、Expo Blur 和 Expo Image 七类 JVM owner；App 通过 `tests/native/composer-keyboard.gradle` 挂入 Composer 与系统选图 IO 测试。每个预期测试类必须有本次新鲜报告、非跳过用例且零失败/错误；邻近测试通过不能替代缺席 owner。runner 输出每项耗时；selection 不能只编译 App。CI 的原生检查使用 Node 24，Node `22.22.2` 与 `24.15.0` 分别验证对应版本线的最低 JS 工具链要求。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
 
@@ -255,7 +255,7 @@ cd android
 
 ### 审查修复的隔离设备故障验证
 
-先按 Reader SQLite 设备流程准备已有的 `WZ_ReaderStorage_API35_20260910`，确认其 fixture ownership marker。使用 Node 22（`>=22.22.2 <23`）、当前 lockfile 和已完成 fresh prebuild 的生成目录：
+先按 Reader SQLite 设备流程准备已有的 `WZ_ReaderStorage_API35_20260910`，确认其 fixture ownership marker。使用 `package.json` 支持的 Node 版本（推荐 24 LTS）、当前 lockfile 和已完成 fresh prebuild 的生成目录：
 
 ```powershell
 node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --build --output .codex-tmp/<任务目录>/runtime.json
@@ -428,6 +428,8 @@ L 站访问活跃诊断：按原有 `traceId + requestId` 对照 JS 修饰后的
 
 ### 覆盖安装
 
+LDC 接入验收使用普通开发构建和已有登录设备：先核对「我的」中 linux.do 身份，查看 LDC 余额区；没有 Credit 会话时应先自动尝试共享 Cookie 的后台登录。分别记录已有会话直接读取、非交互验证自行完成、网站直接跳转成功、需要用户确认的回退入口和取消路径，确认失败不会循环重试或使论坛账号失效。需条款或 OAuth 确认时由用户操作。成功后比对官网可用余额、待到账及同一条收入/支出，继续验证加载更多、刷新、返回保留、App 重新打开后的会话复用和取消授权；不执行支付、转移或其他真实写操作。没有可完成授权的 LDC 会话时，将自动登录成功及实际余额与收支标为 `NOT_VERIFIED`，不能以 HTTP 401、页面能打开或模拟数据代替通过。
+
 本机 `WZ_Pixel_API_35` 已于 2026-09-14 经用户授权保留数据扩容到 16 GiB，完成文件系统离线校验和冷启动后 `/data` 约 16G、剩余约 10G，随后开发包覆盖安装及 `APK_SANITY` 通过，首次安装时间和登录态不变。该 AVD 的旧 QCOW2 带历史快照，单改 `disk.dataPartition.size` 不扩大已有磁盘；本次保留完整备份，以 `qemu-img convert/compare` 核对当前内容一致后扩副本，最后扩展 Android 加密映射中的 ext4。在线 resize 的保留块错误不可用反复重试或强制忽略绕过；离线扩容后须通过 e2fsck 并核对原数据。临时只读系统组件内存副本和 root ADB 已随重启退出；原磁盘及完整备份保留在本机，不提交到仓库。
 
 安装前后都记录 `firstInstallTime`，并要求值不变：
@@ -481,7 +483,7 @@ runner 会拒绝与 `WZ_ANDROID_TEST_DEVICE` 或 `WZ_ANDROID_SMOKE_DEVICE` 相�
 
 1. 核对安装身份、版本与 APK SHA-256；覆盖安装后执行 `APK_SANITY` 和 `tests/device/feed-gesture-priority.ad`。
 2. 打开首页，顺序执行下方连续手势矩阵、双向 CANCEL/UP、独立惯性、首页刷新和边界交叉脚本。
-3. 核对底栏顺序为「首页、搜索、消息、更多」，第三格使用铃铛 `Bell`，第四格保留 `MoreHorizontal`。打开「消息」，执行通知刷新取消脚本，然后返回首页。
+3. 核对底栏顺序为「首页、搜索、消息、我的」，第三格使用铃铛 `Bell`，第四格使用 `UserRound`。打开「消息」，执行通知刷新取消脚本，然后返回首页。
 4. 按 `tests/live/agent-live.md` 的 `LIVE-FEED-01` 补验首尾边界、点选、分类栏、刷新中切来源/底栏和返回。只读手势验收不改变来源启停/顺序或账号状态。
 5. 保存每项通过或未验证范围及设备输入方式；实体手机与鼠标手动操作分别记录，不借用自动注入结论。回收本轮会话和专用临时文件。
 
@@ -572,7 +574,7 @@ node scripts/check-cold-start.mjs --serial <serial> --apk <匹配的本地APK路
 
 `scripts/startup-inline-requires.metro.cjs` 是独立编译实验，不是正常构建的默认配置。它继承 Expo 默认值，开启 `inlineRequires`，并让 `index.ts`、`App.tsx`、`src/app/AppRoot.tsx`、`src/app/AppComposition.tsx` 保持原求值方式，保留启动注册与 Splash 初始化。真实 Metro/Expo 转换后执行的任务注册、依赖延迟和启动顺序由 `tests/tooling/startup-inline-requires.test.ts` 验证；正常启动行为仍由原有 App/Account owner 验证。GitHub 依据、实际产物和限制见 `REG-NAV-010`，配置生效不代表首帧变快。
 
-复跑编译对照时，先使用项目要求的 Node.js 22，在 `.codex-tmp` 下新建空输出目录。以下命令只生成本地 bundle，不运行 App 或请求外站；示例目录已存在时应换新目录，不覆盖旧证据：
+复跑编译对照时，先使用项目支持的 Node.js 版本，并在两组对照中保持版本一致，在 `.codex-tmp` 下新建空输出目录。以下命令只生成本地 bundle，不运行 App 或请求外站；示例目录已存在时应换新目录，不覆盖旧证据：
 
 ```powershell
 $startupOutput = '.codex-tmp/startup-inline-requires-new'
@@ -617,7 +619,7 @@ Runner 在临时 Gradle overlay 中选择 `dev/reader-storage-proof/index.tsx`�
 
 ### Mock 数据与媒体压力测试
 
-使用 `package.json` 要求的 Node 22，停止本轮构建和其他压力采样后执行：
+使用 `package.json` 支持的 Node 版本，停止本轮构建和其他压力采样后执行：
 
 ```powershell
 npm run test:performance
@@ -758,7 +760,7 @@ fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/b
 
 ### 执行发布
 
-发布前准备 Node 22（`>=22.22.2 <23`）、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
+发布前准备 `package.json` 支持的 Node 版本（推荐 24 LTS）、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
 
 Windows 的 Hermes 宿主构建还需要 Visual C++ 开发环境。先在 Visual Studio 的 x64 Native Tools 环境中确认 `nmake`、`cl` 和 `rc` 可解析，再执行发布；普通终端找不到 `nmake` 时，CMake 配置会在原生测试前失败。仅有 Android SDK/NDK 不足以完成此步骤。
 

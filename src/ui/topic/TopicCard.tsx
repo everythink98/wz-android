@@ -6,6 +6,7 @@ import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
 import { highlightTextParts } from '@/ui/text/highlight';
 import {
+  readerRadii,
   type ReaderStyleSettings,
   sourceBadgeColorStyle,
   topicTagColorStyle,
@@ -135,8 +136,11 @@ export function TopicCard({
         {visibleTopicTags.length ? (
           <View style={styles.topicTagRow}>
             {visibleTopicTags.map((tag, index) => (
-              <View key={getMappingKey(tag, index)} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
-                <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>
+              <View
+                key={getMappingKey(tag, index)}
+                style={[styles.topicTagPill, topicTagColorStyle(tag, theme, topic.tags)]}
+              >
+                <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme, topic.tags)]} numberOfLines={1}>
                   {tag}
                 </Text>
               </View>
@@ -216,14 +220,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       color: theme.ink,
       fontFamily,
       fontSize: 11,
-      fontWeight: '700',
+      fontWeight: '600',
       includeFontPadding: false,
       lineHeight: 16,
-      backgroundColor: theme.surface2,
+      backgroundColor: 'transparent',
       borderColor: theme.line,
-      borderRadius: 7,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
+      borderRadius: readerRadii.badge,
+      borderWidth: 0,
+      paddingHorizontal: 0,
       paddingVertical: 3,
       textAlignVertical: 'center'
     },
@@ -232,14 +236,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       color: theme.muted,
       fontFamily,
       fontSize: 11,
-      fontWeight: '600',
+      fontWeight: '400',
       includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: 'transparent',
       borderColor: theme.line,
-      borderRadius: 7,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
+      borderRadius: readerRadii.badge,
+      borderWidth: 0,
+      paddingHorizontal: 0,
       paddingVertical: 3,
       textAlignVertical: 'center'
     },
@@ -248,7 +252,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       color: theme.ink,
       fontFamily,
       fontSize: Math.round(17 * listFontScale),
-      fontWeight: '600',
+      fontWeight: '500',
       letterSpacing: 0,
       lineHeight: Math.round(24 * listFontScale)
     },
@@ -266,7 +270,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       lineHeight: 16,
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
       borderColor: alphaColor(theme.danger, 0.34),
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
       paddingVertical: 3,
@@ -301,7 +305,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       color: theme.muted,
       fontFamily,
       fontSize: 13,
-      fontWeight: '600',
+      fontWeight: '400',
       includeFontPadding: false,
       lineHeight: 16
     },
@@ -310,18 +314,18 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       alignItems: 'center',
       backgroundColor: 'transparent',
       borderColor: 'transparent',
-      borderRadius: 6,
+      borderRadius: readerRadii.badge,
       borderWidth: 0,
       justifyContent: 'center',
       minHeight: 20,
-      paddingHorizontal: 5,
-      paddingVertical: 1
+      paddingHorizontal: 7,
+      paddingVertical: 3
     },
     topicTagText: {
       color: theme.muted,
       fontFamily,
       fontSize: 11,
-      fontWeight: '600',
+      fontWeight: '500',
       includeFontPadding: false,
       lineHeight: 14,
       textAlignVertical: 'center'

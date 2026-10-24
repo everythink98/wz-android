@@ -1,6 +1,13 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { memo, type RefObject, useCallback, useEffect, useState } from 'react';
-import { type NativeScrollEvent, type NativeSyntheticEvent, Pressable, Text, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Pressable,
+  Text,
+  View
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated from 'react-native-reanimated';
 import { useScrollActionVisibility } from '@/ui/hooks/useScrollActionVisibility';
@@ -22,6 +29,7 @@ import { forumQueryKeys } from '@/platform/query/serverState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
+import { NavigationBackdropProvider, NavigationBackdropTarget, NavigationGlass } from '@/ui/navigation/NavigationGlass';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from './styles';
 import { ReplyComposerSheet } from './components/ReplyComposerSheet';
@@ -105,7 +113,9 @@ export const TopicScreen = memo(function TopicScreen({
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
+  const [topBarHeight, setTopBarHeight] = useState(0);
   const [replyActionHeight, setReplyActionHeight] = useState(0);
+  const [commentSearchFocused, setCommentSearchFocused] = useState(false);
   const replyComposerIntent = state.replyComposerIntent;
   const replyComposerOpen = replyComposerIntent.kind !== 'closed';
   const {
@@ -191,8 +201,8 @@ export const TopicScreen = memo(function TopicScreen({
 
   const content = (
     <View style={styles.topicScreenRoot} onLayout={onPageLayout}>
-      <ScreenTopBar>
-        <IconButton icon={ChevronLeft} compact ghost label="返回" onPress={chrome.back} />
+      <ScreenTopBar onLayout={(event) => setTopBarHeight(event.nativeEvent.layout.height)}>
+        <IconButton icon={ChevronLeft} iconSize={24} iconOnly ghost label="返回" onPress={chrome.back} />
         <ScreenTopBarTitle>
           {sourceLabel(item.source)}
           {item.category ? ' · ' + item.category : ''}
@@ -217,29 +227,40 @@ export const TopicScreen = memo(function TopicScreen({
           />
         </ScreenTopBarActions>
       </ScreenTopBar>
-      <TopicContentList
-        active={active}
-        actions={actions}
-        article={article}
-        bodyMediaPaused={bodyMediaPaused}
-        readingPaused={topicMenuOpen || state.replyComposerIntent.kind !== 'closed'}
-        bottomContentInset={canWrite ? replyActionHeight + styles.replyActionPosition.bottom + 16 : 0}
-        currentNodeSeekUser={currentNodeSeekUser}
-        discourseEmojiUrls={discourseEmojiUrls}
-        headerState={headerState}
-        html={html}
-        nodeSeekUserId={nodeSeekUserId}
-        onImagePreviewDescriptors={onImagePreviewDescriptors}
-        onOpenTopic={chrome.openTopic}
-        onOpenUser={chrome.openUser}
-        onScroll={chrome.onScroll}
-        onScrollProgress={canWrite ? updateReplyActionForScroll : undefined}
-        read={read}
-        session={session}
-        location={location}
-        locationRequestId={locationRequestId}
-        topicScrollRef={topicScrollRef}
-      />
+      <KeyboardAvoidingView
+        testID="topic-keyboard-viewport"
+        behavior="height"
+        enabled={active && commentSearchFocused && !replyComposerOpen}
+        style={styles.flex}
+      >
+        <NavigationBackdropTarget active={active} testID="topic-glass-content" topInset={topBarHeight}>
+          <TopicContentList
+            active={active}
+            actions={actions}
+            article={article}
+            bodyMediaPaused={bodyMediaPaused}
+            readingPaused={topicMenuOpen || state.replyComposerIntent.kind !== 'closed'}
+            bottomContentInset={canWrite ? replyActionHeight + styles.replyActionPosition.bottom + 16 : 0}
+            commentSearchFocused={commentSearchFocused}
+            currentNodeSeekUser={currentNodeSeekUser}
+            discourseEmojiUrls={discourseEmojiUrls}
+            headerState={headerState}
+            html={html}
+            nodeSeekUserId={nodeSeekUserId}
+            onImagePreviewDescriptors={onImagePreviewDescriptors}
+            onCommentSearchFocusChange={setCommentSearchFocused}
+            onOpenTopic={chrome.openTopic}
+            onOpenUser={chrome.openUser}
+            onScroll={chrome.onScroll}
+            onScrollProgress={canWrite ? updateReplyActionForScroll : undefined}
+            read={read}
+            session={session}
+            location={location}
+            locationRequestId={locationRequestId}
+            topicScrollRef={topicScrollRef}
+          />
+        </NavigationBackdropTarget>
+      </KeyboardAvoidingView>
       {canWrite ? (
         <AnimatedSafeAreaView
           edges={['bottom']}
@@ -259,7 +280,8 @@ export const TopicScreen = memo(function TopicScreen({
             style={styles.replyAction}
             onPress={() => commands.composer.toggle(true)}
           >
-            <SquarePen size={20} color={theme.onPrimary} strokeWidth={1.8} />
+            <NavigationGlass accent />
+            <SquarePen size={20} color={theme.dark ? theme.primary : theme.primaryStrong} strokeWidth={1.8} />
             <Text style={styles.replyActionText}>回复</Text>
           </Pressable>
         </AnimatedSafeAreaView>
@@ -313,16 +335,18 @@ export const TopicScreen = memo(function TopicScreen({
     </View>
   );
   return (
-    <LinuxDoPostInteractionsProvider
-      active={active}
-      scopeKey={`${html.mediaSessionIdentity}:${item.id}`}
-      topic={topic}
-      replies={read.topicReplies}
-      actions={actions}
-      emojiUrls={discourseEmojiUrls}
-      onOpenUser={chrome.openUser}
-    >
-      {content}
-    </LinuxDoPostInteractionsProvider>
+    <NavigationBackdropProvider>
+      <LinuxDoPostInteractionsProvider
+        active={active}
+        scopeKey={`${html.mediaSessionIdentity}:${item.id}`}
+        topic={topic}
+        replies={read.topicReplies}
+        actions={actions}
+        emojiUrls={discourseEmojiUrls}
+        onOpenUser={chrome.openUser}
+      >
+        {content}
+      </LinuxDoPostInteractionsProvider>
+    </NavigationBackdropProvider>
   );
 });

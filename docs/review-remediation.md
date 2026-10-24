@@ -4,6 +4,113 @@
 
 原始基线为 `c89787f13e2c0862179edbd1694b87c750a99dfd`，叠加开工时 15 个未提交文件；保留原修改，不提交、发布或上传。日志、原送审包和设备资料仅保存在本机由 Git 忽略的目录中。
 
+## 2026-10-22 Node 26 ARM64 真机测试包
+
+用户要求交付真机测试包。本批使用本机默认 Node `26.12.1`、普通 `index.ts` 入口和现有项目签名，定向执行 ARM64 `assembleRelease`；未修改产品代码或版本，未执行正式发布流程、提交或上传，也未操作设备。包名为 `com.wz.reader`，版本 `1.3.157/161`，最低 API 24，目标 API 36，大小 48,695,908 字节。构建前后 570 个运行源码输入的哈希一致。
+
+交付文件为 ignored `.codex-tmp/node26-phone-20261022/wz-android-1.3.157-node26-arm64-test.apk`，SHA-256 为 `d84e7299c116e941c84b015f428d95f5a149eef093a4ed4dc11480f7270ed34c`，buildId 为 `0f3a1a4708f5455592eea8f4e41b685d`。`STATIC_PASS`：签名验证通过且与 `app.json` 固定公钥摘要一致，仅含 `arm64-v8a`，非 debuggable，ZIP 对齐检查通过；未压缩 Hermes 字节码版本 98、长度和尾部校验均通过，当前原生 buildId 与归档 source map、R8 mapping、APK 哈希对应。初次核验误用了旧版 Hermes 库名，按当前加载器要求改为检查实际 `libhermesvm.so` 后通过；未因此修改包体。
+
+本批未在 ARM64 真机安装运行，`APK_SANITY`、真机登录、图片保存和字号流程为 `NOT_VERIFIED`，不能以此前 x86_64 模拟器验收替代。签名匹配只证明项目签名一致，不证明某台手机当前安装身份匹配；覆盖安装仍须满足同包名、同签名且无版本降级。诊断符号和构建证据保留在本机 ignored 目录。
+
+## 2026-10-22 Node 26 构建包保留数据覆盖验收
+
+用户授权将上一批 Node 26 构建的普通 APK 覆盖安装到原 `WZ_Pixel_API_35 / emulator-5554`，并验证登录、图片保存和设置字号。本批没有修改产品代码。安装前核对原包 SHA、双方签名及原站账号结果，随后仅执行 `adb install -r`；设备中的新 APK SHA 为 `e213d78d96a51b2aee888e5882db2468369cdda693d2ac78451a15096ae13d51`，buildId 为 `5138e0ba91aa4a0f8d896607a3b1bcf1`，版本保持 `1.3.157/161`。`firstInstallTime=2026-07-26 16:51:37` 在安装前、安装后及收尾均未变，形成 `APK_SANITY`。
+
+| 能力与证据层 | 本包实际验收 |
+| --- | --- |
+| `ACCOUNT-01` / `LIVE_PASS` | 北京时间 18:00:08 安装前、18:11:45 新包启动后、18:18:31 关闭重开后，L 站权威账号检查均为 HTTP 200、`accountEvidence=current-user`、success。后两次属于本包不同 `processSessionId`；关闭时 `pidof` 无 App 进程。其间实际打开并浏览 L 站帖子、预览图片和生成长图，没有重新登录或借助外部浏览器。 |
+| `TOPIC-02` / `LIVE_PASS` | 实际帖内图片预览后保存，当前 buildId 的 `save-preview` 事件成功；新增 App 自有 MediaStore 图片，1038×460、18020 字节、`is_pending=0`。 |
+| `TOPIC-04` / `LIVE_PASS` | 同一帖子生成正文长图并保存，页面明确显示「已保存到相册」；新增另一条 App 自有图片，1440×4017、726241 字节、`is_pending=0`。该本机文件 helper 没有独立成功 trace，证据采用当前包的实际页面与新增媒体行，不虚构诊断事件。 |
+| `MORE-03` 及共用 `MORE-01/02/05`、`DATA-03`、`ACCOUNT-03` / `LIVE_PASS` | 浅色主题下，内容源、外观、服务器代理、问题诊断、备份 / 恢复、linux.do 等级六入口标题均从 100% 的 53 px 增至 140% 的 74 px，四条现有摘要从 45 px 增至 63 px。断言仅采用实际可见视口内完整的原生 TextView，排除顶栏/底栏后的节点；截图无裁切或重叠。最终恢复浅色、100%、标准密度，重开后摘要与标题高度仍保持恢复值。 |
+
+两个照片读取权限 `READ_MEDIA_IMAGES`、`READ_MEDIA_VISUAL_USER_SELECTED` 始终为拒绝，安装与两次保存均未改变权限。真实输入法和系统字号 1.0 保持不变。测试前 App 自有相册查询为空，本次新增的两张测试图片保留供复核；未删除其他媒体、清数据、清 Cookie 或重置设备。既有三站登录标签保留，但本批只有 L 站具有权威刷新证据，不将其他站的缓存标签记为 `LIVE_PASS`。
+
+agent-device MCP 仍返回 `Transport closed`，因此按本机 CLI 完成设备操作；没有因此创建或重启模拟器。CLI 不支持 skill 示例中的 `--foreground`，首次无效参数未启动操作，移除该参数后使用普通 open 与 `--no-test-ime`。本批会话已关闭，ADB、模拟器、QEMU 的原 PID 和创建时间均保持。证据位于 ignored `.codex-tmp/node26-device-20261022/`，验收断言、字体几何检查、文档引用及 `git diff --check` 通过；产品代码未变，沿用上一批同一构建的完整 JS 门禁，不重复跑全量测试。
+
+本批只证明已有登录态在覆盖安装、浏览、保存和 App 重开后保留，不是一次新的首次登录实验。两三天持久性、浏览器联动、其他 Android 版本/iOS、全平台字号矩阵和全部媒体来源仍为 `NOT_VERIFIED`。没有提交、发布或上传。
+
+## 2026-10-22 本机默认切换 Node 26 并重跑验证
+
+用户明确要求将本机默认 Node 切至 26。首次管理员确认取消，未启动安装；用户再次确认后，官方 Node 26.12.1 x64 MSI 于北京时间 17:40:20 安装成功，退出码为 0。安装包 SHA-256 与官方 SHASUMS256 一致，OpenJS Authenticode 签名有效。新的普通 PowerShell 中，`node`、`npm`、`npx` 均优先解析到 `C:\Program Files\nodejs`，实际版本为 Node 26.12.1 / npm 11.20.0，MSI 注册版本一致；以下验证没有使用便携 Node 或临时 PATH 覆盖。
+
+全局 npm prefix 和 8 个全局包的版本保持不变，Codex、agent-device、Claude 的版本命令均通过。本批保留原 Git 修订与 WIP，只新增本节取证；没有修改产品逻辑、依赖或支持范围。项目 `.nvmrc` 仍为 24，项目推荐版本与本机默认安装分别记录。
+
+| 证据层 | 本次默认 Node 26 的实际结果 |
+| --- | --- |
+| `STATIC_PASS` | `npm run verify` 和独立 `npm run typecheck` 均退出 0；lint、格式、架构、文档、unused 和版本检查通过，架构工具 28 项、文档工具 29 项。文档收口后另运行引用检查与 `git diff --check`。 |
+| `UNIT_PASS` | Vitest 260 文件、4186 项通过，seed `1792662214884`。 |
+| `UI_PASS` | Jest 102 套件、3046 项通过，seed `1771082674`；既有 act 告警保留，没有屏蔽。 |
+| `APK_SANITY` | 使用既有生成目录构建普通 `index.ts` 入口、开发签名 Release x86_64 APK，耗时 2m31s。强制重新执行 JS bundle 任务，Gradle 内探针确认实际 Node 26.12.1 路径；5288 模块重新打包，Kotlin/Java 编译及 APK 签名验证通过。APK 内 Hermes 98 字节码为 25125040 字节，magic、长度和内嵌校验一致，570 项运行输入未变。 |
+
+APK 版本保持 `1.3.157/161`，buildId 为 `5138e0ba91aa4a0f8d896607a3b1bcf1`，SHA-256 为 `e213d78d96a51b2aee888e5882db2468369cdda693d2ac78451a15096ae13d51`。本次只构建，没有安装到设备；不将原设备运行结果归到这个新包。原 ADB、模拟器和 QEMU 的 PID 与创建时间保持，未清除登录态。Node 26 下的 fresh prebuild、原生完整测试矩阵、该新包设备运行和远端 CI 实跑仍为 `NOT_VERIFIED`。
+
+安装影响单独记录：外层 MSI 已设置 `MSIRESTARTMANAGERCONTROL=Disable`，但升级中的旧 Node 25 嵌套卸载没有继承此属性。日志明确记录 17:40:09 Restart Manager 关闭占用文件的应用；至少 16 个基线 Node 进程出现在该清单且随后消失，父链均属于 Codex，其中可识别 Context7、GitHub 与 Chrome DevTools MCP，两个具体角色未知。安装器的「已重启」日志不足以证明连接恢复；随后 agent-device 与 Context7 的只读连接调用约两分钟未返回，停止等待并保留 `NOT_VERIFIED`。需要重开 Codex 后复核连接，不能宣称共享进程回到了完整基线。各全局工具的完整工作流也未验证。
+
+本批 verify、typecheck 和 Gradle 进程均已退出，没有主动终止或重建共享服务。证据保存在 ignored `.codex-tmp/node26-default-20261022/`，保留第一次取消、重试安装、进程审计和验证回执；未提交、发布或上传。
+
+## 2026-10-22 Node 支持范围复核与最低版本纠正
+
+本批继续保留 `e0a2dc912a9bff28af8eb58f5ddc0712d6d8a4a9` 上的已有 WIP，只处理工具链契约和验证，不修改产品运行逻辑或设备状态。此前将 Node 24 整条版本线纳入支持范围过宽：锁定的 jsdom 30.0.1 要求 Node 24.15.0 及以上，React Native/Metro 另要求 24.3.0 及以上。将 package、lockfile 根 engines 和发布门禁统一修正为 `>=22.22.2 <23 || >=24.15.0 <25 || >=26 <27` 后，该范围满足锁文件中全部 796 项 Node engines 要求；没有升级依赖或重新生成锁文件。
+
+发布门禁的既有 owner 新增 24.0.0、24.14.99 拒绝断言，并将可接受的 24 最低值改为 24.15.0。Node 24.22.1、seed `20261022` 下修前 2 失败/60 通过，修后 release-environment 与 release-workflow 两个 owner 共 62/62 通过。证据归属为工具链 `UNIT_PASS`，不虚构产品能力 ID。
+
+CI 配置为 22.22.2、24.15.0、最新 24、最新 26 四项；均执行 `npm ci --engine-strict`、完整 verify 和 Android bundle 导出，使最低支持版本的依赖要求成为安装门禁。fresh prebuild、关联 Native 测试和 Kotlin 编译仍仅由最新 24 项承担。`.nvmrc` 保持 24，README 与维护手册同步最低值、当前终端版本检查及便携 Node 的 PATH 要求。当前官方版本状态为 24/22 LTS、26 Current、25 EOL，默认继续推荐 24 LTS，来源为 [Node.js 官方版本状态](https://nodejs.org/en/about/previous-releases)。
+
+| 本机实际运行版本 | 本批证据 |
+| --- | --- |
+| Node 22.22.2 / npm 10.9.7 | 主工作区完整 verify 退出 0：`UNIT_PASS` 260 文件/4186 项，seed `1792659402478`；`UI_PASS` 102 套件/3046 项，seed `-1330342075`；类型、lint、格式、架构、文档和版本均 `STATIC_PASS`。 |
+| Node 24.15.0 / npm 11.12.1 | 官方 ZIP 与 SHASUMS256 一致；独立目录真实严格安装 1332 包，18 项补丁及 postinstall Composer 成功，package/lock 未变。普通入口 Android 导出成功，生成 5298 模块的 Hermes bundle；主工作区 `npm run typecheck` 退出 0。 |
+| Node 26.12.1 / npm 11.20.0 | 主工作区完整 verify 退出 0：`UNIT_PASS` 260 文件/4186 项，seed `1792658977133`；`UI_PASS` 102 套件/3046 项，seed `-2061072880`；类型、lint、格式、架构、文档和版本均 `STATIC_PASS`。独立副本另完成严格重装 1332 包、18 项补丁和 Composer，并成功导出 5298 模块的 Hermes bundle。 |
+
+两次隔离安装与导出的退出码均为 0，package/lock 及复制的运行输入保持一致；两份 HBC 均检查了 Hermes magic、版本 98 和内嵌校验，各为 27732264 字节。额外逐字节比较发现 40 字节不同，保留该额外断言失败与差异证据，没有宣称产物逐字节一致，也不据此推断功能失败。npm 11.20 的 allowScripts 提示原样保留，未扩展执行许可；esbuild 由实际 Composer 构建验证，unrs-resolver 由真实原生加载和路径解析验证。主工作区全量门禁与隔离副本安装/导出是两组独立证据，不将后者称为隔离全量检查。
+
+Node 24.22.1 的上一批完整 verify 与普通 APK 证据保留在图片保存/字号修复记录中，本批没有将旧包计作新的原生构建。当前系统默认仍为 Node 25.2.1，本轮通过便携运行时和命令级 PATH 运行上述支持版本，没有修改系统安装。证据保存在 ignored `.codex-tmp/node-support-review-20261022/`；远端 CI 实跑、Node 22/26 原生 APK 构建仍为 `NOT_VERIFIED`，没有提交或发布。
+
+本次测试、安装和导出进程均已退出，保留共享 MCP 和用户原有进程。收尾已核对临时安装目录的绝对路径、普通目录属性和成功回执，但自动审批仍以 `blocked by policy` 拒绝删除 isolated-install，未提供更具体理由；该目录原样保留，没有改用其他方式删除。清理受阻单独记录，不改写已完成的验证结果。
+
+## 2026-10-22 图片保存权限与设置字号修复
+
+用户在全项目检查后明确要求修复两项遗漏，并检查共用入口、沿用原模拟器且保留登录。基线仍为 `e0a2dc912a9bff28af8eb58f5ddc0712d6d8a4a9` 加已有 WIP；本批生产改动限图片保存的共用调用与设置文字的共用样式，没有新增依赖或改动原生配置。
+
+| 范围 | 修复与证据 |
+| --- | --- |
+| `TOPIC-02/04` 图片权限 | 删除普通图片入口重复申请读取照片权限的逻辑，下载或 data URL 落盘后复用已有本机文件保存函数。Android API 30 及以上直接创建自有媒体；旧 Android/iOS 保留写入权限、身份与取消检查，临时文件继续由各自 owner 释放。现有 imageSave owner 修前 7 失败/23 通过，修后 30/30 通过，seed `20261022`。 |
+| `MORE-03` 设置字号 | ExpandableControls 的菜单标题、面板标题和摘要统一按 App 字号缩放字号及行高。真实 ReaderStyleProvider 的 100%→140% 断言修前失败，修后四个相关 UI owner 69/69 通过，seed `10222026`；不改变折叠、隐藏命中、字体和换行规则。 |
+
+Node 24.22.1 完整 `npm run verify` 退出 0：`UNIT_PASS` 为 260 文件/4184 项，seed `1792656344127`；`UI_PASS` 为 102 套件/3046 项，seed `585046669`。lint、格式、架构及其测试、文档及其测试、类型/unused 和版本检查均为 `STATIC_PASS`。既有 React act 与 Reanimated mock 警告未屏蔽，测试无失败。文档收尾后另核对文档门禁和 diff，没有为纯证据更新重复执行全量测试。
+
+普通开发 APK 为 `APK_SANITY`：SHA-256 `03c09c2226a1ef661c5295568fef80d85a42a0765cb839798b3279a5204702b6`，buildId `b729b8ea909a49fd95d2ea43cb59220a`，版本 1.3.157/161、x86_64、开发签名与原包相同。构建前后 569 项运行输入一致，使用普通 index.ts/Hermes 入口；只覆盖安装到原 `WZ_Pixel_API_35/emulator-5554`，firstInstallTime 仍为 `2026-07-26 16:51:37`。
+
+图片 `LIVE_PASS`：旧包 `41cb105cef8f84d69241a700362c00aff5a02c8096c119465403acb7f6d33285` 在妖火帖子图片预览中弹读取照片权限框，拒绝后于北京时间 16:03:24 返回 blocked/permission_denied。修后保持 READ_MEDIA_IMAGES 与 READ_MEDIA_VISUAL_USER_SELECTED 均为拒绝，同图保存不再弹权限框，16:11:17 诊断返回 success；系统 MediaStore 确认发布 6318 字节、555×265 的 WebP。共用「生成长图 → 保存到相册」再发布 213826 字节、1440×1834 的 PNG，两项 is_pending 均为 0。旧包拒绝测试增加的 user-fixed 标记在候选验证前按两项权限恢复至基线，未授予读取权限。取证后逐项核对归属并仅删除这两张测试图片，媒体记录回到测试前状态。
+
+字号 `LIVE_PASS`：在 API 35、1080×2400、420 dpi 上核对内容源、外观、服务器代理、问题诊断、备份/恢复与 linux.do 等级六个共用入口。140% 时标题文字区域从旧包的 53 px 增至 74 px，摘要从 45 px 增至 63 px；恢复 100% 后回到原高度，浅深主题未见文字裁切或关键动作遮挡。内容源、外观、问题诊断、备份及等级展开/收起可用；代理只观察标题和摘要，不修改配置。结束恢复浅色 100%，四个内容源与代理设置不变，没有导入备份或清理账号。
+
+登录保留：三站登录 UI 仍可见，16:13:22 再次刷新 Linux.do 账号得到 HTTP 200/current-user，未用缓存头像代替核验。未清 Cookie、App 数据、登录态或重新登录，未使用外部浏览器。操作完成关闭本次 agent-device 会话，保留原模拟器。证据仅保存在 ignored `.codex-tmp/media-font-fixes-20261022/`，没有提交、发布或上传。
+
+`NOT_VERIFIED`：旧 Android/iOS 的真实保存、data URL 设备保存、其他系统字号与 OEM/物理设备组合；对应权限与数据分支有单元证据。未重新执行全套设备 Replay，不能把本次手动 Live 验收记为 Replay 通过；两三天登录持久性及浏览器连带退出原因仍沿用 `REG-ACCOUNT-070` 的未验证边界。
+
+## 2026-10-22 全项目检查与 Node 版本范围适配
+
+本批基线为 `e0a2dc912a9bff28af8eb58f5ddc0712d6d8a4a9` 加已有未提交改动；保留 WIP，不提交或发布。按单用户 Android 客户端、同进程多个 WebView 共享登录状态与并发读取的负载检查，分别追踪账号/存储、内容/媒体/通知、导航/共享 UI，以及构建/发布工具。检查覆盖全仓门禁与主要入口，高风险链路深入读取，不代表逐文件或所有运行组合穷尽审计。
+
+Node 支持范围改为 `>=22.22.2 <23 || >=24 <25 || >=26 <27`，默认 `.nvmrc` 跟随 24 LTS。同步 package/lockfile 根 engines、发布前置版本检查、原测试、CI 矩阵及开发文档，没有重解依赖或修改系统 Node。CI 三版本均执行 JS 门禁及 Android bundle 导出，原生预构建/测试/编译使用 24。依据为 Node 官方版本状态：24/22 为 LTS，26 为 Current，25 已结束支持；实际验证使用官方校验和核对的 portable 24.22.1、26.12.1 与已有 22.22.2。
+
+| 本批发现 | 处理与证据 |
+| --- | --- |
+| 新增 LDC 对象破坏 More 账号区引用隔离 | 已按字段投影修复；保持既有严格引用断言，详见 `REG-PERF-042`。 |
+| 登录初始化门禁变更后 9 项 UI fixture 过时 | 三个原 owner 补真实当前文档初始化 bridge 消息、认证 Cookie 测试数据和显式检测；Topic 取消用例确认进入 handoff 后才取消，保留零重发断言。原 seed `-358595823` 从 9 失败/109 通过变为 118/118 通过，没有放松生产门禁。 |
+| account-readonly Replay 仍点击已移除的账号展开入口 | 改为当前固定账号区的 NodeSeek Tab；原失败后单条重跑 12 步通过、无自动修补或重试。 |
+| 普通图片保存误依赖读取相册权限 | P2 既有缺陷，代码与已安装 Expo 实现相互印证，未改产品；见 `REG-TOPIC-217`。 |
+| More 部分设置标题与摘要不跟随 App 字号 | 100%/140%、浅深色对照确认，未见关键动作裁切；作为一致性遗漏登记在清理清单，没有擅自调整共享样式。 |
+
+Node 22.22.2 原全 Unit 4156 项通过；新增 Node 边界与发布流程 60 项红转绿，最终四个受影响 UI owner 134/134 通过。Node 24.22.1 全 Unit 260 文件/4179 项通过，seed `1792655121731`；首次全 UI 在修复前已加载 startup，得到 3044 通过/1 失败，随后该 owner 同原 seed 16/16 通过。最终全 UI 同失败 seed `-321127373` 重跑为 102 套/3045 项全部通过。lint、格式、架构、架构测试、文档测试/引用、类型/unused、版本及 diff 门禁分段完成，无残余失败；不将首次 verify 的非零退出改写为通过。Node 26.12.1 全 Unit 260 文件/4179 项通过，seed `1792655352148`，四个受影响 UI owner 134/134（seed `-358595823`）、类型检查和 Android/Hermes bundle 导出通过；不是 Node 26 全 UI 或原生编译证据。
+
+原 API 35 AVD 的 8 条只读回放，首批 7 通过/1 过期步骤失败，修正后失败项单独通过。随后在同一普通包实际读取四站各一帖的正文，包含 L 站和妖火滚动；没有发帖、回复、点赞、收藏切换或签到。浅深主题与 App 字号 140% 查看后恢复浅色 100%。这些设备观察使用 alignment 普通包 SHA-256 `d6fbdd307c1fc016fd793cc88a4876f91135f8c64237d110309cc36ca5384dfe`，不能冒充后续新包的完整八条结果。
+
+Node 24 普通开发构建 `APK_SANITY`：SHA-256 `41cb105cef8f84d69241a700362c00aff5a02c8096c119465403acb7f6d33285`，buildId `322b0549458f4ccaa436d9d57d8aa339`，1.3.157/161、x86_64、开发签名与原包一致，构建前后 569 项运行输入未变。仅覆盖原 `WZ_Pixel_API_35/emulator-5554`，firstInstallTime 仍为 `2026-07-26 16:51:37`。新包 More 三站登录、账号刷新、LDC 余额/明细及返回、关闭重开已实测；15:53:51 的 Linux.do 账号核对为 HTTP 200/current-user，距 14:06:49 App-only 首次登录约 107 分钟，没有依赖缓存头像作结论。最终包额外取得 account-readonly、more-readonly、library-return 三条 `DEVICE_REPLAY_PASS`，合计 106 步、零重试、零自动修补；不外推为其余五条在新包重跑。相关证据只留在 ignored `.codex-tmp/full-audit-20261022/`。
+
+未验证：Node 26 全 UI/原生构建、远端 CI 实跑、物理设备/OEM、所有功能与大字号组合、实际拒绝相册读取权限后的保存、论坛真实写入、两三天登录持久性及浏览器连带退出根因。期间存在主动刷新及后台账号核对，不能称为连续无请求静置。既有 OPEN 性能与认证事故不因本轮未复现而关闭。
+
 ## 2026-09-20 持续复审与性能核对
 
 基线仍为 revision `69cdedf94392ba2570459492cb7dfdad33f27545` 叠加完整已有 WIP。沿用全仓 906 个文件清点，按来源/领域、平台/Native、页面/生命周期三个独立方向检查真实调用链，再交叉复核本轮修改。860 个代码、测试、脚本、补丁及 CI/Replay 文件中，本轮只改变 6 个生产文件、6 个既有测试文件和 1 个既有设备 proof，其余 847 个文件与开工哈希一致。文件清点不等同所有分支、来源和设备的穷尽证明。

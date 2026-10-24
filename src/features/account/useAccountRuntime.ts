@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
 import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
 import { migrateLegacyCookieSnapshots } from '@/platform/storage/legacyCookieSnapshotMigration';
+import { markAccountSessionHandoffPending, saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
 import {
   createCredentialWriteGate,
   enqueueCredentialWriteForGeneration,
@@ -62,6 +63,7 @@ import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
 import { useNodeImageAuthController } from './useNodeImageAuthController';
+import { useLinuxDoCreditAuthController } from './useLinuxDoCreditAuthController';
 import { useNodeSeekCheckInController } from './useNodeSeekCheckInController';
 import { useSessionController } from './useSessionController';
 import { useSessionReadGateway } from './useSessionReadGateway';
@@ -72,6 +74,7 @@ import { AccountHosts, type AccountHostsProps } from './AccountHosts';
 
 export function useAccountRuntime({
   appActive,
+  beforeRequest,
   enabledSources,
   fetcher,
   loginNavigation,
@@ -83,6 +86,7 @@ export function useAccountRuntime({
   webViewBlockMessage
 }: {
   appActive: boolean;
+  beforeRequest?: () => Promise<void>;
   enabledSources: readonly Source[];
   fetcher: Fetcher;
   loginNavigation: AccountHostsProps['loginNavigation'];
@@ -295,6 +299,8 @@ export function useAccountRuntime({
   const mountedLinuxDoWebViewRef = useRef(false);
   const linuxDoUnmountWaitersRef = useRef<(() => void)[]>([]);
   const linuxDoCookieHandoffRef = useRef<Promise<void> | null>(null);
+  const linuxDoCookiePreparationRef = useRef<Promise<void> | null>(null);
+  const linuxDoDeferredCreditReconcileRef = useRef<Promise<void> | null>(null);
   const awaitLinuxDoWebViewUnmount = useCallback(
     () =>
       mountedLinuxDoWebViewRef.current
@@ -302,14 +308,11 @@ export function useAccountRuntime({
         : Promise.resolve(),
     []
   );
-  useLayoutEffect(() => {
-    mountedLinuxDoWebViewRef.current = mountLinuxDoWebView;
-    if (!mountLinuxDoWebView) linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
-  }, [mountLinuxDoWebView]);
   useEffect(
     () => () => {
       loginPanelCheckRef.current = null;
       linuxDoCookieHandoffRef.current = null;
+      linuxDoDeferredCreditReconcileRef.current = null;
       linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
     },
     []
@@ -327,13 +330,22 @@ export function useAccountRuntime({
   }, []);
   const forumSessionEpochsRef = useRef<ForumSessionEpochs>(initialForumSessionEpochs);
   const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
-  const [, refreshAuthSurfaces] = useState(0);
+  const authSurfacePreparationsRef = useRef<
+    Partial<
+      Record<
+        SessionSite,
+        { ready: boolean; pending: boolean; error: string; promise: Promise<void>; confirmed?: AccountSessionSnapshot }
+      >
+    >
+  >({});
+  const [authSurfaceRevision, refreshAuthSurfaces] = useState(0);
   const visibleAuthSurface = authSurfaceRegistryRef.current.visible;
   const showLoginPanel = visibleAuthSurface === 'nodeseek-login';
   const showYaohuoLoginPanel = visibleAuthSurface === 'yaohuo-login';
   const showLinuxDoPanel = visibleAuthSurface === 'linuxdo-login';
   const linuxDoPanelVisible = showLinuxDoPanel || recoveryPanel.phase !== 'idle';
   const showNodeImagePanel = visibleAuthSurface === 'nodeimage-auth';
+  const showLinuxDoCreditPanel = visibleAuthSurface === 'linuxdo-credit';
   const authSurfaceVisible = useCallback(
     (surface: AuthSurface) => isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface),
     []
@@ -367,7 +379,9 @@ export function useAccountRuntime({
       return {
         source,
         authenticated: access.authenticated,
-        authSurfaceOpen: sourceEnabled && hasAuthSurfaceBarrierForSource(authSurfaceRegistryRef.current, source),
+        authSurfaceOpen:
+          sourceEnabled &&
+          (account.handoffPending === true || hasAuthSurfaceBarrierForSource(authSurfaceRegistryRef.current, source)),
         identityKey: access.identityKey,
         identityTrust: isSourceIdentityReady(source) ? access.identityTrust : 'unknown',
         sessionEpoch: forumSessionEpochsRef.current[source],
@@ -390,25 +404,50 @@ export function useAccountRuntime({
     [readSessionRuntimeSnapshot]
   );
   const beginAuthSurfaceTicket = useCallback(
-    (surface: AuthSurface, source: SessionSite, checkIdentity = true) => {
+    (surface: AuthSurface, source: SessionSite, checkIdentity = true, visible = true) => {
       const account = readSessionRuntimeSnapshot(source);
-      const ticket = beginAuthSurface(authSurfaceRegistryRef.current, {
-        source,
-        surface,
-        identityKey: account.identityKey,
-        sessionEpoch: forumSessionEpochsRef.current[source]
-      });
+      const wasVisible = isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface);
+      const ticket = beginAuthSurface(
+        authSurfaceRegistryRef.current,
+        {
+          source,
+          surface,
+          identityKey: account.identityKey,
+          sessionEpoch: forumSessionEpochsRef.current[source]
+        },
+        visible
+      );
+      const preparation = {
+        ready: wasVisible && authSurfacePreparationsRef.current[source]?.ready === true,
+        pending: true,
+        error: '',
+        promise: markAccountSessionHandoffPending(source)
+      };
+      authSurfacePreparationsRef.current[source] = preparation;
+      void preparation.promise.then(
+        () => {
+          if (authSurfacePreparationsRef.current[source] !== preparation) return;
+          preparation.ready = true;
+          refreshAuthSurfaces((revision) => revision + 1);
+        },
+        () => {
+          if (authSurfacePreparationsRef.current[source] !== preparation) return;
+          preparation.error = '登录会话保存失败，请关闭后重试';
+          refreshAuthSurfaces((revision) => revision + 1);
+          notify(preparation.error);
+        }
+      );
       refreshAuthSurfaces((revision) => revision + 1);
       if (checkIdentity) beginAccountIdentityCheckRef.current(source, ticket.generation);
       return ticket;
     },
-    [readSessionRuntimeSnapshot]
+    [notify, readSessionRuntimeSnapshot]
   );
   const handoffLinuxDoCookies = useCallback(
     (parentTraceId?: string): Promise<void> => {
       if (linuxDoCookieHandoffRef.current) return linuxDoCookieHandoffRef.current;
       const generation = authSurfaceRegistryRef.current.generation;
-      const handoff = awaitLinuxDoWebViewUnmount().then(() => {
+      const handoff = Promise.all([awaitLinuxDoWebViewUnmount(), linuxDoCookiePreparationRef.current]).then(() => {
         // A refreshed/replaced WebView owns a new handoff; the old one must not unlock it.
         if (linuxDoCookieHandoffRef.current !== handoff) throw new CancelledError();
         return setLinuxDoCookieResponseBarrier(
@@ -429,6 +468,9 @@ export function useAccountRuntime({
   );
   const verificationAppActiveRef = useRef(appActive);
   useCommitRefValue(verificationAppActiveRef, appActive);
+  const awaitLinuxDoCookieHandoff = useCallback(async () => {
+    await Promise.all([linuxDoCookieHandoffRef.current, linuxDoDeferredCreditReconcileRef.current]);
+  }, []);
   const readingVerificationRef = useRef<(recovery: LinuxDoReadingRecovery) => void>(() => undefined);
   const finishAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason, parentTraceId?: string) => {
@@ -437,15 +479,52 @@ export function useAccountRuntime({
       if (!ticket && !wasVisible) return null;
       refreshAuthSurfaces((revision) => revision + 1);
       if (!ticket?.shouldReconcile) {
-        const handoff = surface === 'linuxdo-login' ? handoffLinuxDoCookies(parentTraceId) : Promise.resolve();
-        void handoff.catch((error) => {
-          if (!isCancelledError(error)) notify('登录会话交接未完成，请刷新账号页面重试。');
-        });
+        const handoff =
+          surface === 'linuxdo-login' || surface === 'linuxdo-credit'
+            ? handoffLinuxDoCookies(parentTraceId)
+            : Promise.resolve();
+        const source =
+          ticket?.source ||
+          (surface === 'linuxdo-login' || surface === 'linuxdo-credit'
+            ? 'linuxdo'
+            : surface === 'yaohuo-login'
+              ? 'yaohuo'
+              : 'nodeseek');
+        const preparation = authSurfacePreparationsRef.current[source];
+        void handoff
+          .then(async () => {
+            if (reason !== 'authoritative-recovery' || !preparation?.confirmed) return;
+            const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source));
+            if (
+              !snapshot ||
+              snapshot.identityTrust === 'unknown' ||
+              snapshot.isVerifying ||
+              snapshot.lastError ||
+              accountSessionAccess(snapshot).identityKey !== accountSessionAccess(preparation.confirmed).identityKey
+            )
+              return;
+            const isCurrent = () =>
+              authSurfacePreparationsRef.current[source] === preparation &&
+              enabledSourcesRef.current.includes(source) &&
+              appQueryClient.getQueryData(accountQueryKeys.snapshot(source)) === snapshot &&
+              !isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface) &&
+              !Object.values(authSurfaceRegistryRef.current.active).some(
+                (active) => active?.source === source && active.phase === 'open'
+              );
+            if (await saveAccountSessionSnapshot(snapshot, isCurrent)) preparation.pending = false;
+          })
+          .catch((error) => {
+            if (!isCancelledError(error)) notify('登录会话交接未完成，请刷新账号页面重试。');
+          });
         return null;
       }
       const reconciliation = Promise.resolve()
         .then(() =>
-          authSurfaceRegistryRef.current.active[surface]?.generation === ticket.generation
+          authSurfaceRegistryRef.current.active[surface]?.generation === ticket.generation &&
+          !(ticket.source === 'linuxdo' && isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login')) &&
+          !Object.values(authSurfaceRegistryRef.current.active).some(
+            (active) => active?.source === ticket.source && active.phase === 'open'
+          )
             ? reconcileAccountStatusRef.current(ticket.source, { surfaceGeneration: ticket.generation })
             : ({ status: 'stale' } as const)
         )
@@ -546,6 +625,7 @@ export function useAccountRuntime({
   const readGateway = useSessionReadGateway({
     reading,
     anonymousFetcher: fetcher,
+    beforeRequest,
     fetcher: session.forumFetchWithWebViewFallback,
     getEnabledSources,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
@@ -565,7 +645,9 @@ export function useAccountRuntime({
         linuxDoCookieHandoffRef.current = null;
         void setLinuxDoCookieResponseBarrier(
           !enabledSourcesRef.current.includes('linuxdo') ||
-            (isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login') && !nativeOwnsCookies),
+            ((isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login') ||
+              authSurfaceRegistryRef.current.active['linuxdo-credit']?.phase === 'open') &&
+              !nativeOwnsCookies),
           'identity-change'
         ).catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
       }
@@ -582,8 +664,11 @@ export function useAccountRuntime({
     onAccountStatusChanged: handleAccountStatusChanged
   });
   const reconcileAccountStatusBase = status.reconcileAccountStatus;
+  const settleAccountSessionHandoff = status.settleAccountSessionHandoff;
   const reconcileAccountStatus = useCallback(
-    async (...args: Parameters<typeof reconcileAccountStatusBase>): Promise<AccountReconcileResult> => {
+    async (
+      ...args: [SessionSite, (Parameters<typeof reconcileAccountStatusBase>[1] & { completeOpenHandoff?: boolean })?]
+    ): Promise<AccountReconcileResult> => {
       const source = args[0];
       if (!enabledSourcesRef.current.includes(source)) return { status: 'stale' };
       if (!isSourceIdentityReady(source) || !status.hydrated) {
@@ -594,8 +679,15 @@ export function useAccountRuntime({
         (ticket) => ticket?.source === source && ticket.phase === 'reconciling'
       );
       const needsHandoff = source === 'linuxdo' && tickets.length > 0;
+      const preparation = authSurfacePreparationsRef.current[source];
+      const hasOpenSurface = () =>
+        Object.values(authSurfaceRegistryRef.current.active).some(
+          (ticket) => ticket?.source === source && ticket.phase === 'open'
+        );
+      const canCompleteHandoff = () => !hasOpenSurface();
       const isCurrent = () =>
         enabledSourcesRef.current.includes(source) &&
+        authSurfacePreparationsRef.current[source] === preparation &&
         tickets.every((ticket) => {
           const current = authSurfaceRegistryRef.current.active[ticket.surface];
           return !current || current.generation === ticket.generation;
@@ -623,6 +715,30 @@ export function useAccountRuntime({
           : { status: 'unknown', error: errorMessage(error), errorInfo: sourceErrorFromUnknown(source, error) };
       }
       if (result.status === 'same' || result.status === 'changed' || result.status === 'anonymous') {
+        if (args[1]?.completeOpenHandoff && !(result.status === 'anonymous' && args[1]?.publishAnonymous === false)) {
+          const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source));
+          if (preparation) preparation.confirmed = snapshot;
+          settleAccountSessionHandoff(source);
+        }
+        if (
+          canCompleteHandoff() &&
+          !(result.status === 'anonymous' && args[1]?.publishAnonymous === false) &&
+          (preparation?.pending ||
+            appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source))?.handoffPending)
+        ) {
+          const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source));
+          const persisted =
+            snapshot &&
+            (await saveAccountSessionSnapshot(snapshot, () => isCurrent() && canCompleteHandoff()).catch(() => false));
+          if (!isCurrent()) return { status: 'stale' };
+          if (!persisted) {
+            const error = new Error('登录会话交接未能保存，请刷新账号页面重试');
+            settleAccountSessionHandoff(source, error.message);
+            return { status: 'unknown', error: error.message, errorInfo: sourceErrorFromUnknown(source, error) };
+          }
+          if (preparation) preparation.pending = false;
+          settleAccountSessionHandoff(source);
+        }
         let released = false;
         for (const ticket of tickets) {
           released = releaseAuthSurface(authSurfaceRegistryRef.current, ticket.surface, ticket.generation) || released;
@@ -631,16 +747,50 @@ export function useAccountRuntime({
       }
       return result;
     },
-    [handoffLinuxDoCookies, isSourceIdentityReady, reconcileAccountStatusBase, status.hydrated]
+    [
+      handoffLinuxDoCookies,
+      isSourceIdentityReady,
+      reconcileAccountStatusBase,
+      settleAccountSessionHandoff,
+      status.hydrated
+    ]
   );
   const reconcileAuthSurfaceAccountStatus = useCallback(
     (source: SessionSite, options: { surfaceGeneration?: number; publishAnonymous?: boolean } = {}) =>
-      reconcileAccountStatus(source, { publishAnonymous: false, ...options }),
+      reconcileAccountStatus(source, { publishAnonymous: false, completeOpenHandoff: true, ...options }),
     [reconcileAccountStatus]
   );
   useCommitRefValue(beginAccountIdentityCheckRef, status.beginAccountIdentityCheck);
   useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
   useCommitRefValue(applyAccountSessionEventRef, status.applyAccountSessionEvent);
+  const attemptedInterruptedSourcesRef = useRef(new Set<SessionSite>());
+  useEffect(() => {
+    if (!status.hydrated || !appActive) return;
+    for (const source of status.interruptedSources) {
+      if (!enabledSessionSourceSet.has(source)) {
+        attemptedInterruptedSourcesRef.current.delete(source);
+        continue;
+      }
+      if (!isSourceIdentityReady(source) || attemptedInterruptedSourcesRef.current.has(source)) continue;
+      if (
+        !appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source))?.handoffPending ||
+        Object.values(authSurfaceRegistryRef.current.active).some(
+          (ticket) => ticket?.source === source && ticket.phase === 'open'
+        )
+      )
+        continue;
+      attemptedInterruptedSourcesRef.current.add(source);
+      void reconcileAccountStatus(source);
+    }
+  }, [
+    appActive,
+    authSurfaceRevision,
+    enabledSessionSourceSet,
+    isSourceIdentityReady,
+    reconcileAccountStatus,
+    status.hydrated,
+    status.interruptedSources
+  ]);
 
   const resetLinuxDoLevelState = useCallback(() => {
     void appQueryClient.cancelQueries({ queryKey: forumQueryKeys.level('linuxdo') });
@@ -657,8 +807,8 @@ export function useAccountRuntime({
   const prepareNodeImageSurface = useCallback(() => prepareAuthSurfaceOpenRef.current('nodeimage-auth'), []);
   const readNodeImageRuntime = useCallback(() => readSessionRuntimeSnapshot('nodeseek'), [readSessionRuntimeSnapshot]);
   const reconcileNodeImageAccount = useCallback(
-    (surfaceGeneration: number) => reconcileAuthSurfaceAccountStatus('nodeseek', { surfaceGeneration }),
-    [reconcileAuthSurfaceAccountStatus]
+    (surfaceGeneration: number) => reconcileAccountStatus('nodeseek', { surfaceGeneration, publishAnonymous: false }),
+    [reconcileAccountStatus]
   );
   const nodeImage = useNodeImageAuthController({
     beginSurface: beginNodeImageSurface,
@@ -745,8 +895,51 @@ export function useAccountRuntime({
   const prepareLinuxDoCookieResponseBarrier = useCallback(() => {
     cancelLinuxDoBrowserHandoff();
     linuxDoCookieHandoffRef.current = null;
-    return setLinuxDoCookieResponseBarrier(true, 'surface-open', authSurfaceRegistryRef.current.generation);
+    const preparation = Promise.resolve(authSurfacePreparationsRef.current.linuxdo?.promise).then(() =>
+      setLinuxDoCookieResponseBarrier(true, 'surface-open', authSurfaceRegistryRef.current.generation)
+    );
+    linuxDoCookiePreparationRef.current = preparation;
+    void preparation
+      .finally(() => {
+        if (linuxDoCookiePreparationRef.current === preparation) linuxDoCookiePreparationRef.current = null;
+      })
+      .catch(() => undefined);
+    return preparation;
   }, [cancelLinuxDoBrowserHandoff]);
+  const beginLinuxDoCreditSurface = useCallback(
+    (mode: 'manual' | 'silent') => beginAuthSurfaceTicket('linuxdo-credit', 'linuxdo', false, mode === 'manual'),
+    [beginAuthSurfaceTicket]
+  );
+  const finishLinuxDoCreditSurface = useCallback(
+    (reason: AuthSurfaceCloseReason) =>
+      finishAuthSurfaceTicket('linuxdo-credit', reason) ??
+      handoffLinuxDoCookies().then(() => ({ status: 'stale' }) as const),
+    [finishAuthSurfaceTicket, handoffLinuxDoCookies]
+  );
+  const canStartLinuxDoCreditSilent = useCallback(() => authSurfaceRegistryRef.current.visible === null, []);
+  const prepareLinuxDoCreditSurface = useCallback(() => prepareAuthSurfaceOpenRef.current('linuxdo-credit'), []);
+  const readLinuxDoCreditRuntime = useCallback(
+    () => readSessionRuntimeSnapshot('linuxdo'),
+    [readSessionRuntimeSnapshot]
+  );
+  const linuxDoCredit = useLinuxDoCreditAuthController({
+    appActive,
+    beginSurface: beginLinuxDoCreditSurface,
+    canStartSilent: canStartLinuxDoCreditSilent,
+    finishSurface: finishLinuxDoCreditSurface,
+    getUserAgent: getLinuxDoUserAgent,
+    notify,
+    prepareCookieBarrier: prepareLinuxDoCookieResponseBarrier,
+    prepareSurfaceOpen: prepareLinuxDoCreditSurface,
+    readRuntime: readLinuxDoCreditRuntime,
+    screenActive: screen === 'more',
+    surfaceVisible: showLinuxDoCreditPanel
+  });
+  const mountedLinuxDoCreditWebView = Boolean(linuxDoCredit.panel.document) && !webViewBlockMessage;
+  useLayoutEffect(() => {
+    mountedLinuxDoWebViewRef.current = mountLinuxDoWebView || mountedLinuxDoCreditWebView;
+    if (!mountedLinuxDoWebViewRef.current) linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
+  }, [mountLinuxDoWebView, mountedLinuxDoCreditWebView]);
   const verification = useVerificationController({
     fetcher,
     getLinuxDoSurfaceGeneration,
@@ -761,7 +954,7 @@ export function useAccountRuntime({
       ]);
     },
     awaitLinuxDoWebViewUnmount,
-    awaitLinuxDoCookieHandoff: () => linuxDoCookieHandoffRef.current || Promise.resolve(),
+    awaitLinuxDoCookieHandoff,
     handoffLinuxDoCookies,
     canOpenLinuxDoPanel: () => verificationAppActiveRef.current && enabledSourcesRef.current.includes('linuxdo'),
     changeNodeSeekLoginPanel,
@@ -780,9 +973,64 @@ export function useAccountRuntime({
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     onLinuxDoSurfaceClosed: ({ authoritativeResult, reason, parentTraceId }) => {
       handleClearCredentialLoginIntent('linuxdo');
-      finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason, parentTraceId);
+      const initializationIncomplete = !authoritativeResult && reason === 'initialization-incomplete';
+      if (
+        initializationIncomplete &&
+        (authSurfaceRegistryRef.current.active['linuxdo-login'] ||
+          authSurfaceRegistryRef.current.active['linuxdo-credit']?.phase === 'reconciling')
+      ) {
+        beginAccountIdentityCheckRef.current('linuxdo', ++authSurfaceRegistryRef.current.generation);
+        applyAccountSessionEventRef.current({
+          site: 'linuxdo',
+          type: 'check-failed',
+          message: '网站登录初始化尚未完成，请重新打开登录页后检测登录。'
+        });
+      }
+      const reconciliation = finishAuthSurfaceTicket(
+        'linuxdo-login',
+        authoritativeResult ? 'authoritative-recovery' : reason,
+        parentTraceId
+      );
+      const credit = authSurfaceRegistryRef.current.active['linuxdo-credit'];
+      if (initializationIncomplete) {
+        if (credit?.phase === 'reconciling')
+          void handoffLinuxDoCookies(parentTraceId).then(
+            () => {
+              if (releaseAuthSurface(authSurfaceRegistryRef.current, 'linuxdo-credit', credit.generation))
+                refreshAuthSurfaces((revision) => revision + 1);
+            },
+            () => undefined
+          );
+        return;
+      }
+      if (!reconciliation && credit?.phase === 'reconciling' && enabledSourcesRef.current.includes('linuxdo')) {
+        // Reading recovery has no account ticket, so it settles the Credit ticket it replaced before resuming.
+        const settlement = Promise.resolve(linuxDoCookieHandoffRef.current)
+          .then(() => {
+            const registry = authSurfaceRegistryRef.current;
+            if (
+              registry.active['linuxdo-credit']?.generation !== credit.generation ||
+              registry.active['linuxdo-credit']?.phase !== 'reconciling' ||
+              isAuthSurfaceVisible(registry, 'linuxdo-login') ||
+              Object.values(registry.active).some((active) => active?.source === 'linuxdo' && active.phase === 'open')
+            )
+              throw new CancelledError();
+            return reconcileAccountStatusRef.current('linuxdo', { surfaceGeneration: credit.generation });
+          })
+          .then((result) => {
+            if (result.status === 'unknown') throw new Error(result.error);
+            if (result.status === 'stale') throw new CancelledError();
+          });
+        linuxDoDeferredCreditReconcileRef.current = settlement;
+        void settlement
+          .catch(() => undefined)
+          .finally(() => {
+            if (linuxDoDeferredCreditReconcileRef.current === settlement)
+              linuxDoDeferredCreditReconcileRef.current = null;
+          });
+      }
       if (authoritativeResult)
-        void linuxDoCookieHandoffRef.current?.then(
+        void awaitLinuxDoCookieHandoff().then(
           () => reading.verified(),
           () => undefined
         );
@@ -828,7 +1076,9 @@ export function useAccountRuntime({
     const reason = linuxDoCookieBarrierInitializedRef.current ? 'source-change' : 'startup';
     linuxDoCookieBarrierInitializedRef.current = true;
     void setLinuxDoCookieResponseBarrier(
-      !linuxDoSourceEnabled || isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login'),
+      !linuxDoSourceEnabled ||
+        isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login') ||
+        authSurfaceRegistryRef.current.active['linuxdo-credit']?.phase === 'open',
       reason
     ).catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
   }, [linuxDoSourceEnabled, notify, cancelLinuxDoBrowserHandoff]);
@@ -845,14 +1095,22 @@ export function useAccountRuntime({
     cancelLinuxDoCheckForInactiveApp();
   }, [appActive, authSurfaceVisible, beginAuthSurfaceTicket, cancelLoginPanelCheck, cancelLinuxDoCheckForInactiveApp]);
   const closeNodeImageAuthPanel = nodeImage.panel.close;
+  const closeLinuxDoCreditPanel = linuxDoCredit.panel.close;
   const closeAuthSurface = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
       if (surface === 'linuxdo-login') closeLinuxDoPanel(true, reason);
+      else if (surface === 'linuxdo-credit') closeLinuxDoCreditPanel(reason);
       else if (surface === 'nodeimage-auth') closeNodeImageAuthPanel(reason);
       else if (surface === 'nodeseek-login') changeNodeSeekLoginPanel(false, reason);
       else closeYaohuoLoginPanel(reason);
     },
-    [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]
+    [
+      changeNodeSeekLoginPanel,
+      closeLinuxDoPanel,
+      closeLinuxDoCreditPanel,
+      closeNodeImageAuthPanel,
+      closeYaohuoLoginPanel
+    ]
   );
   const prepareAuthSurfaceOpen = useCallback(
     (openingSurface: AuthSurface) => {
@@ -867,10 +1125,14 @@ export function useAccountRuntime({
       closeNodeImageAuthPanel('source-disabled');
     }
     if (!enabledSessionSourceSet.has('yaohuo')) closeYaohuoLoginPanel('source-disabled');
-    if (!enabledSessionSourceSet.has('linuxdo')) closeLinuxDoPanel(true, 'source-disabled');
+    if (!enabledSessionSourceSet.has('linuxdo')) {
+      closeLinuxDoPanel(true, 'source-disabled');
+      closeLinuxDoCreditPanel('source-disabled');
+    }
   }, [
     changeNodeSeekLoginPanel,
     closeLinuxDoPanel,
+    closeLinuxDoCreditPanel,
     closeNodeImageAuthPanel,
     closeYaohuoLoginPanel,
     enabledSessionSourceSet
@@ -1074,7 +1336,14 @@ export function useAccountRuntime({
     closeNodeImageAuthPanel('navigation-away');
     closeYaohuoLoginPanel('navigation-away');
     closeLinuxDoPanel(true, 'navigation-away');
-  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
+    closeLinuxDoCreditPanel('navigation-away');
+  }, [
+    changeNodeSeekLoginPanel,
+    closeLinuxDoPanel,
+    closeLinuxDoCreditPanel,
+    closeNodeImageAuthPanel,
+    closeYaohuoLoginPanel
+  ]);
   const closeTopmostSurface = useCallback(() => {
     if (recoveryPanel.phase !== 'idle') {
       closeLinuxDoPanel(true, 'hardware-back');
@@ -1207,8 +1476,15 @@ export function useAccountRuntime({
   const hostElement = createElement(AccountHosts, {
     account,
     blockedMessage: webViewBlockMessage,
+    authSurfaceBlockMessages: Object.fromEntries(
+      sessionSources.map((source) => {
+        const preparation = authSurfacePreparationsRef.current[source];
+        return [source, preparation && !preparation.ready ? preparation.error || '正在保存登录交接状态…' : ''];
+      })
+    ),
     credentials,
     loginNavigation,
+    linuxDoCredit,
     nodeImage,
     session,
     status,
@@ -1266,6 +1542,11 @@ export function useAccountRuntime({
       requestAccountRecheck
     },
     center: {
+      linuxDoCredit: {
+        open: linuxDoCredit.open,
+        connectSilently: linuxDoCredit.connectSilently,
+        busy: linuxDoCredit.busy
+      },
       account: {
         linuxDoLevelBusy: account.linuxDoLevelBusy,
         linuxDoLevelError: account.linuxDoLevelError,
@@ -1309,7 +1590,8 @@ export function useAccountRuntime({
       requestNodeSeekVerification,
       showLinuxDoVerification: verification.showLinuxDoVerification,
       surfaces: {
-        linuxdo: linuxDoPanelVisible,
+        linuxdo: linuxDoPanelVisible || showLinuxDoCreditPanel,
+        linuxdoCredit: showLinuxDoCreditPanel,
         nodeseek: showLoginPanel,
         yaohuo: showYaohuoLoginPanel
       }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, fireEvent, render, within, waitFor } from '../render';
 import React, { useState } from 'react';
 import { Animated, Platform, StyleSheet } from 'react-native';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { getAnimatedStyle } from 'react-native-reanimated';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
@@ -67,6 +68,7 @@ jest.mock('@shopify/flash-list', () => {
     FlashList: ReactModule.forwardRef(function FlashList(
       {
         accessibilityElementsHidden,
+        contentContainerStyle,
         data,
         importantForAccessibility,
         keyExtractor,
@@ -84,6 +86,7 @@ jest.mock('@shopify/flash-list', () => {
         testID
       }: {
         accessibilityElementsHidden?: boolean;
+        contentContainerStyle?: React.ComponentProps<typeof NativeScrollView>['contentContainerStyle'];
         data: Topic[];
         importantForAccessibility?: React.ComponentProps<typeof NativeScrollView>['importantForAccessibility'];
         keyExtractor?: (item: Topic, index: number) => string;
@@ -128,6 +131,7 @@ jest.mock('@shopify/flash-list', () => {
         {
           accessibilityLabel: refreshControl ? '列表，支持下拉刷新' : '列表，无下拉刷新',
           accessibilityElementsHidden,
+          contentContainerStyle,
           importantForAccessibility,
           nestedScrollEnabled,
           onScroll: handleScroll,
@@ -279,7 +283,13 @@ function renderFeed(
   );
 }
 
-function ControllerFeed({ gateway }: { gateway: ReadGateway }) {
+function ControllerFeed({
+  gateway,
+  showLinuxDoVerification = () => undefined
+}: {
+  gateway: ReadGateway;
+  showLinuxDoVerification?: Parameters<typeof useFeedController>[0]['showLinuxDoVerification'];
+}) {
   const data = React.useMemo(
     () => ({
       ...readerData,
@@ -302,7 +312,7 @@ function ControllerFeed({ gateway }: { gateway: ReadGateway }) {
     notify: jest.fn(),
     readerData: data,
     readerDataLoaded: true,
-    showLinuxDoVerification: () => undefined,
+    showLinuxDoVerification,
     showNodeSeekVerification: () => undefined,
     showYaohuoLogin: () => undefined,
     readGateway: gateway
@@ -331,6 +341,77 @@ function ControllerFeed({ gateway }: { gateway: ReadGateway }) {
 }
 
 describe('feed initial content readiness', () => {
+  it.each(['unavailable', 'verification'] as const)(
+    'shows a retry action after an initial %s response and preserves recovered posts if refresh fails',
+    async (failure) => {
+      appQueryClient.clear();
+      let failing = true;
+      const fetcher = jest.fn(async () => {
+        if (failing) {
+          return failure === 'verification'
+            ? new Response('<title>Just a moment...</title>', { status: 403, headers: { 'Content-Type': 'text/html' } })
+            : new Response('unavailable', { status: 503 });
+        }
+        return Response.json({
+          topic_list: {
+            topics: [
+              { id: 901, title: '重试后的最新主题', slug: 'fresh', created_at: '2026-10-22T00:00:00Z', posts_count: 1 }
+            ]
+          }
+        });
+      });
+      const showLinuxDoVerification = jest.fn<Parameters<typeof useFeedController>[0]['showLinuxDoVerification']>();
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo'],
+        linuxDoUserAgent: () => 'saved',
+        nodeSeekUserAgent: () => 'saved',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          sourceEnabled: true,
+          authenticated: true,
+          authSurfaceOpen: false,
+          identityKey: `${source}:7`,
+          identityTrust: 'confirmed',
+          sessionEpoch: 0
+        })
+      });
+      const view = await render(
+        <QueryTestWrapper>
+          <ControllerFeed gateway={gateway} showLinuxDoVerification={showLinuxDoVerification} />
+        </QueryTestWrapper>
+      );
+      const message = failure === 'verification' ? '需要登录或验证，请完成后重试。' : '主题读取失败，请重试。';
+      try {
+        await waitFor(() => expect(view.getByText(message)).toBeTruthy());
+        expect(view.queryByText('暂无主题')).toBeNull();
+        expect(view.queryByText('当前筛选没有匹配主题')).toBeNull();
+        if (failure === 'verification') expect(showLinuxDoVerification).toHaveBeenCalled();
+        else expect(showLinuxDoVerification).not.toHaveBeenCalled();
+        const initialRequests = fetcher.mock.calls.length;
+        failing = false;
+        await fireEvent.press(view.getByRole('button', { name: '重试' }));
+        await waitFor(() => expect(view.getByText('重试后的最新主题')).toBeTruthy());
+        expect(fetcher.mock.calls.length).toBeGreaterThan(initialRequests);
+        expect(view.queryByText(message)).toBeNull();
+        failing = true;
+        await act(async () => view.getByLabelText('列表，支持下拉刷新').props.refreshControl.props.onRefresh());
+        await waitFor(() =>
+          expect(
+            view.getByTestId(`feed-outcome-${failure === 'verification' ? 'auth' : 'partial'}-all-default`)
+          ).toBeTruthy()
+        );
+        expect(view.getByText('重试后的最新主题')).toBeTruthy();
+        expect(view.queryByText(message)).toBeNull();
+        expect(view.queryByRole('button', { name: '重试' })).toBeNull();
+      } finally {
+        await view.unmount();
+        appQueryClient.clear();
+      }
+    }
+  );
+
   it.each(['success', 'failure'] as const)(
     'keeps the controller-driven list mounted through a pending cold filter and %s',
     async (outcome) => {
@@ -509,6 +590,30 @@ function FeedSortHarness({ onFilterChange }: { onFilterChange: (filter: SourceFe
 }
 
 describe('Feed loading', () => {
+  it('keeps initial loading, topics, refresh feedback, and the list end clear of measured navigation overlays', async () => {
+    const view = await render(
+      <BottomTabBarHeightContext.Provider value={100}>{renderFeed(true, [])}</BottomTabBarHeightContext.Provider>
+    );
+    await fireEvent(view.getByTestId('feed-primary-header'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 110 } }
+    });
+    await fireEvent(view.getByTestId('feed-secondary-all'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 110, width: 400, height: 62 } }
+    });
+
+    expect(
+      StyleSheet.flatten(within(view.getByTestId('mock-feed-scene-all')).getByTestId('feed-loading-scene').props.style)
+    ).toMatchObject({ paddingTop: 172 });
+    await view.rerender(
+      <BottomTabBarHeightContext.Provider value={100}>{renderFeed(false, [topic])}</BottomTabBarHeightContext.Provider>
+    );
+    const list = view.getByLabelText('列表，支持下拉刷新');
+    expect(StyleSheet.flatten(list.props.contentContainerStyle)).toMatchObject({ paddingTop: 172, paddingBottom: 116 });
+    expect(list.props.refreshControl.props.progressViewOffset).toBe(172);
+    expect(StyleSheet.flatten(view.getByTestId('feed-secondary-all').props.style).top).toBe(110);
+    expect(view.getByTestId('feed-topic-first')).toBeTruthy();
+  });
+
   it('opens a list topic only once when the card is pressed twice before navigation settles', async () => {
     const onOpenTopic = jest.fn();
     const view = await render(renderFeed(false, [topic], { onOpenTopic }));
@@ -608,13 +713,12 @@ describe('Feed loading', () => {
 
   it('keeps secondary navigation on its bottom border inside the scene', async () => {
     const view = await render(renderFeed(false, [topic]));
-    const secondary = within(view.getByTestId('feed-secondary-all')).getByLabelText('全部，已选择');
+    const secondary = within(view.getByTestId('feed-secondary-all')).getByText('全部');
 
-    expect(StyleSheet.flatten(secondary.props.style)).toMatchObject({
+    expect(StyleSheet.flatten(secondary.parent?.props.style)).toMatchObject({
       backgroundColor: 'transparent',
       borderBottomColor: theme.primary,
-      borderBottomWidth: 2,
-      paddingBottom: 5
+      borderBottomWidth: 2
     });
   });
 
@@ -907,6 +1011,20 @@ describe('Feed loading', () => {
     const refreshTag = nativeTags.find((tag) => relations.get(tag)?.blocksHandlers?.includes(scrollTag!));
     expect(relations.get(refreshTag!)).toMatchObject({ blocksHandlers: [scrollTag] });
     expect(relations.get(scrollTag!)).toMatchObject({ blocksHandlers: [] });
+  });
+
+  it('keeps the create action above the actual bottom bar as its safe area changes', async () => {
+    const screen = (height: number) => (
+      <BottomTabBarHeightContext.Provider value={height}>
+        {renderFeed(false, [topic])}
+      </BottomTabBarHeightContext.Provider>
+    );
+    const view = await render(screen(97));
+    for (const height of [97, 110, 73]) {
+      await view.rerender(screen(height));
+      const action = StyleSheet.flatten(view.getByTestId('feed-create-topic-action').props.style);
+      expect(action.bottom).toBeGreaterThanOrEqual(height + 16);
+    }
   });
 
   it('hides creation on downward scrolling, reveals it upward and restores it when returning', async () => {

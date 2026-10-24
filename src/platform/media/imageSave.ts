@@ -72,12 +72,6 @@ export async function saveImageUriToLibrary(
       throw new Error('图片地址不支持保存');
     }
     assertCurrent(requestOptions);
-    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
-    markDiagnosticStage(trace, 'credential', { isGranted: permission.granted });
-    if (!permission.granted) {
-      throw new Error('没有图片保存权限');
-    }
-    assertCurrent(requestOptions);
     let savedUri = '';
     let native: NativeImageDownload | null = null;
     let downloadId: string | undefined;
@@ -104,12 +98,8 @@ export async function saveImageUriToLibrary(
           byteCount: downloaded.byteCount
         });
       }
-      assertCurrent(requestOptions);
-      await assertReadableImageFile(savedUri);
-      assertCurrent(requestOptions);
-      markDiagnosticStage(trace, 'parse', { state: 'file-readable' });
       markDiagnosticStage(trace, 'persist', { state: 'media-library-start' });
-      await MediaLibrary.Asset.create(savedUri);
+      await saveLocalImageFileToLibrary(savedUri, () => assertCurrent(requestOptions));
       markDiagnosticStage(trace, 'persist', { state: 'media-library' });
     } finally {
       requestOptions.signal?.removeEventListener('abort', abort);

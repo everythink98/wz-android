@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { Pressable, Text } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
 import type { TopicScreen } from '@/features/topic/TopicScreen';
@@ -17,12 +17,14 @@ import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
 import type { Fetcher } from '@/platform/network/request';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
+import type { UserReference } from '@/domain/forum/models';
 import { createTheme } from '@/ui/theme/tokens';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { act, fireEvent, render, waitFor } from '../render';
 
 let mockStallHiddenRead = false;
 const mockTopicScreenMount = jest.fn();
+let mockTopicScreenProps: ComponentProps<typeof TopicScreen> | undefined;
 
 // Presentation and native WebView are boundaries; Route, Account, gateway and Query owners are real.
 jest.mock('@/features/topic/TopicScreen', () => {
@@ -30,6 +32,7 @@ jest.mock('@/features/topic/TopicScreen', () => {
   const { Text, Pressable } = require('react-native');
   return {
     TopicScreen: (props: ComponentProps<typeof TopicScreen>) => {
+      mockTopicScreenProps = props;
       React.useEffect(() => {
         mockTopicScreenMount();
       }, []);
@@ -76,7 +79,7 @@ jest.mock('react-native-webview', () => {
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
-  readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: 'test-session=fixture' }))
+  readManagedCookieHeader: jest.fn(async () => ({ status: 'ok', header: '_t=fixture-auth; _rt=fixture-runtime' }))
 }));
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -110,6 +113,7 @@ function seedAccount(username = 'alice') {
 }
 
 beforeEach(() => {
+  mockTopicScreenProps = undefined;
   jest
     .spyOn(SecureStore, 'getItemAsync')
     .mockImplementation(async (key) => (key.endsWith('-user-agent') ? 'Saved fixture browser UA' : null));
@@ -117,13 +121,15 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 async function mount(readTopic?: Fetcher) {
+  const navigationRef = createNavigationContainerRef<RootStackParamList>();
   await saveAccountSessionSnapshot(seedAccount());
   await markAccountSessionMigrationCompleted();
   let challenged = true;
   const requests: string[] = [];
   const fetcher: Fetcher = async (url, init) => {
     requests.push(url);
-    if (url.includes('/t/42.json') && readTopic) return readTopic(url, init);
+    if (url === 'https://linux.do/cdn-cgi/trace') return new Response('ip=192.0.2.17\nhttp=h2\n');
+    if (/\/t\/\d+\.json/.test(url) && readTopic) return readTopic(url, init);
     if (url.includes('/t/42.json'))
       return challenged
         ? new Response('<title>Just a moment...</title>', {
@@ -180,9 +186,13 @@ async function mount(readTopic?: Fetcher) {
     return (
       <ForumSessionEpochProvider sessionEpochs={account.read.forumSessionEpochs} transportIdentity="applied">
         <TopicRouteRuntimeProvider value={runtime}>
-          <NavigationContainer>
+          <NavigationContainer ref={navigationRef}>
             <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
               <Stack.Screen name="Topic" component={TopicRoute} initialParams={{ topic }} />
+              <Stack.Screen name="User">
+                {({ route }) => <Text>{`用户 ${route.params.user.username}`}</Text>}
+              </Stack.Screen>
+              <Stack.Screen name="TopicComposer">{() => null}</Stack.Screen>
               <Stack.Screen name="ReadingSettings">
                 {({ navigation }) => (
                   <Pressable onPress={navigation.goBack}>
@@ -205,12 +215,99 @@ async function mount(readTopic?: Fetcher) {
   return {
     view,
     Harness,
+    navigationRef,
     requests,
     allow: () => {
       challenged = false;
     }
   };
 }
+
+async function returnToForum(view: Awaited<ReturnType<typeof mount>>['view']) {
+  await waitFor(() => expect(view.getByTestId('verification-webview')).toBeTruthy());
+  const challenge = view.getByTestId('verification-webview');
+  await fireEvent(challenge, 'loadStart', { nativeEvent: { url: 'https://cdk.linux.do/login', loading: true } });
+  await fireEvent(challenge, 'message', {
+    nativeEvent: {
+      url: 'https://cdk.linux.do',
+      data: JSON.stringify({
+        type: 'linuxdo-webview',
+        documentKey: 'https://cdk.linux.do/login:1234',
+        hasChallengeMarker: false
+      })
+    }
+  });
+  await waitFor(() =>
+    expect(view.getByTestId('verification-webview').props.source.uri).toBe('https://linux.do/latest')
+  );
+  const observe = (hasSessionInitialization: boolean) =>
+    fireEvent(view.getByTestId('verification-webview'), 'message', {
+      nativeEvent: {
+        url: 'https://linux.do',
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          documentKey: 'https://linux.do/latest:1235',
+          userAgent: 'Saved fixture browser UA',
+          status: 'logged-in',
+          hasChallengeMarker: false,
+          hasSessionInitialization
+        })
+      }
+    });
+  await observe(false);
+  return () => observe(true);
+}
+
+it.each(['author', 'topic', 'settings', 'edit'])(
+  'ignores queued %s navigation after leaving the topic and permits revisiting after return',
+  async (destination) => {
+    const { view, navigationRef } = await mount(
+      async (url) =>
+        new Response(
+          JSON.stringify(
+            url.includes('/t/43.json')
+              ? { ...body, id: 43, title: 'Related topic' }
+              : destination === 'edit'
+                ? { ...body, details: { can_edit: true } }
+                : body
+          )
+        )
+    );
+    await waitFor(() => expect(view.getByText('Recovered topic')).toBeTruthy());
+    const chrome = mockTopicScreenProps?.chrome;
+    if (!chrome) throw new Error('Expected the mounted Topic route navigation actions');
+    if (destination === 'edit' && !chrome.editTopic) throw new Error('Expected the editable topic action');
+    const author: UserReference = { source: 'linuxdo', id: '7', username: 'author', url: 'https://linux.do/u/author' };
+    const openDestination =
+      destination === 'author'
+        ? () => chrome.openUser(author)
+        : destination === 'topic'
+          ? () => chrome.openTopic({ ...topic, id: '43', url: 'https://linux.do/t/43' })
+          : destination === 'edit'
+            ? chrome.editTopic!
+            : chrome.openReadingSettings;
+    const routeName =
+      destination === 'author'
+        ? 'User'
+        : destination === 'topic'
+          ? 'Topic'
+          : destination === 'edit'
+            ? 'TopicComposer'
+            : 'ReadingSettings';
+    await act(() => {
+      openDestination();
+      openDestination();
+      openDestination();
+      chrome.openUser({ ...author, id: '8', username: 'another-author' });
+    });
+    expect(navigationRef.getRootState()?.routes.map((route) => route.name)).toEqual(['Topic', routeName]);
+    if (destination === 'author') expect(view.getByText('用户 author')).toBeTruthy();
+    await act(() => navigationRef.goBack());
+    expect(view.getByText('Recovered topic')).toBeTruthy();
+    await act(() => openDestination());
+    expect(navigationRef.getRootState()?.routes.map((route) => route.name)).toEqual(['Topic', routeName]);
+  }
+);
 
 it('retains the real route detail transport when the app backgrounds and displays its original result on return', async () => {
   const response = Promise.withResolvers<Response>();
@@ -310,9 +407,13 @@ it('reopens Account verification after cancellation and explicitly refreshes the
   await fireEvent.press(view.getByText('取消验证'));
   await act(async () => fireEvent.press(view.getByText('去验证')));
   await waitFor(() => expect(view.getByText('检测并继续')).toBeTruthy());
+  const completeInitialization = await returnToForum(view);
   const before = requests.length;
   allow();
   await fireEvent.press(view.getByText('检测并继续'));
+  expect(view.getByTestId('verification-webview')).toBeTruthy();
+  expect(requests).toHaveLength(before);
+  await completeInitialization();
   await waitFor(() => expect(view.getByText('Recovered topic')).toBeTruthy());
   expect(requests.slice(before)).toEqual([expect.stringContaining('/t/42.json')]);
   expect(view.queryByText('检测并继续')).toBeNull();
@@ -331,10 +432,14 @@ it.each(['background', 'identity', 'source', 'route'] as const)(
     await fireEvent.press(view.getByText('取消验证'));
     await act(async () => fireEvent.press(view.getByText('去验证')));
     await waitFor(() => expect(view.getByText('检测并继续')).toBeTruthy());
+    const completeInitialization = await returnToForum(view);
     const handoff = Promise.withResolvers<void>();
-    jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => handoff.promise);
+    const beginHandoff = jest.fn(() => handoff.promise);
+    jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(beginHandoff);
     allow();
     await fireEvent.press(view.getByText('检测并继续'));
+    await completeInitialization();
+    await waitFor(() => expect(beginHandoff).toHaveBeenCalledTimes(1));
     const before = requests.length;
     if (exit === 'identity') await act(async () => seedAccount('bob'));
     else if (exit === 'route') await fireEvent.press(view.getByText('离开详情'));

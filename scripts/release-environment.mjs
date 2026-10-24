@@ -77,10 +77,17 @@ export function signingReleaseChildEnv(unsigned, release) {
   return child;
 }
 
-export function assertReleaseNode22(version) {
-  const match = /^22\.(\d+)\.(\d+)$/u.exec(String(version));
-  if (!match || Number(match[1]) < 22 || (Number(match[1]) === 22 && Number(match[2]) < 2)) {
-    throw new Error(`正式发布要求 Node 22 >=22.22.2 <23，当前为 ${version || 'unknown'}。`);
+export function assertReleaseNodeVersion(version) {
+  const match = /^(22|24|26)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(String(version));
+  if (
+    !match ||
+    match[0] !== version ||
+    (match[1] === '22' && (Number(match[2]) < 22 || (Number(match[2]) === 22 && Number(match[3]) < 2))) ||
+    (match[1] === '24' && Number(match[2]) < 15)
+  ) {
+    throw new Error(
+      `正式发布要求 Node >=22.22.2 <23 || >=24.15.0 <25 || >=26 <27（推荐 Node 24 LTS），当前为 ${version || 'unknown'}。`
+    );
   }
 }
 

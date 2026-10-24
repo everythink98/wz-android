@@ -1,6 +1,7 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
+import { accountSessionAccess } from '@/domain/session/siteSessionState';
 import { activeNetworkProxyProfile, applyNetworkProxy, loadNetworkProxyState } from '@/platform/network/networkProxy';
 import { notificationAdapters } from '@/sources/notificationAdapters';
 import { probeBackgroundNotificationAccess } from '@/sources/notificationBackgroundAccess';
@@ -18,6 +19,7 @@ import {
 } from '@/platform/notifications/notificationSystem';
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
 import { loadReaderSettings } from '@/platform/storage/readerDataStore';
+import { loadAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 
@@ -35,6 +37,12 @@ if (!TaskManager.isTaskDefined(NOTIFICATION_BACKGROUND_TASK)) {
         sources,
         parentTrace: trace,
         sourceAllowed: async (source) => (await loadEnabledNotificationSources()).includes(source),
+        privateAccessAllowed: async (source, identityKey) => {
+          const snapshot = await loadAccountSessionSnapshot(source);
+          if (!snapshot) return false;
+          const access = accountSessionAccess(snapshot);
+          return access.authenticated && access.identityTrust === 'confirmed' && access.identityKey === identityKey;
+        },
         network: {
           restoreProxy: async () => {
             const state = await loadNetworkProxyState();

@@ -104,7 +104,9 @@ async function checkCategoryRails() {
         previous = current;
       }
       assert(end, `${source}: reach a finite category rail end`);
-      const target = end.find((n) => !initialButtons.some((old) => old.label === n.label));
+      const target = end
+        .filter((n) => !initialButtons.some((old) => old.label === n.label))
+        .sort((a, b) => b.rect.width - a.rect.width)[0];
       assert(target, `${source}: end contains a previously hidden category`);
       device('press', `@${target.ref}`);
       device('wait', `label="${target.label}，已选择"`, '5000');
