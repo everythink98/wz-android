@@ -134,7 +134,9 @@ describe('isolated diagnostic device proof', () => {
         expect(result.symbolicatedStack).toContain(
           'DiagnosticsProofFaultActivity.onCreate(DiagnosticsProofFaultActivity.java:5)'
         );
-    }
+    },
+    // The real Java/R8 process has a 30s limit, plus test-runner overhead.
+    35_000
   );
 
   it('requires the exact archived R8 mapping before accepting the Java fault source', () => {

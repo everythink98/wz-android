@@ -95,6 +95,7 @@ describe('diagnostic build evidence', () => {
     expect(() => symbolicateDiagnosticEvent({ buildId, stack }, directory)).toThrow('checksum');
   });
 
+  // The real Java/R8 process has a 30s limit, plus test-runner overhead.
   it('uses official Retrace to recover class, source line and inlined frames from a sanitized native stack', () => {
     const { directory, buildId } = archivedFixture();
     const stack =
@@ -106,7 +107,7 @@ describe('diagnostic build evidence', () => {
     expect(() => retraceNativeDiagnosticEvent({ buildId: 'c'.repeat(32), stack }, directory)).toThrow('does not match');
     writeFileSync(path.join(directory, 'mapping.txt'), 'damaged');
     expect(() => retraceNativeDiagnosticEvent({ buildId, stack }, directory)).toThrow('checksum');
-  });
+  }, 35_000);
 
   it('continues past older sessions and reports every skipped build while symbolizing matching JS and native events', () => {
     const { directory, buildId, root } = archivedFixture();
@@ -135,5 +136,5 @@ describe('diagnostic build evidence', () => {
     expect(result.stdout).toContain('CrashOrigin.cause(CrashOrigin.kt:42)');
     const summary = JSON.parse(result.stderr.trim());
     expect(summary).toMatchObject({ buildId, symbolicated: 2, skipped: 3, skippedBuilds: { [old]: 2, unknown: 1 } });
-  });
+  }, 35_000);
 });
