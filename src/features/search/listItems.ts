@@ -1,3 +1,4 @@
+import { hasNextPageCursor } from '@/domain/forum/pagination';
 import type { Source, SourceErrorKind, Topic } from '@/domain/forum/models';
 import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 
@@ -84,13 +85,7 @@ export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
   return result.group;
 }
 
-export function hasNextSearchPage(
-  hasMore: boolean | undefined,
-  nextPage: number | null | undefined,
-  requestedPage: number
-) {
-  return Boolean(hasMore && nextPage && nextPage !== requestedPage);
-}
+export const hasNextSearchPage = hasNextPageCursor<number>;
 
 export function buildSearchListItems({
   groups,

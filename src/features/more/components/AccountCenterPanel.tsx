@@ -11,7 +11,7 @@ import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import type { UserDetails } from '@/domain/forum/models';
 import { Avatar } from '@/ui/avatar/Avatar';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { createReaderFontSizer, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { IconButton } from '@/ui/controls/ButtonControls';
 import { DisclosureChevron, ExpandableContent } from '@/ui/controls/ExpandableControls';
@@ -30,7 +30,7 @@ type AccountCenterStyles = ReturnType<typeof createAccountCenterStyles>;
 
 function createAccountCenterStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const actionColor = theme.primary;
-  const fontSize = (size: number) => Math.round(size * settings.fontScale);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
     header: { alignItems: 'center', flexDirection: 'row', gap: 8, minHeight: 52 },
     title: {

@@ -7,7 +7,7 @@ import { sourceLabel } from '@/domain/forum/presentation';
 import { errorMessage } from '@/platform/network/errors';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { createReaderFontSizer, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 
 export function TopicShareOptions({
   topic,
@@ -144,7 +144,7 @@ export function TopicShareOptions({
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const font = (size: number) => Math.round(size * settings.fontScale);
+  const font = createReaderFontSizer(settings);
   return StyleSheet.create({
     content: { flexShrink: 1 },
     topic: {

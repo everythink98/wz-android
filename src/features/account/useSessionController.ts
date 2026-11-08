@@ -1,19 +1,17 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import { sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
-import { sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { sanitizeWebViewUserAgent } from '@/platform/android/userAgent';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import {
   createNodeSeekWebViewFallbackFetcher,
-  isNodeSeekBrowserFetchUrl,
-  isNodeSeekBrowserResultUrl
+  isNodeSeekRequestUrl,
+  isNodeSeekBrowserRequestPair
 } from '@/sources/nodeseek/browserFallback';
 import {
   createLinuxDoWebViewFallbackFetcher,
-  isLinuxDoBrowserFetchUrl,
-  isLinuxDoBrowserResultUrl,
   isLinuxDoRequestUrl,
+  isLinuxDoBrowserRequestPair,
   LinuxDoHiddenBrowserFailureError,
   type LinuxDoHiddenBrowserFailureReason
 } from '@/sources/linuxdo/browserFallback';
@@ -300,7 +298,7 @@ export function useSessionController({
   const nodeSeekFetchWithWebView: Fetcher = useCallback(
     async (input, init) => {
       const url = String(input);
-      if (!isNodeSeekBrowserFetchUrl(url)) {
+      if (!isNodeSeekRequestUrl(url)) {
         return defaultFetcher(input, init);
       }
       const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
@@ -381,7 +379,7 @@ export function useSessionController({
       if (!current || data.id !== current.id) {
         return;
       }
-      if (!data.url || !isNodeSeekBrowserResultUrl(data.url, current.url)) {
+      if (!data.url || !isNodeSeekBrowserRequestPair(data.url, current.url)) {
         rejectNodeSeekBrowserFetch(current, 'NodeSeek 页面跳转到外部地址，已停止读取');
         return;
       }
@@ -398,7 +396,7 @@ export function useSessionController({
       nodeSeekBrowserWebViewRef.current?.stopLoading();
       nodeSeekBrowserFetchCurrentRef.current = null;
       setNodeSeekBrowserFetchRequest(null);
-      const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
+      const userAgent = sanitizeWebViewUserAgent(data.userAgent);
       if (credentialIsCurrent && userAgent) {
         commitNodeSeekWebViewUserAgent(userAgent);
       }
@@ -524,7 +522,7 @@ export function useSessionController({
   const linuxDoFetchWithWebView: Fetcher = useCallback(
     async (input, init) => {
       const url = String(input);
-      if (!isLinuxDoBrowserFetchUrl(url)) {
+      if (!isLinuxDoRequestUrl(url)) {
         return defaultFetcher(input, init);
       }
       return new Promise<Response>((resolve, reject) => {
@@ -627,7 +625,7 @@ export function useSessionController({
       if (!current || data.id !== current.id) {
         return;
       }
-      if (!data.url || !isLinuxDoBrowserResultUrl(data.url, current.url)) {
+      if (!data.url || !isLinuxDoBrowserRequestPair(data.url, current.url)) {
         rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
         return;
       }
@@ -648,7 +646,7 @@ export function useSessionController({
       linuxDoBrowserWebViewRef.current?.stopLoading();
       linuxDoBrowserFetchCurrentRef.current = null;
       setLinuxDoBrowserFetchRequest(null);
-      const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
+      const userAgent = sanitizeWebViewUserAgent(data.userAgent);
       if (credentialIsCurrent && isLinuxDoPage && userAgent) {
         commitLinuxDoWebViewUserAgent(userAgent);
       }

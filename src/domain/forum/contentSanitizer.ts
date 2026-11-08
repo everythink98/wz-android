@@ -2,6 +2,7 @@ import Anser from 'anser';
 import { TextNode, HTMLElement } from 'node-html-parser';
 
 import {
+  nodeTagName,
   decodeHtml,
   createForumTextIndex,
   elementText,
@@ -583,11 +584,6 @@ function mediaSourceUrl(node: HTMLElement, baseUrl: string) {
   return candidates.map((value) => sanitizedHttpMediaUrl(value, baseUrl)).find(Boolean) || '';
 }
 
-function safeTagName(node: HTMLElement) {
-  const record = node as unknown as { rawTagName?: string; tagName?: string };
-  return String(record.rawTagName || record.tagName || '').toLowerCase();
-}
-
 function sanitizePlayableAudio(root: HTMLElement, baseUrl: string) {
   transformForumElements(root, root.querySelectorAll('audio'), (node) => {
     const src = mediaSourceUrl(node, baseUrl);
@@ -864,7 +860,7 @@ function nodeSeekMagicTabContentHtml(body: HTMLElement) {
   const meaningfulChildren = body.childNodes.filter((node) => Boolean(node.toString().trim()));
   if (!roots.length && meaningfulChildren.length === 1) {
     const onlyChild = meaningfulChildren[0] as HTMLElement;
-    if (safeTagName(onlyChild) === 'code') roots.push(onlyChild);
+    if (nodeTagName(onlyChild) === 'code') roots.push(onlyChild);
   }
   transformForumElements(body, roots, (root) => {
     const xtermRows = root.matches('.xterm-rows') ? root : root.querySelector('.xterm-rows');
@@ -942,10 +938,10 @@ function sanitizeNodeSeekAnsiReportSections(root: HTMLElement) {
         const heading = siblings[index] as HTMLElement;
         const code = siblings[index + 1] as HTMLElement;
         if (
-          !['p', 'div'].includes(safeTagName(heading)) ||
+          !['p', 'div'].includes(nodeTagName(heading)) ||
           !heading.childNodes.every((node) => node instanceof TextNode) ||
           !/^(?:💻|🎬|🌐|📍)[\s\S]{0,40}$/u.test(elementText(heading)) ||
-          safeTagName(code) !== 'div' ||
+          nodeTagName(code) !== 'div' ||
           !code.classList.contains('forum-terminal-code')
         )
           break;
@@ -1029,7 +1025,7 @@ export function sanitizeContentHtmlWithRoot(
   // Validate the base once; fully qualified HTTP URLs still use the standard URL parser.
   const absoluteAttributeBase = parsedAbsoluteUrl(baseUrl, baseUrl) ? undefined : baseUrl;
   root.querySelectorAll('*').forEach((node) => {
-    const tagName = safeTagName(node);
+    const tagName = nodeTagName(node);
     for (const [name, rawValue] of Object.entries(node.attributes)) {
       const lower = name.toLowerCase();
       const value = String(rawValue || '');

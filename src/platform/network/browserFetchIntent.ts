@@ -62,3 +62,17 @@ export function withNativeForumReadIntent(input: string, init: RequestInit | und
   headers.set(FORUM_READ_CANCEL_CLASS_HEADER, forumReadCancelClass(intent));
   return { ...init, headers };
 }
+
+export function withDefaultBrowserFetchIntent<T extends { browserFetchIntent?: BrowserFetchIntent }>(
+  options: T,
+  owner: BrowserFetchOwner,
+  priority: BrowserFetchPriority
+): T {
+  if (options.browserFetchIntent) {
+    return options;
+  }
+  return {
+    ...options,
+    browserFetchIntent: { owner, priority }
+  };
+}

@@ -6,7 +6,7 @@ import type {
   NodeSeekStardustCreditPage
 } from '@/domain/forum/accountData';
 import type { ReadGateway } from '@/sources/readGateway';
-import { forumQueryKeys } from '@/platform/query/serverState';
+import { forumQueryKeys, keepFirstQueryPage } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { summarizeCredits } from './nodeSeekCredits';
 
@@ -141,9 +141,7 @@ export function useNodeSeekCredits({
       await queryClient.cancelQueries({ queryKey: key, exact: true });
       if (!currentOwner.current.enabled || currentOwner.current.owner !== owner) return;
       setRefreshedPagination({ session: paginationSession, day: new Date().setHours(0, 0, 0, 0) });
-      queryClient.setQueryData<InfiniteData<CreditPage, number>>(key, (previous) =>
-        previous ? { pages: previous.pages.slice(0, 1), pageParams: previous.pageParams.slice(0, 1) } : previous
-      );
+      queryClient.setQueryData<InfiniteData<CreditPage, number>>(key, keepFirstQueryPage);
       await refetchLedger();
     } finally {
       refreshingRef.current = false;

@@ -5,8 +5,8 @@ import { shouldHandleBrowserHttpError } from './browserFetchQueue';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 
-import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/sources/linuxdo/browserFallback';
-import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/sources/nodeseek/browserFallback';
+import { isLinuxDoBrowserRequestPair } from '@/sources/linuxdo/browserFallback';
+import { isNodeSeekBrowserRequestPair } from '@/sources/nodeseek/browserFallback';
 import type { AccountHostStyles } from './accountHostStyles';
 
 type HiddenBrowserState = {
@@ -75,10 +75,7 @@ export function HiddenBrowserHost({
   const handleNodeSeekBrowserNavigation = useCallback(
     (request: { url?: string }) => {
       const url = request.url || '';
-      if (
-        !url ||
-        (nodeSeekBrowserFetchRequest && isNodeSeekBrowserNavigationUrl(url, nodeSeekBrowserFetchRequest.url))
-      ) {
+      if (!url || (nodeSeekBrowserFetchRequest && isNodeSeekBrowserRequestPair(url, nodeSeekBrowserFetchRequest.url))) {
         return true;
       }
       if (nodeSeekBrowserFetchRequest) {
@@ -91,7 +88,7 @@ export function HiddenBrowserHost({
   const handleLinuxDoBrowserNavigation = useCallback(
     (request: { url?: string }) => {
       const url = request.url || '';
-      if (!url || (linuxDoBrowserFetchRequest && isLinuxDoBrowserNavigationUrl(url, linuxDoBrowserFetchRequest.url))) {
+      if (!url || (linuxDoBrowserFetchRequest && isLinuxDoBrowserRequestPair(url, linuxDoBrowserFetchRequest.url))) {
         return true;
       }
       if (linuxDoBrowserFetchRequest) {
@@ -153,7 +150,7 @@ export function HiddenBrowserHost({
             onHttpError={(event) => {
               if (
                 !shouldHandleBrowserHttpError(nodeSeekBrowserFetchRequest.url, event.nativeEvent.url, (url) =>
-                  isNodeSeekBrowserResultUrl(url, nodeSeekBrowserFetchRequest.url)
+                  isNodeSeekBrowserRequestPair(url, nodeSeekBrowserFetchRequest.url)
                 )
               ) {
                 return;
@@ -208,7 +205,7 @@ export function HiddenBrowserHost({
             onHttpError={(event) => {
               if (
                 !shouldHandleBrowserHttpError(linuxDoBrowserFetchRequest.url, event.nativeEvent.url, (url) =>
-                  isLinuxDoBrowserResultUrl(url, linuxDoBrowserFetchRequest.url)
+                  isLinuxDoBrowserRequestPair(url, linuxDoBrowserFetchRequest.url)
                 )
               ) {
                 return;

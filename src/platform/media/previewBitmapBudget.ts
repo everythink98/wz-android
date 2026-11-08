@@ -1,3 +1,4 @@
+import { safeImageScale } from './imageDisplayDimensions';
 export const PREVIEW_BITMAP_MAX_EDGE = 2_048;
 export const PREVIEW_BITMAP_MAX_PIXELS = PREVIEW_BITMAP_MAX_EDGE * PREVIEW_BITMAP_MAX_EDGE;
 
@@ -11,9 +12,9 @@ export function previewBitmapDecodeTarget(
   viewport: { height: number; width: number },
   pixelRatio: number
 ): PreviewBitmapDecodeTarget {
-  const density = positiveFinite(pixelRatio);
-  const rawWidth = positiveFinite(viewport.width) * density;
-  const rawHeight = positiveFinite(viewport.height) * density;
+  const density = safeImageScale(pixelRatio);
+  const rawWidth = safeImageScale(viewport.width) * density;
+  const rawHeight = safeImageScale(viewport.height) * density;
   const scale = Math.min(
     1,
     PREVIEW_BITMAP_MAX_EDGE / rawWidth,
@@ -46,10 +47,6 @@ export function previewMaxScale(
   const fittedScale = Math.min(viewport.width / source!.width, viewport.height / source!.height);
   const physicalScale = fittedScale * pixelRatio;
   return Math.max(3, 1 / physicalScale);
-}
-
-function positiveFinite(value: number) {
-  return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
 function isPositiveFinite(value: number | null | undefined): value is number {

@@ -14,8 +14,8 @@ import {
 } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { Source, UserProfile, UserReference } from '@/domain/forum/models';
-import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
-import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import { createSessionReadPlan } from '../sessionReadPlan';
+import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
@@ -106,26 +106,12 @@ function renderUserController({
       showNodeSeekVerification,
       showYaohuoLogin,
       readGateway: {
-        getReadPlan: (source: Source, operation: ForumReadOperation) => {
-          const authSurfaceOpen = isSessionSource(source) && getIdentityBarriers().includes(source);
-          const identityTrust = isSessionSource(source) ? getIdentityTrust?.(source) || 'confirmed' : undefined;
-          return resolveForumReadPlan(
-            source,
-            operation,
-            getSourceEnabled(source),
-            isSessionSource(source)
-              ? {
-                  source,
-                  authenticated: identityTrust === 'confirmed',
-                  authSurfaceOpen,
-                  identityKey: `${source}:test`,
-                  identityTrust: identityTrust!,
-                  sessionEpoch: getSessionEpochs()[source],
-                  sourceEnabled: getSourceEnabled(source)
-                }
-              : undefined
-          );
-        },
+        getReadPlan: createSessionReadPlan({
+          getIdentityBarriers,
+          getIdentityTrust,
+          getSessionEpochs,
+          getSourceEnabled
+        }),
         getUserDetails,
         getUserTopics,
         getUserReplies,

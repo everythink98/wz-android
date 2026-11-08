@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import * as Notifications from 'expo-notifications';
 import type { ForumNotification, NotificationPage } from '@/domain/notifications/models';
 import {
@@ -17,10 +18,6 @@ import {
   presentSourceNotification,
   reconcileSourceNotificationSlots
 } from '@/platform/notifications/notificationSystem';
-
-function check(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(message);
-}
 
 export async function verifyNotificationQuality(mode: 'partial' | 'invalid' | 'legacy') {
   const identityKey = 'nodeseek:quality-proof';

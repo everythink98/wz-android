@@ -2,8 +2,11 @@ import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef
 import { CancelledError, isCancelledError } from '@tanstack/react-query';
 import type { WebView } from 'react-native-webview';
 import * as SecureStore from 'expo-secure-store';
-import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
-import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import {
+  LINUXDO_USER_AGENT_STORAGE_KEY,
+  sanitizeWebViewUserAgent,
+  NODESEEK_USER_AGENT_STORAGE_KEY
+} from '@/platform/android/userAgent';
 import { migrateLegacyCookieSnapshots } from '@/platform/storage/legacyCookieSnapshotMigration';
 import { markAccountSessionHandoffPending, saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
 import {
@@ -201,9 +204,9 @@ export function useAccountRuntime({
       .then(([nodeSeekUserAgent, linuxDoUserAgent]) => {
         if (!active) return;
         if (generations.nodeseek === 0 && userAgentGatesRef.current.nodeseek.generation === 0)
-          setUserAgent('nodeseek', sanitizeNodeSeekUserAgent(nodeSeekUserAgent ?? ''));
+          setUserAgent('nodeseek', sanitizeWebViewUserAgent(nodeSeekUserAgent ?? ''));
         if (generations.linuxdo === 0 && userAgentGatesRef.current.linuxdo.generation === 0)
-          setUserAgent('linuxdo', sanitizeLinuxDoUserAgent(linuxDoUserAgent ?? ''));
+          setUserAgent('linuxdo', sanitizeWebViewUserAgent(linuxDoUserAgent ?? ''));
         setRestoredUserAgentAttempt(restoreAttempt);
       })
       .catch(() => {
@@ -232,11 +235,7 @@ export function useAccountRuntime({
         const gate = userAgentGatesRef.current[site];
         const userAgentRef = site === 'nodeseek' ? nodeSeekWebViewUserAgentRef : linuxDoWebViewUserAgentRef;
         if (isRestorationCurrent() && (!userAgentRef.current || gate.generation > 0)) {
-          const userAgent =
-            userAgentRef.current ||
-            (site === 'nodeseek'
-              ? sanitizeNodeSeekUserAgent(legacyUserAgent)
-              : sanitizeLinuxDoUserAgent(legacyUserAgent));
+          const userAgent = userAgentRef.current || sanitizeWebViewUserAgent(legacyUserAgent);
           const write = enqueueCredentialWriteForGeneration(gate, gate.generation, async ({ isCurrent }) => {
             if (!isRestorationCurrent()) return;
             await SecureStore.setItemAsync(

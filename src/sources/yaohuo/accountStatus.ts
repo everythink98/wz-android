@@ -1,5 +1,5 @@
 import { checkYaohuoLogin } from '@/sources/readGateway';
-import { summarizeYaohuoCookieHeader } from './session';
+import { summarizeCookieHeader } from '@/platform/network/cookieHeaderNames';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { managedCookieHeaderOrThrow, type ManagedCookieReadResult } from '@/platform/network/managedCookies';
@@ -67,7 +67,7 @@ export async function readYaohuoAccountStatus({
   try {
     const cookieHeader = managedCookieHeaderOrThrow(await readManagedCookieHeader(YAOHUO_ACCOUNT_STATUS_URL));
     if (signal.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-    const cookieSummary = summarizeYaohuoCookieHeader(cookieHeader).names;
+    const cookieSummary = summarizeCookieHeader(cookieHeader).names;
     const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
     markDiagnosticStage(trace, 'credential', { source: 'yaohuo', hasCredential: Boolean(cookieHeader) });
     const check = await checkYaohuoLogin({ yaohuoFetcher: diagnosticFetcher, signal });

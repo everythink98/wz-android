@@ -1,8 +1,6 @@
 package expo.modules.forumcontentselection
 
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
@@ -285,28 +283,4 @@ class ForumSelectionIsolationProofTest {
     val bounds: RectF,
     val hostOriginX: Float
   )
-
-  private class FixedReplacementSpan(
-    private val width: Int
-  ) : ReplacementSpan() {
-    override fun getSize(
-      paint: Paint,
-      text: CharSequence,
-      start: Int,
-      end: Int,
-      fontMetrics: Paint.FontMetricsInt?
-    ): Int = width
-
-    override fun draw(
-      canvas: Canvas,
-      text: CharSequence,
-      start: Int,
-      end: Int,
-      x: Float,
-      top: Int,
-      y: Int,
-      bottom: Int,
-      paint: Paint
-    ) = Unit
-  }
 }

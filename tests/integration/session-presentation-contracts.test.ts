@@ -1,17 +1,8 @@
-import { projectTestAccountSessions, testAccountUser } from '../helpers/accountSessions';
+import { emptyCredentialSummaries, projectTestAccountSessions, testAccountUser } from '../helpers/accountSessions';
 import { describe, expect, it } from 'vitest';
-import type { CredentialSummaries } from '@/platform/storage/credentialVault';
 import { createSiteAccountViews } from '@/features/more/accountCenter';
 import { authNoticeForSource, authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
-
-function emptyCredentialSummaries(): CredentialSummaries {
-  return {
-    nodeseek: { site: 'nodeseek', state: 'missing', hasCredential: false, protection: null },
-    linuxdo: { site: 'linuxdo', state: 'missing', hasCredential: false, protection: null },
-    yaohuo: { site: 'yaohuo', state: 'missing', hasCredential: false, protection: null }
-  };
-}
 
 describe('site session prompts', () => {
   it('keeps a confirmed identity available while its account check is running', () => {

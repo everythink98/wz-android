@@ -1,3 +1,4 @@
+import { createDiscourseReadingClock } from '../../../tests/helpers/discourseReadingClock';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
@@ -26,7 +27,7 @@ afterEach(() => {
 
 function setupReadingRuntime(fetcher: Fetcher) {
   vi.useFakeTimers();
-  let clock = 0;
+  const { now, advance } = createDiscourseReadingClock();
   const scope = () => 'alice';
   const sender = createLinuxDoReadingSender({ fetcher, scope, userAgent: () => 'fixture-agent' });
   const runtime = createDiscourseReadingRuntime({
@@ -34,14 +35,8 @@ function setupReadingRuntime(fetcher: Fetcher) {
     scope,
     send: (batch, identity, signal, context) =>
       sender(batch, identity, signal, undefined, context.recovery, context.beforePost),
-    now: () => clock
+    now
   });
-  const advance = async (ms: number) => {
-    for (let elapsed = 0; elapsed < ms; elapsed += 1000) {
-      clock += Math.min(1000, ms - elapsed);
-      await vi.advanceTimersByTimeAsync(Math.min(1000, ms - elapsed));
-    }
-  };
   return { runtime, advance };
 }
 

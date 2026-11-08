@@ -1,8 +1,13 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 export const MIN_AGENT_DEVICE_VERSION = '0.19.0';
+
+export function prepareDeviceEvidence(evidence) {
+  execFileSync('git', ['check-ignore', path.resolve(evidence)]);
+  mkdirSync(evidence, { recursive: true });
+}
 
 export function selectedDeviceName(device = process.env.WZ_ANDROID_TEST_DEVICE || process.env.WZ_ANDROID_SMOKE_DEVICE) {
   const selectedDevice = String(device || '').trim();

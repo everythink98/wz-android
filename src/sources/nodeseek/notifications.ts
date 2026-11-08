@@ -1,3 +1,4 @@
+import { positiveInteger } from '@/domain/forum/numericValues';
 import { absoluteUrl, isRecord, recordText as text, toIsoString } from '@/domain/forum/html';
 import { notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
@@ -155,11 +156,6 @@ async function fetchJson(path: string, options: NotificationAdapterAccess) {
   return data;
 }
 
-function integer(value: string) {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 ? number : undefined;
-}
-
 function privateReceiverUid(item: ForumNotification) {
   const id = item.target.type === 'private-conversation' ? item.target.conversationId : '';
   const uid = Number(id);
@@ -225,7 +221,7 @@ function rowNotification(group: NodeSeekGroup, row: Record<string, unknown>, own
     group === 'message'
       ? actorName
       : text(row, 'post_title', 'discussion_title', 'title') || (group === 'at-me' ? '提到了你' : '回复了你');
-  const floor = integer(floorValue);
+  const floor = positiveInteger(floorValue);
   if ((group === 'message' && !actorId) || (group !== 'message' && !postId)) return null;
   const target =
     group === 'message'
@@ -405,7 +401,7 @@ export const nodeSeekNotificationAdapter = {
       return { notification: item, title: topic.title, contentHtml: topic.contentHtml, topic };
     }
     const floor = item.target.postNumber;
-    const commentId = integer(item.target.postId || '');
+    const commentId = positiveInteger(item.target.postId || '');
     const matchesTarget = (candidate: (typeof topic.replies)[number]) =>
       commentId ? candidate.commentId === commentId : candidate.floor === floor;
     let reply = topic.replies.find(matchesTarget);

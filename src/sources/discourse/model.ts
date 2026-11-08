@@ -1,3 +1,4 @@
+import { normalizeTopicId, positiveInteger, positiveNumber } from '@/domain/forum/numericValues';
 import {
   decodeHtml,
   hasRenderableHtmlContent,
@@ -224,27 +225,12 @@ export type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentI
     >
   >;
 
-function positiveNumber(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : undefined;
-}
-
-function positiveInteger(value: unknown) {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 ? number : undefined;
-}
-
 function nonNegativeNumber(value: unknown) {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : undefined;
-}
-
-function topicId(value: unknown) {
-  const text = String(value || '').trim();
-  return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
 }
 
 function tagNames(value: unknown) {
@@ -498,7 +484,7 @@ export function discourseTopicFields(raw: unknown) {
   if (!isRecord(raw)) {
     return null;
   }
-  const id = topicId(raw.id);
+  const id = normalizeTopicId(raw.id);
   const title = decodeHtml(raw.unicode_title || raw.title || '').trim();
   const createdAt = toIsoString(raw.created_at);
   const postCount = positiveInteger(raw.posts_count);

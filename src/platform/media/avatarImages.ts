@@ -1,3 +1,4 @@
+import { isSvgContentType, positiveHeaderNumber } from './imageResponseHeaders';
 import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './imageRequestSource';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
 import { fetchWithTimeout } from '@/platform/network/request';
@@ -87,7 +88,7 @@ async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetch
   if (headType && !isSvgContentType(headType)) {
     return RETRY_LATER_AVATAR_RESULT;
   }
-  const contentLength = headerNumber(head.headers.get('content-length'));
+  const contentLength = positiveHeaderNumber(head.headers.get('content-length'));
   if (contentLength && contentLength > MAX_AVATAR_SVG_TEXT_BYTES) {
     return RETRY_LATER_AVATAR_RESULT;
   }
@@ -108,7 +109,7 @@ async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetch
   if (!response.ok) {
     return RETRY_LATER_AVATAR_RESULT;
   }
-  const responseLength = headerNumber(response.headers.get('content-length'));
+  const responseLength = positiveHeaderNumber(response.headers.get('content-length'));
   if (responseLength && responseLength > MAX_AVATAR_SVG_TEXT_BYTES) {
     return RETRY_LATER_AVATAR_RESULT;
   }
@@ -141,15 +142,6 @@ function isNodeSeekAvatarUrl(value: string) {
   }
 }
 
-function isSvgContentType(value: string | null) {
-  return /(?:^|;|\s)(?:image|application)\/svg\+xml(?:;|\s|$)/i.test(value || '');
-}
-
 function isBitmapContentType(value: string | null) {
   return /(?:^|;|\s)image\/(?:png|jpe?g|webp|gif|avif|bmp)(?:;|\s|$)/i.test(value || '');
-}
-
-function headerNumber(value: string | null) {
-  const number = value ? Number(value) : 0;
-  return Number.isFinite(number) && number > 0 ? number : 0;
 }

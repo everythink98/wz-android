@@ -1,5 +1,5 @@
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
-import { diagnosticUserAgentHash } from './linuxDoUserAgent';
+import { diagnosticUserAgentHash } from './userAgent';
 
 export function createDefaultWebViewUserAgentReader(read: () => Promise<unknown>): () => Promise<string> {
   let cached: string | undefined;

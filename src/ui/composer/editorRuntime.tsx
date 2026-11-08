@@ -123,6 +123,18 @@ function renderExpressionNode(dom: HTMLSpanElement, raw: string, config: Runtime
   dom.append(image);
 }
 
+function rawMarkdownAttributes() {
+  return { raw: { default: '' } };
+}
+
+function footnoteMarkdownAttributes() {
+  return { raw: { default: '' }, label: { default: '' } };
+}
+
+function renderRawMarkdown(node: JSONContent) {
+  return String(node.attrs?.raw || '');
+}
+
 const ForumExpressionNode = TiptapNode.create<Record<string, never>, ExpressionStorage>({
   name: 'forumExpression',
   inline: true,
@@ -132,9 +144,7 @@ const ForumExpressionNode = TiptapNode.create<Record<string, never>, ExpressionS
   addStorage() {
     return { config: null, refreshers: new Set() };
   },
-  addAttributes() {
-    return { raw: { default: '' } };
-  },
+  addAttributes: rawMarkdownAttributes,
   parseHTML() {
     return [{ tag: 'span[data-composer-node="forum-expression"]' }];
   },
@@ -182,9 +192,7 @@ const ForumExpressionNode = TiptapNode.create<Record<string, never>, ExpressionS
   parseMarkdown(token, helpers) {
     return helpers.createNode('forumExpression', { raw: token.raw });
   },
-  renderMarkdown(node) {
-    return String(node.attrs?.raw || '');
-  }
+  renderMarkdown: renderRawMarkdown
 });
 
 type ExpressionPreview = { imageUrl: string; label: string; presentation: 'emoji' | 'sticker' };
@@ -614,9 +622,7 @@ const ForumPrivateBlockNode = TiptapNode.create({
   parseMarkdown(token, helpers) {
     return helpers.createNode('forumPrivateBlock', { kind: token.kind, raw: token.raw });
   },
-  renderMarkdown(node) {
-    return String(node.attrs?.raw || '');
-  }
+  renderMarkdown: renderRawMarkdown
 });
 
 const LinuxDoDateNode = TiptapNode.create({
@@ -625,9 +631,7 @@ const LinuxDoDateNode = TiptapNode.create({
   group: 'inline',
   atom: true,
   priority: 1_000,
-  addAttributes() {
-    return { raw: { default: '' } };
-  },
+  addAttributes: rawMarkdownAttributes,
   parseHTML() {
     return [{ tag: 'span[data-composer-node="linuxdo-date"]' }];
   },
@@ -660,9 +664,7 @@ const LinuxDoDateNode = TiptapNode.create({
   parseMarkdown(token, helpers) {
     return helpers.createNode('linuxdoDate', { raw: token.raw });
   },
-  renderMarkdown(node) {
-    return String(node.attrs?.raw || '');
-  }
+  renderMarkdown: renderRawMarkdown
 });
 
 const LinuxDoFootnoteReferenceNode = TiptapNode.create({
@@ -671,9 +673,7 @@ const LinuxDoFootnoteReferenceNode = TiptapNode.create({
   group: 'inline',
   atom: true,
   priority: 1_000,
-  addAttributes() {
-    return { raw: { default: '' }, label: { default: '' } };
-  },
+  addAttributes: footnoteMarkdownAttributes,
   parseHTML() {
     return [{ tag: 'span[data-composer-node="linuxdo-footnote-reference"]' }];
   },
@@ -701,9 +701,7 @@ const LinuxDoFootnoteReferenceNode = TiptapNode.create({
   parseMarkdown(token, helpers) {
     return helpers.createNode('linuxdoFootnoteReference', { raw: token.raw, label: token.label });
   },
-  renderMarkdown(node) {
-    return String(node.attrs?.raw || '');
-  }
+  renderMarkdown: renderRawMarkdown
 });
 
 const LinuxDoFootnoteDefinitionNode = TiptapNode.create({
@@ -712,9 +710,7 @@ const LinuxDoFootnoteDefinitionNode = TiptapNode.create({
   atom: true,
   isolating: true,
   priority: 1_000,
-  addAttributes() {
-    return { raw: { default: '' }, label: { default: '' } };
-  },
+  addAttributes: footnoteMarkdownAttributes,
   parseHTML() {
     return [{ tag: 'div[data-composer-node="linuxdo-footnote-definition"]' }];
   },
@@ -752,9 +748,7 @@ const LinuxDoFootnoteDefinitionNode = TiptapNode.create({
   parseMarkdown(token, helpers) {
     return helpers.createNode('linuxdoFootnoteDefinition', { raw: token.raw, label: token.label });
   },
-  renderMarkdown(node) {
-    return String(node.attrs?.raw || '');
-  }
+  renderMarkdown: renderRawMarkdown
 });
 
 function escapeGfmTableCell(value: string) {

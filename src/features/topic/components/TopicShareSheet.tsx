@@ -26,7 +26,13 @@ import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES } from '@/ui/conte
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { readerRadii, createTheme, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import {
+  createReaderFontSizer,
+  readerRadii,
+  createTheme,
+  type ReaderStyleSettings,
+  type ReaderTheme
+} from '@/ui/theme/tokens';
 import { createHtmlCustomElementModels } from '../rendering/htmlElementModels';
 import { prepareTopicShareContent } from '../topicShareContent';
 import { shareTopicImageFile } from '../shareTopicImageFile';
@@ -497,7 +503,7 @@ export function TopicShareSheet({
 }
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const font = (size: number) => Math.round(size * settings.fontScale);
+  const font = createReaderFontSizer(settings);
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: theme.surface },
     toolbar: {

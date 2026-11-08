@@ -1,3 +1,4 @@
+import type { render } from './render';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { testPostInteractionReads } from './topicInteractionFixture';
 import { Button, Text, View } from 'react-native';
@@ -346,4 +347,8 @@ export function TopicSubmissionFixture({
       />
     </View>
   );
+}
+
+export function composerProofState(view: Awaited<ReturnType<typeof render>>) {
+  return JSON.parse(view.getByTestId('composer-proof-state').props.children);
 }

@@ -15,8 +15,8 @@ import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { RepliesResponse, Reply, TopicLocationTarget, Source, Topic, TopicDetail } from '@/domain/forum/models';
-import { resolveForumReadPlan } from '@/domain/forum/readPlan';
-import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import { createSessionReadPlan } from '../sessionReadPlan';
+import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { prepareReplyContent, requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
@@ -190,26 +190,12 @@ function renderTopicController({
         () =>
           ({
             ...readGateway,
-            getReadPlan: (source, operation) => {
-              const authSurfaceOpen = isSessionSource(source) && getIdentityBarriers().includes(source);
-              const identityTrust = isSessionSource(source) ? getIdentityTrust?.(source) || 'confirmed' : undefined;
-              return resolveForumReadPlan(
-                source,
-                operation,
-                getSourceEnabled(source),
-                isSessionSource(source)
-                  ? {
-                      source,
-                      authenticated: identityTrust === 'confirmed',
-                      authSurfaceOpen,
-                      identityKey: `${source}:test`,
-                      identityTrust: identityTrust!,
-                      sessionEpoch: getSessionEpochs()[source],
-                      sourceEnabled: getSourceEnabled(source)
-                    }
-                  : undefined
-              );
-            }
+            getReadPlan: createSessionReadPlan({
+              getIdentityBarriers,
+              getIdentityTrust,
+              getSessionEpochs,
+              getSourceEnabled
+            })
           }) as ReadGateway,
         [readGateway, getIdentityBarriers, getIdentityTrust, getSourceEnabled, getSessionEpochs]
       );

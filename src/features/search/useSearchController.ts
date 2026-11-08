@@ -26,7 +26,7 @@ import {
 } from './history';
 import type { ReadGateway } from '@/sources/readGateway';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
@@ -82,6 +82,26 @@ function combineAggregateSearchQueries(results: AggregateSearchQueryProjection[]
     isPending,
     refetch
   }));
+}
+
+async function runSearchOptions<Item>(
+  source: DiscourseSource,
+  trace: DiagnosticTrace,
+  signal: AbortSignal | undefined,
+  read: () => Promise<Item[]>
+) {
+  try {
+    const items = await read();
+    markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
+    finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
+    return items;
+  } catch (error) {
+    finishDiagnosticTrace(trace, signal?.aborted ? 'canceled' : 'failure', {
+      source,
+      reason: signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+    });
+    throw error;
+  }
 }
 
 function firstSearchPageData(result: RemoteSearchSourceResult): InfiniteData<RemoteSearchSourceResult, number> {
@@ -1105,21 +1125,9 @@ export function useSearchController({
         hasQuery: Boolean(options.query?.trim()),
         selectedCount: options.selectedTags?.length || 0
       });
-      try {
-        const items = await readGateway.searchTagOptions(
-          { source, ...request },
-          { readPlanScope: readPlan.cacheScope, trace }
-        );
-        markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
-        finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
-        return items;
-      } catch (error) {
-        finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
-          source,
-          reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-        });
-        throw error;
-      }
+      return runSearchOptions(source, trace, options.signal, () =>
+        readGateway.searchTagOptions({ source, ...request }, { readPlanScope: readPlan.cacheScope, trace })
+      );
     },
     [readGateway]
   );
@@ -1132,21 +1140,9 @@ export function useSearchController({
       const { source: _source, ...request } = options;
       const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
       markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
-      try {
-        const items = await readGateway.searchUserOptions(
-          { source, ...request },
-          { readPlanScope: readPlan.cacheScope, trace }
-        );
-        markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
-        finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
-        return items;
-      } catch (error) {
-        finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
-          source,
-          reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-        });
-        throw error;
-      }
+      return runSearchOptions(source, trace, options.signal, () =>
+        readGateway.searchUserOptions({ source, ...request }, { readPlanScope: readPlan.cacheScope, trace })
+      );
     },
     [readGateway]
   );

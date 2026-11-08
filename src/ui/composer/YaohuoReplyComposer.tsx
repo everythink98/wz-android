@@ -22,6 +22,7 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
+  createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   alphaColor,
@@ -76,7 +77,7 @@ function formatUbb(action: FormatAction, text: string) {
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
-  const scaled = (value: number) => Math.round(value * settings.fontScale);
+  const scaled = createReaderFontSizer(settings);
   const neutral = theme.dark ? '#ffffff' : '#000000';
   const neutralSurface = alphaColor(neutral, theme.dark ? 0.06 : 0.035);
   const neutralBorder = alphaColor(neutral, theme.dark ? 0.12 : 0.09);

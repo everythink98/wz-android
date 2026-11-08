@@ -1,8 +1,6 @@
 package expo.modules.forumcontentselection
 
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ReplacementSpan
@@ -127,29 +125,5 @@ class ForumReplacementSpanLayoutTest {
 
   private class FixtureReactTextView(context: Context) : ReactTextView(context) {
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) = Unit
-  }
-
-  private class FixedReplacementSpan(
-    private val width: Int
-  ) : ReplacementSpan() {
-    override fun getSize(
-      paint: Paint,
-      text: CharSequence,
-      start: Int,
-      end: Int,
-      fontMetrics: Paint.FontMetricsInt?
-    ): Int = width
-
-    override fun draw(
-      canvas: Canvas,
-      text: CharSequence,
-      start: Int,
-      end: Int,
-      x: Float,
-      top: Int,
-      y: Int,
-      bottom: Int,
-      paint: Paint
-    ) = Unit
   }
 }

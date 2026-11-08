@@ -15,7 +15,7 @@ import {
   type TopicRecord,
   type FollowedUserRecord
 } from '@/domain/reader/readerData';
-import { MAX_BACKUP_JSON_BYTES } from '@/domain/reader/readerBackup';
+import { MAX_BACKUP_JSON_BYTES, utf8ByteLength } from '@/domain/reader/readerBackup';
 import {
   createEmptyReaderState,
   readerCollections,
@@ -61,10 +61,6 @@ CREATE TABLE IF NOT EXISTS reader_deleted (
 CREATE INDEX IF NOT EXISTS reader_deleted_order ON reader_deleted(kind, time DESC, ordinal ASC);
 PRAGMA user_version = 1;
 `;
-
-export function utf8Bytes(value: string) {
-  return new TextEncoder().encode(value).byteLength;
-}
 
 export async function readReaderMeta(sql: ReaderSql) {
   return sql.getFirstAsync<ReaderMeta>('SELECT status, settings, bytes, nextOrdinal FROM reader_meta WHERE id = 1');
@@ -229,7 +225,7 @@ export class ReaderTransaction {
       'INSERT INTO reader_meta(id,status,settings,bytes,nextOrdinal) VALUES(1,?,?,?,1)',
       'cleanup_pending',
       JSON.stringify(settings),
-      utf8Bytes(JSON.stringify(empty))
+      utf8ByteLength(JSON.stringify(empty))
     );
     for (const kind of readerCollections)
       await sql.runAsync('INSERT INTO reader_counts(kind,records,deleted) VALUES(?,0,0)', kind);
@@ -258,7 +254,7 @@ export class ReaderTransaction {
   ) {
     const json = JSON.stringify(value);
     if (old?.value === json) return;
-    const bytes = utf8Bytes(JSON.stringify(key)) + 1 + utf8Bytes(json);
+    const bytes = utf8ByteLength(JSON.stringify(key)) + 1 + utf8ByteLength(json);
     const column = deleted ? 'deleted' : 'records';
     this.meta.bytes += bytes - (old?.bytes || 0) + (!old && this.counts[kind][column] > 0 ? 1 : 0);
     if (!old) {
@@ -364,7 +360,7 @@ export class ReaderTransaction {
       for (const row of rows) {
         const old = oldDeleted.get(row.key);
         if (old?.value === json) continue;
-        const bytes = utf8Bytes(JSON.stringify(row.key)) + 1 + utf8Bytes(json);
+        const bytes = utf8ByteLength(JSON.stringify(row.key)) + 1 + utf8ByteLength(json);
         this.meta.bytes += bytes - (old?.bytes || 0) + (!old && this.counts[kind].deleted > 0 ? 1 : 0);
         if (!old) this.counts[kind].deleted++;
         params.push(kind, row.key, json, Date.parse(at), old?.ordinal ?? this.meta.nextOrdinal++, bytes);
@@ -447,7 +443,7 @@ export class ReaderTransaction {
   setSettings(settings: ReaderSettings) {
     const json = JSON.stringify(settings);
     if (json === this.meta.settings) return;
-    this.meta.bytes += utf8Bytes(json) - utf8Bytes(this.meta.settings);
+    this.meta.bytes += utf8ByteLength(json) - utf8ByteLength(this.meta.settings);
     this.meta.settings = json;
     this.change.settings = settings;
   }
@@ -464,7 +460,7 @@ export class ReaderTransaction {
           const params: (string | number)[] = [];
           for (const [key, value] of batch) {
             const json = JSON.stringify(value);
-            const bytes = utf8Bytes(JSON.stringify(key)) + 1 + utf8Bytes(json);
+            const bytes = utf8ByteLength(JSON.stringify(key)) + 1 + utf8ByteLength(json);
             const ordinal = this.meta.nextOrdinal++;
             if (deleted) {
               params.push(kind, key, json, Date.parse(value as string), ordinal, bytes);
@@ -499,7 +495,7 @@ export class ReaderTransaction {
         this.dirtyCounts.add(kind);
       }
     }
-    this.meta.bytes = utf8Bytes(JSON.stringify(snapshot));
+    this.meta.bytes = utf8ByteLength(JSON.stringify(snapshot));
   }
 
   async replaceBackupSnapshot(snapshot: ReaderData) {

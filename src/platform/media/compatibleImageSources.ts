@@ -1,3 +1,4 @@
+import { isSvgContentType, positiveHeaderNumber } from './imageResponseHeaders';
 import { Buffer } from 'buffer';
 import type { ImageURISource } from 'react-native';
 import { normalizeImagePreviewUrl } from './imageRequestSource';
@@ -554,13 +555,4 @@ export function stableImageRequestKey(value: string) {
 
 function stableSvgPosterKey(value: string) {
   return `svg-${stableImageRequestKey(value)}`;
-}
-
-function isSvgContentType(value: string | null) {
-  return /(?:^|;|\s)(?:image|application)\/svg\+xml(?:;|\s|$)/i.test(value || '');
-}
-
-function positiveHeaderNumber(value: string | null) {
-  const parsed = value ? Number(value) : 0;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }

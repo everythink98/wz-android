@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import { runAgentDevice } from './agent-device-runtime.mjs';
+import { prepareDeviceEvidence, runAgentDevice } from './agent-device-runtime.mjs';
 
 const serial = process.env.ANDROID_SERIAL;
 const evidence = process.argv[2];
@@ -13,8 +13,7 @@ const railSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 const railSource = process.argv[4];
 assert(!railSource || (mode === 'rail' && railSources.includes(railSource)), 'Select a supported rail source.');
 assert(serial && evidence, 'Set ANDROID_SERIAL and pass an ignored evidence directory.');
-execFileSync('git', ['check-ignore', path.resolve(evidence)]);
-mkdirSync(evidence, { recursive: true });
+prepareDeviceEvidence(evidence);
 const device = (...args) =>
   runAgentDevice([...args, '--platform', 'android', '--serial', serial], { capture: true, echoCapture: false });
 const snapshot = () => JSON.parse(device('snapshot', '--json')).data.nodes;

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { focusManager, onlineManager } from '@tanstack/react-query';
+import { createQueryTestWrapper } from '../QueryTestWrapper';
 import type { SessionSite } from '@/domain/session/siteSessionState';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -71,9 +71,7 @@ function setup() {
         }),
       {
         initialProps: { active: true, site: 'nodeseek' },
-        wrapper: ({ children }: { children: ReactNode }) => (
-          <QueryClientProvider client={client}>{children}</QueryClientProvider>
-        )
+        wrapper: createQueryTestWrapper(client)
       }
     );
   return { client, getUserDetails, getOverview, getBoard, render };

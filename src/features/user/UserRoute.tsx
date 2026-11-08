@@ -1,13 +1,11 @@
 import { useCallback } from 'react';
-import { Linking } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Topic } from '@/domain/forum/models';
 
 import { userKey } from '@/domain/reader/readerData';
 
-import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
-import { errorMessage } from '@/platform/network/errors';
+import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
@@ -51,16 +49,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     readGateway: runtime.account.readGateway,
     user: route.params.user
   });
-  const openExternalUrl = useCallback(
-    (url: string) => {
-      if (!isHttpOrHttpsUrl(url)) {
-        runtime.notify('仅支持打开 http/https 链接。');
-        return;
-      }
-      void Linking.openURL(url).catch((error) => runtime.notify(errorMessage(error)));
-    },
-    [runtime]
-  );
+  const openExternalUrl = useCallback((url: string) => openHttpUrl(url, runtime.notify), [runtime]);
   const refreshUser = useCallback(() => {
     void controller.refreshUser();
   }, [controller]);

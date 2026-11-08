@@ -6,7 +6,7 @@ import {
   LinuxDoCloudflareError,
   cloudflareChallengeDiagnostics
 } from '@/platform/network/cloudflareChallenge';
-import { diagnosticUserAgentHash } from '@/platform/android/linuxDoUserAgent';
+import { diagnosticUserAgentHash } from '@/platform/android/userAgent';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import {
   diagnosticRequestFields,

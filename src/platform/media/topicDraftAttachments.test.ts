@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { FileUriPart } from '../../../tests/helpers/expoFileUri';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,17 +16,12 @@ const harness = vi.hoisted(() => ({ directory: '', failCopy: false, saved: null 
 vi.mock('@/platform/persistence/topicDrafts', () => ({ loadTopicDraft: async () => harness.saved }));
 vi.mock('expo-file-system', async () => {
   const fs = await import('node:fs');
-  const { join } = await import('node:path');
   const { fileURLToPath, pathToFileURL } = await import('node:url');
-  type Part = string | { uri: string };
-  const uriFor = (parts: Part[]) => {
-    const [root, ...names] = parts.map((part) => (typeof part === 'string' ? part : part.uri));
-    return pathToFileURL(join(fileURLToPath(root), ...names)).href;
-  };
+  const { fileUriFor } = await import('../../../tests/helpers/expoFileUri');
   class Directory {
     uri: string;
-    constructor(...parts: Part[]) {
-      this.uri = uriFor(parts) + '/';
+    constructor(...parts: FileUriPart[]) {
+      this.uri = fileUriFor(parts) + '/';
     }
     create() {
       fs.mkdirSync(fileURLToPath(this.uri), { recursive: true });
@@ -33,8 +29,8 @@ vi.mock('expo-file-system', async () => {
   }
   class File {
     uri: string;
-    constructor(...parts: Part[]) {
-      this.uri = uriFor(parts);
+    constructor(...parts: FileUriPart[]) {
+      this.uri = fileUriFor(parts);
     }
     get exists() {
       return fs.existsSync(fileURLToPath(this.uri));

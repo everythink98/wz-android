@@ -13,3 +13,11 @@ export function cookieNamesFromHeader(header?: string | null) {
   }
   return [...names].sort((left, right) => left.localeCompare(right));
 }
+
+export function summarizeCookieHeader(header?: string | null) {
+  const names = cookieNamesFromHeader(header);
+  return {
+    count: names.length,
+    names
+  };
+}

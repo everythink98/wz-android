@@ -68,7 +68,6 @@ import {
   nodeSeekStardustReceiveFromAttributes
 } from '@/sources/nodeseek/stardustMarkup';
 import {
-  replyContextBadgeStyle,
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
   topicStatusBadgeTextColorStyle,
@@ -137,6 +136,7 @@ import { highlightHtml } from '@/ui/text/highlight';
 import { stripHtml } from '@/domain/forum/text';
 import { createHtmlCustomElementModels } from '../rendering/htmlElementModels';
 import {
+  monotonicNowMs,
   TopicBodyMediaCoordinatorProvider,
   useTopicBodyMediaFirstRowMarker,
   TopicBodyMediaRowBoundary,
@@ -302,10 +302,6 @@ type QuoteContentLayoutProgress = {
   frame: number | null;
   primed: boolean;
 };
-
-function monotonicNowMs() {
-  return typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
-}
 
 function TopicListItemFrame({
   children,
@@ -2217,7 +2213,7 @@ export const TopicContentList = memo(function TopicContentList({
                     </Text>
                     {item.authorLevelLabel ? (
                       <Text
-                        style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}
+                        style={[styles.replyContextBadge, topicStatusBadgeColorStyle('neutral', theme)]}
                         numberOfLines={1}
                       >
                         {item.authorLevelLabel}

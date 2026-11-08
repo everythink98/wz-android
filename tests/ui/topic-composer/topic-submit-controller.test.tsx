@@ -1,3 +1,4 @@
+import { sqliteParameters as mockSqliteParameters } from '../../helpers/sqliteParameters';
 import { createTopicEditTransport } from '../../helpers/topicEditingTransport';
 import { createTopicProofTransport } from '../../helpers/topicCreationTransport';
 import { loadLinuxDoTopicEditContext } from '@/sources/linuxdo/topicEditing';
@@ -68,7 +69,6 @@ jest.mock('expo-sqlite', () => ({
     const { DatabaseSync } = jest.requireActual<typeof import('node:sqlite')>('node:sqlite');
     const db = mockDatabases.get(name) || new DatabaseSync(':memory:');
     mockDatabases.set(name, db);
-    const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
     const check = (sql: string) => {
       if (mockSqlFailure && sql.includes(mockSqlFailure)) {
         mockSqlFailure = '';
@@ -87,15 +87,15 @@ jest.mock('expo-sqlite', () => ({
           mockDraftSaveGate = undefined;
           await gate();
         }
-        return db.prepare(sql).run(...parameters(args));
+        return db.prepare(sql).run(...mockSqliteParameters(args));
       },
       getFirstAsync: async (sql: string, ...args: unknown[]) => {
         check(sql);
-        return db.prepare(sql).get(...parameters(args)) ?? null;
+        return db.prepare(sql).get(...mockSqliteParameters(args)) ?? null;
       },
       getAllAsync: async (sql: string, ...args: unknown[]) => {
         check(sql);
-        return db.prepare(sql).all(...parameters(args));
+        return db.prepare(sql).all(...mockSqliteParameters(args));
       },
       closeAsync: async () => undefined
     };

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { focusManager, onlineManager, QueryClientProvider, type InfiniteData } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { focusManager, onlineManager, type InfiniteData } from '@tanstack/react-query';
+import { createQueryTestWrapper } from '../QueryTestWrapper';
 import type {
   NodeSeekAttendanceBoard,
   NodeSeekCreditCurrency,
@@ -77,9 +77,7 @@ async function controller(
     }) => useNodeSeekCredits({ active, gateway, userId, sessionEpoch, currency: selectedCurrency ?? currency }),
     {
       initialProps: { active, userId: '42', sessionEpoch: 0 },
-      wrapper: ({ children }: { children: ReactNode }) => (
-        <QueryClientProvider client={client}>{children}</QueryClientProvider>
-      )
+      wrapper: createQueryTestWrapper(client)
     }
   );
   return { ...hook, client, getAttendance, getStardust };

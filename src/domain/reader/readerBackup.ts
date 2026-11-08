@@ -6,8 +6,8 @@ export const MAX_BACKUP_JSON_BYTES = 5 * 1024 * 1024;
 const MAX_BACKUP_OBJECT_DEPTH = 32;
 const BACKUP_TOO_LARGE_MESSAGE = '备份文件过大，请减少历史记录后重新导入。';
 
-function utf8ByteLength(value: string) {
-  return new TextEncoder().encode(value).length;
+export function utf8ByteLength(value: string) {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function stripSensitive(value: unknown, depth = 0, path = ''): unknown {

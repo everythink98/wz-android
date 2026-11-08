@@ -1,5 +1,6 @@
 import { StyleSheet } from 'react-native';
 import {
+  createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   alphaColor,
@@ -10,7 +11,7 @@ import {
 
 export function createNotificationStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
-  const scaled = (value: number) => Math.round(value * settings.fontScale);
+  const scaled = createReaderFontSizer(settings);
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.background },
     listContent: { flexGrow: 1, backgroundColor: theme.surface, paddingBottom: 24 },

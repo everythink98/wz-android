@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import pngjs from 'pngjs';
-import { runAgentDevice } from './agent-device-runtime.mjs';
+import { captureDeviceScreenshot } from './device-screenshot.mjs';
+import { prepareDeviceEvidence, runAgentDevice } from './agent-device-runtime.mjs';
 
 // Light theme, a readable source. Only refreshes reads; never opens or modifies posts.
 const serial = process.env.ANDROID_SERIAL;
@@ -12,8 +12,7 @@ const evidence = process.argv[2];
 const mode = process.argv[3] || 'pulls';
 assert(serial && evidence, 'Set ANDROID_SERIAL and pass an ignored evidence directory.');
 assert(['pulls', 'interruptions'].includes(mode), 'Select pulls or interruptions.');
-execFileSync('git', ['check-ignore', path.resolve(evidence)]);
-mkdirSync(evidence, { recursive: true });
+prepareDeviceEvidence(evidence);
 const adb = (...args) => execFileSync('adb', ['-s', serial, ...args]);
 const device = (...args) =>
   runAgentDevice([...args, '--platform', 'android', '--serial', serial], { capture: true, echoCapture: false });
@@ -30,9 +29,7 @@ const x = Math.round(list.width * 0.51);
 const y = Math.round(list.y + list.height * 0.3);
 const end = Math.round(list.y + list.height * 0.9);
 function capture(name) {
-  const bytes = adb('exec-out', 'screencap', '-p');
-  writeFileSync(path.join(evidence, `${name}.png`), bytes);
-  const { width, data } = pngjs.PNG.sync.read(bytes);
+  const { width, data } = captureDeviceScreenshot(serial, evidence, name);
   let blue = 0;
   // This strip may include selected tabs; compare against the captured baseline and inspect candidates.
   for (let cy = list.y; cy < list.y + list.height * 0.3; cy++) {

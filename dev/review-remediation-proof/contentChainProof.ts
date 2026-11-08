@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import { HTMLElement, TextNode } from 'node-html-parser';
 import { parseHtml } from '@/domain/forum/html';
 import { sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
@@ -8,10 +9,6 @@ import { parseNodeSeekPageDocument } from '@/sources/nodeseek/protocol';
 import { normalizeRenderedNodeSeekPollRoot, parseRenderedNodeSeekTopicHtml } from '@/sources/nodeseek/topicParser';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { parseYaohuoTopicHtml, parseYaohuoRepliesDocument } from '@/sources/yaohuo/topicParser';
-
-function check(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
 
 export type ContentWork = {
   layout: string;

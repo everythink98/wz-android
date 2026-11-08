@@ -1,10 +1,15 @@
+import { composerHostMessages } from '../composerHostMessages';
 import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
 import { QueryTestWrapper } from '../QueryTestWrapper';
-import { createComposerTransport, TopicSubmissionFixture, type ComposerTransport } from '../composerSubmissionFixture';
-import type { ComposerHostMessage } from '@/ui/composer/structuredComposerBridge';
+import {
+  composerProofState,
+  createComposerTransport,
+  TopicSubmissionFixture,
+  type ComposerTransport
+} from '../composerSubmissionFixture';
 
 // Native sheet geometry and WebView DOM rendering remain device evidence.
 jest.mock('react-native-reanimated', () => ({
@@ -44,16 +49,6 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaFrame: () => ({ x: 0, y: 0, width: 360, height: 800 })
 }));
 
-type Rendered = Awaited<ReturnType<typeof render>>;
-function messages(view: Rendered): ComposerHostMessage[] {
-  return view
-    .getByTestId('structured-composer-webview', { includeHiddenElements: true })
-    .props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
-}
-function state(view: Rendered) {
-  return JSON.parse(view.getByTestId('composer-proof-state').props.children);
-}
-
 describe('large composer documents under repeated interaction', () => {
   const transports: ComposerTransport[] = [];
   beforeEach(async () => {
@@ -79,7 +74,7 @@ describe('large composer documents under repeated interaction', () => {
         await fireEvent.press(view.getByText('打开测试回复'));
         if (round === 0)
           await fireEvent(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }), 'loadEnd');
-        const init = messages(view).findLast((message) => message.type === 'INIT');
+        const init = composerHostMessages(view).findLast((message) => message.type === 'INIT');
         expect(init).toBeDefined();
         const documentEpoch = init!.payload.documentEpoch;
         const send = (type: string, payload: object) =>
@@ -87,9 +82,9 @@ describe('large composer documents under repeated interaction', () => {
             nativeEvent: { data: JSON.stringify({ type, payload: { documentEpoch, ...payload } }) }
           });
         await act(async () => send('READY', { revision: 0 }));
-        const start = messages(view).length;
+        const start = composerHostMessages(view).length;
         for (let press = 0; press < 100; press++) await fireEvent.press(view.getByLabelText('发送回复'));
-        const requests = messages(view)
+        const requests = composerHostMessages(view)
           .slice(start)
           .filter((message) => message.type === 'REQUEST_SNAPSHOT');
         snapshotRequests += requests.length;
@@ -107,25 +102,25 @@ describe('large composer documents under repeated interaction', () => {
           for (const request of requests) send('SNAPSHOT', { requestId: request.payload.requestId, snapshot });
         });
         await waitFor(() => expect(transport.requests).toHaveLength(round + 1));
-        expect(state(view)).toEqual({ visible: true, content: markdown, busy: true });
+        expect(composerProofState(view)).toEqual({ visible: true, content: markdown, busy: true });
         const body = transport.requests[round]!.body;
         expect(source === 'nodeseek' ? JSON.parse(body).content : new URLSearchParams(body).get('raw')).toBe(markdown);
         await act(async () => transport.release());
         await waitFor(() =>
-          expect(messages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')?.payload.submission).toEqual(
-            {
-              documentEpoch,
-              revision: snapshot.revision
-            }
-          )
+          expect(
+            composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')?.payload.submission
+          ).toEqual({
+            documentEpoch,
+            revision: snapshot.revision
+          })
         );
-        const settlement = messages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')!;
+        const settlement = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT')!;
         await act(async () => send('SNAPSHOT', { requestId: settlement.payload.requestId, snapshot }));
-        await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
+        await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
         await act(async () => {
           for (let late = 0; late < 100; late++) send('SNAPSHOT', { snapshot: { ...snapshot, revision: late + 2 } });
         });
-        expect(state(view).content).toBe('');
+        expect(composerProofState(view).content).toBe('');
         expect(transport.confirmations).toBe(round + 1);
       }
       console.info(

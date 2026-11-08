@@ -1,8 +1,9 @@
+import { createImageTouch } from '../imageTouchFixture';
 import { describe, expect, it, jest } from '@jest/globals';
 import { inactivePostInteractionActions } from '../topicInteractionFixture';
 import React, { type ReactNode, type RefObject } from 'react';
 import type { FlashListRef } from '@shopify/flash-list';
-import { Platform, StyleSheet, Text, View, type MeasureOnSuccessCallback } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import type { PanGestureHandlerEventPayload } from 'react-native-gesture-handler';
 import { createGestureController, getByGestureTestId } from 'react-native-gesture-handler/jest-utils';
 import RenderHTML, {
@@ -756,21 +757,7 @@ describe('topic rich-text selection', () => {
         });
         const anchor = view.getByTestId('a');
         const image = within(anchor).getByLabelText('linked image');
-        const target = { measure: (callback: MeasureOnSuccessCallback) => callback(0, 0, 320, 240, 0, 0) };
-        const touch = (x: number, count: number) => {
-          const point = (identifier: number) => ({ identifier, pageX: x, pageY: 60 + identifier * 40 });
-          return {
-            currentTarget: target,
-            target,
-            persist: () => undefined,
-            stopPropagation: () => undefined,
-            nativeEvent: {
-              ...point(0),
-              touches: Array.from({ length: count }, (_, index) => point(index)),
-              changedTouches: [point(count === 2 ? 1 : 0)]
-            }
-          };
-        };
+        const { target, touch } = createImageTouch();
         expect(anchor).not.toBe(image);
         expect(anchor.props.accessibilityRole).toBe('link');
         expect(anchor.props.onResponderGrant).toEqual(expect.any(Function));
@@ -958,21 +945,7 @@ describe('topic rich-text selection', () => {
           mockReadingList.onLoad();
         });
         const image = view.getByLabelText('touch gallery image');
-        const target = { measure: (callback: MeasureOnSuccessCallback) => callback(0, 0, 320, 240, 0, 0) };
-        const touch = (x: number, count: number) => {
-          const point = (identifier: number) => ({ identifier, pageX: x, pageY: 60 + identifier * 40 });
-          return {
-            currentTarget: target,
-            target,
-            persist: () => undefined,
-            stopPropagation: () => undefined,
-            nativeEvent: {
-              ...point(0),
-              touches: Array.from({ length: count }, (_, index) => point(index)),
-              changedTouches: [point(count === 2 ? 1 : 0)]
-            }
-          };
-        };
+        const { touch } = createImageTouch();
         expect(image.props.onResponderGrant).toEqual(expect.any(Function));
         await fireEvent(image, 'responderGrant', touch(240, 1));
         await fireEvent(image, 'touchStart', touch(240, 1));

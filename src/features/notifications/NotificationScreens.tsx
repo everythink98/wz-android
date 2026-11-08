@@ -1025,6 +1025,13 @@ export function NotificationDetailScreen({
     );
   }
   const item = detail.notification;
+  const detailHtmlProps = {
+    source: item.source,
+    mediaContext,
+    onOpenImagePreview: openImagePreview,
+    onOpenExternalUrl,
+    onOpenTopic
+  };
   const conversation = Boolean(detail.messages);
   const emptyConversation = item.source === 'nodeseek' && detail.messages?.length === 0;
   const readOnlyText =
@@ -1115,15 +1122,7 @@ export function NotificationDetailScreen({
               <View style={styles.conversationOriginal}>
                 <Text style={styles.conversationOriginalLabel}>原消息</Text>
                 {detail.contentHtml ? (
-                  <DetailHtml
-                    contentWidth={contentWidth - 50}
-                    html={detail.contentHtml}
-                    source={item.source}
-                    mediaContext={mediaContext}
-                    onOpenImagePreview={openImagePreview}
-                    onOpenExternalUrl={onOpenExternalUrl}
-                    onOpenTopic={onOpenTopic}
-                  />
+                  <DetailHtml contentWidth={contentWidth - 50} html={detail.contentHtml} {...detailHtmlProps} />
                 ) : null}
                 {detail.contentText ? (
                   <Text selectable style={styles.detailBody}>
@@ -1195,11 +1194,7 @@ export function NotificationDetailScreen({
                         message
                         contentWidth={Math.round(contentWidth * 0.72)}
                         html={message.contentHtml}
-                        source={item.source}
-                        mediaContext={mediaContext}
-                        onOpenImagePreview={openImagePreview}
-                        onOpenExternalUrl={onOpenExternalUrl}
-                        onOpenTopic={onOpenTopic}
+                        {...detailHtmlProps}
                       />
                     ) : null}
                     {message.contentText ? (
@@ -1214,15 +1209,7 @@ export function NotificationDetailScreen({
           ) : (
             <>
               {detail.contentHtml ? (
-                <DetailHtml
-                  contentWidth={contentWidth}
-                  html={detail.contentHtml}
-                  source={item.source}
-                  mediaContext={mediaContext}
-                  onOpenImagePreview={openImagePreview}
-                  onOpenExternalUrl={onOpenExternalUrl}
-                  onOpenTopic={onOpenTopic}
-                />
+                <DetailHtml contentWidth={contentWidth} html={detail.contentHtml} {...detailHtmlProps} />
               ) : null}
               {detail.contentText ? (
                 <Text selectable style={styles.detailBody}>

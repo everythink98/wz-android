@@ -1,14 +1,8 @@
+import { jsonResponse } from '../../tests/helpers/jsonResponse';
 import { describe, expect, it, vi } from 'vitest';
 
 import { linuxDoNotificationAdapter } from './discourseNotifications';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
-
-function json(value: unknown) {
-  return new Response(JSON.stringify(value), {
-    status: 200,
-    headers: { 'content-type': 'application/json' }
-  });
-}
 
 describe('Discourse notifications', () => {
   function conversationHistory(count: number) {
@@ -31,10 +25,10 @@ describe('Discourse notifications', () => {
         if (failPosts) throw new Error('历史读取失败');
         const ids = url.searchParams.getAll('post_ids[]');
         const found = all.filter((post) => ids.includes(String(post.id)));
-        return json({ post_stream: { posts: incompletePosts ? found.slice(1) : found } });
+        return jsonResponse({ post_stream: { posts: incompletePosts ? found.slice(1) : found } });
       }
       if (url.pathname !== '/t/201.json') throw new Error(`Unexpected request ${url.pathname}`);
-      return json({
+      return jsonResponse({
         id: 201,
         title: '长私信',
         slug: 'private-topic',
@@ -156,7 +150,7 @@ describe('Discourse notifications', () => {
       identityKey: 'linuxdo:7',
       userId: '7',
       fetcher: async () =>
-        json({
+        jsonResponse({
           notifications: [
             { id: 1, data: { display_username: '显示名' } },
             { id: 2, data: { display_username: '显示名', username: 'actual_username' } }
@@ -185,7 +179,7 @@ describe('Discourse notifications', () => {
       identityKey: 'linuxdo:7',
       userId: '7',
       unreadOnly: true,
-      fetcher: async () => json({ notifications: [null], total_rows_notifications: 1 })
+      fetcher: async () => jsonResponse({ notifications: [null], total_rows_notifications: 1 })
     });
     expect(page.items).toEqual([]);
     expect(sourceDiagnosticSummary(page)).toMatchObject({
@@ -199,7 +193,7 @@ describe('Discourse notifications', () => {
   it('exposes the current Discourse menu categories and advertised Chat support', async () => {
     const fetcher = vi.fn(async (input: string) => {
       expect(new URL(input).pathname).toBe('/site.json');
-      return json({
+      return jsonResponse({
         notification_types: {
           mentioned: 1,
           replied: 2,
@@ -231,15 +225,15 @@ describe('Discourse notifications', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/site.json') {
-        return json({ notification_types: { mentioned: 1, replied: 2, liked: 5 } });
+        return jsonResponse({ notification_types: { mentioned: 1, replied: 2, liked: 5 } });
       }
       if (url.searchParams.get('offset') === '2') {
-        return json({
+        return jsonResponse({
           notifications: [{ id: 3, notification_type: 2, read: false, data: {} }],
           total_rows_notifications: 3
         });
       }
-      return json({
+      return jsonResponse({
         notifications: [
           { id: 1, notification_type: 5, read: false, data: {} },
           { id: 2, notification_type: 5, read: false, data: {} }
@@ -285,7 +279,7 @@ describe('Discourse notifications', () => {
     const fetcher = vi.fn(async (input: string) => {
       const path = new URL(input).pathname;
       if (path === '/site.json') {
-        return json({
+        return jsonResponse({
           notification_types: {
             mentioned: 1,
             liked: 5,
@@ -297,7 +291,7 @@ describe('Discourse notifications', () => {
           }
         });
       }
-      return json({ notifications: [] });
+      return jsonResponse({ notifications: [] });
     });
 
     await linuxDoNotificationAdapter.listPage({
@@ -315,7 +309,7 @@ describe('Discourse notifications', () => {
 
   it('maps the Discourse private-message menu to conversation rows', async () => {
     const fetcher = vi.fn(async (_input: string) =>
-      json({
+      jsonResponse({
         read_notifications: [],
         unread_notifications: [
           {
@@ -393,7 +387,7 @@ describe('Discourse notifications', () => {
         userId: '7',
         username: 'alice',
         fetcher: async () =>
-          json({
+          jsonResponse({
             read_notifications: [],
             unread_notifications: [],
             topics: [{ id: 201, title: '私信主题', last_poster_username: lastPoster, participants }],
@@ -419,7 +413,7 @@ describe('Discourse notifications', () => {
         userId: '7',
         username: 'alice',
         fetcher: async () =>
-          json(
+          jsonResponse(
             categoryId === 'messages'
               ? { topics: [], users: [], unread_notifications: [ownNotification], read_notifications: [] }
               : { notifications: [ownNotification], total_rows_notifications: 1 }
@@ -446,13 +440,13 @@ describe('Discourse notifications', () => {
     const fetcher = vi.fn(async (input: string) => {
       const path = new URL(input).pathname;
       if (path === '/notifications') {
-        return json({ notifications: [notification], total_rows_notifications: 1 });
+        return jsonResponse({ notifications: [notification], total_rows_notifications: 1 });
       }
       if (path === '/u/alice/user-menu-private-messages') {
-        return json({ read_notifications: [notification], unread_notifications: [], topics: [], users: [] });
+        return jsonResponse({ read_notifications: [notification], unread_notifications: [], topics: [], users: [] });
       }
       if (path === '/t/202.json') {
-        return json({
+        return jsonResponse({
           id: 202,
           title: '与 discobot 的私信',
           slug: 'discobot-message',
@@ -532,7 +526,7 @@ describe('Discourse notifications', () => {
   });
 
   it('rejects a structurally invalid Discourse notification payload instead of treating it as empty', async () => {
-    const fetcher = vi.fn(async () => json({ total_rows_notifications: 0 }));
+    const fetcher = vi.fn(async () => jsonResponse({ total_rows_notifications: 0 }));
 
     await expect(
       linuxDoNotificationAdapter.listPage({
@@ -545,7 +539,7 @@ describe('Discourse notifications', () => {
 
   it('reads the official top-level notification serializer fields', async () => {
     const fetcher = vi.fn(async (_input: string) =>
-      json({
+      jsonResponse({
         notifications: [
           {
             id: 30,
@@ -578,7 +572,7 @@ describe('Discourse notifications', () => {
 
   it('maps known kinds, preserves unknown kinds, and uses an opaque offset cursor', async () => {
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
-      json({
+      jsonResponse({
         total_rows_notifications: 8,
         notifications: [
           {
@@ -642,7 +636,7 @@ describe('Discourse notifications', () => {
     };
     const detail = { notification: item, title: item.title };
     const linuxFetcher = vi.fn(async (url: string, _init?: RequestInit) =>
-      new URL(url).pathname === '/session/csrf' ? json({ csrf: 'token' }) : json({ success: true })
+      new URL(url).pathname === '/session/csrf' ? jsonResponse({ csrf: 'token' }) : jsonResponse({ success: true })
     );
 
     await linuxDoNotificationAdapter.markRead(item, detail, {
@@ -665,7 +659,7 @@ describe('Discourse notifications', () => {
 
   it('uses the unread filter and the authoritative unread total', async () => {
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
-      json({
+      jsonResponse({
         total_rows_notifications: 4,
         notifications: []
       })
@@ -685,7 +679,7 @@ describe('Discourse notifications', () => {
 
   it('matches the current Discourse notification type contract', async () => {
     const fetcher = vi.fn(async (_input: string) =>
-      json({
+      jsonResponse({
         notifications: [
           { id: 1, notification_type: 9, read: false, data: {} },
           { id: 2, notification_type: 19, read: false, data: {} },
@@ -707,7 +701,7 @@ describe('Discourse notifications', () => {
 
   it('keeps a topic-only notification out of exact post lookup', async () => {
     const fetcher = vi.fn(async (_input: string) =>
-      json({
+      jsonResponse({
         notifications: [
           {
             id: 18,
@@ -750,7 +744,7 @@ describe('Discourse notifications', () => {
 
   it('loads the exact Discourse post for read-only detail', async () => {
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
-      json({
+      jsonResponse({
         id: 777,
         topic_id: 201,
         post_number: 4,
@@ -798,7 +792,7 @@ describe('Discourse notifications', () => {
 
   it('loads a Discourse private topic as an ordered replyable conversation', async () => {
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
-      json({
+      jsonResponse({
         id: 201,
         title: '私信主题',
         slug: 'secret-topic',
@@ -873,7 +867,9 @@ describe('Discourse notifications', () => {
 
   it('replies to a linux.do private topic with the original Markdown post request', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) =>
-      new URL(input).pathname === '/session/csrf' ? json({ csrf: 'token' }) : json({ id: 102, post_number: 3 })
+      new URL(input).pathname === '/session/csrf'
+        ? jsonResponse({ csrf: 'token' })
+        : jsonResponse({ id: 102, post_number: 3 })
     );
     const item = {
       source: 'linuxdo' as const,

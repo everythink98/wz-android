@@ -1,3 +1,4 @@
+import { hasNextPageCursor } from '@/domain/forum/pagination';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   hashKey,
@@ -59,13 +60,7 @@ export function userSourceRecoveryTarget(source: Source, error: SourceErrorInfo)
     : null;
 }
 
-export function hasNextUserPage(
-  hasMore: boolean | undefined,
-  nextCursor: string | null | undefined,
-  requestedCursor: string | null | undefined
-) {
-  return Boolean(hasMore && nextCursor && nextCursor !== requestedCursor);
-}
+export const hasNextUserPage = hasNextPageCursor<string | null | undefined>;
 
 function nextUserCursor(profile: UserActivityPage, lane: UserLane) {
   return lane === 'topics' ? profile.nextTopicsCursor : profile.nextRepliesCursor;

@@ -1,3 +1,4 @@
+import type { CredentialSummaries } from '@/platform/storage/credentialVault';
 import {
   accountSessionSnapshotFromObservation,
   createAccountSessionSnapshot,
@@ -17,4 +18,12 @@ export function projectTestAccountSessions(states: SiteSessionStates): SiteSessi
       accountSessionSnapshotFromObservation(createAccountSessionSnapshot(site), { session: states[site] })
     );
   return { nodeseek: project('nodeseek'), linuxdo: project('linuxdo'), yaohuo: project('yaohuo') };
+}
+
+export function emptyCredentialSummaries(): CredentialSummaries {
+  return {
+    nodeseek: { site: 'nodeseek', state: 'missing', hasCredential: false, protection: null },
+    linuxdo: { site: 'linuxdo', state: 'missing', hasCredential: false, protection: null },
+    yaohuo: { site: 'yaohuo', state: 'missing', hasCredential: false, protection: null }
+  };
 }

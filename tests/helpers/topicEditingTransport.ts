@@ -1,8 +1,7 @@
+import { jsonResponse } from './jsonResponse';
 import { Buffer } from 'buffer';
 import type { TopicCreationSource } from '@/domain/forum/topicComposer';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
-
-const json = (data: unknown) => new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json' } });
 
 // This transport has no network fallback. It is shared by protocol, UI and isolated device proof.
 export function createTopicEditTransport(source: TopicCreationSource, userId = '42') {
@@ -39,14 +38,14 @@ export function createTopicEditTransport(source: TopicCreationSource, userId = '
       if (source === 'nodeseek' && url.pathname === '/api/content/edit-discussion') {
         const data = JSON.parse(body);
         Object.assign(state, { title: data.title, body: data.content, rank: data.rank });
-        return json({ success: true });
+        return jsonResponse({ success: true });
       }
       if (source === 'linuxdo' && /^\/t\/(?:-\/)?123(?:\.json|\/tags)$/.test(url.pathname)) {
         const data = JSON.parse(body);
         if (data.title !== undefined) state.title = data.title;
         if (data.category_id !== undefined) state.categoryId = String(data.category_id);
         if (data.tags !== undefined) state.tags = data.tags;
-        return json(
+        return jsonResponse(
           data.tags
             ? { id: 123, title: state.title, tags: state.tags }
             : { basic_topic: { id: 123, title: state.title } }
@@ -54,7 +53,7 @@ export function createTopicEditTransport(source: TopicCreationSource, userId = '
       }
       if (source === 'linuxdo' && url.pathname === '/posts/789.json') {
         state.body = JSON.parse(body).post.raw;
-        return json({ post: { id: 789, raw: state.body } });
+        return jsonResponse({ post: { id: 789, raw: state.body } });
       }
       if (source === 'yaohuo' && url.pathname === '/bbs/book_view_mod.aspx') {
         const fields = new URLSearchParams(body);
@@ -87,7 +86,7 @@ export function createTopicEditTransport(source: TopicCreationSource, userId = '
       }
       if (source === 'linuxdo') {
         if (url.pathname === '/t/123.json')
-          return json({
+          return jsonResponse({
             id: 123,
             title: state.title,
             category_id: Number(state.categoryId),
@@ -96,7 +95,7 @@ export function createTopicEditTransport(source: TopicCreationSource, userId = '
             post_stream: { posts: [{ id: 789, post_number: 1 }] }
           });
         if (url.pathname === '/posts/789.json')
-          return json({
+          return jsonResponse({
             id: 789,
             post_number: 1,
             topic_id: 123,
@@ -105,15 +104,16 @@ export function createTopicEditTransport(source: TopicCreationSource, userId = '
             can_edit: state.canEditBody
           });
         if (url.pathname === '/site.json')
-          return json({
+          return jsonResponse({
             categories: [
               { id: 4, name: '技术', permission: 1 },
               { id: 5, name: '反馈', permission: 1, topic_template: '不要覆盖原文' }
             ]
           });
-        if (url.pathname === '/session/current.json') return json({ current_user: { id: userId, trust_level: 2 } });
-        if (url.pathname === '/session/csrf') return json({ csrf: 'fixture-csrf' });
-        if (url.pathname === '/tags/filter/search') return json({ results: state.tags });
+        if (url.pathname === '/session/current.json')
+          return jsonResponse({ current_user: { id: userId, trust_level: 2 } });
+        if (url.pathname === '/session/csrf') return jsonResponse({ csrf: 'fixture-csrf' });
+        if (url.pathname === '/tags/filter/search') return jsonResponse({ results: state.tags });
         if (url.pathname === '/latest')
           return new Response(
             `<script id="data-preloaded" type="application/json">${JSON.stringify({

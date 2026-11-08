@@ -2,8 +2,11 @@ import * as SecureStore from 'expo-secure-store';
 import type { NotificationAdapterAccess } from './notificationAdapter';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { getCurrentUserIdentity } from './sourceRead';
-import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
-import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import {
+  LINUXDO_USER_AGENT_STORAGE_KEY,
+  sanitizeWebViewUserAgent,
+  NODESEEK_USER_AGENT_STORAGE_KEY
+} from '@/platform/android/userAgent';
 import { withFetchGuard } from '@/platform/network/request';
 
 export async function probeBackgroundNotificationAccess(
@@ -15,8 +18,8 @@ export async function probeBackgroundNotificationAccess(
     source === 'nodeseek' ? SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY) : null,
     source === 'linuxdo' ? SecureStore.getItemAsync(LINUXDO_USER_AGENT_STORAGE_KEY) : null
   ]);
-  const nodeSeekUserAgent = sanitizeNodeSeekUserAgent(nodeSeekUserAgentValue || undefined);
-  const linuxDoUserAgent = sanitizeLinuxDoUserAgent(linuxDoUserAgentValue || undefined);
+  const nodeSeekUserAgent = sanitizeWebViewUserAgent(nodeSeekUserAgentValue || undefined);
+  const linuxDoUserAgent = sanitizeWebViewUserAgent(linuxDoUserAgentValue || undefined);
   await assertCurrent();
   const profile = await getCurrentUserIdentity({
     source,

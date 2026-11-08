@@ -1,7 +1,7 @@
 import { hashKey } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
-import { sanitizeLinuxDoUserAgent, diagnosticUserAgentHash } from '@/platform/android/linuxDoUserAgent';
+import { sanitizeWebViewUserAgent, diagnosticUserAgentHash } from '@/platform/android/userAgent';
 import { errorMessage } from '@/platform/network/errors';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
@@ -1068,12 +1068,12 @@ export function useVerificationController({
             userAgentSource:
               data.type === 'linuxdo-webview' && typeof data.userAgent === 'string' ? 'webview' : 'unknown',
             ...(data.type === 'linuxdo-webview' && typeof data.userAgent === 'string'
-              ? { userAgentHash: diagnosticUserAgentHash(sanitizeLinuxDoUserAgent(data.userAgent)) }
+              ? { userAgentHash: diagnosticUserAgentHash(sanitizeWebViewUserAgent(data.userAgent)) }
               : {})
           });
         }
         if (data.type === 'linuxdo-webview' && typeof data.userAgent === 'string') {
-          const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
+          const userAgent = sanitizeWebViewUserAgent(data.userAgent);
           if (userAgent) {
             commitLinuxDoWebViewUserAgent(userAgent);
           }

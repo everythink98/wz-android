@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -27,9 +28,6 @@ import { notificationAdapters } from '@/sources/notificationAdapters';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { verifyDeletionBoundaries } from '../reader-storage-proof/deletionBoundaries';
 
-function check(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(message);
-}
 function receipt(mode: string, token: string, data: object) {
   const file = new File(Paths.cache, `acceptance-${mode}.json`);
   file.create({ overwrite: true });

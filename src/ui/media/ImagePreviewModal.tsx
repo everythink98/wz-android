@@ -17,6 +17,7 @@ import {
   GestureDetector,
   GestureHandlerRootView,
   GestureStateManager,
+  type GestureTouchEvent,
   usePanGesture
 } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
@@ -636,20 +637,20 @@ function ImagePreviewModalContent({
   const nextSlot = ring.slots.find(({ page, role }) => role === 1 && page?.index === activeIndex + 1)?.slot ?? -1;
   const recycleForPrevious = ring.slots.length === 3 ? (ring.slots.find(({ role }) => role === 1)?.slot ?? -1) : -1;
   const recycleForNext = ring.slots.length === 3 ? (ring.slots.find(({ role }) => role === -1)?.slot ?? -1) : -1;
+  const singlePreviewTouch = (event: GestureTouchEvent) => {
+    'worklet';
+    const touch =
+      event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001 ? undefined : event.allTouches[0];
+    if (!touch) GestureStateManager.fail(event.handlerTag);
+    return touch;
+  };
   const previewGesture = usePanGesture({
     manualActivation: true,
     maxPointers: 1,
     onTouchesDown: (event) => {
       'worklet';
-      if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
-        GestureStateManager.fail(event.handlerTag);
-        return;
-      }
-      const touch = event.allTouches[0];
-      if (!touch) {
-        GestureStateManager.fail(event.handlerTag);
-        return;
-      }
+      const touch = singlePreviewTouch(event);
+      if (!touch) return;
       gestureAxis.value = 0;
       gestureQueuesTransition.value = transitioning.value;
       gestureStartX.value = touch.absoluteX;
@@ -658,15 +659,8 @@ function ImagePreviewModalContent({
     },
     onTouchesMove: (event) => {
       'worklet';
-      if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
-        GestureStateManager.fail(event.handlerTag);
-        return;
-      }
-      const touch = event.allTouches[0];
-      if (!touch) {
-        GestureStateManager.fail(event.handlerTag);
-        return;
-      }
+      const touch = singlePreviewTouch(event);
+      if (!touch) return;
       if (transitioning.value) {
         gestureQueuesTransition.value = true;
       }

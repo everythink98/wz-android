@@ -6,13 +6,13 @@ import { errorMessage } from '@/platform/network/errors';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText } from '@/ui/controls/FeedbackStates';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { createReaderFontSizer, type ReaderStyleSettings, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import type { CreditDay } from './nodeSeekCredits';
 import type { useNodeSeekCredits } from './useNodeSeekCredits';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
-  const size = (value: number) => Math.round(value * settings.fontScale);
+  const size = createReaderFontSizer(settings);
   return StyleSheet.create({
     list: { flex: 1, backgroundColor: theme.background },
     content: { paddingHorizontal: 16, paddingBottom: 16 },

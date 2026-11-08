@@ -1,16 +1,11 @@
-import { projectTestAccountSessions, testAccountUser } from '../../../tests/helpers/accountSessions';
+import {
+  emptyCredentialSummaries,
+  projectTestAccountSessions,
+  testAccountUser
+} from '../../../tests/helpers/accountSessions';
 import { describe, expect, it } from 'vitest';
-import type { CredentialSummaries } from '@/platform/storage/credentialVault';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { accountCenterSummary, createSiteAccountViews } from './accountCenter';
-
-function emptyCredentialSummaries(): CredentialSummaries {
-  return {
-    nodeseek: { site: 'nodeseek', state: 'missing', hasCredential: false, protection: null },
-    linuxdo: { site: 'linuxdo', state: 'missing', hasCredential: false, protection: null },
-    yaohuo: { site: 'yaohuo', state: 'missing', hasCredential: false, protection: null }
-  };
-}
 
 describe('account center view', () => {
   it('orders all sites and maps the primary action from session and credential state', () => {

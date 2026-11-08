@@ -1,15 +1,16 @@
+import { linuxDoCreditPresentation } from '../linuxDoCreditPresentation';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
-import { formatLinuxDoCreditAmount, LinuxDoCreditError, type LinuxDoCreditAccount } from '@/domain/forum/linuxDoCredit';
+import { formatLinuxDoCreditAmount, type LinuxDoCreditAccount } from '@/domain/forum/linuxDoCredit';
 import { errorMessage } from '@/platform/network/errors';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { createReaderFontSizer, fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
-  const size = (value: number) => Math.round(value * settings.fontScale);
+  const size = createReaderFontSizer(settings);
   return StyleSheet.create({
     section: { paddingHorizontal: 20, gap: 8 },
     row: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
@@ -56,16 +57,11 @@ export function LinuxDoCreditSummary({
   onRefresh: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const accessError = error instanceof LinuxDoCreditError ? error.kind : undefined;
-  const needsConnection = accessError === 'authorization-required' || accessError === 'identity-mismatch';
-  const visibleAccount = needsConnection ? undefined : account;
-  const connectLabel = forumVerificationRequired
-    ? '验证 L 站'
-    : accessError === 'identity-mismatch'
-      ? '重新连接 LDC'
-      : accessError === 'verification-required'
-        ? '验证 LDC'
-        : '连接 LDC';
+  const { visibleAccount, webAction, connectLabel } = linuxDoCreditPresentation(
+    account,
+    error,
+    forumVerificationRequired
+  );
 
   return (
     <View style={styles.section}>
@@ -113,11 +109,7 @@ export function LinuxDoCreditSummary({
         </Text>
       ) : null}
       {visibleAccount && error ? <Text style={styles.meta}>显示上次读取的余额</Text> : null}
-      {!busy &&
-      (forumVerificationRequired ||
-        needsConnection ||
-        accessError === 'verification-required' ||
-        (!visibleAccount && !error)) ? (
+      {!busy && (webAction || (!visibleAccount && !error)) ? (
         <View style={styles.actions}>
           <AppButton label={connectLabel} variant="primary" onPress={onConnect} />
         </View>

@@ -625,7 +625,10 @@ function originalForumImageSource(
     [
       linkedUrl,
       forumImageAttributeValue(attributes, 'data-original'),
-      bestForumSrcsetImageUrl(forumImageAttributeValue(attributes, 'srcset'), resolveImageUrl),
+      bestSrcsetImageUrlFromCandidates(
+        parseSrcsetCandidates(forumImageAttributeValue(attributes, 'srcset')),
+        (url) => resolveImageUrl(url).allowed
+      ),
       forumImageAttributeValue(attributes, 'data-src'),
       forumImageAttributeValue(attributes, 'src')
     ],
@@ -641,13 +644,15 @@ function firstAllowedForumImageSource(values: string[], resolveImageUrl: ForumIm
   return '';
 }
 
-function bestForumSrcsetImageUrl(srcset: string, resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl) {
+export function bestSrcsetImageUrlFromCandidates(candidates: readonly string[], isAllowed: (url: string) => boolean) {
   let bestUrl = '';
   let bestScore = -1;
-  parseSrcsetCandidates(srcset).forEach((candidate, index) => {
+  candidates.forEach((candidate, index) => {
     const parts = candidate.trim().split(/\s+/);
     const url = String(parts.shift() || '').trim();
-    if (!resolveImageUrl(url).allowed) return;
+    if (!isAllowed(url)) {
+      return;
+    }
     const descriptor = parts[0] || '';
     const width = descriptor.match(/^(\d+(?:\.\d+)?)w$/i);
     const density = descriptor.match(/^(\d+(?:\.\d+)?)x$/i);

@@ -1,6 +1,7 @@
+import { preparedReply } from '../../../../tests/helpers/preparedReply';
 import { describe, expect, it } from 'vitest';
 import { parseHtml } from '@/domain/forum/html';
-import type { Reply, Source, TopicDetail } from '@/domain/forum/models';
+import type { TopicDetail } from '@/domain/forum/models';
 import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
 import {
   buildAcceptedAnswerContentItems as buildAcceptedAnswerContentItemsFromPlan,
@@ -8,19 +9,6 @@ import {
   buildTopicOpeningContent as buildTopicOpeningContentFromPlan,
   buildTopicQuotedPostContentItems as buildTopicQuotedPostContentItemsFromPlan
 } from './topicOpeningPresentation';
-
-function preparedReply<T extends Reply>(reply: T, source: Source): T {
-  const signatureHtml = String(reply.signatureHtml || '');
-  reply.preparedContent = prepareForumContentHtml(reply.contentHtml, {
-    polls: reply.polls,
-    role: 'reply',
-    source
-  });
-  reply.preparedSignature = signatureHtml.trim()
-    ? prepareForumContentHtml(signatureHtml, { role: 'signature', source })
-    : undefined;
-  return reply;
-}
 
 function buildTopicOpeningContent(topic: Parameters<typeof buildTopicOpeningContentFromPlan>[0]) {
   return buildTopicOpeningContentFromPlan(

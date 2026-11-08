@@ -1,3 +1,4 @@
+import { normalizeTopicId } from '@/domain/forum/numericValues';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type {
   CategoriesResponse,
@@ -96,11 +97,6 @@ function toV2exHtmlIsoString(value: unknown) {
   return toIsoString(value, V2EX_HTML_TIMEZONE);
 }
 
-export function topicId(value: unknown) {
-  const text = String(value || '').trim();
-  return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
-}
-
 export function v2exMemberLevelLabel(member: Record<string, unknown>) {
   return member.pro === true || Number(member.pro) > 0 ? 'Pro' : undefined;
 }
@@ -109,7 +105,7 @@ function normalizeApiTopic(raw: unknown): Topic | null {
   if (!isRecord(raw)) {
     return null;
   }
-  const id = topicId(raw.id);
+  const id = normalizeTopicId(raw.id);
   if (!id) {
     return null;
   }

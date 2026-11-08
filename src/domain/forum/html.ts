@@ -399,3 +399,8 @@ export function createForumTextIndex(root: HTMLElement, excludedElements?: Reado
     }
   };
 }
+
+export function nodeTagName(node: unknown) {
+  const record = node as { rawTagName?: unknown; tagName?: unknown };
+  return String(record.rawTagName || record.tagName || '').toLowerCase();
+}

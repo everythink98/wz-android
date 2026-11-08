@@ -1,9 +1,6 @@
+import { jsonResponse } from '../../../tests/helpers/jsonResponse';
 import { describe, expect, it, vi } from 'vitest';
 import { fetchLinuxDoTemplates, normalizeLinuxDoTemplates, recordLinuxDoTemplateUse } from './templates';
-
-function json(value: unknown) {
-  return new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
-}
 
 describe('LinuxDo templates', () => {
   it('normalizes only bounded template records', () => {
@@ -15,10 +12,10 @@ describe('LinuxDo templates', () => {
   it('lists without CSRF and records use with the existing CSRF action client', async () => {
     const fetcher = vi.fn(async (url: string) =>
       url.endsWith('/session/csrf')
-        ? json({ csrf: 'token' })
+        ? jsonResponse({ csrf: 'token' })
         : url.endsWith('/discourse_templates')
-          ? json([{ id: 7, title: '模板', content: '正文' }])
-          : json({ usage_count: 1 })
+          ? jsonResponse([{ id: 7, title: '模板', content: '正文' }])
+          : jsonResponse({ usage_count: 1 })
     );
     await expect(fetchLinuxDoTemplates({ fetcher, userAgent: 'ua' })).resolves.toEqual([
       { id: '7', title: '模板', content: '正文' }

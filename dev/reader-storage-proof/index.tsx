@@ -1,3 +1,5 @@
+import { utf8ByteLength } from '@/domain/reader/readerBackup';
+import { check } from '../proofCheck';
 import '@/platform/diagnostics/diagnosticBootstrap';
 import { registerRootComponent } from 'expo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,7 +10,7 @@ import { Linking, Text, View } from 'react-native';
 import { createEmptyReaderData, MAX_DELETED_RECORDS, type ReaderData } from '@/domain/reader/readerData';
 import type { Topic } from '@/domain/forum/models';
 import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
-import { readReaderMeta, readReaderPage, readReaderSnapshot, utf8Bytes } from '@/platform/storage/readerDatabase';
+import { readReaderMeta, readReaderPage, readReaderSnapshot } from '@/platform/storage/readerDatabase';
 import * as store from '@/platform/storage/readerDataStore';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
 import { exercisePollJournal, verifyReopenedPollJournal } from './pollJournal';
@@ -38,9 +40,6 @@ function fixture(profile: string): ReaderData {
     data.favorites[`nodeseek:${i}`] = { topic: topic(i), savedAt: '2025-01-01T00:00:00.000Z' };
   data.deletedRecords.history['nodeseek:deleted'] = at;
   return data;
-}
-function check(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
 }
 async function execute(mode: string, profile: string, token: string, status: (text: string) => void) {
   const started = performance.now();
@@ -76,7 +75,7 @@ async function execute(mode: string, profile: string, token: string, status: (te
         'reader-settings': JSON.stringify(data.settings),
         'reader-storage-unrelated': 'preserved'
       });
-      write('passed', { bytes: utf8Bytes(JSON.stringify(data)), history: Object.keys(data.history).length });
+      write('passed', { bytes: utf8ByteLength(JSON.stringify(data)), history: Object.keys(data.history).length });
       return;
     }
     check((await AsyncStorage.getItem(marker)) === 'isolated', 'Missing isolated fixture owner');
@@ -260,7 +259,7 @@ async function execute(mode: string, profile: string, token: string, status: (te
       if (mode === 'verify-updated') expected.settings.theme = 'dark';
       const actual = await readReaderSnapshot(db);
       check(JSON.stringify(actual) === JSON.stringify(expected), 'Complete migration contents/order mismatch');
-      check((await readReaderMeta(db))?.bytes === utf8Bytes(JSON.stringify(expected)), 'Logical byte mismatch');
+      check((await readReaderMeta(db))?.bytes === utf8ByteLength(JSON.stringify(expected)), 'Logical byte mismatch');
       check((await AsyncStorage.getItem('reader-storage-unrelated')) === 'preserved', 'Other owner changed');
       const keys = await AsyncStorage.getAllKeys();
       if (mode === 'cleanup-failure') {
@@ -421,7 +420,7 @@ async function execute(mode: string, profile: string, token: string, status: (te
         'Backup overwrote or omitted a queued operation'
       );
       check(
-        (await readReaderMeta(db))?.bytes === utf8Bytes(JSON.stringify(final)),
+        (await readReaderMeta(db))?.bytes === utf8ByteLength(JSON.stringify(final)),
         'Bytes drifted after native backup merge'
       );
       const historyKeys = Object.keys(final.history);
@@ -440,7 +439,7 @@ async function execute(mode: string, profile: string, token: string, status: (te
       check(
         JSON.stringify(cleared.favorites) === JSON.stringify(final.favorites) &&
           JSON.stringify(cleared.followedUsers) === JSON.stringify(final.followedUsers) &&
-          (await readReaderMeta(db))?.bytes === utf8Bytes(JSON.stringify(cleared)),
+          (await readReaderMeta(db))?.bytes === utf8ByteLength(JSON.stringify(cleared)),
         'Bulk history deletion changed other collections or byte accounting'
       );
       write('passed', {
