@@ -36,7 +36,7 @@ import {
   replyQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions
 } from '@/domain/forum/quotedPosts';
-import { replyContextBadgeStyle, type ReaderTheme } from '@/ui/theme/tokens';
+import { topicStatusBadgeColorStyle, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
@@ -540,7 +540,7 @@ export function ReplyItem({
                   </Text>
                   {reply.authorLevelLabel ? (
                     <Text
-                      style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}
+                      style={[styles.replyContextBadge, topicStatusBadgeColorStyle('neutral', theme)]}
                       numberOfLines={1}
                     >
                       {reply.authorLevelLabel}
@@ -548,22 +548,22 @@ export function ReplyItem({
                   ) : null}
                   {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
                   {reply.hot ? (
-                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text>
+                    <Text style={[styles.replyContextBadge, topicStatusBadgeColorStyle('warning', theme)]}>热门</Text>
                   ) : null}
                   {reply.pinned ? (
-                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text>
+                    <Text style={[styles.replyContextBadge, topicStatusBadgeColorStyle('accent', theme)]}>置顶</Text>
                   ) : null}
                   {reply.wiki ? (
-                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text>
+                    <Text style={[styles.replyContextBadge, topicStatusBadgeColorStyle('info', theme)]}>Wiki</Text>
                   ) : null}
                   {reply.hidden ? (
-                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text>
+                    <Text style={[styles.replyContextBadge, topicStatusBadgeColorStyle('danger', theme)]}>已隐藏</Text>
                   ) : null}
                   {reply.folded ? (
-                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text>
+                    <Text style={[styles.replyContextBadge, topicStatusBadgeColorStyle('warning', theme)]}>已折叠</Text>
                   ) : null}
                   {reply.siteExtension?.needsApproval ? (
-                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
+                    <Text style={[styles.replyContextBadge, topicStatusBadgeColorStyle('warning', theme)]}>待审批</Text>
                   ) : null}
                 </View>
                 <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>

@@ -1,3 +1,4 @@
+import { jsonResponse } from '../../helpers/jsonResponse';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
@@ -34,7 +35,7 @@ vi.mock('expo-secure-store', () => ({
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import { createReadGateway, html, json, nodeSeekPayload } from './fixtures';
+import { createReadGateway, html, nodeSeekPayload } from './fixtures';
 
 function readLinuxDoAccountWith(fetcher: Parameters<typeof readAccountStatus>[1]['fetcher']) {
   return readAccountStatus('linuxdo', {
@@ -341,7 +342,7 @@ describe('Android local sources', () => {
           { status }
         )
       );
-      const webViewFetcher = vi.fn(async () => json({ ok: false, message: 'unexpected fallback' }));
+      const webViewFetcher = vi.fn(async () => jsonResponse({ ok: false, message: 'unexpected fallback' }));
       const fetcher = createNodeSeekWebViewFallbackFetcher({
         defaultFetcher: normalFetcher,
         webViewFetcher
@@ -358,7 +359,7 @@ describe('Android local sources', () => {
   it.each([200, 403])('preserves a background account JSON response with status %i', async (status) => {
     const body = { message: 'business response', atMe: 2, reply: 1, messageCount: 3 };
     const direct = Response.json(body, { status });
-    const webViewFetcher = vi.fn(async () => json({ message: 'unexpected fallback' }));
+    const webViewFetcher = vi.fn(async () => jsonResponse({ message: 'unexpected fallback' }));
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => direct),
       webViewFetcher
@@ -401,9 +402,9 @@ describe('Android local sources', () => {
               status: 403,
               headers: { 'content-type': 'text/html' }
             })
-          : json(counters)
+          : jsonResponse(counters)
       );
-      const webViewFetcher = vi.fn(async () => json(counters));
+      const webViewFetcher = vi.fn(async () => jsonResponse(counters));
       const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher, webViewFetcher });
 
       await expect(
@@ -1009,7 +1010,7 @@ describe('Android local sources', () => {
     const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async (input: string | URL | Request) => {
         if (String(input).includes('/api/vote/info/2443')) {
-          return json({
+          return jsonResponse({
             vote: {
               id: 2443,
               title: 'direct poll',
@@ -1140,7 +1141,7 @@ describe('Android local sources', () => {
       expect(webViewFetcher).toHaveBeenCalledTimes(2);
       expect(legacyGlobalRecovery).not.toHaveBeenCalled();
 
-      linuxDoPending.resolve(json({ topic_list: { topics: [] } }));
+      linuxDoPending.resolve(jsonResponse({ topic_list: { topics: [] } }));
       await expect(linuxDoRequest).resolves.toBe('{"topic_list":{"topics":[]}}');
     } finally {
       vi.clearAllTimers();
@@ -1322,7 +1323,7 @@ describe('Android local sources', () => {
         })
     );
     const webViewFetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 42,
         title: 'linux.do WebView fallback topic',
         created_at: '2026-05-21T00:00:00.000Z',
@@ -1457,7 +1458,7 @@ describe('Android local sources', () => {
       expect(webViewFetcher).toHaveBeenCalledTimes(1);
       expect(recoverReadChannel).not.toHaveBeenCalled();
 
-      const fallbackResponse = json({ topic_list: { topics: [] } });
+      const fallbackResponse = jsonResponse({ topic_list: { topics: [] } });
       resolveWebView(fallbackResponse);
 
       await expect(request).resolves.toMatchObject({ items: [] });
@@ -1479,7 +1480,7 @@ describe('Android local sources', () => {
             });
           })
       );
-      const fallbackResponse = json({ topic_list: { topics: [] } });
+      const fallbackResponse = jsonResponse({ topic_list: { topics: [] } });
       const webViewFetcher = vi.fn(async () => fallbackResponse);
       const recoverReadChannel = vi.fn(async () => {
         throw new Error('rotation failed');
@@ -1553,7 +1554,7 @@ describe('Android local sources', () => {
       defaultFetcher: vi.fn(async () => {
         throw new TypeError('Network request failed');
       }),
-      webViewFetcher: vi.fn(async () => json({ current_user: null })),
+      webViewFetcher: vi.fn(async () => jsonResponse({ current_user: null })),
       recoverReadChannel
     });
 
@@ -1585,7 +1586,7 @@ describe('Android local sources', () => {
         throw new TypeError('Network request failed');
       }
       if (url.includes('linux.do')) {
-        return json({
+        return jsonResponse({
           topic_list: {
             topics: [
               {
@@ -1663,7 +1664,7 @@ describe('Android local sources', () => {
       throw new TypeError('Network request failed');
     });
     const webViewFetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         current_user: {
           id: 42,
           username: 'alice',
@@ -1723,7 +1724,7 @@ describe('Android local sources', () => {
   });
 
   it('preserves the recovered Account result when runtime rotation fails', async () => {
-    const fallbackResponse = json({
+    const fallbackResponse = jsonResponse({
       current_user: {
         id: 42,
         username: 'alice'
@@ -1859,7 +1860,7 @@ describe('Android local sources', () => {
     });
     expect(getReadNetworkRuntimeSnapshot().generation).toBe(requestStartGeneration + 1);
 
-    linuxDoFallback.resolve(json({ current_user: null }));
+    linuxDoFallback.resolve(jsonResponse({ current_user: null }));
     await expect(linuxDoRead).resolves.toMatchObject({ session: { status: 'anonymous' } });
 
     expect(recoverForumReadChannel).toHaveBeenCalledTimes(2);
@@ -2068,7 +2069,7 @@ describe('Android local sources', () => {
   });
 
   it('does not read ordinary linux.do JSON twice before handing it to callers', async () => {
-    const response = json({
+    const response = jsonResponse({
       id: 42,
       title: 'ordinary linux.do topic',
       created_at: '2026-05-21T00:00:00.000Z',

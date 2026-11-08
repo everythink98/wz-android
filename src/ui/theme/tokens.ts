@@ -39,6 +39,10 @@ export const readerRadii = {
   pill: 999
 };
 
+export function createReaderFontSizer(settings: Pick<ReaderStyleSettings, 'fontScale'>) {
+  return (size: number) => Math.round(size * settings.fontScale);
+}
+
 export function lineHeightMultiplier(value: ReaderSettings['lineHeight']) {
   if (value === 'compact') {
     return 1.4;
@@ -162,10 +166,6 @@ export function topicStatusBadgeColorStyle(tone: StatusBadgeTone, theme: ReaderT
 
 export function topicStatusBadgeTextColorStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
   return { color: statusToneColor(tone, theme) };
-}
-
-export function replyContextBadgeStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
-  return chipToneStyle(statusToneColor(tone, theme), theme);
 }
 
 export function sourceBadgeColorStyle(source: Source, theme: ReaderTheme): TextStyle {

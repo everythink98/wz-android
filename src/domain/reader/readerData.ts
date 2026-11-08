@@ -372,7 +372,7 @@ export function topicKey(topic: Pick<Topic, 'source' | 'id'>) {
 }
 
 export function categoryKey(category: Pick<Category, 'source' | 'id'>) {
-  return `${category.source}:${category.id}`;
+  return topicKey(category);
 }
 
 export function userKey(user: Pick<UserProfile, 'source' | 'id'>) {

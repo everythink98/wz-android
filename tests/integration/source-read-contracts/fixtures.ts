@@ -27,12 +27,6 @@ export function createReadGateway(
   });
 }
 
-export function json(value: unknown) {
-  return new Response(JSON.stringify(value), {
-    headers: { 'content-type': 'application/json' }
-  });
-}
-
 export function html(value: string) {
   return new Response(value, {
     headers: { 'content-type': 'text/html' }

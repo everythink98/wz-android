@@ -1,8 +1,7 @@
 import {
   withBrowserFetchIntent,
-  type BrowserFetchIntent,
-  type BrowserFetchOwner,
-  type BrowserFetchPriority
+  withDefaultBrowserFetchIntent,
+  type BrowserFetchIntent
 } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
@@ -101,20 +100,6 @@ export interface NodeSeekOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   browserFetchIntent?: BrowserFetchIntent;
-}
-
-function nodeSeekOptionsWithBrowserIntent<T extends NodeSeekOptions>(
-  options: T,
-  owner: BrowserFetchOwner,
-  priority: BrowserFetchPriority
-): T {
-  if (options.browserFetchIntent) {
-    return options;
-  }
-  return {
-    ...options,
-    browserFetchIntent: { owner, priority }
-  };
 }
 
 async function readNodeSeekPollsFromVoteLinks(
@@ -277,7 +262,7 @@ export async function getNodeSeekFeed(
     feedFilter?: NodeSeekFeedFilter;
   } = {}
 ): Promise<FeedResponse> {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'feed', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'postTime' : options.feedFilter || 'postTime';
@@ -331,7 +316,7 @@ export async function getNodeSeekFeed(
 }
 
 export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'feed', 'foreground');
   const { pageDocument, response, text: html } = await fetchNodeSeekTextResult('/', requestOptions);
   const document = pageDocument ?? parseNodeSeekPageDocument(html);
   const embedded = document.embedded;
@@ -362,7 +347,7 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions, trace?: DiagnosticTrace) {
   const result = await fetchNodeSeekTextResult(
     nodeSeekTopicPagePath(id, page),
-    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground'),
+    withDefaultBrowserFetchIntent(options, 'topic', 'foreground'),
     {},
     trace
   );
@@ -422,95 +407,64 @@ export async function getNodeSeekTopic(
   options: NodeSeekOptions & { replyLimit?: number } = {},
   trace?: DiagnosticTrace
 ) {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
   const { pageDocument, response, responseUrl } = await fetchTopicHtml(id, 1, requestOptions, trace);
   const documentUrl = responseUrl || nodeSeekTopicUrl(id);
   const embedded = pageDocument.embedded;
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const rendered = parseRenderedNodeSeekTopicHtml(pageDocument, id, options.replyLimit || 30);
-  if (rendered) {
-    const embeddedTopic = postData
-      ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30, rendered)
-      : undefined;
-    const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
-    const pollOwners = await readNodeSeekPollsForOwners([topic, ...topic.replies], requestOptions);
-    const replies = prepareNodeSeekRepliesWithPolls(topic.replies, pollOwners.pollsByOwner.slice(1));
-    const preparedTopic = prepareNodeSeekOpeningContent({ ...topic, replies }, pollOwners.pollsByOwner[0], trace);
-    const paged = withNodeSeekReplyPagination(preparedTopic, pageDocument, id, 1);
-    const comments = postData ? arrayField(postData.comments) : [];
-    const replyCandidates = Math.max(rendered.replies.length, Math.max(0, comments.length - 1));
-    const result = {
-      ...paged,
-      replyWatermark: confirmedNodeSeekWatermark(
-        {
-          items: paged.replies,
-          confirmedFloors: rendered.replies.flatMap((reply) => (reply.floor === undefined ? [] : [reply.floor])),
-          currentPage: 1,
-          resolvedPageConfirmed: resolvedNodeSeekPostPage(pageDocument, id, responseUrl) === 1,
-          hasMore: Boolean(paged.replyHasMore) || paged.replies.length !== replyCandidates,
-          nextPage: paged.replyNextPage ?? null
-        },
-        paged.replyCount === 0
-      ),
-      mediaReferrer: { documentUrl },
-      replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
-    };
-    const parsed = annotateSourceDiagnosticSummary(result, {
-      parserVariant: 'rendered-topic',
-      candidateCount: 1 + replyCandidates,
-      validCount: 1 + result.replies.length,
-      droppedCount: Math.max(0, replyCandidates - result.replies.length),
-      partialErrorCount: pollOwners.partialErrorCount,
-      missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
-    });
-    acceptForumReadResponse(response);
-    return parsed;
+  const embeddedTopic = postData
+    ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30, rendered ?? undefined)
+    : undefined;
+  const topic = rendered ? mergeRenderedNodeSeekTopic(rendered, embeddedTopic) : embeddedTopic;
+  if (!topic) {
+    rejectForumReadResponse(response);
+    throw new Error('NodeSeek 主题解析失败');
   }
-  if (postData) {
-    const comments = arrayField(postData.comments);
-    const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
-    const pollOwners = await readNodeSeekPollsForOwners([topic, ...topic.replies], requestOptions);
-    const replies = prepareNodeSeekRepliesWithPolls(topic.replies, pollOwners.pollsByOwner.slice(1));
-    const preparedTopic = prepareNodeSeekOpeningContent({ ...topic, replies }, pollOwners.pollsByOwner[0], trace);
-    const paged = withNodeSeekReplyPagination(preparedTopic, pageDocument, id, 1);
-    const replyCandidates = Math.max(0, comments.length - 1);
-    const result = {
-      ...paged,
-      replyWatermark: confirmedNodeSeekWatermark(
-        {
-          items: paged.replies,
-          confirmedFloors: comments.slice(1).flatMap((comment) => {
-            const floor = isRecord(comment) ? optionalInteger(comment.floorIndex ?? comment.floor) : undefined;
-            return floor === undefined ? [] : [floor];
-          }),
-          currentPage: 1,
-          resolvedPageConfirmed: resolvedNodeSeekPostPage(pageDocument, id, responseUrl) === 1,
-          hasMore: Boolean(paged.replyHasMore) || paged.replies.length !== replyCandidates,
-          nextPage: paged.replyNextPage ?? null
-        },
-        paged.replyCount === 0
-      ),
-      mediaReferrer: { documentUrl },
-      replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
-    };
-    const missingFloorCount = comments
-      .slice(1)
-      .filter(
+  const pollOwners = await readNodeSeekPollsForOwners([topic, ...topic.replies], requestOptions);
+  const replies = prepareNodeSeekRepliesWithPolls(topic.replies, pollOwners.pollsByOwner.slice(1));
+  const preparedTopic = prepareNodeSeekOpeningContent({ ...topic, replies }, pollOwners.pollsByOwner[0], trace);
+  const paged = withNodeSeekReplyPagination(preparedTopic, pageDocument, id, 1);
+  const comments = postData ? arrayField(postData.comments) : [];
+  const replyCandidates = Math.max(rendered?.replies.length ?? 0, comments.length - 1);
+  const replyComments = rendered ? [] : comments.slice(1);
+  const confirmedFloors = rendered
+    ? rendered.replies.flatMap((reply) => (reply.floor === undefined ? [] : [reply.floor]))
+    : replyComments.flatMap((comment) => {
+        const floor = isRecord(comment) ? optionalInteger(comment.floorIndex ?? comment.floor) : undefined;
+        return floor === undefined ? [] : [floor];
+      });
+  const missingFloorCount = rendered
+    ? rendered.replies.filter((reply) => !reply.floor).length
+    : replyComments.filter(
         (comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined
       ).length;
-    const parsed = annotateSourceDiagnosticSummary(result, {
-      parserVariant: 'embedded-topic',
-      candidateCount: 1 + replyCandidates,
-      validCount: 1 + result.replies.length,
-      droppedCount: Math.max(0, replyCandidates - result.replies.length),
-      partialErrorCount: pollOwners.partialErrorCount,
-      missingFloorCount
-    });
-    acceptForumReadResponse(response);
-    return parsed;
-  }
-  rejectForumReadResponse(response);
-  throw new Error('NodeSeek 主题解析失败');
+  const result = {
+    ...paged,
+    replyWatermark: confirmedNodeSeekWatermark(
+      {
+        items: paged.replies,
+        confirmedFloors,
+        currentPage: 1,
+        resolvedPageConfirmed: resolvedNodeSeekPostPage(pageDocument, id, responseUrl) === 1,
+        hasMore: Boolean(paged.replyHasMore) || paged.replies.length !== replyCandidates,
+        nextPage: paged.replyNextPage ?? null
+      },
+      paged.replyCount === 0
+    ),
+    mediaReferrer: { documentUrl },
+    replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
+  };
+  const parsed = annotateSourceDiagnosticSummary(result, {
+    parserVariant: rendered ? 'rendered-topic' : 'embedded-topic',
+    candidateCount: 1 + replyCandidates,
+    validCount: 1 + result.replies.length,
+    droppedCount: Math.max(0, replyCandidates - result.replies.length),
+    partialErrorCount: pollOwners.partialErrorCount,
+    missingFloorCount
+  });
+  acceptForumReadResponse(response);
+  return parsed;
 }
 
 type NodeSeekChronologicalRepliesOptions = NodeSeekOptions & {
@@ -784,7 +738,7 @@ async function getNodeSeekRepliesChronological(
   id: string,
   options: NodeSeekChronologicalRepliesOptions
 ): Promise<NodeSeekChronologicalReplies> {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
   const target = options.targetReply;
   if (target) {
     const commentId = positiveReplyLocation(target.commentId);
@@ -1067,7 +1021,7 @@ export async function getNodeSeekReplies(
   );
   const pollOwners = await readNodeSeekPollsForOwners(
     oriented.items,
-    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
+    withDefaultBrowserFetchIntent(options, 'topic', 'foreground')
   );
   const prepared = copySourceDiagnosticSummary(
     { ...oriented, items: prepareNodeSeekRepliesWithPolls(oriented.items, pollOwners.pollsByOwner) },
@@ -1093,7 +1047,7 @@ export async function resolveNodeSeekUser(username: string, options: NodeSeekOpt
       loginRequired: true
     });
   }
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'user', 'foreground');
   const data = await fetchNodeSeekJson(`/api/account/find/${encodeURIComponent(requestedUsername)}`, requestOptions);
   return parseNodeSeekUserReference(requestedUsername, data);
 }
@@ -1101,7 +1055,7 @@ export async function resolveNodeSeekUser(username: string, options: NodeSeekOpt
 export async function getNodeSeekUserDetails(id: string, options: NodeSeekOptions = {}): Promise<UserDetails> {
   const requestedId = id.trim();
   if (!/^\d+$/.test(requestedId)) throw new Error('NodeSeek 用户主页需要数字用户 ID');
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'user', 'foreground');
   const data = await fetchNodeSeekJson(
     `/api/account/getInfo/${encodeURIComponent(requestedId)}?readme=1`,
     requestOptions
@@ -1113,7 +1067,7 @@ export async function getNodeSeekUserTopics(profile: UserDetails, options: NodeS
   const page = parsePositiveInteger(options.cursor) || 1;
   const data = await fetchNodeSeekJson(
     `/api/content/list-discussions?uid=${encodeURIComponent(profile.id)}&page=${page}`,
-    nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground')
+    withDefaultBrowserFetchIntent(options, 'user', 'foreground')
   );
   if (!isRecord(data) || !Array.isArray(data.discussions)) throw new Error('NodeSeek 主题列表响应不完整');
   return parseNodeSeekUserTopics(profile, data.discussions, page);
@@ -1123,7 +1077,7 @@ export async function getNodeSeekUserReplies(profile: UserDetails, options: Node
   const page = parsePositiveInteger(options.cursor) || 1;
   const data = await fetchNodeSeekJson(
     `/api/content/list-comments?uid=${encodeURIComponent(profile.id)}&page=${page}`,
-    nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground')
+    withDefaultBrowserFetchIntent(options, 'user', 'foreground')
   );
   if (!isRecord(data) || !Array.isArray(data.comments)) throw new Error('NodeSeek 回复列表响应不完整');
   return parseNodeSeekUserReplies(profile, data.comments, page);
@@ -1139,7 +1093,7 @@ function nodeSeekLoginExpiredError() {
 }
 
 export async function getNodeSeekCurrentUserIdentity(options: NodeSeekOptions = {}): Promise<UserIdentity> {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'account', 'background');
   for (const path of ['/', '/setting']) {
     const { pageDocument, response } = await fetchNodeSeekTextResult(path, requestOptions);
     if (!pageDocument) {
@@ -1169,7 +1123,7 @@ export async function searchNodeSeek(
   query: string,
   options: NodeSeekOptions & { limit?: number; page?: number; filter?: NodeSeekSearchFilter } = {}
 ): Promise<SearchResponse> {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'search', 'foreground');
+  const requestOptions = withDefaultBrowserFetchIntent(options, 'search', 'foreground');
   const trimmedQuery = query.trim();
   const limit = options.limit || 30;
   const page = options.page || 1;

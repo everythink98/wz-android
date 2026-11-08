@@ -85,15 +85,7 @@ export function isLinuxDoRequestUrl(input: string) {
   }
 }
 
-export function isLinuxDoBrowserFetchUrl(input: string) {
-  return isLinuxDoRequestUrl(input);
-}
-
-export function isLinuxDoBrowserNavigationUrl(input: string, initialRequestUrl: string) {
-  return isLinuxDoRequestUrl(initialRequestUrl) && isLinuxDoRequestUrl(input);
-}
-
-export function isLinuxDoBrowserResultUrl(input: string, initialRequestUrl: string) {
+export function isLinuxDoBrowserRequestPair(input: string, initialRequestUrl: string) {
   return isLinuxDoRequestUrl(initialRequestUrl) && isLinuxDoRequestUrl(input);
 }
 
@@ -121,54 +113,7 @@ async function fetchLinuxDoThroughWebView(
     reason: 'verification_required',
     ...evidence
   });
-  try {
-    cancelRequestTimeoutForFallback(init);
-    const response = await webViewFetcher(url, init);
-    markDiagnosticStage(trace, 'transport', {
-      ...diagnosticRequestFields(init),
-      source: 'linuxdo',
-      channel: 'webview',
-      state: 'finish',
-      status: response.status
-    });
-    if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
-        source: 'linuxdo',
-        channel: 'webview',
-        ...(response.ok ? {} : { reason: 'http_error' })
-      });
-    }
-    return response;
-  } catch (error) {
-    const reason = normalizeDiagnosticReason(error);
-    markDiagnosticStage(trace, 'transport', {
-      ...diagnosticRequestFields(init),
-      source: 'linuxdo',
-      channel: 'webview',
-      state: 'failure',
-      reason
-    });
-    if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', {
-        source: 'linuxdo',
-        channel: 'webview',
-        reason
-      });
-    }
-    if (
-      (typeof error === 'object' &&
-        error !== null &&
-        'reason' in error &&
-        (error.reason === 'private-access-stale' || error.reason === 'source-disabled')) ||
-      reason === 'canceled' ||
-      reason === 'stale' ||
-      reason === 'superseded' ||
-      (error instanceof LinuxDoHiddenBrowserFailureError && error.reason === 'content-too-large')
-    ) {
-      throw error;
-    }
-    throw challenge;
-  }
+  return fetchTracedLinuxDoWebView(webViewFetcher, url, init, { trace, ownsTrace: !inheritedTrace, challenge });
 }
 
 async function fetchLinuxDoWebViewOnly(
@@ -201,6 +146,29 @@ async function fetchLinuxDoWebViewOnly(
     state: 'start',
     ...(directFailure ? { owner: directFailure.owner } : {})
   });
+  return fetchTracedLinuxDoWebView(webViewFetcher, url, init, {
+    trace,
+    ownsTrace: !inheritedTrace,
+    ownerFields: directFailure ? { owner: directFailure.owner } : {}
+  });
+}
+
+async function fetchTracedLinuxDoWebView(
+  webViewFetcher: Fetcher,
+  url: string,
+  init: RequestInit | undefined,
+  {
+    trace,
+    ownsTrace,
+    ownerFields = {},
+    challenge
+  }: {
+    trace: DiagnosticTrace;
+    ownsTrace: boolean;
+    ownerFields?: { owner?: 'account' };
+    challenge?: LinuxDoCloudflareError;
+  }
+) {
   try {
     cancelRequestTimeoutForFallback(init);
     const response = await webViewFetcher(url, init);
@@ -209,14 +177,14 @@ async function fetchLinuxDoWebViewOnly(
       source: 'linuxdo',
       channel: 'webview',
       state: 'finish',
-      ...(directFailure ? { owner: directFailure.owner } : {}),
+      ...ownerFields,
       status: response.status
     });
-    if (!inheritedTrace) {
+    if (ownsTrace) {
       finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
         source: 'linuxdo',
         channel: 'webview',
-        ...(directFailure ? { owner: directFailure.owner } : {}),
+        ...ownerFields,
         ...(response.ok ? {} : { reason: 'http_error' })
       });
     }
@@ -229,17 +197,30 @@ async function fetchLinuxDoWebViewOnly(
       channel: 'webview',
       state: 'failure',
       reason,
-      ...(directFailure ? { owner: directFailure.owner } : {})
+      ...ownerFields
     });
-    if (!inheritedTrace) {
+    if (ownsTrace) {
       finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', {
         source: 'linuxdo',
         channel: 'webview',
         reason,
-        ...(directFailure ? { owner: directFailure.owner } : {})
+        ...ownerFields
       });
     }
-    throw error;
+    if (
+      !challenge ||
+      (typeof error === 'object' &&
+        error !== null &&
+        'reason' in error &&
+        (error.reason === 'private-access-stale' || error.reason === 'source-disabled')) ||
+      reason === 'canceled' ||
+      reason === 'stale' ||
+      reason === 'superseded' ||
+      (error instanceof LinuxDoHiddenBrowserFailureError && error.reason === 'content-too-large')
+    ) {
+      throw error;
+    }
+    throw challenge;
   }
 }
 

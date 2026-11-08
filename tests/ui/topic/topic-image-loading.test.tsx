@@ -1,7 +1,9 @@
+import { mockFetchSvgDocument } from '../svgDocumentFixture';
+import { createImageTouch } from '../imageTouchFixture';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Image, NativeModules, StyleSheet, Text, type MeasureOnSuccessCallback } from 'react-native';
+import { Image, NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentAudio } from '@/ui/content/ForumContentAudio';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
@@ -216,15 +218,6 @@ async function loadAndDisplayImage(
     })
   );
   await act(() => props.onDisplay?.());
-}
-
-async function mockFetchSvgDocument(url: string, headers: Record<string, string>) {
-  const response = await fetch(url, { headers });
-  if (!response.ok || !/(?:image|application)\/svg\+xml/i.test(response.headers.get('content-type') || '')) {
-    return null;
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  return bytes.length <= 1024 * 1024 ? { base64: bytes.toString('base64') } : null;
 }
 
 jest.mock('expo-image', () => {
@@ -736,21 +729,7 @@ describe('topic block image loading', () => {
       );
       try {
         const image = view.getByRole('button');
-        const target = { measure: (callback: MeasureOnSuccessCallback) => callback(0, 0, 320, 240, 0, 0) };
-        const touch = (x: number, count: number) => {
-          const point = (identifier: number) => ({ identifier, pageX: x, pageY: 60 + identifier * 40 });
-          return {
-            currentTarget: target,
-            target,
-            persist: () => undefined,
-            stopPropagation: () => undefined,
-            nativeEvent: {
-              ...point(0),
-              touches: Array.from({ length: count }, (_, index) => point(index)),
-              changedTouches: [point(count === 2 ? 1 : 0)]
-            }
-          };
-        };
+        const { target, touch } = createImageTouch();
         expect(image.props.onResponderGrant).toEqual(expect.any(Function));
         await fireEvent(image, 'responderGrant', touch(240, 1));
         await fireEvent(image, 'touchStart', touch(240, 1));

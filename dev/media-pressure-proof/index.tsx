@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import { registerRootComponent } from 'expo';
 import { Asset } from 'expo-asset';
 import { File, Paths } from 'expo-file-system';
@@ -50,9 +51,6 @@ type Record = {
 };
 type Scenario = { token: string; rounds: number; minSeconds: number; externalEvery: number };
 
-function check(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(message);
-}
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function observations() {

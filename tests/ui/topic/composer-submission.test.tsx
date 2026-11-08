@@ -1,3 +1,4 @@
+import { composerHostMessages } from '../composerHostMessages';
 import React from 'react';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,6 +8,7 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import { appQueryClient } from '@/platform/query/serverState';
 import {
   COMPOSER_DRAFT,
+  composerProofState,
   createComposerTransport,
   TopicSubmissionFixture,
   type ComposerTransport
@@ -35,15 +37,10 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 type Rendered = Awaited<ReturnType<typeof render>>;
-const editorDocuments = new WeakMap<Rendered, { documentEpoch: number; snapshot: ComposerSnapshot }>();
+const editorDocuments = new WeakMap<Rendered, { documentEpoch: number | undefined; snapshot: ComposerSnapshot }>();
 const heldSettlements = new WeakSet<Rendered>();
-function messages(view: Rendered) {
-  return view
-    .getByTestId('structured-composer-webview', { includeHiddenElements: true })
-    .props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
-}
 async function bridge(view: Rendered, type: string, payload: unknown, updateDocument = true) {
-  const documentEpoch = messages(view).findLast((message: { type: string }) => message.type === 'INIT')?.payload
+  const documentEpoch = composerHostMessages(view).findLast((message) => message.type === 'INIT')?.payload
     .documentEpoch;
   if (type === 'SNAPSHOT' && updateDocument) {
     const snapshot = (payload as { snapshot: ComposerSnapshot }).snapshot;
@@ -57,8 +54,8 @@ async function bridge(view: Rendered, type: string, payload: unknown, updateDocu
 }
 async function ready(view: Rendered) {
   await fireEvent(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }), 'loadEnd');
-  await waitFor(() => expect(messages(view).some((message: { type: string }) => message.type === 'INIT')).toBe(true));
-  const initial = messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload;
+  await waitFor(() => expect(composerHostMessages(view).some((message) => message.type === 'INIT')).toBe(true));
+  const initial = composerHostMessages(view).findLast((message) => message.type === 'INIT')!.payload;
   const initialize = (payload: typeof initial) => {
     editorDocuments.set(view, {
       documentEpoch: payload.documentEpoch,
@@ -96,10 +93,10 @@ async function submit(
   validationIssues: { code: string; message: string }[] = []
 ) {
   await fireEvent.press(view.getByLabelText(label));
-  const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+  const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
   expect(request).toBeDefined();
   await bridge(view, 'SNAPSHOT', {
-    requestId: request.payload.requestId,
+    requestId: request!.payload.requestId,
     snapshot: {
       revision,
       markdown,
@@ -119,9 +116,6 @@ function editWithoutSnapshot(view: Rendered, markdown: string) {
 }
 function sheetOpen(view: Rendered) {
   return view.getByTestId('composer-bottom-sheet', { includeHiddenElements: true }).props.pointerEvents === 'auto';
-}
-function state(view: Rendered) {
-  return JSON.parse(view.getByTestId('composer-proof-state').props.children);
 }
 
 describe('composer submission through the production controller and sheet', () => {
@@ -222,17 +216,15 @@ describe('composer submission through the production controller and sheet', () =
     async (source) => {
       const { view, transport } = await open(source);
       await submit(view);
-      await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
+      await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
       expect(transport.requests).toHaveLength(1);
       expect(transport.confirmations).toBe(1);
       await waitFor(() =>
-        expect(messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload.markdown).toBe(
-          ''
-        )
+        expect(composerHostMessages(view).findLast((message) => message.type === 'INIT')!.payload.markdown).toBe('')
       );
       await fireEvent.press(view.getByText('打开测试回复'));
-      expect(state(view).content).toBe('');
-      expect(state(view).visible).toBe(true);
+      expect(composerProofState(view).content).toBe('');
+      expect(composerProofState(view).visible).toBe(true);
     }
   );
   it.each(['nodeseek', 'linuxdo'] as const)(
@@ -240,12 +232,12 @@ describe('composer submission through the production controller and sheet', () =
     async (source) => {
       const { view, transport } = await open(source, 'success', true);
       await submit(view);
-      await waitFor(() => expect(state(view).busy).toBe(true));
+      await waitFor(() => expect(composerProofState(view).busy).toBe(true));
       await fireEvent.press(view.getByLabelText('发送回复'));
       expect(transport.requests).toHaveLength(1);
-      expect(state(view).content).toBe(COMPOSER_DRAFT);
+      expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
       await act(async () => transport.release());
-      await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
+      await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
     }
   );
   it.each(
@@ -260,10 +252,10 @@ describe('composer submission through the production controller and sheet', () =
       await waitFor(() => expect(transport.requests).toHaveLength(1));
       const newerDraft = `${COMPOSER_DRAFT}\nNewer text entered while sending.`;
       editWithoutSnapshot(view, newerDraft);
-      expect(state(view).content).toBe(COMPOSER_DRAFT);
+      expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
       await act(async () => transport.release());
-      await waitFor(() => expect(state(view).busy).toBe(false));
-      expect(state(view)).toEqual({ visible: true, content: newerDraft, busy: false });
+      await waitFor(() => expect(composerProofState(view).busy).toBe(false));
+      expect(composerProofState(view)).toEqual({ visible: true, content: newerDraft, busy: false });
       expect(transport.requests).toHaveLength(1);
       expect(transport.confirmations).toBe(1);
     }
@@ -277,18 +269,18 @@ describe('composer submission through the production controller and sheet', () =
     if (source === 'yaohuo') await fireEvent.press(view.getByLabelText('发送回复'));
     else await submit(view);
     await waitFor(() => expect(view.getByTestId('composer-proof-notice').props.children).not.toBe(''));
-    expect(state(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
+    expect(composerProofState(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
     expect(transport.requests).toHaveLength(1);
     transport.outcome = 'success';
     if (source === 'yaohuo') await fireEvent.press(view.getByLabelText('发送回复'));
     else await submit(view);
-    await waitFor(() => expect(state(view).visible).toBe(false));
+    await waitFor(() => expect(composerProofState(view).visible).toBe(false));
     expect(transport.requests).toHaveLength(2);
   });
   it('settles a confirmed reply even if the subsequent refresh fails', async () => {
     const { view, transport } = await open('nodeseek', 'refresh-error');
     await submit(view);
-    await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
+    await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
     expect(view.getByTestId('composer-proof-notice').props.children).toContain('勿重复发送');
     expect(transport.requests).toHaveLength(1);
   });
@@ -299,21 +291,21 @@ describe('composer submission through the production controller and sheet', () =
   )('settles the $source $entry entry through its real controller', async ({ source, entry }) => {
     const { view, transport } = await open(source, 'success', false, entry);
     await submit(view, COMPOSER_DRAFT, entry === 'edit' ? '保存编辑' : '发送回复');
-    await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
+    await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
     expect(transport.requests).toHaveLength(1);
   });
   it('settles the native Yaohuo editor after the real HTML parser confirms the response', async () => {
     const { view, transport } = await open('yaohuo');
     await fireEvent.press(view.getByLabelText('发送回复'));
-    await waitFor(() => expect(state(view)).toEqual({ visible: false, content: '', busy: false }));
+    await waitFor(() => expect(composerProofState(view)).toEqual({ visible: false, content: '', busy: false }));
     expect(transport.requests).toHaveLength(1);
   });
   it('does not restore a submitted draft from a late bridge snapshot', async () => {
     const { view, transport } = await open();
-    const documentEpoch = messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload
+    const documentEpoch = composerHostMessages(view).findLast((message) => message.type === 'INIT')!.payload
       .documentEpoch;
     await submit(view);
-    await waitFor(() => expect(state(view).visible).toBe(false));
+    await waitFor(() => expect(composerProofState(view).visible).toBe(false));
     await bridge(view, 'SNAPSHOT', {
       documentEpoch,
       snapshot: {
@@ -325,7 +317,7 @@ describe('composer submission through the production controller and sheet', () =
         pendingNodeSeekPolls: []
       }
     });
-    expect(state(view).content).toBe('');
+    expect(composerProofState(view).content).toBe('');
     await bridge(view, 'READY', { revision: 0 });
     await fireEvent.press(view.getByText('打开测试回复'));
     await bridge(view, 'SNAPSHOT', {
@@ -339,7 +331,7 @@ describe('composer submission through the production controller and sheet', () =
         pendingNodeSeekPolls: []
       }
     });
-    expect(state(view).content).toBe('');
+    expect(composerProofState(view).content).toBe('');
     expect(transport.requests).toHaveLength(1);
   });
   it('rejects an expired snapshot without sending and accepts a fresh retry', async () => {
@@ -348,18 +340,18 @@ describe('composer submission through the production controller and sheet', () =
     await submit(view);
     expect(view.getByText('编辑器返回了过期正文，请重试')).toBeTruthy();
     expect(transport.requests).toHaveLength(0);
-    expect(state(view).content).toBe(COMPOSER_DRAFT);
+    expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
     await submit(view, COMPOSER_DRAFT, '发送回复', 3);
-    await waitFor(() => expect(state(view).visible).toBe(false));
+    await waitFor(() => expect(composerProofState(view).visible).toBe(false));
     expect(transport.requests).toHaveLength(1);
   });
   it('preserves an unsent document across closing, reopening, presentation and mode changes', async () => {
     const { view, transport } = await open();
     await submit(view, COMPOSER_DRAFT, '收起回复');
-    await waitFor(() => expect(state(view).visible).toBe(false));
-    expect(state(view).content).toBe(COMPOSER_DRAFT);
+    await waitFor(() => expect(composerProofState(view).visible).toBe(false));
+    expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
     await fireEvent.press(view.getByText('打开测试回复'));
-    expect(state(view).content).toBe(COMPOSER_DRAFT);
+    expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
     expect(transport.requests).toHaveLength(0);
     const postMessage = view.getByTestId('structured-composer-webview', { includeHiddenElements: true }).props
       .postMessageMock;
@@ -370,17 +362,17 @@ describe('composer submission through the production controller and sheet', () =
     expect(view.getByTestId('structured-composer-webview', { includeHiddenElements: true }).props.postMessageMock).toBe(
       postMessage
     );
-    expect(state(view).content).toBe(COMPOSER_DRAFT);
+    expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
   });
   it('hides the root-portal composer while its route is inactive and restores the same draft on return', async () => {
     const { view, transport } = await open();
     const webView = view.getByTestId('structured-composer-webview', { includeHiddenElements: true });
     await view.rerender(<TopicSubmissionFixture transport={transport} active={false} />);
     expect(sheetOpen(view)).toBe(false);
-    expect(state(view)).toMatchObject({ visible: true, content: COMPOSER_DRAFT });
-    const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+    expect(composerProofState(view)).toMatchObject({ visible: true, content: COMPOSER_DRAFT });
+    const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
     await bridge(view, 'SNAPSHOT', {
-      requestId: request.payload.requestId,
+      requestId: request!.payload.requestId,
       snapshot: {
         revision: 2,
         markdown: 'draft before navigation',
@@ -393,14 +385,14 @@ describe('composer submission through the production controller and sheet', () =
     await view.rerender(<TopicSubmissionFixture transport={transport} />);
     expect(sheetOpen(view)).toBe(true);
     expect(view.getByTestId('structured-composer-webview', { includeHiddenElements: true })).toBe(webView);
-    expect(state(view).content).toBe('draft before navigation');
+    expect(composerProofState(view).content).toBe('draft before navigation');
     expect(transport.requests).toHaveLength(0);
   });
   it('does not send empty or invalid snapshots', async () => {
     const { view, transport } = await open();
     await submit(view, '');
     expect(transport.requests).toHaveLength(0);
-    expect(state(view).visible).toBe(true);
+    expect(composerProofState(view).visible).toBe(true);
     await bridge(view, 'READY', { revision: 0 });
     await bridge(view, 'SNAPSHOT', {
       snapshot: {
@@ -422,15 +414,15 @@ describe('composer submission through the production controller and sheet', () =
     await waitFor(() => expect(transport.requests).toHaveLength(1));
     await view.rerender(<TopicSubmissionFixture transport={transport} epoch={1} />);
     await act(async () => transport.release());
-    await waitFor(() => expect(state(view).busy).toBe(false));
-    expect(state(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
+    await waitFor(() => expect(composerProofState(view).busy).toBe(false));
+    expect(composerProofState(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
   });
   it.each(['reply', 'edit'] as const)('does not settle a newer session after an old %s confirmation', async (entry) => {
     const { view, transport } = await open('nodeseek', 'success', true, entry);
     await submit(view, COMPOSER_DRAFT, entry === 'edit' ? '保存编辑' : '发送回复');
     await waitFor(() => expect(transport.requests).toHaveLength(1));
     await submit(view, COMPOSER_DRAFT, entry === 'edit' ? '取消编辑' : '收起回复', 2);
-    await waitFor(() => expect(state(view).visible).toBe(false));
+    await waitFor(() => expect(composerProofState(view).visible).toBe(false));
     await fireEvent.press(view.getByText('打开空白回复'));
     await ready(view);
     await bridge(view, 'SNAPSHOT', {
@@ -444,8 +436,8 @@ describe('composer submission through the production controller and sheet', () =
       }
     });
     await act(async () => transport.release());
-    await waitFor(() => expect(state(view).busy).toBe(false));
-    expect(state(view)).toEqual({ visible: true, content: 'new draft', busy: false });
+    await waitFor(() => expect(composerProofState(view).busy).toBe(false));
+    expect(composerProofState(view)).toEqual({ visible: true, content: 'new draft', busy: false });
     expect(transport.requests).toHaveLength(1);
   });
   it('settles the original draft after leaving its route without reopening the composer', async () => {
@@ -454,9 +446,9 @@ describe('composer submission through the production controller and sheet', () =
     await waitFor(() => expect(transport.requests).toHaveLength(1));
     await view.rerender(<TopicSubmissionFixture transport={transport} active={false} />);
     await act(async () => transport.release());
-    await waitFor(() => expect(state(view).busy).toBe(false));
-    expect(state(view).content).toBe('');
-    expect(state(view).visible).toBe(false);
+    await waitFor(() => expect(composerProofState(view).busy).toBe(false));
+    expect(composerProofState(view).content).toBe('');
+    expect(composerProofState(view).visible).toBe(false);
   });
   it.each(
     (['nodeseek', 'linuxdo', 'yaohuo'] as const).flatMap((source) =>
@@ -467,8 +459,7 @@ describe('composer submission through the production controller and sheet', () =
     if (source === 'yaohuo') {
       await fireEvent.press(view.getByLabelText('发送回复'));
     } else {
-      const count = () =>
-        messages(view).filter((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT').length;
+      const count = () => composerHostMessages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT').length;
       const before = count();
       await fireEvent.press(view.getByLabelText('发送回复'));
       expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
@@ -492,8 +483,7 @@ describe('composer submission through the production controller and sheet', () =
       );
     await fireEvent.press(view.getByLabelText(launcher));
     if (source === 'yaohuo') expect(view.getByLabelText('私信回复内容').props.value).toBe('');
-    else
-      expect(messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload.markdown).toBe('');
+    else expect(composerHostMessages(view).findLast((message) => message.type === 'INIT')!.payload.markdown).toBe('');
   });
   it.each(['nodeseek', 'linuxdo'] as const)(
     'preserves private-message text entered before autosnapshot after a confirmed %s submission',
@@ -507,20 +497,20 @@ describe('composer submission through the production controller and sheet', () =
       await waitFor(() => expect(transport.confirmations).toBe(1));
       expect(sheetOpen(view)).toBe(true);
       await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
-      expect(messages(view).filter((message: { type: string }) => message.type === 'INIT')).toHaveLength(1);
+      expect(composerHostMessages(view).filter((message) => message.type === 'INIT')).toHaveLength(1);
       expect(transport.requests).toHaveLength(1);
     }
   );
   it('retains the draft on snapshot timeout and ignores the late timed-out response', async () => {
     const { view, transport } = await open();
     await fireEvent.press(view.getByLabelText('发送回复'));
-    const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+    const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
     await waitFor(() => expect(view.getByText('无法取得最新正文，草稿已保留')).toBeTruthy(), { timeout: 2500 });
     await bridge(
       view,
       'SNAPSHOT',
       {
-        requestId: request.payload.requestId,
+        requestId: request!.payload.requestId,
         snapshot: {
           revision: 9,
           markdown: 'expired body',
@@ -533,9 +523,9 @@ describe('composer submission through the production controller and sheet', () =
       false
     );
     expect(transport.requests).toHaveLength(0);
-    expect(state(view).content).toBe(COMPOSER_DRAFT);
+    expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
     await submit(view);
-    await waitFor(() => expect(state(view).visible).toBe(false));
+    await waitFor(() => expect(composerProofState(view).visible).toBe(false));
   });
   it.each(
     (['nodeseek', 'linuxdo', 'yaohuo'] as const).flatMap((source) =>
@@ -614,7 +604,7 @@ describe('composer submission through the production controller and sheet', () =
     await waitFor(() => expect(view.getByLabelText('发私信').props.accessibilityState.disabled).toBe(false));
     await fireEvent.press(view.getByLabelText('发私信'));
     expect(sheetOpen(view)).toBe(true);
-    expect(messages(view).findLast((message: { type: string }) => message.type === 'INIT').payload.markdown).toBe('');
+    expect(composerHostMessages(view).findLast((message) => message.type === 'INIT')!.payload.markdown).toBe('');
   });
   it('does not close or clear a different topic after an old confirmation', async () => {
     const { view, transport } = await open('nodeseek', 'success', true);
@@ -624,9 +614,9 @@ describe('composer submission through the production controller and sheet', () =
     await fireEvent.press(view.getByText('填入测试草稿'));
     await fireEvent.press(view.getByText('打开测试回复'));
     await act(async () => transport.release());
-    await waitFor(() => expect(state(view).busy).toBe(false));
-    expect(state(view).visible).toBe(true);
-    expect(state(view).content).toBe(COMPOSER_DRAFT);
+    await waitFor(() => expect(composerProofState(view).busy).toBe(false));
+    expect(composerProofState(view).visible).toBe(true);
+    expect(composerProofState(view).content).toBe(COMPOSER_DRAFT);
   });
   it('rechecks the account after the document settlement awaits its response', async () => {
     const { view, transport } = await open('nodeseek', 'success', true);
@@ -635,20 +625,17 @@ describe('composer submission through the production controller and sheet', () =
     await act(async () => transport.release());
     await waitFor(() =>
       expect(
-        messages(view).some(
-          (message: { type: string; payload?: { submission?: unknown } }) =>
-            message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission
-        )
+        composerHostMessages(view).some((message) => message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission)
       ).toBe(true)
     );
-    const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+    const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
     await view.rerender(<TopicSubmissionFixture transport={transport} epoch={1} />);
     await bridge(view, 'SNAPSHOT', {
-      requestId: request.payload.requestId,
+      requestId: request!.payload.requestId,
       snapshot: editorDocuments.get(view)!.snapshot
     });
-    await waitFor(() => expect(state(view).busy).toBe(false));
-    expect(state(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
+    await waitFor(() => expect(composerProofState(view).busy).toBe(false));
+    expect(composerProofState(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
     expect(transport.requests).toHaveLength(1);
   });
   it.each(
@@ -671,16 +658,13 @@ describe('composer submission through the production controller and sheet', () =
     await act(async () => transport.release());
     await waitFor(() =>
       expect(
-        messages(view).some(
-          (message: { type: string; payload?: { submission?: unknown } }) =>
-            message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission
-        )
+        composerHostMessages(view).some((message) => message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission)
       ).toBe(true)
     );
     if (failure === 'error') {
-      const request = messages(view).findLast((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+      const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
       await bridge(view, 'ERROR', {
-        requestId: request.payload.requestId,
+        requestId: request!.payload.requestId,
         revision: 2,
         code: 'too-long',
         message: '正文超过允许长度'
@@ -694,15 +678,15 @@ describe('composer submission through the production controller and sheet', () =
       { timeout: 2500 }
     );
     expect(sheetOpen(view)).toBe(true);
-    if (entry === 'reply') expect(state(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
+    if (entry === 'reply')
+      expect(composerProofState(view)).toEqual({ visible: true, content: COMPOSER_DRAFT, busy: false });
     await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
-    const sent = messages(view);
+    const sent = composerHostMessages(view);
     const settlementRequest = sent.findLastIndex(
-      (message: { type: string; payload?: { submission?: unknown } }) =>
-        message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission
+      (message) => message.type === 'REQUEST_SNAPSHOT' && message.payload?.submission
     );
     expect(sent.slice(settlementRequest + 1)).toContainEqual({ type: 'SET_READ_ONLY', payload: { readOnly: false } });
-    expect(messages(view).filter((message: { type: string }) => message.type === 'INIT')).toHaveLength(1);
+    expect(composerHostMessages(view).filter((message) => message.type === 'INIT')).toHaveLength(1);
     expect(editorDocuments.get(view)!.snapshot.markdown).toBe(
       failure === 'error' ? 'a'.repeat(MAX_COMPOSER_MARKDOWN_LENGTH + 1) : COMPOSER_DRAFT
     );

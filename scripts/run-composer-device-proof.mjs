@@ -13,7 +13,7 @@ import {
   assertComposerExpressionGeometry,
   assertComposerExpressionInsets
 } from './composer-expression-geometry.mjs';
-import apkSigning from './apk-signing.cjs';
+import { deviceApkSignerSha256, findDeviceApkSigner } from './device-apk-signer.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const pkg = 'com.wz.reader';
@@ -536,6 +536,7 @@ export function composerSourceHash(sourceRoot = root) {
     'tests/ui/topicCreationFixture.tsx',
     'tests/helpers/topicCreationTransport.ts',
     'tests/helpers/topicEditingTransport.ts',
+    'tests/helpers/jsonResponse.ts',
     'tests/helpers/accountSessions.ts',
     'modules/forum-platform/android/build.gradle',
     'modules/forum-platform/android/consumer-rules.pro',
@@ -835,23 +836,14 @@ async function main() {
   const artifact = JSON.parse(readFileSync(`${apk}.json`, 'utf8'));
   if (artifact.sourceHash !== composerSourceHash() || artifact.apkHash !== hash(readFileSync(apk)))
     throw new Error('APK does not match the current composer sources');
-  const buildTools = path.join(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '', 'build-tools');
-  const signer = readdirSync(buildTools)
-    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
-    .map((version) => path.join(buildTools, version, 'lib/apksigner.jar'))
-    .find(existsSync);
-  if (!signer) throw new Error('Android apksigner unavailable');
-  const signingIdentity = (file) =>
-    apkSigning.singleApkSignerSha256(
-      execFileSync('java', ['-jar', signer, 'verify', '--print-certs', file], { encoding: 'utf8', windowsHide: true })
-    );
+  const signer = findDeviceApkSigner();
   const installedPath = adb('shell', 'pm', 'path', pkg)
     .split(/\r?\n/)[0]
     .replace(/^package:/, '');
   const installedCopy = path.join(output, 'previous.apk');
   adb('pull', installedPath, installedCopy);
-  const certificate = signingIdentity(apk);
-  if (!certificate || certificate !== signingIdentity(installedCopy))
+  const certificate = deviceApkSignerSha256(signer, apk);
+  if (!certificate || certificate !== deviceApkSignerSha256(signer, installedCopy))
     throw new Error('APK signer mismatch; installation frozen');
   adb('install', '-r', apk);
   if (identity() !== installedAt) throw new Error('Installation identity changed; device changes frozen');

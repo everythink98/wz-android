@@ -598,7 +598,7 @@ class TopicBodyMediaCoordinator {
   }
 }
 
-function monotonicNowMs() {
+export function monotonicNowMs() {
   return typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
 }
 

@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import os from 'node:os';
-import apkSigning from './apk-signing.cjs';
+import { deviceApkSignerSha256, findDeviceApkSigner } from './device-apk-signer.mjs';
 import { buildDeviceProof } from './device-proof-build.mjs';
 import { proofDeviceForSerial } from './review-proof-checkpoint.mjs';
 
@@ -57,20 +57,11 @@ let apkHash;
 if (values.apk) {
   const apk = path.resolve(values.apk);
   apkHash = createHash('sha256').update(readFileSync(apk)).digest('hex');
-  const buildTools = path.join(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '', 'build-tools');
-  const signer = readdirSync(buildTools)
-    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
-    .map((version) => path.join(buildTools, version, 'lib/apksigner.jar'))
-    .find(existsSync);
-  if (!signer) throw new Error('Android apksigner unavailable');
+  const signer = findDeviceApkSigner();
   const aapt = path.join(path.dirname(path.dirname(signer)), process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
   const packageInfo = (file) =>
     /^package: name='([^']+)' versionCode='(\d+)'/mu.exec(
       execFileSync(aapt, ['dump', 'badging', file], { encoding: 'utf8', windowsHide: true })
-    );
-  const signingIdentity = (file) =>
-    apkSigning.singleApkSignerSha256(
-      execFileSync('java', ['-jar', signer, 'verify', '--print-certs', file], { encoding: 'utf8', windowsHide: true })
     );
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'wz-reader-storage-install-'));
   try {
@@ -90,8 +81,8 @@ if (values.apk) {
       Number(candidate?.[2]) < Number(previous?.[2])
     )
       throw new Error('APK package mismatch or downgrade; installation frozen');
-    const certificate = signingIdentity(apk);
-    if (!certificate || certificate !== signingIdentity(installedCopy))
+    const certificate = deviceApkSignerSha256(signer, apk);
+    if (!certificate || certificate !== deviceApkSignerSha256(signer, installedCopy))
       throw new Error('APK signer mismatch; installation frozen');
     adb('install', '-r', apk);
   } finally {

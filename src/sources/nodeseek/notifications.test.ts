@@ -1,16 +1,10 @@
+import { jsonResponse } from '../../../tests/helpers/jsonResponse';
 import { describe, expect, it, vi } from 'vitest';
 
 import { nodeSeekNotificationAdapter } from './notifications';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
-
-function json(value: unknown) {
-  return new Response(JSON.stringify(value), {
-    status: 200,
-    headers: { 'content-type': 'application/json' }
-  });
-}
 
 function html(value: string) {
   return new Response(value, {
@@ -68,7 +62,7 @@ describe('NodeSeek notifications', () => {
       unreadOnly: true,
       identityKey: 'nodeseek:7',
       userId: '7',
-      fetcher: async () => json({ msgArray: [{ id: 1, sender_id: 9, receiver_id: 7, viewed: true }, {}] })
+      fetcher: async () => jsonResponse({ msgArray: [{ id: 1, sender_id: 9, receiver_id: 7, viewed: true }, {}] })
     });
     expect(page.items).toEqual([]);
     expect(page.quality).toBe('partial');
@@ -84,7 +78,7 @@ describe('NodeSeek notifications', () => {
       categoryId: 'messages',
       identityKey: 'nodeseek:7',
       userId: '7',
-      fetcher: async () => json({ msgArray: [{}] })
+      fetcher: async () => jsonResponse({ msgArray: [{}] })
     });
     expect(sourceDiagnosticSummary(invalid)).toMatchObject({ isParseEmpty: true, isExpectedEmpty: false });
     expect(invalid.quality).toBe('invalid');
@@ -95,14 +89,14 @@ describe('NodeSeek notifications', () => {
       nodeSeekNotificationAdapter.readUnreadSnapshot({
         identityKey: 'nodeseek:7',
         userId: '7',
-        fetcher: async () => json({ success: true, atMe: 0 })
+        fetcher: async () => jsonResponse({ success: true, atMe: 0 })
       })
     ).rejects.toThrow();
     await expect(
       nodeSeekNotificationAdapter.readUnreadSnapshot({
         identityKey: 'nodeseek:7',
         userId: '7',
-        fetcher: async () => json({ atMe: 0, reply: 0, message: 0 })
+        fetcher: async () => jsonResponse({ atMe: 0, reply: 0, message: 0 })
       })
     ).resolves.toMatchObject({ total: 0 });
   });
@@ -120,7 +114,7 @@ describe('NodeSeek notifications', () => {
   it('reads only the selected NodeSeek notification category', async () => {
     const fetcher = vi.fn(async (input: string) => {
       expect(new URL(input).pathname).toBe('/api/notification/message/list');
-      return json({
+      return jsonResponse({
         msgArray: [
           {
             id: 21,
@@ -213,7 +207,7 @@ describe('NodeSeek notifications', () => {
   });
 
   it('rejects a structurally invalid notification payload instead of treating it as empty', async () => {
-    const fetcher = vi.fn(async () => json({ success: true }));
+    const fetcher = vi.fn(async () => jsonResponse({ success: true }));
 
     await expect(
       nodeSeekNotificationAdapter.listPage({ fetcher, identityKey: 'nodeseek:7', userId: '7' })
@@ -223,7 +217,7 @@ describe('NodeSeek notifications', () => {
   it('preserves an explicit unknown NodeSeek notification type as other', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/at-me/list')
-        ? json({
+        ? jsonResponse({
             atList: [
               {
                 id: 15,
@@ -233,7 +227,7 @@ describe('NodeSeek notifications', () => {
               }
             ]
           })
-        : json({ notifications: [] })
+        : jsonResponse({ notifications: [] })
     );
 
     const page = await nodeSeekNotificationAdapter.listPage({
@@ -248,8 +242,8 @@ describe('NodeSeek notifications', () => {
   it('treats a missing viewed marker as unread', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/at-me/list')
-        ? json({ atList: [{ id: 14, post_id: 101, commenter_name: '甲' }] })
-        : json({ notifications: [] })
+        ? jsonResponse({ atList: [{ id: 14, post_id: 101, commenter_name: '甲' }] })
+        : jsonResponse({ notifications: [] })
     );
 
     const page = await nodeSeekNotificationAdapter.listPage({
@@ -264,7 +258,7 @@ describe('NodeSeek notifications', () => {
   it('does not report an outgoing private message as unread', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/message/list')
-        ? json({
+        ? jsonResponse({
             msgArray: [
               {
                 id: 21,
@@ -276,7 +270,7 @@ describe('NodeSeek notifications', () => {
               }
             ]
           })
-        : json({ notifications: [] })
+        : jsonResponse({ notifications: [] })
     );
 
     const page = await nodeSeekNotificationAdapter.listPage({
@@ -307,7 +301,7 @@ describe('NodeSeek notifications', () => {
         identityKey: 'nodeseek:7',
         userId: '7',
         fetcher: async (input) =>
-          json(
+          jsonResponse(
             new URL(input).pathname.endsWith('/message/list')
               ? { success: true, msgArray: rows }
               : { success: true, data: [] }
@@ -337,7 +331,10 @@ describe('NodeSeek notifications', () => {
         identityKey: 'nodeseek:7',
         userId: '7',
         fetcher: async () =>
-          json({ success: true, msgArray: [{ receiver_id: 7, sender_id: 9, max_id, created_at, content, viewed: 0 }] })
+          jsonResponse({
+            success: true,
+            msgArray: [{ receiver_id: 7, sender_id: 9, max_id, created_at, content, viewed: 0 }]
+          })
       });
     const first = await load(101, '2026-09-19T10:00:00Z', '原文');
     const repeated = await load(101, '2026-09-19T10:00:00Z', '原文');
@@ -352,7 +349,7 @@ describe('NodeSeek notifications', () => {
     ]);
     expect([first, repeated, changed, newer].every((page) => page.quality === 'complete')).toBe(true);
 
-    const fetcher = vi.fn(async () => json({ success: true }));
+    const fetcher = vi.fn(async () => jsonResponse({ success: true }));
     await nodeSeekNotificationAdapter.markRead(
       first.items[0]!,
       { notification: first.items[0]!, title: '脱敏会话', unreadMessageIds: ['88', '89'] },
@@ -372,7 +369,7 @@ describe('NodeSeek notifications', () => {
         identityKey: 'nodeseek:7',
         userId: '7',
         fetcher: async () =>
-          json({ msgArray: [{ max_id, sender_id: 9, receiver_id: 7, created_at: '2026-09-19T10:00:00Z' }] })
+          jsonResponse({ msgArray: [{ max_id, sender_id: 9, receiver_id: 7, created_at: '2026-09-19T10:00:00Z' }] })
       });
       expect(page.quality).toBe('partial');
       expect(page.items[0]?.id).toMatch(/^message:fallback:/);
@@ -385,7 +382,7 @@ describe('NodeSeek notifications', () => {
       identityKey: 'nodeseek:7',
       userId: '7',
       fetcher: async (input) =>
-        json(
+        jsonResponse(
           new URL(input).pathname.endsWith('/message/list')
             ? { msgArray: [] }
             : { data: [{ max_id: 999, post_id: 101 }] }
@@ -399,8 +396,8 @@ describe('NodeSeek notifications', () => {
     const load = async (commentId: number) => {
       const fetcher = vi.fn(async (input: string) =>
         new URL(input).pathname.endsWith('/reply-to-me/list')
-          ? json({ replyList: [{ id: 12, comment_id: commentId, post_id: 102, viewed: false }] })
-          : json({ notifications: [] })
+          ? jsonResponse({ replyList: [{ id: 12, comment_id: commentId, post_id: 102, viewed: false }] })
+          : jsonResponse({ notifications: [] })
       );
       return nodeSeekNotificationAdapter.listPage({ fetcher, identityKey: 'nodeseek:7', userId: '7' });
     };
@@ -415,8 +412,8 @@ describe('NodeSeek notifications', () => {
   it('carries the compatible message_id into the exact topic target', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/reply-to-me/list')
-        ? json({ replyList: [{ id: 12, message_id: 98, post_id: 102, viewed: false }] })
-        : json({ notifications: [] })
+        ? jsonResponse({ replyList: [{ id: 12, message_id: 98, post_id: 102, viewed: false }] })
+        : jsonResponse({ notifications: [] })
     );
 
     const page = await nodeSeekNotificationAdapter.listPage({
@@ -440,7 +437,7 @@ describe('NodeSeek notifications', () => {
     const fetcher = vi.fn(async (input: string) => {
       const pathname = new URL(input).pathname;
       if (pathname.endsWith('/message/list')) {
-        return json({
+        return jsonResponse({
           msgArray: [
             {
               sender_id: counterpartId,
@@ -453,7 +450,7 @@ describe('NodeSeek notifications', () => {
           ]
         });
       }
-      return json({ notifications: [] });
+      return jsonResponse({ notifications: [] });
     });
 
     const page = await nodeSeekNotificationAdapter.listPage({
@@ -470,13 +467,13 @@ describe('NodeSeek notifications', () => {
   it('drops ambiguous same-time conversations instead of persisting a participant-derived id', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/message/list')
-        ? json({
+        ? jsonResponse({
             msgArray: [
               { sender_id: '101', receiver_id: 7, created_at: '2026-08-02T12:00:00Z', viewed: false },
               { sender_id: '202', receiver_id: 7, created_at: '2026-08-02T12:00:00Z', viewed: false }
             ]
           })
-        : json({ notifications: [] })
+        : jsonResponse({ notifications: [] })
     );
 
     const page = await nodeSeekNotificationAdapter.listPage({
@@ -509,7 +506,7 @@ describe('NodeSeek notifications', () => {
     ];
     const load = async (atList: typeof rows) => {
       const fetcher = vi.fn(async (input: string) =>
-        new URL(input).pathname.endsWith('/at-me/list') ? json({ atList }) : json({ notifications: [] })
+        new URL(input).pathname.endsWith('/at-me/list') ? jsonResponse({ atList }) : jsonResponse({ notifications: [] })
       );
       return nodeSeekNotificationAdapter.listPage({
         fetcher,
@@ -530,7 +527,7 @@ describe('NodeSeek notifications', () => {
     const load = async (postTitle: string, content: string) => {
       const fetcher = vi.fn(async (input: string) =>
         new URL(input).pathname.endsWith('/at-me/list')
-          ? json({
+          ? jsonResponse({
               atList: [
                 {
                   post_id: 101,
@@ -543,7 +540,7 @@ describe('NodeSeek notifications', () => {
                 }
               ]
             })
-          : json({ notifications: [] })
+          : jsonResponse({ notifications: [] })
       );
       return nodeSeekNotificationAdapter.listPage({ fetcher, identityKey: 'nodeseek:7', userId: '7' });
     };
@@ -558,10 +555,12 @@ describe('NodeSeek notifications', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname.endsWith('/at-me/list')) {
-        return json({ atList: [{ id: 11, post_id: 101, commenter_name: '甲', post_title: '主题甲', viewed: false }] });
+        return jsonResponse({
+          atList: [{ id: 11, post_id: 101, commenter_name: '甲', post_title: '主题甲', viewed: false }]
+        });
       }
       if (url.pathname.endsWith('/reply-to-me/list')) {
-        return json({
+        return jsonResponse({
           replyList: [
             {
               id: 12,
@@ -576,7 +575,7 @@ describe('NodeSeek notifications', () => {
           ]
         });
       }
-      return json({
+      return jsonResponse({
         msgArray: [
           {
             id: 13,
@@ -633,7 +632,7 @@ describe('NodeSeek notifications', () => {
         receiver_id: 7,
         viewed: true
       }));
-      return json(
+      return jsonResponse(
         pathname.endsWith('/message/list') ? { success: true, msgArray: rows } : { success: true, data: rows }
       );
     });
@@ -661,14 +660,14 @@ describe('NodeSeek notifications', () => {
     const fetcher = vi.fn(async (input: string) => {
       const pathname = new URL(input).pathname;
       if (pathname.endsWith('/at-me/list')) {
-        return json({ atList: rows.map((id) => ({ id, post_id: id, viewed: false })) });
+        return jsonResponse({ atList: rows.map((id) => ({ id, post_id: id, viewed: false })) });
       }
       if (pathname.endsWith('/reply-to-me/list')) {
-        return json({
+        return jsonResponse({
           replyList: rows.map((id) => ({ id: id + 100, post_id: id + 100, viewed: false }))
         });
       }
-      return json({
+      return jsonResponse({
         msgArray: rows.map((id) => ({ id: id + 200, sender_id: id + 200, receiver_id: 7, viewed: false }))
       });
     });
@@ -859,7 +858,7 @@ describe('NodeSeek notifications', () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      return json({ success: true });
+      return jsonResponse({ success: true });
     });
     const access = { fetcher, identityKey: 'nodeseek:7', userId: '7' };
     const detail = { notification: null as never, title: '' };
@@ -910,7 +909,7 @@ describe('NodeSeek notifications', () => {
       const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         calls.push({ url, init });
         if (new URL(url).pathname.endsWith('/message/with/9')) {
-          return json({
+          return jsonResponse({
             talkTo: { member_name: '丙' },
             msgArray: [
               {
@@ -943,7 +942,7 @@ describe('NodeSeek notifications', () => {
             ]
           });
         }
-        return json({ success: true });
+        return jsonResponse({ success: true });
       });
       const item = {
         source: 'nodeseek' as const,
@@ -995,7 +994,7 @@ describe('NodeSeek notifications', () => {
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.method).toBe('POST');
       wireBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return json(typeof wireBody.receiverUid === 'number' ? { success: true } : { success: false });
+      return jsonResponse(typeof wireBody.receiverUid === 'number' ? { success: true } : { success: false });
     });
     const item = {
       source: 'nodeseek' as const,
@@ -1021,7 +1020,7 @@ describe('NodeSeek notifications', () => {
   });
 
   it('reads a first conversation without creating or marking a message and surfaces a rejected read', async () => {
-    const fetcher = vi.fn(async () => json({ success: true, msgArray: [], talkTo: { uid: 23042 } }));
+    const fetcher = vi.fn(async () => jsonResponse({ success: true, msgArray: [], talkTo: { uid: 23042 } }));
     const item = {
       source: 'nodeseek' as const,
       id: 'conversation:23042',
@@ -1044,7 +1043,7 @@ describe('NodeSeek notifications', () => {
       'https://www.nodeseek.com/api/notification/message/with/23042',
       expect.not.objectContaining({ method: 'POST' })
     );
-    fetcher.mockImplementation(async () => json({ success: false, message: '用户不存在', msgArray: [] }));
+    fetcher.mockImplementation(async () => jsonResponse({ success: false, message: '用户不存在', msgArray: [] }));
     await expect(nodeSeekNotificationAdapter.loadDetail(item, access)).rejects.toThrow('用户不存在');
     fetcher.mockImplementation(async () => new Response('{"error":"USER NOT FOUND"}', { status: 500 }));
     const error = await nodeSeekNotificationAdapter.loadDetail(item, access).catch((value: unknown) => value);
@@ -1055,7 +1054,7 @@ describe('NodeSeek notifications', () => {
   it.each(['', 'not-a-uid', '0', '9007199254740992'])(
     'rejects invalid receiver UID %s before network access',
     async (conversationId) => {
-      const fetcher = vi.fn(async () => json({ success: true }));
+      const fetcher = vi.fn(async () => jsonResponse({ success: true }));
       const item = {
         source: 'nodeseek' as const,
         id: `message:${conversationId}`,
@@ -1082,7 +1081,7 @@ describe('NodeSeek notifications', () => {
   );
 
   it('does not confirm an ambiguous NodeSeek send response', async () => {
-    const fetcher = vi.fn(async () => json({}));
+    const fetcher = vi.fn(async () => jsonResponse({}));
     const item = {
       source: 'nodeseek' as const,
       id: 'message:51153',
@@ -1108,7 +1107,9 @@ describe('NodeSeek notifications', () => {
     async (unconfirmedGroup) => {
       const groups = ['at-me', 'reply-to-me', 'message'];
       const fetcher = vi.fn(async (url: string) =>
-        json(new URL(url).pathname === `/api/notification/${unconfirmedGroup}/markViewed` ? {} : { success: true })
+        jsonResponse(
+          new URL(url).pathname === `/api/notification/${unconfirmedGroup}/markViewed` ? {} : { success: true }
+        )
       );
 
       await expect(
@@ -1127,7 +1128,7 @@ describe('NodeSeek notifications', () => {
     const fetcher = vi.fn(async (url: string) =>
       new URL(url).pathname === '/api/notification/reply-to-me/markViewed'
         ? new Response(JSON.stringify(payload), { status })
-        : json({ success: true })
+        : jsonResponse({ success: true })
     );
 
     await expect(
@@ -1141,8 +1142,8 @@ describe('NodeSeek notifications', () => {
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       return new URL(url).pathname.endsWith('/unread-count')
-        ? json({ reply: 2, atMe: 1, message: 3 })
-        : json({ success: true });
+        ? jsonResponse({ reply: 2, atMe: 1, message: 3 })
+        : jsonResponse({ success: true });
     });
     const access = { fetcher, identityKey: 'nodeseek:7', userId: '7' };
 

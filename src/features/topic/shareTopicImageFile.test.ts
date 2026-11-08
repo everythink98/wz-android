@@ -1,3 +1,4 @@
+import type { FileUriPart } from '../../../tests/helpers/expoFileUri';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   existsSync,
@@ -38,17 +39,12 @@ vi.mock('expo-sharing', () => ({
 vi.mock('expo-file-system', async () => {
   const fs = await import('node:fs');
   const { copyFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
   const { fileURLToPath, pathToFileURL } = await import('node:url');
-  type Part = string | { uri: string };
-  const uriFor = (parts: Part[]) => {
-    const [root, ...names] = parts.map((part) => (typeof part === 'string' ? part : part.uri));
-    return pathToFileURL(join(fileURLToPath(root), ...names)).href;
-  };
+  const { fileUriFor } = await import('../../../tests/helpers/expoFileUri');
   class File {
     uri: string;
-    constructor(...parts: Part[]) {
-      this.uri = uriFor(parts);
+    constructor(...parts: FileUriPart[]) {
+      this.uri = fileUriFor(parts);
     }
     get name() {
       return this.uri.split('/').at(-1);
@@ -73,8 +69,8 @@ vi.mock('expo-file-system', async () => {
   }
   class Directory {
     uri: string;
-    constructor(...parts: Part[]) {
-      this.uri = uriFor(parts);
+    constructor(...parts: FileUriPart[]) {
+      this.uri = fileUriFor(parts);
     }
     create() {
       fs.mkdirSync(fileURLToPath(this.uri), { recursive: true });

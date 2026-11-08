@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { createQueryTestWrapper } from '../QueryTestWrapper';
 import { createAppQueryClient } from '@/platform/query/serverState';
 import { LinuxDoCreditError, type LinuxDoCreditEntry } from '@/domain/forum/linuxDoCredit';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
@@ -71,9 +70,7 @@ async function setup(transactions = true, active = true) {
       }),
     {
       initialProps: { active, userId: 'alice', sessionEpoch: 0 },
-      wrapper: ({ children }: { children: ReactNode }) => (
-        <QueryClientProvider client={client}>{children}</QueryClientProvider>
-      )
+      wrapper: createQueryTestWrapper(client)
     }
   );
   return { ...hook, client, gateway, getAccount, getTransactions, connectSilently };

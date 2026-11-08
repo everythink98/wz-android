@@ -5,6 +5,7 @@ import { Button, IconButton as PaperIconButton } from 'react-native-paper';
 import type { LucideIcon } from 'lucide-react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
+  createReaderFontSizer,
   type ReaderStyleSettings,
   alphaColor,
   fontFamilyValue,
@@ -14,7 +15,7 @@ import {
 import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontSize = (size: number) => Math.round(size * settings.fontScale);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
     floating: {
       width: 52,

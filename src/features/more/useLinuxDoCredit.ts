@@ -3,7 +3,7 @@ import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@
 import { LinuxDoCreditError, type LinuxDoCreditPage } from '@/domain/forum/linuxDoCredit';
 import type { ReadGateway } from '@/sources/readGateway';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
-import { forumQueryKeys } from '@/platform/query/serverState';
+import { forumQueryKeys, keepFirstQueryPage } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 export type LinuxDoCreditGateway = Pick<
@@ -92,9 +92,7 @@ export function useLinuxDoCredit({
     if (!current.current.enabled) return;
     await Promise.all(ownedKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })));
     if (!current.current.enabled || current.current.keys !== keys) return;
-    client.setQueryData<InfiniteData<LinuxDoCreditPage, number>>(keys.transactions, (previous) =>
-      previous ? { pages: previous.pages.slice(0, 1), pageParams: previous.pageParams.slice(0, 1) } : previous
-    );
+    client.setQueryData<InfiniteData<LinuxDoCreditPage, number>>(keys.transactions, keepFirstQueryPage);
     await client.invalidateQueries({ queryKey: keys.account, exact: true });
     if (!current.current.enabled || current.current.keys !== keys || client.getQueryState(keys.account)?.error) return;
     await client.invalidateQueries({ queryKey: keys.transactions, exact: true });

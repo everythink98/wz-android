@@ -1,6 +1,6 @@
 import type { AccessRequirement } from './models';
 import { isRecord, parsePositiveInteger, textContentFromHtml } from './html';
-import { accessRequirementLevelValue } from './presentation';
+import { accessRequirementLevelValue, accessRequirementSpecificity } from './presentation';
 
 function accessRequirementFromLevel(value: unknown) {
   const level = parsePositiveInteger(value);
@@ -125,19 +125,6 @@ function normalizeAccessRequirement(value: unknown): AccessRequirement | undefin
   return detected?.type === 'level' ? detected : { type, label, detail };
 }
 
-function accessRequirementRank(value?: AccessRequirement) {
-  if (!value) {
-    return 0;
-  }
-  if (value.type === 'level') {
-    return 3;
-  }
-  if (value.type === 'permission') {
-    return 2;
-  }
-  return 1;
-}
-
 function preferredAccessRequirement(current: AccessRequirement | undefined, candidate: AccessRequirement | undefined) {
   if (!candidate) {
     return current;
@@ -145,8 +132,8 @@ function preferredAccessRequirement(current: AccessRequirement | undefined, cand
   if (!current) {
     return candidate;
   }
-  const currentRank = accessRequirementRank(current);
-  const candidateRank = accessRequirementRank(candidate);
+  const currentRank = accessRequirementSpecificity(current);
+  const candidateRank = accessRequirementSpecificity(candidate);
   if (candidateRank > currentRank) {
     return candidate;
   }

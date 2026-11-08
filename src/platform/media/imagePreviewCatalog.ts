@@ -5,6 +5,7 @@ import {
   isInlineForumImageUrl,
   ORIGINAL_IMAGE_SOURCE_ATTR,
   parseSrcsetCandidates,
+  bestSrcsetImageUrlFromCandidates,
   parseForumImageDimension as parseImageDimension,
   type ForumImagePreviewDescriptor
 } from '@/domain/forum/forumContentMedia';
@@ -142,7 +143,7 @@ function imagePreviewEntryFromDescriptor(
   const originalUri = firstPreparedPreviewImageSource([
     descriptor.lightboxOriginal,
     descriptor.dataOriginal,
-    bestSrcsetImageUrlFromCandidates(sourceSetCandidates),
+    bestSrcsetImageUrlFromCandidates(sourceSetCandidates, isAllowedPreviewImageSource),
     descriptor.dataSource,
     displayUri,
     descriptor.source,
@@ -478,26 +479,5 @@ function selectResponsiveSrcsetImageUrlFromCandidates(
 }
 
 function bestSrcsetImageUrl(srcset: string) {
-  return bestSrcsetImageUrlFromCandidates(parseSrcsetCandidates(srcset));
-}
-
-function bestSrcsetImageUrlFromCandidates(candidates: readonly string[]) {
-  let bestUrl = '';
-  let bestScore = -1;
-  candidates.forEach((candidate, index) => {
-    const parts = candidate.trim().split(/\s+/);
-    const url = String(parts.shift() || '').trim();
-    if (!isAllowedPreviewImageSource(url)) {
-      return;
-    }
-    const descriptor = parts[0] || '';
-    const width = descriptor.match(/^(\d+(?:\.\d+)?)w$/i);
-    const density = descriptor.match(/^(\d+(?:\.\d+)?)x$/i);
-    const score = width ? Number(width[1]) : density ? Number(density[1]) * 100 : index;
-    if (score >= bestScore) {
-      bestUrl = url;
-      bestScore = score;
-    }
-  });
-  return bestUrl;
+  return bestSrcsetImageUrlFromCandidates(parseSrcsetCandidates(srcset), isAllowedPreviewImageSource);
 }

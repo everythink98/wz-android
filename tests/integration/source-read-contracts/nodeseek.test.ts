@@ -1,3 +1,4 @@
+import { jsonResponse } from '../../helpers/jsonResponse';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getCategories, getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
@@ -26,7 +27,7 @@ vi.mock('expo-secure-store', () => ({
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import { html, htmlAt, json, routeFetcher, nodeSeekPayload } from './fixtures';
+import { html, htmlAt, routeFetcher, nodeSeekPayload } from './fixtures';
 
 const nodeSeekTopicPayload = Buffer.from(
   JSON.stringify({
@@ -863,7 +864,7 @@ describe('Android local sources', () => {
         if (new Headers(init?.headers).get('x-dynamic-sign') !== 'a'.repeat(40)) {
           return new Response(JSON.stringify({ success: false }), { status: 403 });
         }
-        return json({
+        return jsonResponse({
           vote: {
             id: 2443,
             title: '公开投票',
@@ -925,7 +926,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/vote/info/2443',
-        json({
+        jsonResponse({
           vote: {
             id: 2443,
             title: '未投票时隐藏结果',
@@ -983,7 +984,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/vote/info/2443',
-        json({
+        jsonResponse({
           vote: {
             id: 2443,
             title: '可用投票',
@@ -992,7 +993,7 @@ describe('Android local sources', () => {
         })
       ],
       ['/api/vote/info/2444', new Response(JSON.stringify({ success: false }), { status: 403 })],
-      ['/api/vote/info/2445', json({ success: false })],
+      ['/api/vote/info/2445', jsonResponse({ success: false })],
       [/.*/, html(`<script>${payload}</script>`)]
     ]);
 
@@ -1112,7 +1113,7 @@ describe('Android local sources', () => {
     const stardust = 'nsapp://stardust-receive?member_id=42&ref_id=7&description=Pay&diff=5&onetime=false';
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/vote/info/3028')) {
-        return json({
+        return jsonResponse({
           vote: {
             id: 3028,
             title: '评论投票',
@@ -3013,12 +3014,12 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/account/getInfo/7',
-        json({
+        jsonResponse({
           success: true,
           detail: { member_id: 7, member_name: 'newbie', nPost: 0, nComment: 0 }
         })
       ],
-      ['/api/content/list-discussions', json({ discussions: [] })],
+      ['/api/content/list-discussions', jsonResponse({ discussions: [] })],
       [
         /.*/,
         (input) => {
@@ -3036,12 +3037,12 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/account/getInfo/7',
-        json({
+        jsonResponse({
           success: true,
           detail: { member_id: 7, member_name: 'newbie', nPost: 1, nComment: 0 }
         })
       ],
-      ['/api/content/list-discussions', json({ discussions: [{ post_id: 101, title: 'Only topic' }] })]
+      ['/api/content/list-discussions', jsonResponse({ discussions: [{ post_id: 101, title: 'Only topic' }] })]
     ]);
 
     const profile = await readNodeSeekUser('7', { cursorType: 'topics', fetcher });
@@ -3056,12 +3057,15 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/account/getInfo/7',
-        json({
+        jsonResponse({
           success: true,
           detail: { member_id: 7, member_name: 'newbie', nPost: 0, nComment: 1 }
         })
       ],
-      ['/api/content/list-comments', json({ comments: [{ post_id: 101, title: 'Only reply topic', floor_id: 1 }] })]
+      [
+        '/api/content/list-comments',
+        jsonResponse({ comments: [{ post_id: 101, title: 'Only reply topic', floor_id: 1 }] })
+      ]
     ]);
 
     const profile = await readNodeSeekUser('7', { cursorType: 'replies', fetcher });
@@ -3076,7 +3080,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/account/getInfo/7',
-        json({
+        jsonResponse({
           success: true,
           detail: { member_id: 7, member_name: 'member', nPost: 16, nComment: 0 }
         })
@@ -3086,7 +3090,7 @@ describe('Android local sources', () => {
         (input) => {
           const page = Number(new URL(input).searchParams.get('page'));
           const length = page === 1 ? 15 : 1;
-          return json({
+          return jsonResponse({
             discussions: Array.from({ length }, (_, index) => ({
               post_id: (page - 1) * 15 + index + 1,
               title: `Topic ${(page - 1) * 15 + index + 1}`
@@ -3107,7 +3111,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/account/getInfo/7',
-        json({
+        jsonResponse({
           success: true,
           detail: { member_id: 7, member_name: 'member', nPost: 0, nComment: 16 }
         })
@@ -3117,7 +3121,7 @@ describe('Android local sources', () => {
         (input) => {
           const page = Number(new URL(input).searchParams.get('page'));
           const length = page === 1 ? 15 : 1;
-          return json({
+          return jsonResponse({
             comments: Array.from({ length }, (_, index) => ({
               post_id: (page - 1) * 15 + index + 1,
               title: `Reply topic ${(page - 1) * 15 + index + 1}`,
@@ -3142,10 +3146,10 @@ describe('Android local sources', () => {
     'falls back to the raw NodeSeek topic page size when the total is absent: %i rows',
     async (length, hasMore, cursor) => {
       const fetcher = routeFetcher([
-        ['/api/account/getInfo/7', json({ success: true, detail: { member_id: 7, member_name: 'member' } })],
+        ['/api/account/getInfo/7', jsonResponse({ success: true, detail: { member_id: 7, member_name: 'member' } })],
         [
           '/api/content/list-discussions',
-          json({
+          jsonResponse({
             discussions: Array.from({ length }, (_, index) => ({ post_id: index + 1, title: `Topic ${index + 1}` }))
           })
         ]
@@ -3164,10 +3168,10 @@ describe('Android local sources', () => {
     'falls back to the raw NodeSeek reply page size when the total is absent: %i rows',
     async (length, hasMore, cursor) => {
       const fetcher = routeFetcher([
-        ['/api/account/getInfo/7', json({ success: true, detail: { member_id: 7, member_name: 'member' } })],
+        ['/api/account/getInfo/7', jsonResponse({ success: true, detail: { member_id: 7, member_name: 'member' } })],
         [
           '/api/content/list-comments',
-          json({
+          jsonResponse({
             comments: Array.from({ length }, (_, index) => ({
               post_id: index + 1,
               title: `Reply topic ${index + 1}`,
@@ -3184,14 +3188,14 @@ describe('Android local sources', () => {
   );
 
   it('does not continue from full NodeSeek user pages with no parseable rows', async () => {
-    const profileData = json({ success: true, detail: { member_id: 7, member_name: 'member' } });
+    const profileData = jsonResponse({ success: true, detail: { member_id: 7, member_name: 'member' } });
     const topicsFetcher = routeFetcher([
       ['/api/account/getInfo/7', profileData],
-      ['/api/content/list-discussions', json({ discussions: Array.from({ length: 15 }, () => ({})) })]
+      ['/api/content/list-discussions', jsonResponse({ discussions: Array.from({ length: 15 }, () => ({})) })]
     ]);
     const repliesFetcher = routeFetcher([
       ['/api/account/getInfo/7', profileData],
-      ['/api/content/list-comments', json({ comments: Array.from({ length: 15 }, () => ({})) })]
+      ['/api/content/list-comments', jsonResponse({ comments: Array.from({ length: 15 }, () => ({})) })]
     ]);
 
     const topics = await readNodeSeekUser('7', { cursorType: 'topics', fetcher: topicsFetcher });
@@ -3210,7 +3214,7 @@ describe('Android local sources', () => {
       })),
       { member_id: 8052, member_name: 'xy' }
     ];
-    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json({ success: true, memberList }));
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => jsonResponse({ success: true, memberList }));
 
     const user = await resolveNodeSeekUser('xy', {
       authenticated: true,
@@ -3253,7 +3257,7 @@ describe('Android local sources', () => {
 
   it('accepts one unique case-insensitive NodeSeek username match', async () => {
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
-      json({
+      jsonResponse({
         success: true,
         memberList: [
           { member_id: 7, member_name: 'ALIce' },
@@ -3277,7 +3281,7 @@ describe('Android local sources', () => {
 
   it('prefers a strict NodeSeek username match over case-insensitive alternatives', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         success: true,
         memberList: [
           { member_id: 7, member_name: 'ALICE' },
@@ -3311,7 +3315,7 @@ describe('Android local sources', () => {
     }
   ])('rejects $label NodeSeek username matches', async ({ memberList }) => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         success: true,
         memberList
       })
@@ -3327,7 +3331,7 @@ describe('Android local sources', () => {
 
   it('encodes a Unicode NodeSeek username in the resolver path', async () => {
     const fetcher = vi.fn(async (_input: string) =>
-      json({
+      jsonResponse({
         success: true,
         memberList: [{ member_id: 1414, member_name: '男朋友' }]
       })
@@ -3353,7 +3357,7 @@ describe('Android local sources', () => {
 
   it('rejects a NodeSeek profile response for a different canonical UID', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         success: true,
         detail: { member_id: 8, member_name: 'alice' }
       })
@@ -3370,7 +3374,7 @@ describe('Android local sources', () => {
 
   it('rejects an unsuccessful NodeSeek username response even if it contains candidates', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         success: false,
         memberList: [{ member_id: 7, member_name: 'alice' }]
       })
@@ -3401,7 +3405,7 @@ describe('Android local sources', () => {
     ['invalid member id', { success: true, memberList: [{ member_id: 'not-numeric', member_name: 'alice' }] }],
     ['invalid candidate payload', { success: true, memberList: {} }]
   ])('rejects %s when resolving a NodeSeek username', async (_label, payload) => {
-    const fetcher = vi.fn(async () => json(payload));
+    const fetcher = vi.fn(async () => jsonResponse(payload));
 
     await expect(
       resolveNodeSeekUser('alice', {

@@ -1,8 +1,8 @@
+import { positiveNumber } from '@/domain/forum/numericValues';
 import {
   withBrowserFetchIntent,
-  type BrowserFetchIntent,
-  type BrowserFetchOwner,
-  type BrowserFetchPriority
+  withDefaultBrowserFetchIntent,
+  type BrowserFetchIntent
 } from '@/platform/network/browserFetchIntent';
 import {
   fetchWithTimeout,
@@ -83,20 +83,6 @@ export interface LinuxDoOptions {
   timeoutMs?: number;
   trackVisit?: boolean;
   trackView?: boolean;
-}
-
-export function linuxDoOptionsWithBrowserIntent<T extends LinuxDoOptions>(
-  options: T,
-  owner: BrowserFetchOwner,
-  priority: BrowserFetchPriority
-): T {
-  if (options.browserFetchIntent) {
-    return options;
-  }
-  return {
-    ...options,
-    browserFetchIntent: { owner, priority }
-  };
 }
 
 export function categoryMapFromData(data: unknown) {
@@ -277,13 +263,8 @@ function linuxDoAccessRequirementFromError(error: unknown): Topic['accessRequire
     : undefined;
 }
 
-function positiveNumber(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : undefined;
-}
-
 export async function getLinuxDoEmojiUrls(options: LinuxDoOptions = {}) {
-  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
   if (emojiUrlCache) {
     return emojiUrlCache;
   }
@@ -477,7 +458,7 @@ export async function getLinuxDoFeed(
     linuxDoFilter?: DiscourseFeedFilter;
   } = {}
 ): Promise<FeedResponse> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'feed', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'feed', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
   const linuxDoFilter = options.linuxDoFilter || 'latest';
@@ -535,7 +516,7 @@ export async function getLinuxDoFeed(
 }
 
 export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promise<CategoriesResponse> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'feed', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'feed', 'foreground');
   const data = await waitForCategoryData(options);
   const categories = Array.isArray(data.categories)
     ? data.categories
@@ -572,7 +553,7 @@ export async function getLinuxDoTopic(
   id: string,
   options: LinuxDoOptions & { replyLimit?: number } = {}
 ): Promise<TopicDetail> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
   let data: Record<string, unknown>;
   try {
     data = await topicData(id, options);
@@ -712,7 +693,7 @@ export async function getLinuxDoConversationPage(
   if (beforePostId !== undefined && (!/^[1-9]\d*$/.test(beforePostId) || !Number.isSafeInteger(Number(beforePostId)))) {
     throw new Error('私信历史游标不正确');
   }
-  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
   const data = await topicData(id, options);
   const rawStream = topicStreamState(data).stream;
   const stream = rawStream.map(String);
@@ -765,7 +746,7 @@ export async function getLinuxDoReplies(
     limit?: number;
   }
 ): Promise<RepliesResponse> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
   const limit = options.limit || 30;
   if (options.position.kind === 'target') {
     let targetFloor = options.position.target.floor;
@@ -868,7 +849,7 @@ export async function getLinuxDoReplies(
 }
 
 export async function getLinuxDoReply(id: string, floor: number, options: LinuxDoOptions = {}): Promise<Reply> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
   if (!Number.isSafeInteger(floor) || floor < 1) throw new Error('引用楼层不正确');
   const data = await topicData(id, options, floor);
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];

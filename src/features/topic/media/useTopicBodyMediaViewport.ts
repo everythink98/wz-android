@@ -1,3 +1,4 @@
+import { sameMediaSequence } from './mediaSequence';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { getReplyKey } from '../model/replyListModel';
 import { topicListCompiledRow, type TopicListItem } from '../model/topicListModel';
@@ -82,21 +83,17 @@ function createViewportItemMetadata(items: readonly TopicListItem[]): ViewportIt
   return { indexByKey, regionMembership: membership };
 }
 
-function sameKeys(left: readonly string[], right: readonly string[]) {
-  return left === right || (left.length === right.length && left.every((key, index) => key === right[index]));
-}
-
 function sameSnapshot(left: ViewportSnapshot, right: ViewportSnapshot) {
   return (
     left.sessionIdentity === right.sessionIdentity &&
     left.scrollingForward === right.scrollingForward &&
-    sameKeys(left.rowKeys, right.rowKeys) &&
-    sameKeys(left.visibleRowKeys, right.visibleRowKeys) &&
+    sameMediaSequence(left.rowKeys, right.rowKeys) &&
+    sameMediaSequence(left.visibleRowKeys, right.visibleRowKeys) &&
     left.regions.length === right.regions.length &&
     left.regions.every(
       (region, index) =>
         region.identity === right.regions[index]?.identity &&
-        sameKeys(region.rowKeys, right.regions[index]?.rowKeys || [])
+        sameMediaSequence(region.rowKeys, right.regions[index]?.rowKeys || [])
     )
   );
 }
@@ -137,7 +134,7 @@ function reconcileSnapshot(
     return sameSnapshot(snapshot, next) ? snapshot : next;
   }
   const changedRegions = snapshot.regions.filter(
-    (region) => !sameKeys(region.rowKeys, membership.get(region.identity) || [])
+    (region) => !sameMediaSequence(region.rowKeys, membership.get(region.identity) || [])
   );
   if (!changedRegions.length) {
     const next = { ...snapshot, rowKeys: stableRowKeys, visibleRowKeys: stableVisibleRowKeys };

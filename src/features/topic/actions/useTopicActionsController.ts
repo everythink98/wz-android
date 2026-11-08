@@ -183,40 +183,28 @@ function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'
 
 function confirmNodeSeekPollReplacement(poll: PendingNodeSeekPoll) {
   return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
     Alert.alert(
       '投票内容已修改',
       `“${poll.title}”已经分配过远端投票。NodeSeek 不支持修改远端投票；继续会创建一个新投票，旧投票会保留。`,
       [
-        { text: '取消', style: 'cancel', onPress: () => finish(false) },
-        { text: '创建新投票', onPress: () => finish(true) }
+        { text: '取消', style: 'cancel', onPress: () => resolve(false) },
+        { text: '创建新投票', onPress: () => resolve(true) }
       ],
-      { cancelable: true, onDismiss: () => finish(false) }
+      { cancelable: true, onDismiss: () => resolve(false) }
     );
   });
 }
 
 function confirmNodeSeekStardustPayment(receive: NodeSeekStardustReceive, receiverName: string) {
   return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
     Alert.alert(
       '确认 Stardust 付款？',
       `收款人 ${receiverName} (#${receive.receiverMemberId})\n金额 ${receive.amount} Stardust\n\n付款提交后不可退回。`,
       [
-        { text: '取消', style: 'cancel', onPress: () => finish(false) },
-        { text: '确认付款', style: 'destructive', onPress: () => finish(true) }
+        { text: '取消', style: 'cancel', onPress: () => resolve(false) },
+        { text: '确认付款', style: 'destructive', onPress: () => resolve(true) }
       ],
-      { cancelable: true, onDismiss: () => finish(false) }
+      { cancelable: true, onDismiss: () => resolve(false) }
     );
   });
 }
@@ -248,6 +236,15 @@ function updateReplyCache(
         }
       : current
   );
+}
+
+function toggleBookmarkOptimistically(
+  patch: (active: boolean, bookmarkId?: number) => void,
+  bookmarked: boolean,
+  detail: TopicDetail
+) {
+  patch(!bookmarked, bookmarked ? undefined : detail.bookmarkId);
+  return () => patch(bookmarked, detail.bookmarkId);
 }
 
 function updateBookmarkCache(
@@ -2227,10 +2224,7 @@ export function useTopicActionsController({
       busy: false,
       decision: { action: 'bookmark', targetPresent: !bookmarked || Boolean(actionDetail.bookmarkId) },
       trace,
-      applyOptimistic: () => {
-        patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId);
-        return () => patch(bookmarked, actionDetail.bookmarkId);
-      },
+      applyOptimistic: () => toggleBookmarkOptimistically(patch, bookmarked, actionDetail),
       task: (ticket) =>
         runYaohuoRequest(
           () =>
@@ -2305,10 +2299,7 @@ export function useTopicActionsController({
       busy: false,
       decision: { action: 'bookmark' },
       trace,
-      applyOptimistic: () => {
-        patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId);
-        return () => patch(bookmarked, actionDetail.bookmarkId);
-      },
+      applyOptimistic: () => toggleBookmarkOptimistically(patch, bookmarked, actionDetail),
       task: (ticket) =>
         runLinuxDoRequest(
           {

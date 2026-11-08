@@ -1,3 +1,4 @@
+import { sqliteParameters as mockSqliteParameters } from '../../helpers/sqliteParameters';
 import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { testPostInteractionReads } from '../topicInteractionFixture';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -13,7 +14,6 @@ jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: async () => {
     const { DatabaseSync } = jest.requireActual<typeof import('node:sqlite')>('node:sqlite');
     const db = (mockPollDatabase ??= new DatabaseSync(':memory:'));
-    const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
     const check = (sql: string) => {
       if (mockPollSqlFailure && sql.includes(mockPollSqlFailure)) {
         mockPollSqlFailure = '';
@@ -27,15 +27,15 @@ jest.mock('expo-sqlite', () => ({
       },
       runAsync: async (sql: string, ...args: unknown[]) => {
         check(sql);
-        return db.prepare(sql).run(...parameters(args));
+        return db.prepare(sql).run(...mockSqliteParameters(args));
       },
       getFirstAsync: async (sql: string, ...args: unknown[]) => {
         check(sql);
-        return db.prepare(sql).get(...parameters(args)) ?? null;
+        return db.prepare(sql).get(...mockSqliteParameters(args)) ?? null;
       },
       getAllAsync: async (sql: string, ...args: unknown[]) => {
         check(sql);
-        return db.prepare(sql).all(...parameters(args));
+        return db.prepare(sql).all(...mockSqliteParameters(args));
       },
       closeAsync: async () => undefined
     };

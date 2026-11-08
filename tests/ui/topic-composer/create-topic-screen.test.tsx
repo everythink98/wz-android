@@ -1,3 +1,4 @@
+import { postedMessages } from '../composerHostMessages';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createRef, useRef, useState, type ComponentProps, type Ref } from 'react';
 import { Dimensions, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput } from 'react-native';
@@ -32,6 +33,17 @@ let mockStructuredProps: ComponentProps<typeof StructuredReplyComposer>;
 let mockUseRealEditor = false;
 const mockKeyboardStreams = new Set<{ height: { value: number }; state: { value: number } }>();
 const mockKeyboardFrames = new Set<() => void>();
+
+async function keyboardFrame(height: number, state = height > 0 ? KeyboardState.OPEN : KeyboardState.CLOSED) {
+  return act(() => {
+    mockKeyboardStreams.forEach((keyboard) => {
+      keyboard.height.value = height;
+      keyboard.state.value = state;
+    });
+    mockKeyboardFrames.forEach((frame) => frame());
+  });
+}
+
 const mockKeyboardStyles = new Map<object, () => { paddingBottom?: number; maxHeight?: number | string }>();
 let mockQueuedJS: (() => void)[] | null = null;
 type KeyboardHiddenAck = { nativeEvent: { requestId: number; success: boolean } };
@@ -456,20 +468,12 @@ describe('Create topic screen', () => {
     await fireEvent(webView, 'message', {
       nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { documentEpoch: 0, revision: 0 } }) }
     });
-    const messages = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+    const messages = () => postedMessages(webView);
     const padding = () => {
       const styles = [view.getByTestId('create-topic-keyboard-viewport').props.style].flat(Infinity);
       const read = styles.map((style) => mockKeyboardStyles.get(style)).find(Boolean)!;
       return read().paddingBottom;
     };
-    const keyboardFrame = async (height: number) =>
-      act(() => {
-        mockKeyboardStreams.forEach((keyboard) => {
-          keyboard.height.value = height;
-          keyboard.state.value = height > 0 ? KeyboardState.OPEN : KeyboardState.CLOSED;
-        });
-        mockKeyboardFrames.forEach((frame) => frame());
-      });
     expect(mockKeyboardStreams.size).toBe(1);
     await keyboardFrame(336);
     expect(padding()).toBeGreaterThan(300);
@@ -652,14 +656,6 @@ describe('Create topic screen', () => {
     const send = async (type: string, payload: object) => {
       await fireEvent(webView, 'message', { nativeEvent: { data: JSON.stringify({ type, payload }) } });
     };
-    const keyboardFrame = async (height: number) =>
-      act(() => {
-        mockKeyboardStreams.forEach((keyboard) => {
-          keyboard.height.value = height;
-          keyboard.state.value = height > 0 ? KeyboardState.OPEN : KeyboardState.CLOSED;
-        });
-        mockKeyboardFrames.forEach((frame) => frame());
-      });
     await send('READY', { documentEpoch: 0, revision: 0 });
     await send('PANEL_CHANGED', { documentEpoch: 0, open: true });
     expect(view.getByLabelText('查看标题与标签')).toBeTruthy();
@@ -687,14 +683,6 @@ describe('Create topic screen', () => {
     const send = async (type: string, payload: object) => {
       await fireEvent(editor, 'message', { nativeEvent: { data: JSON.stringify({ type, payload }) } });
     };
-    const keyboardFrame = async (height: number, state: KeyboardState) =>
-      act(() => {
-        mockKeyboardStreams.forEach((keyboard) => {
-          keyboard.height.value = height;
-          keyboard.state.value = state;
-        });
-        mockKeyboardFrames.forEach((frame) => frame());
-      });
     await send('READY', { documentEpoch: 0, revision: 0 });
     await keyboardFrame(283, KeyboardState.OPEN);
     await send('RETURN_TO_EDITOR', { documentEpoch: 0 });
@@ -709,14 +697,6 @@ describe('Create topic screen', () => {
     { label: '表情', item: '淡定' }
   ])('keeps topic metadata compact between native hide and Yaohuo $label readiness', async ({ label, item }) => {
     const view = await render(<Harness initialDraft={draftFor('yaohuo')} />);
-    const keyboardFrame = async (height: number, state: KeyboardState) =>
-      act(() => {
-        mockKeyboardStreams.forEach((keyboard) => {
-          keyboard.height.value = height;
-          keyboard.state.value = state;
-        });
-        mockKeyboardFrames.forEach((frame) => frame());
-      });
     await keyboardFrame(283, KeyboardState.OPEN);
     const queuedFrames: FrameRequestCallback[] = [];
     const frame = jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -760,14 +740,6 @@ describe('Create topic screen', () => {
       const send = async (type: string, payload: object) => {
         await fireEvent(editor, 'message', { nativeEvent: { data: JSON.stringify({ type, payload }) } });
       };
-      const keyboardFrame = async (height: number, state: KeyboardState) =>
-        act(() => {
-          mockKeyboardStreams.forEach((keyboard) => {
-            keyboard.height.value = height;
-            keyboard.state.value = state;
-          });
-          mockKeyboardFrames.forEach((frame) => frame());
-        });
       if (source !== 'yaohuo') await send('READY', { documentEpoch: 0, revision: 0 });
       await keyboardFrame(283, KeyboardState.OPEN);
       if (source === 'yaohuo') {

@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { openDatabaseAsync } from 'expo-sqlite';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -19,9 +20,6 @@ const transportCheckpointKey = 'reader-storage-poll-proof-transport';
 const fingerprint = '0123456789abcdef';
 const intent = (localId: string) => ({ localId, fingerprint });
 const legacyKey = (identity: string) => `wz:composer:nodeseek-polls:${encodeURIComponent(identity)}`;
-function check(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
 async function rejects(operation: Promise<unknown>, message: string) {
   let rejected = false;
   try {

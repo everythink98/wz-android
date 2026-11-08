@@ -1,3 +1,4 @@
+import { safeImageScale } from './imageDisplayDimensions';
 import {
   INLINE_EMOJI_MAX_SIZE,
   forumImageAttributeValue as attributeValue,
@@ -161,8 +162,4 @@ export function inlineForumImageAlignmentStyle(
 
 function safeImageDimension(value: number) {
   return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function safeImageScale(scale: number) {
-  return Number.isFinite(scale) && scale > 0 ? scale : 1;
 }

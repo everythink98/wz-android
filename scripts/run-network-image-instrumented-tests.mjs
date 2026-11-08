@@ -1,9 +1,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import apkSigning from './apk-signing.cjs';
+import { deviceApkSignerSha256, findDeviceApkSigner } from './device-apk-signer.mjs';
 
 const usage =
   'Usage: node scripts/run-network-image-instrumented-tests.mjs [--platform-exports | --platform-export-ui | --platform-file-faults | --topic-share | --svg-only | --hardware-pressure]';
@@ -146,16 +146,7 @@ try {
       .exec(execFileSync('adb', ['-s', serial, 'shell', 'dumpsys', 'package', pkg], { encoding: 'utf8' }))?.[1]
       ?.trim();
   const before = installedAt();
-  const buildTools = path.join(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || '', 'build-tools');
-  const signer = readdirSync(buildTools)
-    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
-    .map((version) => path.join(buildTools, version, 'lib/apksigner.jar'))
-    .find(existsSync);
-  if (!signer) throw new Error('Android apksigner unavailable');
-  const certificate = (apk) =>
-    apkSigning.singleApkSignerSha256(
-      execFileSync('java', ['-jar', signer, 'verify', '--print-certs', apk], { encoding: 'utf8', windowsHide: true })
-    );
+  const signer = findDeviceApkSigner();
   if (before) {
     const installed = execFileSync('adb', ['-s', serial, 'shell', 'pm', 'path', pkg], { encoding: 'utf8' })
       .trim()
@@ -164,7 +155,10 @@ try {
     const previous = path.join(fixture, 'previous.apk');
     execFileSync('adb', ['-s', serial, 'pull', installed, previous], { stdio: 'ignore' });
     const next = path.join(android, 'app/build/outputs/apk/release/app-release.apk');
-    if (!certificate(next) || certificate(next) !== certificate(previous))
+    if (
+      !deviceApkSignerSha256(signer, next) ||
+      deviceApkSignerSha256(signer, next) !== deviceApkSignerSha256(signer, previous)
+    )
       throw new Error('APK signer mismatch; installation frozen');
   }
   for (const apk of ['release/app-release.apk', 'androidTest/release/app-release-androidTest.apk']) {

@@ -3,18 +3,8 @@ import { exportReaderBackupJson } from '@/domain/reader/readerBackup';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { buildExternalForumSearchUrl, isExternalForumSearchUrl } from '@/domain/forum/externalSearch';
 import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from '@/sources/yaohuo/protocol';
-import {
-  isLinuxDoBrowserFetchUrl,
-  isLinuxDoBrowserNavigationUrl,
-  isLinuxDoBrowserResultUrl,
-  isLinuxDoRequestUrl
-} from '@/sources/linuxdo/browserFallback';
-import {
-  isNodeSeekBrowserFetchUrl,
-  isNodeSeekBrowserNavigationUrl,
-  isNodeSeekBrowserResultUrl,
-  isNodeSeekRequestUrl
-} from '@/sources/nodeseek/browserFallback';
+import { isLinuxDoRequestUrl, isLinuxDoBrowserRequestPair } from '@/sources/linuxdo/browserFallback';
+import { isNodeSeekRequestUrl, isNodeSeekBrowserRequestPair } from '@/sources/nodeseek/browserFallback';
 
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 
@@ -25,26 +15,19 @@ describe('Android App security review guards', () => {
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com.evil.example/search')).toBe(false);
     expect(isNodeSeekRequestUrl('https://evil.example@www.nodeseek.com/search')).toBe(false);
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com@evil.example/search')).toBe(false);
-    expect(isNodeSeekBrowserFetchUrl('https://www.nodeseek.com/search?q=codex')).toBe(true);
-    expect(isNodeSeekBrowserFetchUrl(buildExternalForumSearchUrl('nodeseek', 'codex'))).toBe(false);
+    expect(isNodeSeekRequestUrl('https://www.nodeseek.com/search?q=codex')).toBe(true);
+    expect(isNodeSeekRequestUrl(buildExternalForumSearchUrl('nodeseek', 'codex'))).toBe(false);
     expect(
-      isNodeSeekBrowserNavigationUrl('https://www.nodeseek.com/post-123-1', 'https://www.nodeseek.com/search?q=codex')
+      isNodeSeekBrowserRequestPair('https://www.nodeseek.com/post-123-1', 'https://www.nodeseek.com/search?q=codex')
     ).toBe(true);
     expect(
-      isNodeSeekBrowserResultUrl('https://www.nodeseek.com/post-123-1', 'https://www.nodeseek.com/search?q=codex')
-    ).toBe(true);
-    expect(
-      isNodeSeekBrowserNavigationUrl(
-        buildExternalForumSearchUrl('nodeseek', 'codex'),
-        'https://www.nodeseek.com/search'
-      )
+      isNodeSeekBrowserRequestPair(buildExternalForumSearchUrl('nodeseek', 'codex'), 'https://www.nodeseek.com/search')
     ).toBe(false);
     expect(isLinuxDoRequestUrl('https://linux.do/search?q=test')).toBe(true);
-    expect(isLinuxDoBrowserFetchUrl(buildExternalForumSearchUrl('linuxdo', 'codex'))).toBe(false);
-    expect(isLinuxDoBrowserNavigationUrl('https://linux.do/t/topic/123', 'https://linux.do/search?q=codex')).toBe(true);
-    expect(isLinuxDoBrowserResultUrl('https://linux.do/t/topic/123', 'https://linux.do/search?q=codex')).toBe(true);
+    expect(isLinuxDoRequestUrl(buildExternalForumSearchUrl('linuxdo', 'codex'))).toBe(false);
+    expect(isLinuxDoBrowserRequestPair('https://linux.do/t/topic/123', 'https://linux.do/search?q=codex')).toBe(true);
     expect(
-      isLinuxDoBrowserNavigationUrl(buildExternalForumSearchUrl('linuxdo', 'codex'), 'https://linux.do/search')
+      isLinuxDoBrowserRequestPair(buildExternalForumSearchUrl('linuxdo', 'codex'), 'https://linux.do/search')
     ).toBe(false);
     expect(isExternalForumSearchUrl(buildExternalForumSearchUrl('linuxdo', '"AI agent" -windows'))).toBe(true);
     expect(isExternalForumSearchUrl(buildExternalForumSearchUrl('nodeseek', '"AI agent" -windows'))).toBe(true);
@@ -54,17 +37,13 @@ describe('Android App security review guards', () => {
     expect(isExternalForumSearchUrl('https://evil.example/search?q=site%3Alinux.do+codex')).toBe(false);
     const linuxDoConnect = 'https://connect.linux.do/';
     expect(
-      isLinuxDoBrowserNavigationUrl('https://linux.do/session/sso_provider?sso=fixed&sig=fixed', linuxDoConnect)
+      isLinuxDoBrowserRequestPair('https://linux.do/session/sso_provider?sso=fixed&sig=fixed', linuxDoConnect)
     ).toBe(true);
     expect(
-      isLinuxDoBrowserNavigationUrl(
-        'https://connect.linux.do/discourse/sso_callback?sso=fixed&sig=fixed',
-        linuxDoConnect
-      )
+      isLinuxDoBrowserRequestPair('https://connect.linux.do/discourse/sso_callback?sso=fixed&sig=fixed', linuxDoConnect)
     ).toBe(true);
-    expect(isLinuxDoBrowserResultUrl('https://connect.linux.do/', linuxDoConnect)).toBe(true);
-    expect(isLinuxDoBrowserNavigationUrl('https://example.com/callback', linuxDoConnect)).toBe(false);
-    expect(isLinuxDoBrowserResultUrl('https://example.com/callback', linuxDoConnect)).toBe(false);
+    expect(isLinuxDoBrowserRequestPair('https://connect.linux.do/', linuxDoConnect)).toBe(true);
+    expect(isLinuxDoBrowserRequestPair('https://example.com/callback', linuxDoConnect)).toBe(false);
 
     expect(isYaohuoRequestUrl('https://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);
     expect(isYaohuoRequestUrl('https://www.yaohuo.me/bbs/book_view.aspx?id=1')).toBe(true);

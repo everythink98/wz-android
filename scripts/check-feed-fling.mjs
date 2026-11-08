@@ -1,18 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import pngjs from 'pngjs';
+import { captureDeviceScreenshot } from './device-screenshot.mjs';
 
-import { runAgentDevice } from './agent-device-runtime.mjs';
+import { prepareDeviceEvidence, runAgentDevice } from './agent-device-runtime.mjs';
 
 // Feed open, static list rows, no loading overlay. Screenshots stay in ignored evidence storage.
 const serial = process.env.ANDROID_SERIAL;
 const evidence = process.argv[2];
 assert(serial && evidence, 'Set ANDROID_SERIAL and pass an ignored evidence directory.');
-execFileSync('git', ['check-ignore', path.resolve(evidence)]);
-mkdirSync(evidence, { recursive: true });
+prepareDeviceEvidence(evidence);
 const device = (...args) => runAgentDevice([...args, '--platform', 'android', '--serial', serial]);
 const adb = (...args) => execFileSync('adb', ['-s', serial, ...args]);
 device('press', 'id="feed-source-all"');
@@ -21,9 +18,7 @@ device('wait', 'id="feed-topic-first"', '60000');
 await setTimeout(1000);
 
 function capture(name) {
-  const bytes = adb('exec-out', 'screencap', '-p');
-  writeFileSync(path.join(evidence, `${name}.png`), bytes);
-  return pngjs.PNG.sync.read(bytes);
+  return captureDeviceScreenshot(serial, evidence, name);
 }
 
 function changedFraction(a, b) {

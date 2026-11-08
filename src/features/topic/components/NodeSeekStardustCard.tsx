@@ -6,6 +6,7 @@ import type { NodeSeekStardustStatus } from '@/sources/nodeseek/stardust';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
+  createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   alphaColor,
@@ -19,7 +20,7 @@ import { NODESEEK_BASE_URL } from '@/sources/nodeseek/protocol';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
-  const fontSize = (size: number) => Math.round(size * settings.fontScale);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
     card: {
       alignSelf: 'stretch',

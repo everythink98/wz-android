@@ -46,10 +46,12 @@ export async function ensureMessageNotificationChannel() {
   });
 }
 
-export async function notificationPermissionGranted() {
-  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode: 'silent' });
+async function checkNotificationPermission(mode: 'silent' | 'manual') {
+  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode });
   try {
-    const permissions = await Notifications.getPermissionsAsync();
+    if (mode === 'manual') await ensureMessageNotificationChannel();
+    const permissions =
+      mode === 'manual' ? await Notifications.requestPermissionsAsync() : await Notifications.getPermissionsAsync();
     finishDiagnosticTrace(trace, permissions.granted ? 'success' : 'blocked', {
       isGranted: permissions.granted,
       ...(!permissions.granted ? { reason: 'permission_denied' } : {})
@@ -61,20 +63,12 @@ export async function notificationPermissionGranted() {
   }
 }
 
-export async function requestNotificationPermission() {
-  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode: 'manual' });
-  try {
-    await ensureMessageNotificationChannel();
-    const permissions = await Notifications.requestPermissionsAsync();
-    finishDiagnosticTrace(trace, permissions.granted ? 'success' : 'blocked', {
-      isGranted: permissions.granted,
-      ...(!permissions.granted ? { reason: 'permission_denied' } : {})
-    });
-    return permissions.granted;
-  } catch (error) {
-    finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-    throw error;
-  }
+export function notificationPermissionGranted() {
+  return checkNotificationPermission('silent');
+}
+
+export function requestNotificationPermission() {
+  return checkNotificationPermission('manual');
 }
 
 export function openNotificationSystemSettings() {

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Linking, ToastAndroid, useWindowDimensions } from 'react-native';
+import { AppState, ToastAndroid, useWindowDimensions } from 'react-native';
 import { focusManager } from '@tanstack/react-query';
 import type { UserActivityTab, UserReference } from '@/domain/forum/models';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
-import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
+import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 import { LOGIN_WEBVIEW_ALLOWED_HOSTS, shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import type { Screen } from '@/ui/navigation/types';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
@@ -48,16 +48,7 @@ export function useAppLifecycleRuntime() {
     },
     [notify]
   );
-  const openExternalUrl = useCallback(
-    (url: string) => {
-      if (!isHttpOrHttpsUrl(url)) {
-        notify('仅支持打开 http/https 链接。');
-        return;
-      }
-      void Linking.openURL(url).catch((error) => notify(errorMessage(error)));
-    },
-    [notify]
-  );
+  const openExternalUrl = useCallback((url: string) => openHttpUrl(url, notify), [notify]);
   const handleLoginNavigation = useCallback(
     (request: LoginNavigationRequest, allowedHosts: readonly string[]) => {
       if (shouldOpenLoginWebViewUrl(request.url, allowedHosts)) return true;

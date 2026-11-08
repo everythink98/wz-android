@@ -1,3 +1,4 @@
+import { topicKey } from '@/domain/reader/readerData';
 import { getNodeSeekCategories, getNodeSeekFeed } from '@/sources/nodeseek/reader';
 import { yaohuoCategoriesResponse } from '@/sources/yaohuo/feedParser';
 import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
@@ -105,10 +106,6 @@ function includedAggregateSources(includedSources: readonly Source[] | undefined
   const included = new Set(includedSources || sources);
   return sources.filter((source) => included.has(source));
 }
-function topicIdentity(topic: Topic) {
-  return `${topic.source}:${topic.id}`;
-}
-
 export async function getFeed({
   source,
   page = 1,
@@ -258,10 +255,10 @@ export async function getFeed({
           ])
         );
         const selected = balanceTopicsBySource(items).slice(0, limit);
-        const selectedKeys = new Set(selected.map(topicIdentity));
+        const selectedKeys = new Set(selected.map(topicKey));
         const nextBuffers: Partial<Record<Source, Topic[]>> = {};
         for (const item of items) {
-          if (selectedKeys.has(topicIdentity(item))) {
+          if (selectedKeys.has(topicKey(item))) {
             continue;
           }
           (nextBuffers[item.source] ??= []).push(item);

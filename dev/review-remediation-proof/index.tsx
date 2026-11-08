@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import '@/platform/diagnostics/diagnosticBootstrap';
 import { registerRootComponent } from 'expo';
 import { File, Paths } from 'expo-file-system';
@@ -87,9 +88,6 @@ import { verifyPendingPollMaterialization } from './pendingPollProof';
 // HTTP fixtures use the supplied fetcher; the platform-export route uses an instrumentation-owned loopback server.
 // WebView uses inline documents with no remote resources.
 const delay = (ms = 30) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-function check(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
 function materializeTextRange(segments: ReturnType<ReturnType<typeof createForumTextIndex>['range']>) {
   return segments.map(({ tape, start, end }) => tape.text.slice(start, end)).join('');
 }

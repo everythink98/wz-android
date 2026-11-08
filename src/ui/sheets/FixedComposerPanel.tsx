@@ -1,14 +1,9 @@
 import {
-  type Dispatch,
-  type ReactNode,
-  type RefObject,
-  type SetStateAction,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState
-} from 'react';
+  useComposerKeyboardSource,
+  type KeyboardSource,
+  type PublishKeyboardSource
+} from '@/ui/hooks/useComposerKeyboardSource';
+import { type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   AppState,
   Keyboard,
@@ -23,7 +18,6 @@ import Animated, {
   cancelAnimation,
   KeyboardState,
   runOnJS,
-  useAnimatedKeyboard,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -33,17 +27,8 @@ import Animated, {
 import type { ComposerPresentation } from '@/domain/forum/structuredComposer';
 import { ComposerKeyboardHost, type ComposerKeyboardHostHandle } from '@/ui/composer/ComposerKeyboardHost';
 
-type KeyboardSource = ReturnType<typeof useAnimatedKeyboard>;
-
-function ComposerKeyboardSource({ publish }: { publish: Dispatch<SetStateAction<KeyboardSource | null>> }) {
-  const keyboard = useAnimatedKeyboard({
-    isStatusBarTranslucentAndroid: true,
-    isNavigationBarTranslucentAndroid: true
-  });
-  useLayoutEffect(() => {
-    publish(keyboard);
-    return () => publish((current) => (current === keyboard ? null : current));
-  }, [keyboard, publish]);
+function ComposerKeyboardSource({ publish }: { publish: PublishKeyboardSource }) {
+  useComposerKeyboardSource(publish);
   return null;
 }
 

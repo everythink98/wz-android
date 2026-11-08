@@ -1,7 +1,7 @@
+import { linuxDoCreditPresentation } from './linuxDoCreditPresentation';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import {
   formatLinuxDoCreditAmount,
-  LinuxDoCreditError,
   linuxDoCreditStatusLabel,
   type LinuxDoCreditAccount,
   type LinuxDoCreditEntry
@@ -11,7 +11,7 @@ import { errorMessage } from '@/platform/network/errors';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
+import { createReaderFontSizer, fontFamilyValue, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 
 const typeLabels = new Map([
   ['receive', '商户收入'],
@@ -28,7 +28,7 @@ const typeLabels = new Map([
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
-  const size = (value: number) => Math.round(value * settings.fontScale);
+  const size = createReaderFontSizer(settings);
   return StyleSheet.create({
     list: { flex: 1, backgroundColor: theme.surface },
     content: { paddingHorizontal: 20, paddingBottom: 16 },
@@ -99,18 +99,12 @@ export function LinuxDoCreditScreen({
   onConnect: () => void;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
-  const accessError = error instanceof LinuxDoCreditError ? error.kind : undefined;
-  const needsConnection = accessError === 'authorization-required' || accessError === 'identity-mismatch';
-  const visibleAccount = needsConnection ? undefined : account;
+  const { needsConnection, visibleAccount, webAction, connectLabel } = linuxDoCreditPresentation(
+    account,
+    error,
+    forumVerificationRequired
+  );
   const visibleEntries = needsConnection ? [] : entries;
-  const webAction = forumVerificationRequired || needsConnection || accessError === 'verification-required';
-  const connectLabel = forumVerificationRequired
-    ? '验证 L 站'
-    : accessError === 'identity-mismatch'
-      ? '重新连接 LDC'
-      : accessError === 'verification-required'
-        ? '验证 LDC'
-        : '连接 LDC';
 
   return (
     <FlatList

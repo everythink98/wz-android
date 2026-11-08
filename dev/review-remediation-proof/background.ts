@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as BackgroundTask from 'expo-background-task';
 import { File, Paths } from 'expo-file-system';
@@ -23,9 +24,6 @@ const taskName = 'wz-isolated-headless-proof';
 const configFile = () => new File(Paths.cache, 'background-proof-config.json');
 const receiptFile = () => new File(Paths.cache, 'background-proof.json');
 type Config = { token: string; mode: 'success' | 'deadline'; run: number };
-function check(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(message);
-}
 function write(config: Config, checkpoint: string, evidence: object = {}) {
   const file = receiptFile();
   file.create({ overwrite: true });

@@ -14,3 +14,7 @@ export function rememberImageDisplayDimensions(cacheKey: string, dimensions: Cac
     imageDimensionsByIdentity.delete(imageDimensionsByIdentity.keys().next().value!);
   }
 }
+
+export function safeImageScale(scale: number) {
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}

@@ -1,3 +1,4 @@
+import { getPermissionsAsync, requestPermissionsAsync } from 'expo-notifications';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -47,6 +48,8 @@ import {
   dismissSourceNotificationExact,
   ensureMessageNotificationChannel,
   installMessageNotificationHandler,
+  notificationPermissionGranted,
+  requestNotificationPermission,
   presentSourceNotification,
   reconcileSourceNotificationSlots,
   syncNotificationBackgroundRegistration
@@ -58,6 +61,15 @@ beforeEach(() => {
 });
 
 describe('Android notification system', () => {
+  it('reads permission silently and prepares the channel before requesting permission', async () => {
+    await expect(notificationPermissionGranted()).resolves.toBe(false);
+    expect(getPermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(requestPermissionsAsync).not.toHaveBeenCalled();
+    expect(mocks.setChannel).not.toHaveBeenCalled();
+
+    await expect(requestNotificationPermission()).resolves.toBe(false);
+    expect(mocks.setChannel).toHaveBeenCalledBefore(vi.mocked(requestPermissionsAsync));
+  });
   it('records a failed registration and a later successful registration without exposing the failure text', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;

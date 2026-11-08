@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import { runAgentDevice } from './agent-device-runtime.mjs';
+import { prepareDeviceEvidence, runAgentDevice } from './agent-device-runtime.mjs';
+import { compileTouchTrace, touchTraceTimes } from './touch-trace.mjs';
 
 const [session, output] = process.argv.slice(2);
 const serial = process.env.ANDROID_SERIAL;
 const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
 assert(session && output && serial && sdk, 'Pass session/output and set ANDROID_SERIAL/ANDROID_HOME.');
 const evidence = path.resolve(output);
-execFileSync('git', ['check-ignore', evidence]);
-mkdirSync(evidence, { recursive: true });
+prepareDeviceEvidence(evidence);
 const adb = (...args) =>
   execFileSync(path.join(sdk, 'platform-tools/adb'), ['-s', serial, ...args], { encoding: 'utf8' });
 assert.equal(adb('emu', 'avd', 'name').split(/\r?\n/)[0].trim(), 'WZ_Pixel_API_35');
@@ -27,19 +27,7 @@ const button = (nodes, label) => {
   assert.equal(matches.length, 1, `Expected one visible ${label} button.`);
   return matches[0].rect;
 };
-const java = (name) => (process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', name) : name);
-const androidJar = path.join(sdk, 'platforms/android-35/android.jar');
-execFileSync(java('javac'), ['-cp', androidJar, '-d', evidence, 'tests/device/TouchTrace.java']);
-execFileSync(java('java'), [
-  '-cp',
-  path.join(sdk, 'build-tools/36.0.0/lib/d8.jar'),
-  'com.android.tools.r8.D8',
-  '--lib',
-  androidJar,
-  '--output',
-  path.join(evidence, 'touch.jar'),
-  path.join(evidence, 'TouchTrace.class')
-]);
+compileTouchTrace(sdk, evidence);
 const remote = `/data/local/tmp/wz-reader-boundaries-${Date.now()}.jar`;
 adb('push', path.join(evidence, 'touch.jar'), remote);
 const results = [];
@@ -98,22 +86,7 @@ try {
         'shell',
         `CLASSPATH=${remote} app_process / TouchTrace '${points.map((p) => p.join(',')).join(';')}'`
       );
-      const timestamps = delivered
-        .trim()
-        .split(';')
-        .filter(Boolean)
-        .map((p) => p.split(',').map(Number));
-      const actualTimes = timestamps.map(([time]) => time);
-      assert.equal(actualTimes.length, points.length);
-      assert.deepEqual(
-        timestamps.map(([, , sampleTime]) => sampleTime),
-        points.map(([time]) => time),
-        'Injected sample timestamps must preserve the requested trajectory.'
-      );
-      assert(
-        actualTimes.every((time, index) => Math.abs(time - points[index][0]) <= 50),
-        'Input drift exceeded 50 ms.'
-      );
+      const actualTimes = touchTraceTimes(delivered, points, 'Input drift exceeded 50 ms.');
       const after = snapshot();
       if (horizontal)
         assert(after.some((node) => node.identifier === 'feed-source-v2ex' && node.label === 'V2EX，已选择'));

@@ -1,3 +1,5 @@
+import { composerHostMessages } from '../composerHostMessages';
+import { sqliteParameters as mockSqliteParameters } from '../../helpers/sqliteParameters';
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { DatabaseSync } from 'node:sqlite';
@@ -18,12 +20,12 @@ jest.mock('expo-sqlite', () => ({
     const { DatabaseSync } = jest.requireActual<typeof import('node:sqlite')>('node:sqlite');
     const db = mockDatabases.get(name) || new DatabaseSync(':memory:');
     mockDatabases.set(name, db);
-    const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
     return {
       execAsync: async (sql: string) => db.exec(sql),
-      runAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).run(...parameters(args)),
-      getFirstAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).get(...parameters(args)) ?? null,
-      getAllAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).all(...parameters(args))
+      runAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).run(...mockSqliteParameters(args)),
+      getFirstAsync: async (sql: string, ...args: unknown[]) =>
+        db.prepare(sql).get(...mockSqliteParameters(args)) ?? null,
+      getAllAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).all(...mockSqliteParameters(args))
     };
   }
 }));
@@ -53,11 +55,6 @@ jest.mock('react-native-reanimated', () => ({
 const sites = ['nodeseek', 'linuxdo', 'yaohuo'] as const;
 const observe = () => {};
 type Rendered = Awaited<ReturnType<typeof render>>;
-function messages(view: Rendered): ComposerHostMessage[] {
-  return view
-    .getByTestId('structured-composer-webview')
-    .props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
-}
 async function editor(view: Rendered, source: TopicCreationSource) {
   await waitFor(() => expect(view.getByLabelText('帖子标题')).toBeTruthy());
   // Deliver the Native stack's appearance event; RNTL does not execute its animation.
@@ -85,7 +82,7 @@ function snapshot(markdown: string, revision = 1) {
 }
 async function respondToSnapshot(view: Rendered, current: Awaited<ReturnType<typeof editor>>, body: string) {
   if (!current) return;
-  const request = messages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
+  const request = composerHostMessages(view).findLast((message) => message.type === 'REQUEST_SNAPSHOT');
   expect(request).toBeDefined();
   await act(() => current.send('SNAPSHOT', { requestId: request!.payload.requestId, snapshot: snapshot(body) }));
 }
@@ -158,10 +155,14 @@ describe('large topic drafts through production create and edit screens', () => 
         if (current) expect(current.initial).toBe(body);
         else expect(view.getByLabelText('帖子正文').props.value).toBe(body);
         for (let attempt = 0; attempt < 2; attempt++) {
-          const before = current ? messages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT').length : 0;
+          const before = current
+            ? composerHostMessages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT').length
+            : 0;
           for (let index = 0; index < 100; index++) await fireEvent.press(view.getByLabelText('发布'));
           if (current)
-            expect(messages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT')).toHaveLength(before + 1);
+            expect(composerHostMessages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT')).toHaveLength(
+              before + 1
+            );
           await respondToSnapshot(view, current, body);
           await waitFor(() => expect(transport.writes).toHaveLength(attempt + 1));
           if (attempt === 0)
@@ -238,10 +239,14 @@ describe('large topic drafts through production create and edit screens', () => 
         for (let index = 0; index < 100; index++)
           await fireEvent.changeText(view.getByLabelText('帖子标题'), `保留原文编辑标题 ${index}`);
         for (let attempt = 0; attempt < 2; attempt++) {
-          const before = current ? messages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT').length : 0;
+          const before = current
+            ? composerHostMessages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT').length
+            : 0;
           for (let index = 0; index < 100; index++) await fireEvent.press(view.getByLabelText('保存修改'));
           if (current)
-            expect(messages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT')).toHaveLength(before + 1);
+            expect(composerHostMessages(view).filter((message) => message.type === 'REQUEST_SNAPSHOT')).toHaveLength(
+              before + 1
+            );
           await respondToSnapshot(view, current, body);
           await waitFor(() => expect(editing.writes()).toHaveLength(attempt + 1));
           if (attempt === 0)

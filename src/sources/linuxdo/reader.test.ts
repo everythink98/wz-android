@@ -1,14 +1,9 @@
+import { jsonResponse } from '../../../tests/helpers/jsonResponse';
 import { describe, expect, it, vi } from 'vitest';
 
 import { sanitizeLinuxDoContentHtml } from './parser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic } from './reader';
-
-function json(value: unknown) {
-  return new Response(JSON.stringify(value), {
-    headers: { 'content-type': 'application/json' }
-  });
-}
 
 function topic(index: number) {
   return {
@@ -64,7 +59,7 @@ function deletedReplyTopic() {
 
 function deletedReplyFetcher() {
   return vi.fn(async (input: string) =>
-    json(
+    jsonResponse(
       new URL(input).pathname.endsWith('/posts.json')
         ? { post_stream: { posts: [deletedReply, deletedReplyTopic().post_stream.posts[2]] } }
         : deletedReplyTopic()
@@ -97,7 +92,7 @@ describe('linux.do reader', () => {
       };
       const posts = role === 'opening' ? [post] : [{ ...post, id: 1, post_number: 1, cooked: '<p>opening</p>' }, post];
       const fetcher = vi.fn(async () =>
-        json({
+        jsonResponse({
           id: 1,
           title: 'Synthetic depth',
           slug: 'synthetic',
@@ -145,7 +140,7 @@ describe('linux.do reader', () => {
       policy_can_revoke: false
     };
     data.post_stream.posts = data.post_stream.posts.map((post) => ({ ...post, ...policyFields }));
-    const fetcher = vi.fn(async () => json(data));
+    const fetcher = vi.fn(async () => jsonResponse(data));
     const detail = await getLinuxDoTopic('2835903', { fetcher });
     expect(detail.policy).toMatchObject({ postId: '1', canAccept: true, accepted: false });
     expect(detail.replies[0]?.policy).toMatchObject({ postId: '2', canAccept: true, accepted: false });
@@ -170,7 +165,7 @@ describe('linux.do reader', () => {
           : url.pathname.endsWith('/posts.json')
             ? posts.filter((post) => url.searchParams.getAll('post_ids[]').includes(String(post.id)))
             : posts.slice(0, 20);
-      return json({ id: 42, post_stream: { stream: posts.map((post) => post.id), posts: selected } });
+      return jsonResponse({ id: 42, post_stream: { stream: posts.map((post) => post.id), posts: selected } });
     });
     await expect(getLinuxDoReply('42', 25, { fetcher })).resolves.toMatchObject({ commentId: 1025, floor: 25 });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -185,7 +180,7 @@ describe('linux.do reader', () => {
       last_read_post_number: 2,
       unread_posts: 0
     };
-    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json(data));
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => jsonResponse(data));
     const detail = await getLinuxDoTopic('2835903', { fetcher, trackVisit: true, trackView: true });
     const [url, init] = fetcher.mock.calls[0];
     expect(new URL(url).searchParams.get('track_visit')).toBe('true');
@@ -199,7 +194,7 @@ describe('linux.do reader', () => {
       position: { kind: 'target', target: { floor: 3 } }
     });
     expect(new Headers(fetcher.mock.calls[0][1]?.headers).has('Discourse-Track-View')).toBe(false);
-    fetcher.mockImplementation(async () => json({ ...data, archetype: 'private_message' }));
+    fetcher.mockImplementation(async () => jsonResponse({ ...data, archetype: 'private_message' }));
     const privateTopic = await getLinuxDoTopic('2835903', { fetcher });
     expect(privateTopic.isPrivateMessage).toBe(true);
     expect(privateTopic.reading).toBeUndefined();
@@ -238,7 +233,7 @@ describe('linux.do reader', () => {
   it('returns an empty partial window when every author-deleted reply normalizes away', async () => {
     const emptyDeletedReply = { ...deletedReply, cooked: '' };
     const fetcher = vi.fn(async (input: string) =>
-      json(
+      jsonResponse(
         new URL(input).pathname.endsWith('/posts.json')
           ? { post_stream: { posts: [emptyDeletedReply] } }
           : {
@@ -261,7 +256,7 @@ describe('linux.do reader', () => {
 
   it('keeps an author-deleted opening and its reply renderable', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 2780439,
         title: '发个红包，爱你们各位佬',
         slug: 'prepared-topic',
@@ -317,7 +312,7 @@ describe('linux.do reader', () => {
   });
   it('rejects an author-deleted opening without renderable content', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 2780439,
         title: '发个红包，爱你们各位佬',
         slug: 'deleted-topic',
@@ -345,7 +340,7 @@ describe('linux.do reader', () => {
 
   it('prepares a media-only author-deleted opening', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 2780439,
         title: '发个红包，爱你们各位佬',
         slug: 'deleted-topic',
@@ -381,7 +376,7 @@ describe('linux.do reader', () => {
 
   it('trusts the server cursor instead of probing one extra list page', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         topic_list: {
           topics: Array.from({ length: 30 }, (_, index) => topic(index + 1)),
           more_topics_url: '/latest?order=created&page=1'
@@ -399,8 +394,8 @@ describe('linux.do reader', () => {
   it('shares one category request across catalog and feed in the same read scope', async () => {
     const fetcher = vi.fn(async (input: string) =>
       input.includes('/site.json')
-        ? json({ category_list: { categories: [{ id: 5, name: 'Performance', slug: 'performance' }] } })
-        : json({
+        ? jsonResponse({ category_list: { categories: [{ id: 5, name: 'Performance', slug: 'performance' }] } })
+        : jsonResponse({
             topic_list: {
               topics: [{ ...topic(1), category_id: 5 }]
             }
@@ -426,7 +421,7 @@ describe('linux.do reader', () => {
     let siteRequest = 0;
     const fetcher = vi.fn(async () => {
       siteRequest += 1;
-      return json({
+      return jsonResponse({
         category_list: {
           categories: [{ id: 5, name: siteRequest === 1 ? 'Account A' : 'Account B', slug: 'private' }]
         }

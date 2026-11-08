@@ -1,3 +1,4 @@
+import { seedLinuxDoAccount } from '../seedLinuxDoAccount';
 import type { ComponentProps } from 'react';
 import { Pressable, Text } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
@@ -11,8 +12,6 @@ import {
   saveAccountSessionSnapshot
 } from '@/platform/storage/accountSessionStore';
 import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
-import { accountSessionSnapshotFromEvent, createAccountSessionSnapshot } from '@/domain/session/siteSessionState';
-import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { setLinuxDoCookieResponseBarrier } from '@/platform/network/managedCookies';
 import type { Fetcher } from '@/platform/network/request';
@@ -102,16 +101,6 @@ const body = {
     posts: [{ id: 100, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: topic.createdAt }]
   }
 };
-function seedAccount(username = 'alice') {
-  const snapshot = accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
-    type: 'session-updated',
-    loggedIn: true,
-    currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}` }
-  });
-  appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), snapshot);
-  return snapshot;
-}
-
 beforeEach(() => {
   mockTopicScreenProps = undefined;
   jest
@@ -122,7 +111,7 @@ afterEach(() => jest.restoreAllMocks());
 
 async function mount(readTopic?: Fetcher) {
   const navigationRef = createNavigationContainerRef<RootStackParamList>();
-  await saveAccountSessionSnapshot(seedAccount());
+  await saveAccountSessionSnapshot(seedLinuxDoAccount());
   await markAccountSessionMigrationCompleted();
   let challenged = true;
   const requests: string[] = [];
@@ -441,7 +430,7 @@ it.each(['background', 'identity', 'source', 'route'] as const)(
     await completeInitialization();
     await waitFor(() => expect(beginHandoff).toHaveBeenCalledTimes(1));
     const before = requests.length;
-    if (exit === 'identity') await act(async () => seedAccount('bob'));
+    if (exit === 'identity') await act(async () => seedLinuxDoAccount('bob'));
     else if (exit === 'route') await fireEvent.press(view.getByText('离开详情'));
     else await view.rerender(<Harness active={exit !== 'background'} enabled={exit !== 'source'} />);
     await act(async () => handoff.resolve());

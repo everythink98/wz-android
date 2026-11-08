@@ -1,4 +1,4 @@
-import { Buffer } from 'node:buffer';
+import { fromByteArray } from 'base64-js';
 import type { TopicCreationSource } from '@/domain/forum/topicComposer';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 
@@ -34,9 +34,11 @@ export function createTopicProofTransport(outcome: TopicProofOutcome, allowUploa
     if (method === 'GET') {
       reads.push(`${url.origin}${url.pathname}`);
       if (url.origin === 'https://www.nodeseek.com' && url.pathname === '/new-discussion') {
-        const config = Buffer.from(
-          JSON.stringify({ user: { rank: 2 }, allCategory: [{ key: 'tech', cn_text: '技术' }] })
-        ).toString('base64');
+        const config = fromByteArray(
+          new TextEncoder().encode(
+            JSON.stringify({ user: { rank: 2 }, allCategory: [{ key: 'tech', cn_text: '技术' }] })
+          )
+        );
         return new Response(`<script>decode('${config}')</script>`);
       }
       if (url.origin === 'https://linux.do') {

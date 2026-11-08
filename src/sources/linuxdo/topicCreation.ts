@@ -1,4 +1,5 @@
-import { decodeHtml, isRecord, parseHtml } from '@/domain/forum/html';
+import { isRecord } from '@/domain/forum/html';
+import { linuxDoPreloadedData, parseLinuxDoRecord } from './preloadedData';
 import type {
   CreateTopicInput,
   CreateTopicResult,
@@ -21,17 +22,6 @@ import { normalizeLinuxDoPollCapabilities } from './pollCapabilities';
 
 type Options = { fetcher: Fetcher; userAgent: string; signal?: AbortSignal };
 
-function object(value: unknown): Record<string, unknown> {
-  if (typeof value === 'string') {
-    try {
-      return object(JSON.parse(value));
-    } catch {
-      return {};
-    }
-  }
-  return isRecord(value) ? value : {};
-}
-
 function positive(value: unknown, fallback: number) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -39,7 +29,7 @@ function positive(value: unknown, fallback: number) {
 
 function normalizeTag(value: unknown): TopicTag | null {
   if (typeof value === 'string' && value.trim()) return { name: value.trim() };
-  const tag = object(value);
+  const tag = parseLinuxDoRecord(value);
   const name = typeof tag.name === 'string' ? tag.name.trim() : '';
   const id = positive(tag.id, 0);
   return name ? { ...(id ? { id } : {}), name } : null;
@@ -65,13 +55,8 @@ export async function loadLinuxDoTopicCreationContext(options: Options): Promise
     )
   ]);
   const html = await bootstrapResponse.text();
-  const root = parseHtml(html);
-  // node-html-parser textContent decodes entities even inside JSON script text.
-  const preloadScript = root.querySelector('script#data-preloaded[type="application/json"]');
-  const preload = object(
-    preloadScript?.rawText ?? decodeHtml(root.querySelector('[data-preloaded]')?.getAttribute('data-preloaded') || '')
-  );
-  const hasPreloadedRules = Object.keys(object(preload.siteSettings ?? preload.site_settings)).length > 0;
+  const preload = linuxDoPreloadedData(html);
+  const hasPreloadedRules = Object.keys(parseLinuxDoRecord(preload.siteSettings ?? preload.site_settings)).length > 0;
   if (
     isCloudflareChallengeResponse(bootstrapResponse) ||
     (!hasPreloadedRules &&
@@ -87,11 +72,11 @@ export async function loadLinuxDoTopicCreationContext(options: Options): Promise
     );
   if (!bootstrapResponse.ok)
     throw linuxDoRequestError(`linux.do 发帖规则读取失败：HTTP ${bootstrapResponse.status}`, bootstrapResponse.status);
-  const site = object(siteValue);
-  const session = object(sessionValue);
-  const currentUser = object(session.current_user);
+  const site = parseLinuxDoRecord(siteValue);
+  const session = parseLinuxDoRecord(sessionValue);
+  const currentUser = parseLinuxDoRecord(session.current_user);
   const staff = currentUser.staff === true || currentUser.admin === true || currentUser.moderator === true;
-  const settings = object(preload.siteSettings ?? preload.site_settings ?? site.site_settings);
+  const settings = parseLinuxDoRecord(preload.siteSettings ?? preload.site_settings ?? site.site_settings);
   if (!Object.keys(currentUser).length)
     throw Object.assign(new Error('请重新检测 linux.do 登录后读取发帖权限'), {
       source: 'linuxdo',
@@ -103,7 +88,7 @@ export async function loadLinuxDoTopicCreationContext(options: Options): Promise
   const categories: TopicCreationCategory[] = rows.filter(isRecord).flatMap((row) => {
     const id = positive(row.id, 0);
     if (!id || typeof row.name !== 'string') return [];
-    const custom = object(row.custom_fields);
+    const custom = parseLinuxDoRecord(row.custom_fields);
     const groupRows = Array.isArray(row.required_tag_groups) ? row.required_tag_groups : [];
     return [
       {
@@ -182,7 +167,7 @@ export async function searchLinuxDoTopicTags({
     request: { path: `/tags/filter/search?${params}`, method: 'GET', headers: {} }
   });
   const results = Array.isArray(data.results) ? data.results : Array.isArray(data.tags) ? data.tags : [];
-  const required = object(data.required_tag_group);
+  const required = parseLinuxDoRecord(data.required_tag_group);
   const groupName =
     typeof required.name === 'string'
       ? required.name
@@ -279,7 +264,7 @@ export async function createLinuxDoTopic({
     return data.success === true
       ? { status: 'enqueued', message: '帖子已提交，正在等待审核' }
       : { status: 'unknown', message: 'linux.do 未确认审核提交，请到原站核对' };
-  const post = object(data.post ?? data);
+  const post = parseLinuxDoRecord(data.post ?? data);
   const topicId = positive(post.topic_id, 0);
   if (!topicId || !positive(post.id, 0) || post.post_number !== 1)
     return { status: 'unknown', message: 'linux.do 未返回新话题凭据，请到原站核对' };

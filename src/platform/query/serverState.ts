@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
 import { isSessionSource, type DiscourseSource, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { FeedSource, ReplyOrder, Source } from '@/domain/forum/models';
@@ -308,3 +308,7 @@ export function createAppQueryClient() {
 }
 
 export const appQueryClient = createAppQueryClient();
+
+export function keepFirstQueryPage<Page, Cursor>(previous: InfiniteData<Page, Cursor> | undefined) {
+  return previous ? { pages: previous.pages.slice(0, 1), pageParams: previous.pageParams.slice(0, 1) } : previous;
+}

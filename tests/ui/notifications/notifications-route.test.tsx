@@ -286,6 +286,28 @@ type FocusTestStackParamList = {
 
 const FocusTestStack = createNativeStackNavigator<FocusTestStackParamList>();
 
+function linuxDoDetailTree(
+  runtime: NotificationRouteRuntimeValue,
+  item: ForumNotification,
+  navigation: ReturnType<typeof createNavigationContainerRef<FocusTestStackParamList>>
+) {
+  return (
+    <NotificationRouteRuntimeProvider value={runtime}>
+      <NavigationContainer ref={navigation}>
+        <FocusTestStack.Navigator initialRouteName="NotificationDetail">
+          <FocusTestStack.Screen
+            name="NotificationDetail"
+            initialParams={{ notification: item, identityKey: 'linuxdo:7' }}
+          >
+            {(props) => <NotificationDetailRoute navigation={props.navigation as never} route={props.route} />}
+          </FocusTestStack.Screen>
+          <FocusTestStack.Screen name="Other">{() => <Text>其他页面</Text>}</FocusTestStack.Screen>
+        </FocusTestStack.Navigator>
+      </NavigationContainer>
+    </NotificationRouteRuntimeProvider>
+  );
+}
+
 function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): NotificationRouteRuntimeValue {
   return {
     clearReadBlock: jest.fn(),
@@ -733,21 +755,7 @@ describe('notification routes', () => {
       identitySignature: 'linuxdo:7'
     };
     const navigation = createNavigationContainerRef<FocusTestStackParamList>();
-    const tree = () => (
-      <NotificationRouteRuntimeProvider value={runtime}>
-        <NavigationContainer ref={navigation}>
-          <FocusTestStack.Navigator initialRouteName="NotificationDetail">
-            <FocusTestStack.Screen
-              name="NotificationDetail"
-              initialParams={{ notification: item, identityKey: 'linuxdo:7' }}
-            >
-              {(props) => <NotificationDetailRoute navigation={props.navigation as never} route={props.route} />}
-            </FocusTestStack.Screen>
-            <FocusTestStack.Screen name="Other">{() => <Text>其他页面</Text>}</FocusTestStack.Screen>
-          </FocusTestStack.Navigator>
-        </NavigationContainer>
-      </NotificationRouteRuntimeProvider>
-    );
+    const tree = () => linuxDoDetailTree(runtime, item, navigation);
     const view = await render(tree(), { wrapper: QueryTestWrapper });
     await waitFor(() => expect(view.getByText('历史消息 65')).toBeTruthy());
     return {
@@ -1141,21 +1149,7 @@ describe('notification routes', () => {
       identitySignature: 'linuxdo:7'
     };
     const navigation = createNavigationContainerRef<FocusTestStackParamList>();
-    const tree = () => (
-      <NotificationRouteRuntimeProvider value={runtime}>
-        <NavigationContainer ref={navigation}>
-          <FocusTestStack.Navigator initialRouteName="NotificationDetail">
-            <FocusTestStack.Screen
-              name="NotificationDetail"
-              initialParams={{ notification: item, identityKey: 'linuxdo:7' }}
-            >
-              {(props) => <NotificationDetailRoute navigation={props.navigation as never} route={props.route} />}
-            </FocusTestStack.Screen>
-            <FocusTestStack.Screen name="Other">{() => <Text>其他页面</Text>}</FocusTestStack.Screen>
-          </FocusTestStack.Navigator>
-        </NavigationContainer>
-      </NotificationRouteRuntimeProvider>
-    );
+    const tree = () => linuxDoDetailTree(runtime, item, navigation);
     const view = await render(tree(), { wrapper: QueryTestWrapper });
     await waitFor(() => expect(view.getByText('阅读确认')).toBeTruthy());
     return {

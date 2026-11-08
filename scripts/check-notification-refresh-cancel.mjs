@@ -1,18 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import pngjs from 'pngjs';
+import { captureDeviceScreenshot } from './device-screenshot.mjs';
 
-import { runAgentDevice } from './agent-device-runtime.mjs';
+import { prepareDeviceEvidence, runAgentDevice } from './agent-device-runtime.mjs';
 
 // Light theme, aggregate notification list at the top. Does not open messages or mark them read.
 const serial = process.env.ANDROID_SERIAL;
 const evidence = process.argv[2];
 assert(serial && evidence, 'Set ANDROID_SERIAL and pass an ignored evidence directory.');
-execFileSync('git', ['check-ignore', path.resolve(evidence)]);
-mkdirSync(evidence, { recursive: true });
+prepareDeviceEvidence(evidence);
 const device = (...args) =>
   runAgentDevice([...args, '--platform', 'android', '--serial', serial], { capture: true, echoCapture: false });
 device('wait', 'id="notification-source-all"', '10000');
@@ -28,9 +25,7 @@ const list = nodes.find((node) => /^notification-outcome-(data|empty|partial)-al
 assert(list?.x === 0 && list.height > 0, 'Start on a full, settled notification list.');
 
 function capture(name) {
-  const bytes = execFileSync('adb', ['-s', serial, 'exec-out', 'screencap', '-p']);
-  writeFileSync(path.join(evidence, `${name}.png`), bytes);
-  const { width, height, data } = pngjs.PNG.sync.read(bytes);
+  const { width, height, data } = captureDeviceScreenshot(serial, evidence, name);
   let blue = 0;
   // Error notices can move the list and its native refresh indicator below the header.
   for (let y = list.y; y < Math.min(height, list.y + list.height * 0.3); y++) {

@@ -1,3 +1,4 @@
+import { jsonResponse } from '../../helpers/jsonResponse';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
@@ -13,7 +14,7 @@ vi.mock('expo-secure-store', () => ({
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import { html, json, routeFetcher } from './fixtures';
+import { html, routeFetcher } from './fixtures';
 
 describe('Android local sources', () => {
   afterEach(() => {
@@ -24,7 +25,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 810,
             title: 'V2EX Pro topic',
@@ -38,7 +39,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           {
             id: 7001,
             member: { username: 'alice', pro: true },
@@ -91,7 +92,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/topics/latest.json',
-        json([
+        jsonResponse([
           {
             id: 121,
             title: 'V2EX latest',
@@ -113,7 +114,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 121,
             title: 'V2EX detail',
@@ -128,11 +129,11 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([{ member: { username: 'bob' }, content_rendered: '<p>reply</p>', created: 1780000200 }])
+        jsonResponse([{ member: { username: 'bob' }, content_rendered: '<p>reply</p>', created: 1780000200 }])
       ],
       [
         'sov2ex.com',
-        json({
+        jsonResponse({
           hits: {
             hits: [
               {
@@ -143,7 +144,7 @@ describe('Android local sources', () => {
           }
         })
       ],
-      [/.*/, json({})]
+      [/.*/, jsonResponse({})]
     ]);
 
     const first = await getFeed({ source: 'v2ex', fetcher });
@@ -380,7 +381,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 701,
             title: 'Fresh V2EX topic',
@@ -393,7 +394,7 @@ describe('Android local sources', () => {
           }
         ])
       ],
-      ['/api/replies/show.json', json([])],
+      ['/api/replies/show.json', jsonResponse([])],
       [
         { exact: 'https://www.v2ex.com/t/701' },
         html(`
@@ -431,7 +432,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 810,
             title: 'V2EX enriched detail',
@@ -447,7 +448,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           { id: 7001, member: { username: 'alice' }, content_rendered: '<p>first reply</p>', created: 1780000100 },
           {
             id: 7002,
@@ -511,7 +512,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 817,
             title: 'V2EX active reply race',
@@ -525,7 +526,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           { id: 8201, member: { username: 'alice' }, content_rendered: '<p>first stale reply</p>' },
           { id: 8202, member: { username: 'bob' }, content_rendered: '<p>second stale reply</p>' }
         ])
@@ -582,7 +583,7 @@ describe('Android local sources', () => {
     let replyApiCalls = 0;
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([
+        return jsonResponse([
           {
             id: 1232881,
             title: 'V2EX reply snapshot race',
@@ -812,7 +813,7 @@ describe('Android local sources', () => {
     let replyApiCalls = 0;
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([
+        return jsonResponse([
           {
             id: 1231874,
             title: 'V2EX paged replies',
@@ -960,7 +961,7 @@ describe('Android local sources', () => {
     `;
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([
+        return jsonResponse([
           {
             id: 1231875,
             title: 'V2EX invalid paged replies',
@@ -973,7 +974,7 @@ describe('Android local sources', () => {
       }
       if (input.includes('/api/replies/show.json')) {
         replyApiCalls += 1;
-        return json([]);
+        return jsonResponse([]);
       }
       if (input === 'https://www.v2ex.com/t/1231875') {
         return html(`
@@ -1027,7 +1028,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 820,
             title: 'V2EX malformed reply node',
@@ -1040,7 +1041,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           { id: 7501, member: { username: 'alice' }, content_rendered: '<p>first</p>' },
           { id: 7503, member: { username: 'carol' }, content_rendered: '<p>third</p>' }
         ])
@@ -1100,7 +1101,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 821,
             title: 'V2EX commentCount reply snapshot',
@@ -1139,7 +1140,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 822,
             title: 'V2EX conflicting reply declarations',
@@ -1150,7 +1151,7 @@ describe('Android local sources', () => {
           }
         ])
       ],
-      ['/api/replies/show.json', json([])],
+      ['/api/replies/show.json', jsonResponse([])],
       [
         { exact: 'https://www.v2ex.com/t/822' },
         html(`
@@ -1194,7 +1195,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 816,
             title: 'V2EX reply race',
@@ -1208,7 +1209,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           { id: 8101, member: { username: 'alice' }, content_rendered: '<p>first</p>', created: 1780000100 },
           { id: 8102, member: { username: 'bob' }, content_rendered: '<p>second</p>', created: 1780000200 }
         ])
@@ -1254,7 +1255,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 815,
             title: 'V2EX quoted icon attribute',
@@ -1265,7 +1266,7 @@ describe('Android local sources', () => {
           }
         ])
       ],
-      ['/api/replies/show.json', json([])],
+      ['/api/replies/show.json', jsonResponse([])],
       [
         { exact: 'https://www.v2ex.com/t/815' },
         html(`
@@ -1293,7 +1294,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 814,
             title: 'V2EX malformed reply target',
@@ -1304,7 +1305,7 @@ describe('Android local sources', () => {
           }
         ])
       ],
-      ['/api/replies/show.json', json([])],
+      ['/api/replies/show.json', jsonResponse([])],
       [
         { exact: 'https://www.v2ex.com/t/814' },
         html(
@@ -1329,7 +1330,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 811,
             title: 'V2EX fallback detail',
@@ -1401,7 +1402,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 812,
             title: 'V2EX API fallback detail',
@@ -1421,7 +1422,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           {
             id: 7201,
             member: { username: 'alice' },
@@ -1469,7 +1470,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 818,
             title: 'V2EX empty API fallback',
@@ -1486,7 +1487,7 @@ describe('Android local sources', () => {
           throw new Error('origin HTML unavailable');
         }
       ],
-      ['/api/replies/show.json', json([])]
+      ['/api/replies/show.json', jsonResponse([])]
     ]);
 
     const topic = await getTopic({ source: 'v2ex', id: '818', fetcher });
@@ -1516,7 +1517,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 823,
             title: 'V2EX stale zero topic count',
@@ -1535,7 +1536,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([{ id: 7801, member: { username: 'alice' }, content_rendered: '<p>newer reply</p>' }])
+        jsonResponse([{ id: 7801, member: { username: 'alice' }, content_rendered: '<p>newer reply</p>' }])
       ]
     ]);
 
@@ -1556,7 +1557,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 819,
             title: 'V2EX empty API fallback with legacy HTML',
@@ -1577,7 +1578,7 @@ describe('Android local sources', () => {
           </div>
         `)
       ],
-      ['/api/replies/show.json', json([])],
+      ['/api/replies/show.json', jsonResponse([])],
       [
         /.*/,
         (input) => {
@@ -1614,7 +1615,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 813,
             title: 'V2EX incomplete API fallback',
@@ -1633,7 +1634,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           { id: 7301, member: { username: 'alice' }, content_rendered: '<p>first</p>' },
           { id: 7302, member: { username: 'bob' }, content_rendered: '<p>second</p>' }
         ])
@@ -1657,7 +1658,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 824,
             title: 'V2EX malformed API reply',
@@ -1676,7 +1677,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([{ id: 7901, member: { username: 'alice' }, content_rendered: '<p>usable</p>' }, {}])
+        jsonResponse([{ id: 7901, member: { username: 'alice' }, content_rendered: '<p>usable</p>' }, {}])
       ]
     ]);
 
@@ -1698,7 +1699,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
-        json([
+        jsonResponse([
           {
             id: 826,
             title: 'V2EX empty markup reply',
@@ -1717,7 +1718,7 @@ describe('Android local sources', () => {
       ],
       [
         '/api/replies/show.json',
-        json([
+        jsonResponse([
           { id: 7961, member: { username: 'alice' }, content_rendered: '<p>usable</p>' },
           { id: 7962, content_rendered: '<p>   </p>' },
           { id: 7963, content_rendered: '<p>&nbsp;</p>' },
@@ -1883,7 +1884,7 @@ describe('Android local sources', () => {
 
   it('reads V2EX search hits when SOV2EX returns a top-level hits array', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         total: 1,
         hits: [
           {
@@ -1909,7 +1910,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       const from = url.searchParams.get('from');
-      return json({
+      return jsonResponse({
         hits: {
           total: { value: 2 },
           hits: [
@@ -1947,7 +1948,7 @@ describe('Android local sources', () => {
       const size = Number(url.searchParams.get('size'));
       // Official handler.go permits size <= 50 and from + size <= 1000.
       if (size > 50 || from + size > 1000) return Response.json({ message: 'too deep paging' }, { status: 400 });
-      return json({
+      return jsonResponse({
         total,
         hits: Array.from({ length: size }, (_, index) => ({
           _source: { id: from + index + 1, title: 'match', member: 'alice', created: '2026-09-01T00:00:00Z' }
@@ -1972,7 +1973,7 @@ describe('Android local sources', () => {
       const from = Number(url.searchParams.get('from'));
       const size = Number(url.searchParams.get('size'));
       if (size > 50) return Response.json({ message: 'size too large' }, { status: 400 });
-      return json({
+      return jsonResponse({
         total: 100,
         hits: Array.from({ length: Math.min(size, 100 - from) }, (_, index) => ({
           _source: { id: from + index + 1, title: 'match', member: 'alice', created: '2026-09-01T00:00:00Z' }
@@ -1990,7 +1991,7 @@ describe('Android local sources', () => {
   });
 
   it('passes V2EX relevance and time sorting through real SOV2EX parameters', async () => {
-    const fetcher = vi.fn(async () => json({ hits: [] }));
+    const fetcher = vi.fn(async () => jsonResponse({ hits: [] }));
 
     await searchTopics({ source: 'v2ex', query: 'gpt', sort: 'relevance', fetcher });
     await searchTopics({ source: 'v2ex', query: 'gpt', sort: 'time', fetcher });
@@ -2012,7 +2013,7 @@ describe('Android local sources', () => {
   it('passes V2EX site filters through real SOV2EX parameters', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-11T10:00:00+08:00'));
-    const fetcher = vi.fn(async () => json({ hits: [] }));
+    const fetcher = vi.fn(async () => jsonResponse({ hits: [] }));
     try {
       await searchTopics({
         source: 'v2ex',

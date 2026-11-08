@@ -36,15 +36,7 @@ export function isNodeSeekRequestUrl(input: string) {
   }
 }
 
-export function isNodeSeekBrowserFetchUrl(input: string) {
-  return isNodeSeekRequestUrl(input);
-}
-
-export function isNodeSeekBrowserNavigationUrl(input: string, initialRequestUrl: string) {
-  return isNodeSeekRequestUrl(initialRequestUrl) && isNodeSeekRequestUrl(input);
-}
-
-export function isNodeSeekBrowserResultUrl(input: string, initialRequestUrl: string) {
+export function isNodeSeekBrowserRequestPair(input: string, initialRequestUrl: string) {
   return isNodeSeekRequestUrl(initialRequestUrl) && isNodeSeekRequestUrl(input);
 }
 

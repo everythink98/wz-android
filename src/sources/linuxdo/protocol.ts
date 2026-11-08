@@ -33,11 +33,6 @@ const LINUXDO_FEED_PATHS: Record<DiscourseFeedFilter, string> = {
   'new-replies': '/new.json'
 };
 
-export function normalizeLinuxDoTopicId(value: unknown) {
-  const text = String(value || '').trim();
-  return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
-}
-
 export function linuxDoUserUrl(username: string) {
   return `${LINUXDO_BASE_URL}/u/${encodeURIComponent(username)}`;
 }

@@ -1,5 +1,6 @@
 import { StyleSheet } from 'react-native';
 import {
+  createReaderFontSizer,
   readerRadii,
   type ReaderStyleSettings,
   type ReaderTheme,
@@ -9,7 +10,7 @@ import {
 
 export function createMoreSiteSettingStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
-  const fontSize = (size: number) => Math.round(size * settings.fontScale);
+  const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({
     row: { paddingVertical: 0, paddingRight: 0 },
     rowContainer: { alignItems: 'center', minHeight: 64, marginVertical: 0 },
@@ -40,6 +41,7 @@ export function createMoreSiteSettingStyles(theme: ReaderTheme, settings: Reader
 }
 
 export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
+  const fontSize = createReaderFontSizer(settings);
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const levelRiskSafe = theme.dark ? '#78D69C' : '#2F7D4C';
   return StyleSheet.create({
@@ -79,10 +81,10 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(18 * settings.fontScale),
+      fontSize: fontSize(18),
       fontWeight: '600',
       letterSpacing: 0,
-      lineHeight: Math.round(24 * settings.fontScale)
+      lineHeight: fontSize(24)
     },
     levelMetaRow: {
       alignItems: 'center',
@@ -122,9 +124,9 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderStyl
     levelTabText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: Math.round(13 * settings.fontScale),
+      fontSize: fontSize(13),
       fontWeight: '500',
-      lineHeight: Math.round(18 * settings.fontScale)
+      lineHeight: fontSize(18)
     },
     levelTabTextActive: {
       color: theme.primary,

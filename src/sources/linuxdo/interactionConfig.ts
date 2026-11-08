@@ -1,28 +1,13 @@
-import { decodeHtml, isRecord, parseHtml } from '@/domain/forum/html';
+import { linuxDoPreloadedData, parseLinuxDoRecord } from './preloadedData';
 import type { DiscourseInteractionConfig } from '@/domain/forum/discourseInteractions';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { LINUXDO_BASE_URL, linuxDoRequestError } from './protocol';
 
-function record(value: unknown): Record<string, unknown> {
-  if (typeof value === 'string') {
-    try {
-      return record(JSON.parse(value));
-    } catch {
-      return {};
-    }
-  }
-  return isRecord(value) ? value : {};
-}
-
 export function linuxDoSiteSettingsFromHtml(html: string) {
-  const root = parseHtml(html);
-  const script = root.querySelector('script#data-preloaded[type="application/json"]');
-  const preload = record(
-    script?.rawText ?? decodeHtml(root.querySelector('[data-preloaded]')?.getAttribute('data-preloaded') || '')
-  );
-  return record(preload.siteSettings ?? preload.site_settings);
+  const preload = linuxDoPreloadedData(html);
+  return parseLinuxDoRecord(preload.siteSettings ?? preload.site_settings);
 }
 
 export function linuxDoInteractionConfig(settings: Record<string, unknown>): DiscourseInteractionConfig {

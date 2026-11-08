@@ -28,7 +28,7 @@ import { errorMessage } from '@/platform/network/errors';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { RequestDispatchState } from '@/platform/network/request';
-import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
+import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { syncDiscoursePolicyCaches } from '@/platform/query/discoursePolicyCache';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
@@ -1459,16 +1459,7 @@ function EnabledNotificationDetailRoute({
           ...(item.target.postNumber ? { floor: item.target.postNumber } : {})
         })
       : undefined;
-  const openExternalUrl = useCallback(
-    (url: string) => {
-      if (!isHttpOrHttpsUrl(url)) {
-        notify('仅支持打开 http/https 链接。');
-        return;
-      }
-      void WebBrowser.openBrowserAsync(url).catch((error) => notify(errorMessage(error)));
-    },
-    [notify]
-  );
+  const openExternalUrl = useCallback((url: string) => openHttpUrl(url, notify, WebBrowser.openBrowserAsync), [notify]);
   const runComposerRequest = useCallback(async <T,>(operation: (signal: AbortSignal) => Promise<T>) => {
     const controller = new AbortController();
     composerControllersRef.current.add(controller);

@@ -1,6 +1,7 @@
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { sanitizeContentHtmlWithRoot } from './contentSanitizer';
 import {
+  nodeTagName,
   FORUM_AUDIO_TAG,
   FORUM_LINK_CARD_TAG,
   FORUM_MATH_BLOCK_TAG,
@@ -282,11 +283,6 @@ const PLANNED_ISLAND_TAGS = new Set([
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG
 ]);
-
-function nodeTagName(node: unknown) {
-  const record = node as { rawTagName?: unknown; tagName?: unknown };
-  return String(record.rawTagName || record.tagName || '').toLowerCase();
-}
 
 function planningNodeHasContent(node: PlanningNode) {
   return Boolean(nodeTagName(node)) || node.toString().trim().length > 0;

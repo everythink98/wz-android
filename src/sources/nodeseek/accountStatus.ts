@@ -1,5 +1,5 @@
 import { getCurrentUserIdentity } from '@/sources/readGateway';
-import { summarizeNodeSeekCookieHeader } from './session';
+import { summarizeCookieHeader } from '@/platform/network/cookieHeaderNames';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { isCanceledRequest } from '@/platform/network/errors';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
@@ -32,7 +32,7 @@ export async function readNodeSeekAccountStatus({
   try {
     const cookieHeader = managedCookieHeaderOrThrow(await readManagedCookieHeader(NODESEEK_ACCOUNT_STATUS_URL));
     if (signal.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-    const summary = summarizeNodeSeekCookieHeader(cookieHeader);
+    const summary = summarizeCookieHeader(cookieHeader);
     cookieSummary = summary.names;
     markDiagnosticStage(trace, 'credential', { source: 'nodeseek', hasCredential: summary.count > 0 });
     const currentUser = await getCurrentUserIdentity({

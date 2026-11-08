@@ -254,6 +254,11 @@ export function useTopicController({
   );
   const repliesQueryIdentity = JSON.stringify(repliesQueryKey);
   const activeRepliesQueryIdentityRef = useCommittedRef(enabled && !selectedReadBlocked ? repliesQueryIdentity : '');
+  const replyWindowGuard = useCallback(
+    (generation: number) => () =>
+      activeRepliesQueryIdentityRef.current === repliesQueryIdentity && replyWindowGenerationRef.current === generation,
+    [activeRepliesQueryIdentityRef, repliesQueryIdentity]
+  );
   const interactionActiveRef = useCommittedRef(active);
   const isReadRecoveryCurrent = useCallback(
     () => interactionActiveRef.current && activeRepliesQueryIdentityRef.current === repliesQueryIdentity,
@@ -583,9 +588,7 @@ export function useTopicController({
   const replyCollectionComplete = true;
   const rebuildRepliesFromDetail = useCallback(
     async (detail: TopicDetail, generation: number, clearOtherOrder = false) => {
-      const ownsWindow = () =>
-        activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
-        replyWindowGenerationRef.current === generation;
+      const ownsWindow = replyWindowGuard(generation);
       const replyKeys = clearOtherOrder
         ? (['oldest', 'newest'] as const).map((order) =>
             forumQueryKeys.replies(topicQueryKey, order, repliesReadPlan.cacheScope)
@@ -636,12 +639,11 @@ export function useTopicController({
       return true;
     },
     [
-      activeRepliesQueryIdentityRef,
+      replyWindowGuard,
       clearReplyWindowErrors,
       commitReplySnapshot,
       loadReplyPage,
       queryClient,
-      repliesQueryIdentity,
       repliesQueryKey,
       replyOrder,
       topicQueryKey
@@ -938,9 +940,7 @@ export function useTopicController({
     }
     const runAttempt = async (notifySuccess: boolean): Promise<LinuxDoReadResumeOutcome> => {
       const generation = ++replyWindowGenerationRef.current;
-      const ownsWindow = () =>
-        activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
-        replyWindowGenerationRef.current === generation;
+      const ownsWindow = replyWindowGuard(generation);
       try {
         const detailResult = await detailQuery.refetch();
         if (!ownsWindow()) return 'stale';
@@ -977,7 +977,7 @@ export function useTopicController({
     };
     return runAttempt(true);
   }, [
-    activeRepliesQueryIdentityRef,
+    replyWindowGuard,
     handleReadError,
     interactionActiveRef,
     notify,
@@ -986,7 +986,6 @@ export function useTopicController({
     rebuildRepliesFromDetail,
     readingEntry.failed,
     readingEntry.positionReady,
-    repliesQueryIdentity,
     repliesQueryKey,
     repliesReadPlan,
     selectedReadBlocked,
@@ -1016,9 +1015,15 @@ export function useTopicController({
         command.kind === 'created' && (selectedTopic.source === 'nodeseek' || isDiscourseSource(selectedTopic.source))
           ? command
           : null;
-      const ownsWindow = () =>
-        activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
-        replyWindowGenerationRef.current === generation;
+      const ownsWindow = replyWindowGuard(generation);
+      const recoveryFor = (queryKey: LinuxDoReadRecovery['queryKey']): LinuxDoReadRecovery => ({
+        queryKey,
+        isCurrent: ownsWindow,
+        resume: () =>
+          activeRepliesQueryIdentityRef.current === repliesQueryIdentity
+            ? refreshReplies(command)
+            : Promise.resolve('stale')
+      });
       if (command.kind === 'manual') {
         const result = await repliesQuery.refetch();
         if (!ownsWindow()) return 'stale';
@@ -1249,18 +1254,8 @@ export function useTopicController({
             });
           const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
           setReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, refreshPosition, command));
-          handleReadError(
-            selectedTopic.source,
-            error,
-            {
-              queryKey: refreshKey,
-              isCurrent: ownsWindow,
-              resume: () =>
-                activeRepliesQueryIdentityRef.current === repliesQueryIdentity
-                  ? refreshReplies(command)
-                  : Promise.resolve('stale')
-            },
-            (recovery) => onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
+          handleReadError(selectedTopic.source, error, recoveryFor(refreshKey), (recovery) =>
+            onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
           );
           return readOutcome(selectedTopic.source, error);
         } finally {
@@ -1273,23 +1268,14 @@ export function useTopicController({
           'refresh',
           replyFailure(selectedTopic.source, error, capturedPosition || { kind: 'start' }, command)
         );
-        handleReadError(
-          selectedTopic.source,
-          error,
-          {
-            queryKey: repliesQueryKey,
-            isCurrent: ownsWindow,
-            resume: () =>
-              activeRepliesQueryIdentityRef.current === repliesQueryIdentity
-                ? refreshReplies(command)
-                : Promise.resolve('stale')
-          },
-          (recovery) => onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
+        handleReadError(selectedTopic.source, error, recoveryFor(repliesQueryKey), (recovery) =>
+          onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
         );
         return readOutcome(selectedTopic.source, error);
       }
     },
     [
+      replyWindowGuard,
       activeRepliesQueryIdentityRef,
       clearReplyWindowErrors,
       detailQuery.refetch,
@@ -1458,18 +1444,13 @@ export function useTopicController({
       ] as const;
       const generation = ++replyWindowGenerationRef.current;
       replyLocationOwnerRef.current = { generation, queryKey: targetReplyQueryRoot };
+      const ownsTargetWindow = replyWindowGuard(generation);
       const loadTargetWindow = async () => {
-        if (
-          activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
-          replyWindowGenerationRef.current !== generation
-        ) {
+        if (!ownsTargetWindow()) {
           return 'stale' as const;
         }
         await queryClient.cancelQueries({ queryKey: repliesQueryKey, exact: true });
-        if (
-          activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
-          replyWindowGenerationRef.current !== generation
-        ) {
+        if (!ownsTargetWindow()) {
           return 'stale' as const;
         }
         const cachedReplies = mergedReplyPages(
@@ -1487,25 +1468,23 @@ export function useTopicController({
           replyOrder,
           positionKind: 'target'
         });
+        const discardStaleTarget = () => {
+          queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
+          finishDiagnosticTrace(trace, 'stale', {
+            source: selectedTopic.source,
+            reason: 'stale',
+            replyOrder,
+            positionKind: 'target'
+          });
+          return 'stale' as const;
+        };
         try {
           const position = { kind: 'target', target: normalizedTarget } satisfies ReplyPageParam;
           const page = await queryClient.query({
             queryKey: targetQueryKey,
             queryFn: ({ signal }) => loadReplyPage(currentDetail, replyOrder, position, signal, trace)
           });
-          if (
-            activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
-            replyWindowGenerationRef.current !== generation
-          ) {
-            queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
-            finishDiagnosticTrace(trace, 'stale', {
-              source: selectedTopic.source,
-              reason: 'stale',
-              replyOrder,
-              positionKind: 'target'
-            });
-            return 'stale' as const;
-          }
+          if (!ownsTargetWindow()) return discardStaleTarget();
           const resolvedPage = page.currentPage!;
           const resolvedReply =
             findReplyLocation(page.items, normalizedTarget) ||
@@ -1533,19 +1512,7 @@ export function useTopicController({
           });
           return 'completed' as const;
         } catch (error) {
-          if (
-            activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
-            replyWindowGenerationRef.current !== generation
-          ) {
-            queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
-            finishDiagnosticTrace(trace, 'stale', {
-              source: selectedTopic.source,
-              reason: 'stale',
-              replyOrder,
-              positionKind: 'target'
-            });
-            return 'stale' as const;
-          }
+          if (!ownsTargetWindow()) return discardStaleTarget();
           finishDiagnosticTrace(trace, isCanceledRequest(error) ? 'canceled' : 'failure', {
             source: selectedTopic.source,
             reason: isCanceledRequest(error) ? 'canceled' : normalizeDiagnosticReason(error)
@@ -1558,9 +1525,7 @@ export function useTopicController({
       } catch (error) {
         const recovery: LinuxDoReadRecovery = {
           queryKey: targetQueryKey,
-          isCurrent: () =>
-            activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
-            replyWindowGenerationRef.current === generation,
+          isCurrent: ownsTargetWindow,
           resume: async () => {
             queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
             try {
@@ -1579,7 +1544,7 @@ export function useTopicController({
     },
     [
       active,
-      activeRepliesQueryIdentityRef,
+      replyWindowGuard,
       clearReplyWindowErrors,
       handleReadError,
       commitReplySnapshot,

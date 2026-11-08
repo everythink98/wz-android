@@ -24,7 +24,6 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
-import android.text.style.ReplacementSpan
 import android.util.TypedValue
 import android.view.ActionMode
 import android.view.InputDevice
@@ -43,18 +42,8 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.bridge.Callback
-import com.facebook.react.bridge.JavaScriptContextHolder
-import com.facebook.react.bridge.JavaScriptModule
-import com.facebook.react.bridge.NativeModule
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.UIManager
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
-import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.facebook.soloader.SoLoader
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -63,7 +52,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.lang.ref.WeakReference
 import java.lang.reflect.Proxy
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -1833,16 +1821,9 @@ class ForumContentSelectionViewTest {
 
   private class DrawTimeScrollFixture(val activity: Activity) {
     private val density = activity.resources.displayMetrics.density
-    private val reactContext = FixtureReactContext(activity)
+    private val reactContext = SelectionTestReactContext(activity.applicationContext).apply { onHostResume(activity) }
     private val handleColor = resolveTestColor(reactContext, android.R.attr.colorAccent, 0xFF1668DC.toInt())
-    private val appContext = AppContext(
-      object : ModulesProvider {
-        override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-      },
-      ModuleRegistry(emptyList(), emptyList()),
-      WeakReference(reactContext)
-    )
-    val surface = ForumContentSelectionView(reactContext, appContext).apply {
+    val surface = ForumContentSelectionView(reactContext, selectionTestAppContext(reactContext)).apply {
       setBackgroundColor(Color.WHITE)
       systemActionLoaderForTest = { _, _ -> emptyList() }
     }
@@ -2592,15 +2573,8 @@ class ForumContentSelectionViewTest {
   )
 
   private class SurfaceFixture(val activity: Activity) {
-    private val reactContext = FixtureReactContext(activity)
-    private val appContext = AppContext(
-      object : ModulesProvider {
-        override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-      },
-      ModuleRegistry(emptyList(), emptyList()),
-      WeakReference(reactContext)
-    )
-    val surface = ForumContentSelectionView(reactContext, appContext).apply {
+    private val reactContext = SelectionTestReactContext(activity.applicationContext).apply { onHostResume(activity) }
+    val surface = ForumContentSelectionView(reactContext, selectionTestAppContext(reactContext)).apply {
       systemActionLoaderForTest = { _, _ -> emptyList() }
     }
     private val mountedWindow = LinearLayout(reactContext).apply {
@@ -3066,100 +3040,9 @@ class ForumContentSelectionViewTest {
     val spanEndX: Float
   )
 
-  private class FixtureReactContext(activity: Activity) : ReactApplicationContext(activity.applicationContext) {
-    init {
-      onHostResume(activity)
-    }
-
-    override fun <T : JavaScriptModule> getJSModule(jsInterface: Class<T>): T? = null
-
-    override fun <T : NativeModule> hasNativeModule(nativeModuleInterface: Class<T>): Boolean = false
-
-    override fun getNativeModules(): Collection<NativeModule> = emptyList()
-
-    override fun <T : NativeModule> getNativeModule(nativeModuleInterface: Class<T>): T? = null
-
-    override fun getNativeModule(moduleName: String): NativeModule? = null
-
-    @Suppress("DEPRECATION")
-    override fun getCatalystInstance(): com.facebook.react.bridge.CatalystInstance? = null
-
-    @Deprecated("Required by ReactContext; use hasActiveReactInstance in production code.")
-    override fun hasActiveCatalystInstance(): Boolean = false
-
-    override fun hasActiveReactInstance(): Boolean = false
-
-    @Deprecated("Required by ReactContext; use hasReactInstance in production code.")
-    override fun hasCatalystInstance(): Boolean = false
-
-    override fun hasReactInstance(): Boolean = false
-
-    override fun destroy() = Unit
-
-    override fun handleException(exception: Exception) {
-      throw exception
-    }
-
-    @Deprecated("Required by the ReactContext compatibility contract.")
-    override fun isBridgeless(): Boolean = false
-
-    override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
-
-    override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
-
-    @Deprecated("Required by the ReactContext compatibility contract.")
-    override fun getFabricUIManager(): UIManager? = null
-
-    override fun getSourceURL(): String? = null
-
-    override fun registerSegment(segmentId: Int, path: String?, callback: Callback?) = Unit
-  }
-
-  private class FixedReplacementSpan(private val width: Int) : ReplacementSpan() {
-    override fun getSize(
-      paint: Paint,
-      text: CharSequence,
-      start: Int,
-      end: Int,
-      fontMetrics: Paint.FontMetricsInt?
-    ): Int = width
-
-    override fun draw(
-      canvas: Canvas,
-      text: CharSequence,
-      start: Int,
-      end: Int,
-      x: Float,
-      top: Int,
-      y: Int,
-      bottom: Int,
-      paint: Paint
-    ) = Unit
-  }
-
   private companion object {
     const val DRAW_PLAIN_TEXT = "highlight ownership follows text"
     const val DRAW_CODE_TEXT = "prefix prefix prefix prefix prefix mark follows text in horizontal code"
-
-    fun textToken(text: String, trailing: String): String {
-      val trailingSegments = JSONArray()
-      if (trailing.isNotEmpty()) {
-        trailingSegments.put(JSONObject().put("kind", "separator").put("text", trailing))
-      }
-      return JSONObject()
-        .put("version", 1)
-        .put("prefix", JSONArray())
-        .put(
-          "owners",
-          JSONArray().put(
-            JSONObject()
-              .put("text", text)
-              .put("tape", JSONArray())
-              .put("trailing", trailingSegments)
-          )
-        )
-        .toString()
-    }
 
     fun mediaToken(copyText: String): String = JSONObject()
       .put("version", 1)

@@ -1,3 +1,4 @@
+import { check } from '../proofCheck';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   MAX_COMPOSER_MARKDOWN_LENGTH,
@@ -7,10 +8,6 @@ import {
 } from '@/domain/forum/structuredComposer';
 import { saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
 import { materializePendingNodeSeekPolls } from '@/sources/nodeseek/pendingPolls';
-
-function check(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
 
 export async function verifyPendingPollMaterialization(
   run: (name: string, task: () => Promise<void>, metrics?: Record<string, unknown>) => Promise<void>

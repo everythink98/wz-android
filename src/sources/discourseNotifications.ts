@@ -1,3 +1,4 @@
+import { positiveInteger } from '@/domain/forum/numericValues';
 import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
 import type { DiscoursePostPolicy } from '@/domain/forum/discoursePolicy';
 import { discoursePostPolicy } from '@/sources/discourse/policy';
@@ -76,11 +77,6 @@ const discourseExcludedFromOtherTypeNames = new Set([
   'bookmark_reminder'
 ]);
 
-function integer(value: unknown) {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 ? number : undefined;
-}
-
 function boolean(value: unknown) {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
@@ -150,7 +146,7 @@ function parseNotification(value: unknown, ownUsername?: string): ForumNotificat
     text(data, 'display_username', 'username', 'original_username', 'acting_user_name') ||
     '站内消息';
   const topicId = text(value, 'topic_id') || text(data, 'topic_id');
-  const postNumber = integer(value.post_number ?? data.post_number);
+  const postNumber = positiveInteger(value.post_number ?? data.post_number);
   const postId = text(value, 'post_id') || text(data, 'original_post_id', 'post_id');
   const slug = text(value, 'slug') || text(data, 'topic_slug');
   const baseUrl = LINUXDO_BASE_URL;
@@ -591,7 +587,7 @@ export const linuxDoNotificationAdapter = {
       timeoutMs: options.timeoutMs,
       userAgent: options.userAgent
     });
-    return integer(result.id)
+    return positiveInteger(result.id)
       ? { confirmed: true }
       : { confirmed: false, message: '原站未确认发送成功，请刷新会话后确认。' };
   },

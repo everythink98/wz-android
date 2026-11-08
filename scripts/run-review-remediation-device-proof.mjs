@@ -70,6 +70,33 @@ const install = () => {
   if (identity() !== before) throw new Error('Installation identity changed; device changes frozen');
 };
 let context;
+
+function writeSuccessfulProof(outcome) {
+  writeFileSync(
+    output,
+    JSON.stringify({ ...context, business: outcome.result, restoration: outcome.checkpoint, passed: true }, null, 2)
+  );
+}
+
+function writeFailedProof(business, error) {
+  mkdirSync(path.dirname(output), { recursive: true });
+  writeFileSync(
+    output,
+    JSON.stringify(
+      {
+        ...context,
+        business,
+        restoration: error.checkpoint,
+        passed: false,
+        error: String(error),
+        causes: error.errors?.map(String)
+      },
+      null,
+      2
+    )
+  );
+}
+
 if (values.acceptance) {
   const mode = values.acceptance;
   const token = randomUUID().replaceAll('-', '');
@@ -196,32 +223,14 @@ if (values.acceptance) {
         }
       }
     });
-    writeFileSync(
-      output,
-      JSON.stringify({ ...context, business: outcome.result, restoration: outcome.checkpoint, passed: true }, null, 2)
-    );
+    writeSuccessfulProof(outcome);
     console.log(`Acceptance ${mode} and database restoration passed. Receipt: ${output}`);
   } catch (error) {
     try {
       const latest = JSON.parse(adb('shell', 'run-as', pkg, 'cat', `cache/acceptance-${mode}.json`));
       if (latest.token === token) businessResult = latest;
     } catch {}
-    mkdirSync(path.dirname(output), { recursive: true });
-    writeFileSync(
-      output,
-      JSON.stringify(
-        {
-          ...context,
-          business: businessResult,
-          restoration: error.checkpoint,
-          passed: false,
-          error: String(error),
-          causes: error.errors?.map(String)
-        },
-        null,
-        2
-      )
-    );
+    writeFailedProof(businessResult, error);
     throw error;
   }
 } else {
@@ -308,29 +317,11 @@ if (values.acceptance) {
         return JSON.parse(readFileSync(output, 'utf8'));
       }
     });
-    writeFileSync(
-      output,
-      JSON.stringify({ ...context, business: outcome.result, restoration: outcome.checkpoint, passed: true }, null, 2)
-    );
+    writeSuccessfulProof(outcome);
     console.log(`Device proof and database restoration passed. Receipt: ${output}`);
   } catch (error) {
     const business = existsSync(output) ? JSON.parse(readFileSync(output, 'utf8')) : undefined;
-    mkdirSync(path.dirname(output), { recursive: true });
-    writeFileSync(
-      output,
-      JSON.stringify(
-        {
-          ...context,
-          business,
-          restoration: error.checkpoint,
-          passed: false,
-          error: String(error),
-          causes: error.errors?.map(String)
-        },
-        null,
-        2
-      )
-    );
+    writeFailedProof(business, error);
     throw error;
   }
 }

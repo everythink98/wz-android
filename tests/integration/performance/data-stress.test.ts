@@ -1,3 +1,4 @@
+import { sqliteParameters } from '../../helpers/sqliteParameters';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,7 +27,6 @@ vi.mock('expo-sqlite', async () => {
     openDatabaseAsync: async (name: string) => {
       const db = new DatabaseSync(join(harness.directory, name));
       harness.connections.push(db);
-      const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
       return {
         execAsync: async (sql: string) => {
           harness.calls++;
@@ -34,15 +34,15 @@ vi.mock('expo-sqlite', async () => {
         },
         runAsync: async (sql: string, ...args: unknown[]) => {
           harness.calls++;
-          return db.prepare(sql).run(...parameters(args));
+          return db.prepare(sql).run(...sqliteParameters(args));
         },
         getAllAsync: async (sql: string, ...args: unknown[]) => {
           harness.calls++;
-          return db.prepare(sql).all(...parameters(args));
+          return db.prepare(sql).all(...sqliteParameters(args));
         },
         getFirstAsync: async (sql: string, ...args: unknown[]) => {
           harness.calls++;
-          return db.prepare(sql).get(...parameters(args)) ?? null;
+          return db.prepare(sql).get(...sqliteParameters(args)) ?? null;
         },
         closeAsync: async () => {
           db.close();

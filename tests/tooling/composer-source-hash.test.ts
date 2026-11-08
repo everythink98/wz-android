@@ -25,6 +25,7 @@ it('invalidates a proof APK when native code, resources or its build input chang
       'tests/ui/topicCreationFixture.tsx',
       'tests/helpers/topicCreationTransport.ts',
       'tests/helpers/topicEditingTransport.ts',
+      'tests/helpers/jsonResponse.ts',
       'tests/helpers/accountSessions.ts',
       'modules/forum-platform/android/consumer-rules.pro',
       'scripts/device-proof-build.mjs',
@@ -39,6 +40,7 @@ it('invalidates a proof APK when native code, resources or its build input chang
       'modules/forum-platform/android/src/main/AndroidManifest.xml',
       'modules/forum-platform/android/src/main/res/xml/provider.xml',
       'modules/forum-content-selection/android/src/main/Selection.kt',
+      'tests/helpers/jsonResponse.ts',
       'scripts/device-proof-build.mjs'
     ]) {
       write(file, 'changed build input');

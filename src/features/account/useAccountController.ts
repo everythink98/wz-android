@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { sanitizeWebViewUserAgent } from '@/platform/android/userAgent';
 import { errorMessage } from '@/platform/network/errors';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -398,7 +398,7 @@ export function useAccountController({
           messageRecognized: true,
           userAgentSource: typeof data.userAgent === 'string' ? 'webview' : 'default'
         });
-        const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
+        const userAgent = sanitizeWebViewUserAgent(data.userAgent);
         if (userAgent) {
           commitNodeSeekWebViewUserAgent(userAgent);
         }

@@ -1,3 +1,4 @@
+import { jsonResponse } from '../../helpers/jsonResponse';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getCategories, getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
@@ -27,7 +28,7 @@ vi.mock('expo-secure-store', () => ({
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import { json, routeFetcher } from './fixtures';
+import { routeFetcher } from './fixtures';
 
 function testLinuxDoAccess() {
   return { authenticated: true, userAgent: 'LinuxDo WebView UA' };
@@ -42,7 +43,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/latest.json',
-        json({
+        jsonResponse({
           topic_list: {
             topics: [
               {
@@ -61,7 +62,7 @@ describe('Android local sources', () => {
       ],
       [
         '/t/42.json',
-        json({
+        jsonResponse({
           id: 42,
           title: 'linux.do detail topic',
           slug: 'linux-detail-topic',
@@ -110,7 +111,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/posts.json',
-        json({
+        jsonResponse({
           post_stream: {
             posts: [
               {
@@ -126,7 +127,7 @@ describe('Android local sources', () => {
       ],
       [
         /.*/,
-        json({
+        jsonResponse({
           id: 42,
           title: 'linux.do topic',
           created_at: '2026-05-20T00:00:00.000Z',
@@ -167,7 +168,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       id: '42',
       fetcher: vi.fn(async () =>
-        json({
+        jsonResponse({
           id: 42,
           title: 'linux.do topic',
           created_at: '2026-05-20T00:00:00.000Z',
@@ -196,7 +197,7 @@ describe('Android local sources', () => {
         id: '42',
         order: 'oldest',
         position: { kind: 'start' },
-        fetcher: vi.fn(async () => json({ id: 99, post_stream: { stream: [1], posts: [] } }))
+        fetcher: vi.fn(async () => jsonResponse({ id: 99, post_stream: { stream: [1], posts: [] } }))
       })
     ).rejects.toThrow('主题身份不一致');
   });
@@ -210,7 +211,7 @@ describe('Android local sources', () => {
         id: '42',
         order: 'oldest',
         position: { kind: 'target', target: { commentId: 999, floor: 2 } },
-        fetcher: vi.fn(async () => json({ id: 42, post_stream: { stream: [1, 101], posts: [target] } }))
+        fetcher: vi.fn(async () => jsonResponse({ id: 42, post_stream: { stream: [1, 101], posts: [target] } }))
       })
     ).rejects.toThrow('目标楼层未找到');
   });
@@ -226,7 +227,7 @@ describe('Android local sources', () => {
         cooked: '<p>reply</p>',
         created_at: null
       };
-      const fetcher = vi.fn(async () => json({ id: 42, post_stream: { stream: [100, 101], posts: [post] } }));
+      const fetcher = vi.fn(async () => jsonResponse({ id: 42, post_stream: { stream: [100, 101], posts: [post] } }));
       const result = await getReplies({
         source: 'linuxdo',
         id: '42',
@@ -241,7 +242,7 @@ describe('Android local sources', () => {
 
   it('maps linux.do Discourse polls from topic JSON', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 42,
         title: 'linux.do poll topic',
         slug: 'linux-poll-topic',
@@ -329,7 +330,7 @@ describe('Android local sources', () => {
   it('lets a queued Back cancellation win before Topic DOM parsing', async () => {
     const controller = new AbortController();
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 44,
         title: 'cancel before parse',
         slug: 'cancel-before-parse',
@@ -358,7 +359,7 @@ describe('Android local sources', () => {
 
   it('maps linux.do Discourse polls from reply posts', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 43,
         title: 'linux.do reply poll topic',
         slug: 'linux-reply-poll-topic',
@@ -431,7 +432,7 @@ describe('Android local sources', () => {
 
   it('keeps linux.do tags and topic status markers from Discourse lists', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         topic_list: {
           topics: [
             {
@@ -474,7 +475,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/t/2438917.json',
-        json({
+        jsonResponse({
           id: 2438917,
           title: rawTitle,
           unicode_title: displayTitle,
@@ -497,7 +498,7 @@ describe('Android local sources', () => {
       ],
       [
         /.*/,
-        json({
+        jsonResponse({
           topic_list: {
             topics: [
               {
@@ -527,7 +528,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/t/2438918.json',
-        json({
+        jsonResponse({
           id: 2438918,
           title: '&#129765;完辣，ai又来抢饭碗啦，装机仔下岗',
           slug: 'topic',
@@ -549,7 +550,7 @@ describe('Android local sources', () => {
       ],
       [
         /.*/,
-        json({
+        jsonResponse({
           topic_list: {
             topics: [
               {
@@ -576,7 +577,7 @@ describe('Android local sources', () => {
 
   it('keeps linux.do accepted answers and special reply markers from topic JSON', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 407,
         title: 'linux.do accepted answer topic',
         slug: 'linux-accepted-answer-topic',
@@ -658,7 +659,7 @@ describe('Android local sources', () => {
 
   it('uses linux.do boost_count when the boosts array is empty', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 408,
         title: 'linux.do boost fallback topic',
         slug: 'linux-boost-fallback-topic',
@@ -698,7 +699,7 @@ describe('Android local sources', () => {
 
   it('requests linux.do latest feed by creation time', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         topic_list: {
           topics: []
         },
@@ -718,7 +719,7 @@ describe('Android local sources', () => {
       if (fetcher.mock.calls.length > 1) {
         throw new Error('unexpected second linux.do feed request');
       }
-      return json({
+      return jsonResponse({
         topic_list: {
           topics: [],
           more_topics_url: '/latest.json?page=1'
@@ -742,7 +743,7 @@ describe('Android local sources', () => {
       { filter: 'new-replies', path: '/new.json', subset: 'replies', order: null, ascending: null }
     ] as const;
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         topic_list: {
           topics: [
             {
@@ -777,13 +778,13 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/site.json',
-        json({
+        jsonResponse({
           categories: [{ id: 4, name: '开发调优' }]
         })
       ],
       [
         /.*/,
-        json({
+        jsonResponse({
           topic_list: {
             topics: [
               {
@@ -815,13 +816,13 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/site.json',
-        json({
+        jsonResponse({
           categories: [{ id: 4, name: '开发调优' }]
         })
       ],
       [
         /.*/,
-        json({
+        jsonResponse({
           id: 404,
           title: 'linux.do mapped detail category',
           slug: 'mapped-detail-category',
@@ -855,7 +856,7 @@ describe('Android local sources', () => {
 
   it('labels linux.do feed topics without a category as uncategorized', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         topic_list: {
           topics: [
             {
@@ -882,7 +883,7 @@ describe('Android local sources', () => {
 
   it('does not expose linux.do uncategorized as a category tab option', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         categories: [
           {
             id: 1,
@@ -924,7 +925,7 @@ describe('Android local sources', () => {
 
   it('preserves explicit zero statistics for a new linux.do user', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         user_summary: {
           topic_count: 0,
           post_count: 0,
@@ -952,7 +953,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/u/alice/summary.json') {
-        return json({
+        return jsonResponse({
           user_summary: {
             topic_count: 31,
             user: { id: 7, username: 'alice', name: 'Alice' }
@@ -962,7 +963,7 @@ describe('Android local sources', () => {
       }
       expect(url.pathname).toBe('/topics/created-by/alice.json');
       expect(url.searchParams.get('per_page')).toBe('30');
-      return json({
+      return jsonResponse({
         topic_list: {
           topics:
             url.searchParams.get('page') === '0'
@@ -1011,9 +1012,9 @@ describe('Android local sources', () => {
       const fetcher = vi.fn(async (input: string) => {
         const url = new URL(input);
         if (url.pathname === '/u/alice/summary.json') {
-          return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+          return jsonResponse({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
         }
-        return json({
+        return jsonResponse({
           topic_list: {
             topics: Array.from({ length: rowCount }, (_, index) => ({
               id: index + 1,
@@ -1050,7 +1051,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/u/alice/summary.json') {
-        return json({
+        return jsonResponse({
           user_summary: {
             reply_count: 31,
             user: { id: 7, username: 'alice', name: 'Alice' }
@@ -1059,7 +1060,7 @@ describe('Android local sources', () => {
       }
       expect(url.pathname).toBe('/user_actions.json');
       expect(url.searchParams.get('limit')).toBe('31');
-      return json({
+      return jsonResponse({
         user_actions:
           url.searchParams.get('offset') === '0'
             ? [{}, ...Array.from({ length: 30 }, (_, index) => reply(index + 1))]
@@ -1113,10 +1114,10 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/u/alice/summary.json') {
-        return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+        return jsonResponse({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
       }
       expect(url.pathname).toBe('/user_actions.json');
-      return json({
+      return jsonResponse({
         user_actions:
           url.searchParams.get('offset') === '0'
             ? [...Array.from({ length: 30 }, () => ({})), validReply]
@@ -1147,14 +1148,14 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/u/alice/summary.json') {
-        return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+        return jsonResponse({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
       }
       const lane = url.pathname === '/user_actions.json' ? 'replies' : 'topics';
       started.add(lane);
       await Promise.resolve();
       if (started.size !== 2) throw new Error('profile lanes started sequentially');
       if (lane === 'replies') {
-        return json({
+        return jsonResponse({
           user_actions: [
             {
               post_id: 31,
@@ -1167,7 +1168,7 @@ describe('Android local sources', () => {
           ]
         });
       }
-      return json({
+      return jsonResponse({
         topic_list: {
           topics: [
             {
@@ -1196,7 +1197,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/u/alice/summary.json',
-        json({
+        jsonResponse({
           user_summary: { topic_count: 1, user: { id: 7, username: 'alice', name: 'Alice' } },
           topics: [
             {
@@ -1215,7 +1216,7 @@ describe('Android local sources', () => {
           throw new Error('topics unavailable');
         }
       ],
-      ['/user_actions.json', json({ user_actions: [] })]
+      ['/user_actions.json', jsonResponse({ user_actions: [] })]
     ]);
 
     const initial = await getLinuxDoUserDetails('alice', 'alice', { fetcher });
@@ -1228,12 +1229,12 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/u/alice/summary.json') {
-        return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+        return jsonResponse({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
       }
       if (url.pathname === '/topics/created-by/alice.json') {
-        return json({ topic_list: { topics: Array.from({ length: 30 }, () => ({})) } });
+        return jsonResponse({ topic_list: { topics: Array.from({ length: 30 }, () => ({})) } });
       }
-      return json({ user_actions: Array.from({ length: 31 }, () => ({})) });
+      return jsonResponse({ user_actions: Array.from({ length: 31 }, () => ({})) });
     });
 
     const topics = await readLinuxDoUser('alice', 'alice', { cursorType: 'topics', fetcher });
@@ -1260,7 +1261,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       expect(new URL(input).pathname).toBe('/t/900/90.json');
       expect(new URL(input).searchParams.get('include_raw')).toBe('true');
-      return json({ chunk_size: 20, post_stream: { posts, stream } });
+      return jsonResponse({ chunk_size: 20, post_stream: { posts, stream } });
     });
 
     const replies = await getReplies({
@@ -1295,12 +1296,12 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/t/901.json') {
-        return json({ post_stream: { stream, posts: [] } });
+        return jsonResponse({ post_stream: { stream, posts: [] } });
       }
       if (url.pathname === '/t/901/posts.json') {
         const ids = url.searchParams.getAll('post_ids[]');
         requestedPostIds.push(ids);
-        return json({
+        return jsonResponse({
           post_stream: {
             posts: ids.map((id) => ({
               id: Number(id),
@@ -1350,7 +1351,7 @@ describe('Android local sources', () => {
         if (!input.includes('40') || !input.includes('50')) {
           throw new Error(`stale reply stream request: ${input}`);
         }
-        return json({
+        return jsonResponse({
           post_stream: {
             posts: [
               {
@@ -1372,7 +1373,7 @@ describe('Android local sources', () => {
         });
       }
       topicJsonCalls += 1;
-      return json({
+      return jsonResponse({
         id: 900,
         title: 'linux.do topic',
         created_at: '2026-05-20T00:00:00.000Z',
@@ -1411,7 +1412,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/t/920/1.json',
-        json({
+        jsonResponse({
           id: 920,
           title: 'Referenced topic',
           created_at: '2026-05-20T00:00:00.000Z',
@@ -1432,7 +1433,7 @@ describe('Android local sources', () => {
       ],
       [
         /.*/,
-        json({
+        jsonResponse({
           id: 910,
           title: 'Topic with external quote',
           created_at: '2026-05-20T00:00:00.000Z',
@@ -1467,7 +1468,7 @@ describe('Android local sources', () => {
 
   it('keeps a linux.do reply quote preview and loads the same-topic complete post separately', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 910,
         title: 'linux.do quoted author',
         created_at: '2026-05-20T00:00:00.000Z',
@@ -1515,7 +1516,7 @@ describe('Android local sources', () => {
 
   it('keeps a linux.do reply quote target topic instead of treating it as a local floor', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 2685882,
         title: 'Topic with cross-topic reply quote',
         created_at: '2026-07-31T00:00:00.000Z',
@@ -1564,7 +1565,7 @@ describe('Android local sources', () => {
     const quoteHtml =
       '<aside data-post="1" class="quote" data-topic="911"><div class="title"><img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/911/1">Quoted topic</a></div></div><blockquote><p>Original text</p></blockquote></aside>';
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 911,
         title: 'linux.do quoted author avatar',
         created_at: '2026-05-20T00:00:00.000Z',
@@ -1619,7 +1620,7 @@ describe('Android local sources', () => {
       if (String(input).includes('/posts.json')) {
         const url = new URL(String(input));
         const postIds = url.searchParams.getAll('post_ids[]');
-        return json({
+        return jsonResponse({
           post_stream: {
             posts: postIds.map((id) => ({
               id: Number(id),
@@ -1632,7 +1633,7 @@ describe('Android local sources', () => {
         });
       }
       topicJsonCalls += 1;
-      return json({
+      return jsonResponse({
         id: 9901,
         title: 'linux.do refresh replies',
         created_at: '2026-05-20T00:00:00.000Z',
@@ -1665,7 +1666,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         '/posts/1002.json',
-        json({
+        jsonResponse({
           id: 1002,
           post_number: 2,
           username: 'bob',
@@ -1678,7 +1679,7 @@ describe('Android local sources', () => {
       ],
       [
         /.*/,
-        json({
+        jsonResponse({
           id: 900,
           title: 'linux.do logged in topic',
           slug: 'linux-do-logged-in-topic',
@@ -1740,7 +1741,7 @@ describe('Android local sources', () => {
 
   it('marks own linux.do posts unlikable while keeping other posts likable', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 902,
         title: 'linux.do own post like permissions',
         slug: 'linux-do-own-post-like-permissions',
@@ -1790,7 +1791,7 @@ describe('Android local sources', () => {
 
   it('omits linux.do replies that the original site marks as deleted', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 901,
         title: 'linux.do deleted reply topic',
         slug: 'linux-do-deleted-reply-topic',
@@ -1847,7 +1848,7 @@ describe('Android local sources', () => {
     expect(anonymousFetcher).not.toHaveBeenCalled();
 
     const expiredFetcher = routeFetcher([
-      ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],
+      ['linux.do/session/csrf.json', jsonResponse({ csrf: 'csrf-token' })],
       ['linux.do/search?', new Response('', { status: 401 })]
     ]);
     await expect(
@@ -1862,8 +1863,8 @@ describe('Android local sources', () => {
   });
   it('keeps empty linux.do search responses empty instead of falling back to latest topics', async () => {
     const fetcher = routeFetcher([
-      ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],
-      ['linux.do/search?', json({ topics: [], posts: [] })],
+      ['linux.do/session/csrf.json', jsonResponse({ csrf: 'csrf-token' })],
+      ['linux.do/search?', jsonResponse({ topics: [], posts: [] })],
       [
         /.*/,
         (input) => {
@@ -1892,7 +1893,7 @@ describe('Android local sources', () => {
       expect(url.searchParams.get('q')).toBe('keyword');
       expect(url.searchParams.get('page')).toBe('1');
       expect(url.searchParams.has('type_filter')).toBe(false);
-      return json({
+      return jsonResponse({
         grouped_search_result: { more_full_page_results: false },
         topics: [501, 502, 503].map((id) => ({
           id,
@@ -1948,10 +1949,10 @@ describe('Android local sources', () => {
 
   it('does not treat Cloudflare marker text inside Discourse JSON as a challenge', async () => {
     const fetcher = routeFetcher([
-      ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],
+      ['linux.do/session/csrf.json', jsonResponse({ csrf: 'csrf-token' })],
       [
         'linux.do/search?',
-        json({
+        jsonResponse({
           grouped_search_result: { more_full_page_results: false },
           topics: [
             {
@@ -1994,10 +1995,10 @@ describe('Android local sources', () => {
 
   it('keeps linux.do reply matches without claiming the reply author is the OP', async () => {
     const fetcher = routeFetcher([
-      ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],
+      ['linux.do/session/csrf.json', jsonResponse({ csrf: 'csrf-token' })],
       [
         'linux.do/search?',
-        json({
+        jsonResponse({
           grouped_search_result: { more_full_page_results: false },
           topics: [
             {
@@ -2079,7 +2080,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         'linux.do/search?',
-        json({
+        jsonResponse({
           grouped_search_result: { more_full_page_results: false },
           topics: [
             {
@@ -2125,13 +2126,13 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       if (url.pathname === '/session/csrf.json') {
-        return json({ csrf: 'csrf-token' });
+        return jsonResponse({ csrf: 'csrf-token' });
       }
       expect(url.pathname).toBe('/search');
       expect(url.searchParams.get('q')).toBe('keyword');
       expect(url.searchParams.get('page')).toBe('1');
       expect(url.searchParams.has('type_filter')).toBe(false);
-      return json({
+      return jsonResponse({
         topics: [
           {
             id: 605,
@@ -2176,7 +2177,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         'linux.do/search?',
-        json({
+        jsonResponse({
           topics: [
             {
               id: 701,
@@ -2193,7 +2194,7 @@ describe('Android local sources', () => {
       ],
       [
         'linux.do/site.json',
-        json({
+        jsonResponse({
           categories: [
             {
               id: 4,
@@ -2230,7 +2231,7 @@ describe('Android local sources', () => {
     const fetcher = routeFetcher([
       [
         'linux.do/search?',
-        json({
+        jsonResponse({
           topics: [
             {
               id: 801,
@@ -2272,10 +2273,10 @@ describe('Android local sources', () => {
 
   it('sends gateway-supplied linux.do login access when searching', async () => {
     const fetcher = routeFetcher([
-      ['/session/csrf.json', json({ csrf: 'csrf-token' })],
+      ['/session/csrf.json', jsonResponse({ csrf: 'csrf-token' })],
       [
         '/search?',
-        json({
+        jsonResponse({
           topics: [
             {
               id: 601,
@@ -2327,10 +2328,12 @@ describe('Android local sources', () => {
 
   it('marks visible linux.do reads ahead of background account refresh', async () => {
     const visibleFetcher = vi.fn(async (input: string) =>
-      new URL(input).pathname === '/site.json' ? json({ categories: [] }) : json({ topic_list: { topics: [] } })
+      new URL(input).pathname === '/site.json'
+        ? jsonResponse({ categories: [] })
+        : jsonResponse({ topic_list: { topics: [] } })
     );
     const accountFetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         current_user: { id: 42, username: 'alice', name: 'Alice' }
       })
     );
@@ -2355,7 +2358,9 @@ describe('Android local sources', () => {
 
   it('passes linux.do site filters through Discourse search syntax', async () => {
     const fetcher = vi.fn(async (input: string) =>
-      input.includes('/session/csrf.json') ? json({ csrf: 'csrf-token' }) : json({ topics: [], posts: [] })
+      input.includes('/session/csrf.json')
+        ? jsonResponse({ csrf: 'csrf-token' })
+        : jsonResponse({ topics: [], posts: [] })
     );
 
     await searchTopics({
@@ -2426,7 +2431,7 @@ describe('Android local sources', () => {
 
   it('loads selectable linux.do tags with category and current selections', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         results: [
           { id: '人工智能', name: '人工智能', count: 12 },
           { id: '快问快答', name: '快问快答', count: 3 }
@@ -2467,7 +2472,7 @@ describe('Android local sources', () => {
 
   it('loads selectable linux.do authors without groups', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         users: [
           { id: 7, username: 'alice', name: 'Alice', avatar_template: '/user_avatar/linux.do/alice/{size}/1.png' }
         ],
@@ -2501,7 +2506,7 @@ describe('Android local sources', () => {
 
   it('loads linux.do semantic results with an AI marker', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         topics: [
           {
             id: 88,
@@ -2533,7 +2538,7 @@ describe('Android local sources', () => {
   });
 
   it('keeps a zero-result linux.do semantic response distinct from an API failure', async () => {
-    const fetcher = vi.fn(async () => json({ topics: [], posts: [], users: [] }));
+    const fetcher = vi.fn(async () => jsonResponse({ topics: [], posts: [], users: [] }));
 
     const result = await searchLinuxDoSemantic('nothing', {
       fetcher,

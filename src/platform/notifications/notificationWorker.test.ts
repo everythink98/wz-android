@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
-import type { ForumNotification } from '@/domain/notifications/models';
+import type { ForumNotification, NotificationPage } from '@/domain/notifications/models';
 import { buildSourceNotificationDigest, runNotificationBackgroundWorker } from './notificationWorker';
 import { defaultNotificationState, recordNotificationDelivery, type NotificationState } from './notificationStore';
 
@@ -19,6 +19,30 @@ const dismissDigest = async () => undefined;
 const reconcileDigests = async () => undefined;
 const sourceAllowed = async () => true;
 const clearForContentDisable = async () => undefined;
+
+async function unreadNodeSeekReplyPage(): Promise<NotificationPage> {
+  return {
+    quality: 'complete' as const,
+    items: [
+      {
+        source: 'nodeseek',
+        id: 'new',
+        kind: 'reply',
+        actor: { name: '甲' },
+        title: '不进入摘要',
+        createdAt: null,
+        unread: true,
+        target: { type: 'information' }
+      }
+    ],
+    cursor: null,
+    hasMore: false
+  };
+}
+
+async function nodeSeekWorkerAccess() {
+  return { identityKey: 'nodeseek:7', userId: '7' };
+}
 
 function testRecord(state: NotificationState) {
   persistence.state = state;
@@ -495,7 +519,7 @@ describe('background notification digest', () => {
       sourceAllowed: async () => allowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        probeAccess: nodeSeekWorkerAccess,
         listPage: async () => {
           allowed = false;
           return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
@@ -566,7 +590,7 @@ describe('background notification digest', () => {
       sourceAllowed: async () => ++checks < 5,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        probeAccess: nodeSeekWorkerAccess,
         listPage: async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false })
       },
       store: {
@@ -601,24 +625,8 @@ describe('background notification digest', () => {
       sourceAllowed: async () => allowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -659,24 +667,8 @@ describe('background notification digest', () => {
       sourceAllowed: async () => allowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => {
@@ -717,24 +709,8 @@ describe('background notification digest', () => {
       sourceAllowed: async () => allowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -786,24 +762,8 @@ describe('background notification digest', () => {
       sourceAllowed: async () => allowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -986,7 +946,7 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        probeAccess: nodeSeekWorkerAccess,
         listPage
       },
       store: {
@@ -1070,24 +1030,8 @@ describe('background notification digest', () => {
       privateAccessAllowed: async () => accessCurrent,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -1147,24 +1091,8 @@ describe('background notification digest', () => {
       privateAccessAllowed: async () => accessCurrent,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -1218,24 +1146,8 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -1340,7 +1252,7 @@ describe('background notification digest', () => {
         sourceAllowed,
         network: {
           restoreProxy: async () => undefined,
-          probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+          probeAccess: nodeSeekWorkerAccess,
           listPage: async () => {
             throw new Error('PRIVATE_BACKGROUND_FAILURE');
           }
@@ -1400,7 +1312,7 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        probeAccess: nodeSeekWorkerAccess,
         listPage: async () => ({ quality: 'complete' as const, items, cursor: null, hasMore: false })
       },
       store: {
@@ -1513,7 +1425,7 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        probeAccess: nodeSeekWorkerAccess,
         listPage: async () => ({ quality: 'complete' as const, items, cursor: null, hasMore: false })
       },
       store: {
@@ -1573,24 +1485,8 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -1628,24 +1524,8 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -1691,24 +1571,8 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -1769,24 +1633,8 @@ describe('background notification digest', () => {
       deadlineMs: 5,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => state,
@@ -1859,24 +1707,8 @@ describe('background notification digest', () => {
         deadlineMs: 5,
         network: {
           restoreProxy: async () => undefined,
-          probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-          listPage: async () => ({
-            quality: 'complete' as const,
-            items: [
-              {
-                source: 'nodeseek',
-                id: 'new',
-                kind: 'reply',
-                actor: { name: '甲' },
-                title: '不进入摘要',
-                createdAt: null,
-                unread: true,
-                target: { type: 'information' }
-              }
-            ],
-            cursor: null,
-            hasMore: false
-          })
+          probeAccess: nodeSeekWorkerAccess,
+          listPage: unreadNodeSeekReplyPage
         },
         store: {
           load: async () => state,
@@ -1910,7 +1742,7 @@ describe('background notification digest', () => {
         deadlineMs: 500,
         network: {
           restoreProxy: async () => undefined,
-          probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+          probeAccess: nodeSeekWorkerAccess,
           listPage: async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false })
         },
         store: {
@@ -1971,24 +1803,8 @@ describe('background notification digest', () => {
       deadlineMs: 5,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({
-          quality: 'complete' as const,
-          items: [
-            {
-              source: 'nodeseek',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
+        probeAccess: nodeSeekWorkerAccess,
+        listPage: unreadNodeSeekReplyPage
       },
       store: {
         load: async () => {
@@ -2141,7 +1957,7 @@ describe('background notification digest', () => {
       },
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        probeAccess: nodeSeekWorkerAccess,
         listPage: async () => ({ quality: 'complete' as const, items: [item], cursor: null, hasMore: false })
       },
       store: {
@@ -2249,7 +2065,7 @@ describe('background notification digest', () => {
       sourceAllowed,
       network: {
         restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+        probeAccess: nodeSeekWorkerAccess,
         listPage: async () => ({ quality: 'complete' as const, items, cursor: null, hasMore: false })
       },
       store: {

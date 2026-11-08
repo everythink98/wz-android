@@ -1,22 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ImagePreviewItem } from '@/platform/media/imagePreviewCatalog';
-import {
-  AppState,
-  Linking,
-  Platform,
-  Share,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  View
-} from 'react-native';
+import { AppState, Platform, Share, type NativeScrollEvent, type NativeSyntheticEvent, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
 
-import { errorMessage } from '@/platform/network/errors';
-import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
+import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 
@@ -179,25 +170,10 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const mediaSessionIdentity = useForumMediaSessionIdentity(topic.source);
   const openExternalUrl = useCallback(
-    (url: string) => {
-      if (!isHttpOrHttpsUrl(url)) {
-        runtime.notify('仅支持打开 http/https 链接。');
-        return;
-      }
-      void WebBrowser.openBrowserAsync(url).catch((error) => runtime.notify(errorMessage(error)));
-    },
+    (url: string) => openHttpUrl(url, runtime.notify, WebBrowser.openBrowserAsync),
     [runtime]
   );
-  const openOriginalUrl = useCallback(
-    (url: string) => {
-      if (!isHttpOrHttpsUrl(url)) {
-        runtime.notify('仅支持打开 http/https 链接。');
-        return;
-      }
-      void Linking.openURL(url).catch((error) => runtime.notify(errorMessage(error)));
-    },
-    [runtime]
-  );
+  const openOriginalUrl = useCallback((url: string) => openHttpUrl(url, runtime.notify), [runtime]);
   const openImagePreviewRef = useRef<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>(
     () => undefined
   );

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { QueryClient } from '@tanstack/react-query';
+import { createQueryTestWrapper } from '../QueryTestWrapper';
 import {
   createEmptyReaderState,
   type ReaderChange,
@@ -37,9 +37,7 @@ const added: ReaderChange = {
 async function setup() {
   const notify = jest.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  const wrapper = createQueryTestWrapper(client);
   const hook = await renderHook(() => useReaderRuntime({ notify }), { wrapper });
   await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
   return { hook, notify, client };

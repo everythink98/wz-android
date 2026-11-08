@@ -1,3 +1,4 @@
+import { seedLinuxDoAccount } from '../seedLinuxDoAccount';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { QueryObserver } from '@tanstack/react-query';
 import { createRoot } from 'test-renderer';
@@ -63,18 +64,8 @@ jest.mock('@/platform/android/secureRandom', () => ({ nativeSecureRandomHex: jes
 let events: DiagnosticEvent[] = [];
 let networkProxyDescriptor: PropertyDescriptor | undefined;
 let defaultStorageRead: jest.SpyInstance;
-function seedAccount(username = 'alice') {
-  const snapshot = accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
-    type: 'session-updated',
-    loggedIn: true,
-    currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}` }
-  });
-  appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), snapshot);
-  return snapshot;
-}
-
 async function renderRuntime(fetcher: Fetcher, ready = true, enabledSources: readonly Source[] = ['linuxdo']) {
-  await saveAccountSessionSnapshot(seedAccount());
+  await saveAccountSessionSnapshot(seedLinuxDoAccount());
   const notify = jest.fn();
   const openUser = async () => undefined;
   const loginNavigation = { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true };
@@ -125,7 +116,7 @@ describe('LDC website authorization', () => {
     fetcher: Fetcher = async () => Response.json({ current_user: { id: 7, username: 'alice' } }),
     wireCredit = false
   ) {
-    await saveAccountSessionSnapshot(seedAccount());
+    await saveAccountSessionSnapshot(seedLinuxDoAccount());
     const notify = jest.fn();
     let runtime!: ReturnType<typeof useAccountRuntime>;
     let credit!: ReturnType<typeof useLinuxDoCredit>;
@@ -333,7 +324,7 @@ describe('LDC website authorization', () => {
         });
       if (exit === 'identity')
         await act(async () => {
-          seedAccount('bob');
+          seedLinuxDoAccount('bob');
         });
       await act(async () => {
         oldPage.props.onMessage(authMessage('complete'));
@@ -372,7 +363,7 @@ describe('LDC website authorization', () => {
     const oldPage = view.getByTestId('login-webview', { includeHiddenElements: true });
     username = 'bob';
     await act(async () => {
-      seedAccount('bob');
+      seedLinuxDoAccount('bob');
     });
     await act(async () => {
       await previous;
@@ -733,7 +724,7 @@ describe('LDC website authorization', () => {
         });
       if (exit === 'identity')
         await act(async () => {
-          seedAccount('bob');
+          seedLinuxDoAccount('bob');
         });
       await waitFor(() => expect(runtime().hosts.surfaces.linuxdoCredit).toBe(false));
       expect(
@@ -1200,7 +1191,7 @@ describe('local login identity restoration', () => {
   });
 
   it('keeps warm navigation and restored sources ready while a newly enabled identity restores', async () => {
-    seedAccount();
+    seedLinuxDoAccount();
     seedNodeSeekAccount();
     const legacyRead = Promise.withResolvers<string | null>();
     storageRead.mockImplementation((key: string) =>
@@ -1267,7 +1258,7 @@ describe('local login identity restoration', () => {
   });
 
   it('retries only a failed warm source without dropping already restored source access', async () => {
-    seedAccount();
+    seedLinuxDoAccount();
     seedNodeSeekAccount();
     storageRead.mockImplementation((key: string) =>
       Promise.resolve(key === 'nodeseek-access' ? JSON.stringify({ userAgent: 'Legacy Node UA' }) : null)
@@ -1314,7 +1305,7 @@ describe('local login identity restoration', () => {
   });
 
   it('cancels a disabled warm source before writing its identity or deleting legacy keys', async () => {
-    seedAccount();
+    seedLinuxDoAccount();
     seedNodeSeekAccount();
     storageRead.mockImplementation((key: string) =>
       Promise.resolve(key === 'nodeseek-access' ? JSON.stringify({ userAgent: 'Legacy Node UA' }) : null)
@@ -1422,7 +1413,7 @@ async function renderManualLogin(fetcher: Fetcher, awaitIdentity = true) {
     });
     return runtime.hosts.element;
   }
-  seedAccount();
+  seedLinuxDoAccount();
   const view = await render(<Harness />, { wrapper: QueryTestWrapper });
   if (awaitIdentity) await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
   await act(async () => {
@@ -1607,7 +1598,7 @@ it.each(['nodeseek', 'linuxdo', 'yaohuo', 'nodeimage'] as const)(
 it.each(['same', 'changed', 'anonymous', 'storage-failed'] as const)(
   'retains an interrupted identity on an unknown recovery and explicitly settles %s without replaying authorization',
   async (outcome) => {
-    await saveAccountSessionSnapshot(seedAccount());
+    await saveAccountSessionSnapshot(seedLinuxDoAccount());
     await markAccountSessionHandoffPending('linuxdo');
     appQueryClient.clear();
     let recover = false;
@@ -2263,7 +2254,7 @@ it.each(['automatic', 'manual'] as const)(
           })
         : new Response('');
     });
-    seedAccount();
+    seedLinuxDoAccount();
     let runtime!: ReturnType<typeof useAccountRuntime>;
     const notify = jest.fn();
     function Harness() {
@@ -2484,7 +2475,7 @@ it.each([
     if (stage === 'timings') await pending;
     return new Response('');
   };
-  seedAccount();
+  seedLinuxDoAccount();
   const notify = jest.fn();
   let runtime!: ReturnType<typeof useAccountRuntime>;
   function Harness({ active = true, enabled = true }: { active?: boolean; enabled?: boolean }) {
@@ -2529,7 +2520,7 @@ it.each([
     if (exit === 'source') await view.rerender(<Harness enabled={false} />);
     if (exit === 'identity')
       await act(async () => {
-        seedAccount('bob');
+        seedLinuxDoAccount('bob');
       });
     if (exit === 'background') await view.rerender(<Harness active={false} />);
     await act(async () => {
@@ -2626,7 +2617,7 @@ it('accepts an explicitly current read recovery without an active Query observer
 });
 
 it('accepts fresh server reading after changing the NodeSeek recovery setting', async () => {
-  seedAccount();
+  seedLinuxDoAccount();
   const localIdentity = Promise.withResolvers<null>();
   defaultStorageRead.mockReturnValue(localIdentity.promise);
   let lastRead = 20;
@@ -2678,12 +2669,25 @@ it('accepts fresh server reading after changing the NodeSeek recovery setting', 
   }
 });
 
+function setupReadingClock() {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let clock = 0;
+  const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+  const advance = async (milliseconds: number) => {
+    await act(async () => {
+      for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
+        clock += 1000;
+        await jest.advanceTimersByTimeAsync(1000);
+      }
+    });
+  };
+  return { advance, monotonic };
+}
+
 it.each(['csrf', 'timings'] as const)(
   'preserves in-flight %s and paused reading when its transport changes',
   async (stage) => {
-    jest.useFakeTimers({ doNotFake: ['performance'] });
-    let clock = 0;
-    const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+    const { advance, monotonic } = setupReadingClock();
     let complete!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {
       complete = resolve;
@@ -2703,19 +2707,11 @@ it.each(['csrf', 'timings'] as const)(
       screen: 'search' as const,
       webViewBlockMessage: ''
     };
-    seedAccount();
+    seedLinuxDoAccount();
     const hook = await renderHook(
       (props: { fetcher: Fetcher; appActive: boolean }) => useAccountRuntime({ ...options, ...props }),
       { initialProps: { fetcher: oldFetcher, appActive: true }, wrapper: QueryTestWrapper }
     );
-    const advance = async (milliseconds: number) => {
-      await act(async () => {
-        for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
-          clock += 1000;
-          await jest.advanceTimersByTimeAsync(1000);
-        }
-      });
-    };
     const postBodies = () =>
       [...oldFetcher.mock.calls, ...nextFetcher.mock.calls]
         .filter(([url]) => url.endsWith('/topics/timings'))
@@ -2774,9 +2770,7 @@ it.each(
     (['changed', 'anonymous', 'disabled'] as const).map((transition) => ({ stage, transition }))
   )
 )('isolates pending reading at $stage when the account becomes $transition', async ({ stage, transition }) => {
-  jest.useFakeTimers({ doNotFake: ['performance'] });
-  let clock = 0;
-  const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+  const { advance, monotonic } = setupReadingClock();
   let complete!: (response: Response) => void;
   const pending = new Promise<Response>((resolve) => {
     complete = resolve;
@@ -2790,14 +2784,6 @@ it.each(
     return url.endsWith('/session/csrf') ? new Response(JSON.stringify({ csrf: 'current-token' })) : new Response('');
   });
   let hook: Awaited<ReturnType<typeof renderRuntime>> | undefined;
-  const advance = async (milliseconds: number) => {
-    await act(async () => {
-      for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
-        clock += 1000;
-        await jest.advanceTimersByTimeAsync(1000);
-      }
-    });
-  };
   const postBodies = () =>
     fetcher.mock.calls
       .filter(([url]) => url.endsWith('/topics/timings'))
@@ -2820,7 +2806,7 @@ it.each(
     if (transition === 'disabled') await hook.rerender({ enabledSources: [] });
     else
       await act(async () => {
-        if (transition === 'changed') seedAccount('bob');
+        if (transition === 'changed') seedLinuxDoAccount('bob');
         else appQueryClient.setQueryData(accountQueryKeys.snapshot('linuxdo'), createAccountSessionSnapshot('linuxdo'));
       });
     await waitFor(() => expect(heldSignal?.aborted).toBe(true));
@@ -2879,9 +2865,7 @@ it.each(
 });
 
 it('pauses reading behind read recovery and resumes without replacing account progress', async () => {
-  jest.useFakeTimers({ doNotFake: ['performance'] });
-  let clock = 0;
-  const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+  const { advance, monotonic } = setupReadingClock();
   const queryKey = ['reading-recovery-overlay'];
   const observer = new QueryObserver(appQueryClient, {
     queryKey,
@@ -2894,16 +2878,8 @@ it('pauses reading behind read recovery and resumes without replacing account pr
     url.endsWith('/session/csrf') ? new Response(JSON.stringify({ csrf: 'test' })) : new Response('')
   );
   let mounted: Awaited<ReturnType<typeof renderSiteRuntime>> | undefined;
-  const advance = async (milliseconds: number) => {
-    await act(async () => {
-      for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
-        clock += 1000;
-        await jest.advanceTimersByTimeAsync(1000);
-      }
-    });
-  };
   try {
-    await saveAccountSessionSnapshot(seedAccount());
+    await saveAccountSessionSnapshot(seedLinuxDoAccount());
     const { view, runtime } = (mounted = await renderSiteRuntime('linuxdo', fetcher));
     const reading = runtime().read.readGateway.reading!;
     const scope = reading.scope();
@@ -2954,7 +2930,7 @@ it('pauses reading behind read recovery and resumes without replacing account pr
 it.each(['loading', 'ready'] as const)(
   'preserves the same login page across background and foreground: %s',
   async (phase) => {
-    seedAccount();
+    seedLinuxDoAccount();
     const fetcher = jest.fn(async () => new Response('{}'));
     const options = {
       enabledSources: ['linuxdo'] as Source[],
@@ -3100,7 +3076,7 @@ it.each([
     const username = source === 'linuxdo' ? `chain-${entry}-${status}-${outcome}` : 'alice';
     const userId = source === 'nodeseek' ? '42' : source === 'yaohuo' ? '7' : username;
     const topicId = source === 'nodeseek' ? '128' : source === 'yaohuo' ? '123' : '900';
-    if (source === 'linuxdo') seedAccount(username);
+    if (source === 'linuxdo') seedLinuxDoAccount(username);
     else accountClearFixture(source);
     const probe = Promise.withResolvers<Response>();
     let restored = false;
@@ -3307,7 +3283,7 @@ it.each(['anonymous', 'same', 'unknown'] as const)(
   'reconciles concurrent NodeSeek notification USER NOT FOUND responses without replaying writes: %s',
   async (outcome) => {
     const { response } = accountClearFixture('nodeseek');
-    await saveAccountSessionSnapshot(seedAccount());
+    await saveAccountSessionSnapshot(seedLinuxDoAccount());
     accountClearFixture('yaohuo');
     const probe = Promise.withResolvers<Response>();
     let restored = false;
@@ -3753,7 +3729,7 @@ it('retries a failed close handoff before the account-center refresh and release
   await AsyncStorage.setItem('account-session.migration.v1', '1');
   const hook = await renderRuntime(fetcher, true);
   await waitFor(() => expect(hook.result.current.read.sessionsReady).toBe(true));
-  seedAccount();
+  seedLinuxDoAccount();
   await act(async () => {
     await hook.result.current.hosts.showLinuxDoVerification('登录');
   });

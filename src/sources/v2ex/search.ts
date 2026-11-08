@@ -1,3 +1,4 @@
+import { normalizeTopicId } from '@/domain/forum/numericValues';
 import type { SearchSort } from '@/domain/forum/feed';
 import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/domain/forum/searchFilters';
 import type { SearchResponse, Topic } from '@/domain/forum/models';
@@ -5,7 +6,7 @@ import { isRecord, textExcerpt, toIsoString } from '@/domain/forum/html';
 import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { SOV2EX_URL, V2EX_BASE_URL as BASE_URL } from './protocol';
-import { fetchJson, topicId, type V2exOptions } from './reader';
+import { fetchJson, type V2exOptions } from './reader';
 
 const SOV2EX_MAX_PAGE_SIZE = 50;
 const SOV2EX_MAX_PAGING_DEPTH = 1000;
@@ -101,7 +102,7 @@ export async function searchV2ex(
   const items = hits
     .map((hit) => {
       const source = isRecord(hit) && isRecord(hit._source) ? hit._source : isRecord(hit) ? hit : {};
-      const id = topicId(source.id);
+      const id = normalizeTopicId(source.id);
       if (!id) {
         return null;
       }

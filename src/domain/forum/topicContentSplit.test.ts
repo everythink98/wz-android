@@ -15,6 +15,28 @@ import {
 import { topicOpeningPostAsReply } from './quotedPosts';
 import { sanitizeContentHtml } from './contentSanitizer';
 
+async function withUnavailableHtmlParser(run: (compile: typeof compileForumContent) => void) {
+  vi.resetModules();
+  vi.doMock('./html', () => ({
+    FORUM_AUDIO_TAG: 'forum-audio',
+    FORUM_LINK_CARD_TAG: 'forum-link-card',
+    FORUM_MATH_BLOCK_TAG: 'forum-math-block',
+    FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
+    FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
+    FORUM_VIDEO_TAG: 'forum-video',
+    parseHtml: () => {
+      throw new Error('parser unavailable');
+    }
+  }));
+  try {
+    const { compileForumContent } = await import('./topicContentSplit');
+    run(compileForumContent);
+  } finally {
+    vi.doUnmock('./html');
+    vi.resetModules();
+  }
+}
+
 function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
@@ -1987,21 +2009,7 @@ describe('Android topic content splitting', () => {
     const html = `${'<div class="fallback-nested">'.repeat(96)}${sourceUrls
       .map((src) => `<img src="${src}">`)
       .join('')}${'</div>'.repeat(96)}`;
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const compilation = compileWithFallback({ html, role: 'signature', source: 'nodeseek' });
       const rows = renderedContentRows(compilation);
       const plannedUrls = rows.flatMap((row) =>
@@ -2014,10 +2022,7 @@ describe('Android topic content splitting', () => {
       expect(rows.every((row) => parseHtml(row.html).querySelectorAll('img').length <= 4)).toBe(true);
       expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
       expect(plannedUrls).toEqual(sourceUrls);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('keeps preview descriptors when parser fallback is used', async () => {
@@ -2044,21 +2049,7 @@ describe('Android topic content splitting', () => {
   it('fail-closes every unsafe row in a multi-fragment parser fallback', async () => {
     const sourceUrls = Array.from({ length: 5 }, (_, index) => `https://img.example/malformed-${index}.webp`);
     const html = `<div>${'<i>'.repeat(1_000)}${sourceUrls.map((src) => `<img src="${src}">`).join('')}</div>`;
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const compilation = compileWithFallback({ html, role: 'signature', source: 'nodeseek' });
       const rows = renderedContentRows(compilation);
       const structures = rows.map((row) => rawHtmlStructure(row.html));
@@ -2075,10 +2066,7 @@ describe('Android topic content splitting', () => {
       expect(rows.every((row) => Array.from(row.html.matchAll(/<img\b/gi)).length <= 4)).toBe(true);
       expect(rows[0]?.html).toContain('内容过于复杂');
       expect(retainedUrls).toEqual(sourceUrls);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('keeps a media-free rich-text subtree in one owner beyond old budgets', () => {
@@ -2277,21 +2265,7 @@ describe('Android topic content splitting', () => {
   });
 
   it('never returns an oversized parser-fallback row for hostile text', async () => {
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const rows = renderedContentRows(
         compileWithFallback({
           html: `<div data-hostile="${'x'.repeat(40_000)}">body</div>`,
@@ -2302,29 +2276,12 @@ describe('Android topic content splitting', () => {
 
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('enforces node and depth budgets when the parser fallback receives deep HTML', async () => {
     const html = `${'<div>'.repeat(100)}body${'</div>'.repeat(100)}`;
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const rows = renderedContentRows(compileWithFallback({ html, role: 'signature', source: 'nodeseek' }));
 
       expect(rows.length).toBeGreaterThan(0);
@@ -2332,10 +2289,7 @@ describe('Android topic content splitting', () => {
       expect(rows.every((row) => domNodeCount(row.html) <= 80)).toBe(true);
       expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
       expect(rows.map((row) => row.html).join('')).not.toBe(html);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('never returns giant unmatched closing tags when parsing produces no body nodes', () => {
@@ -2385,21 +2339,7 @@ describe('Android topic content splitting', () => {
   });
 
   it.each(['forum-video', 'video'])('counts a %s source and poster in parser fallback media budgets', async (tag) => {
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const plan = compileWithFallback({
         html: `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`,
         role: 'signature',
@@ -2407,10 +2347,7 @@ describe('Android topic content splitting', () => {
       });
 
       expect(renderedContentRows(plan)[0]?.networkMediaCount).toBe(2);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('keeps forum sticker sources bounded in parser fallback rows', async () => {
@@ -2418,21 +2355,7 @@ describe('Android topic content splitting', () => {
     const html = `<forum-sticker-row>${sourceUrls
       .map((src) => `<forum-sticker src="${src}">sticker</forum-sticker>`)
       .join('')}<forum-sticker>local emoji</forum-sticker></forum-sticker-row>`;
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const plan = compileWithFallback({ html, role: 'signature', source: 'nodeseek' });
       const rows = renderedContentRows(plan);
       const plannedUrls = rows.flatMap((row) =>
@@ -2442,10 +2365,7 @@ describe('Android topic content splitting', () => {
       expect(rows).toHaveLength(2);
       expect(rows.every((row) => row.networkMediaCount <= 4)).toBe(true);
       expect(plannedUrls).toEqual(sourceUrls);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('keeps canonical inline-image sources bounded in parser fallback rows', async () => {
@@ -2453,21 +2373,7 @@ describe('Android topic content splitting', () => {
     const html = `<forum-inline-media-line>${sourceUrls
       .map((src) => `<forum-inline-image class="emoji" width="20" height="20" src="${src}">emoji</forum-inline-image>`)
       .join('')}<forum-inline-image class="emoji">local emoji</forum-inline-image></forum-inline-media-line>`;
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const plan = compileWithFallback({ html, role: 'signature', source: 'nodeseek' });
       const rows = renderedContentRows(plan);
       const plannedUrls = rows.flatMap((row) =>
@@ -2477,28 +2383,11 @@ describe('Android topic content splitting', () => {
       expect(rows).toHaveLength(2);
       expect(rows.every((row) => row.networkMediaCount <= 4)).toBe(true);
       expect(plannedUrls).toEqual(sourceUrls);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('counts unquoted link-card artwork in parser fallback media budgets', async () => {
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const plan = compileWithFallback({
         html: '<forum-link-card href=https://example.com icon-src=https://cdn.example/icon.webp image-src=https://cdn.example/card.webp></forum-link-card>',
         role: 'signature',
@@ -2506,10 +2395,7 @@ describe('Android topic content splitting', () => {
       });
 
       expect(renderedContentRows(plan)[0]?.networkMediaCount).toBe(2);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('detects standalone playable video blocks for native rendering', () => {
@@ -2533,21 +2419,7 @@ describe('Android topic content splitting', () => {
   });
 
   it('preserves a standalone video poster in parser fallback rows', async () => {
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
+    await withUnavailableHtmlParser((compileWithFallback) => {
       expect(
         compileWithFallback({
           html: '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp"></forum-video>',
@@ -2561,27 +2433,11 @@ describe('Android topic content splitting', () => {
           type: 'video'
         })
       ]);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('rejects whitespace-wrapped standalone video policies in parser fallback', async () => {
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_AUDIO_TAG: 'forum-audio',
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
+    await withUnavailableHtmlParser((compileWithFallback) => {
       const [video] = compileWithFallback({
         html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
         role: 'reply',
@@ -2589,10 +2445,7 @@ describe('Android topic content splitting', () => {
       }).rows;
 
       expect(video).not.toHaveProperty('referrerPolicy');
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('keeps a native video atomic without swallowing adjacent rich text', () => {

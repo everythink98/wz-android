@@ -1,3 +1,4 @@
+import { postedMessages } from '../composerHostMessages';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createRef, useState } from 'react';
@@ -408,7 +409,7 @@ describe('StructuredReplyComposer', () => {
     };
     const view = await render(<StructuredReplyComposer {...props} />);
     const webView = view.getByTestId('structured-composer-webview');
-    const messages = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+    const messages = () => postedMessages(webView);
     const answer = async (documentEpoch: number, markdown: string) => {
       const request = messages().findLast((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT');
       await fireEvent(
@@ -616,7 +617,7 @@ describe('StructuredReplyComposer', () => {
     const webView = view.getByTestId('structured-composer-webview');
     await fireEvent(webView, 'loadEnd');
     await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
-    const messages = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+    const messages = () => postedMessages(webView);
     const acknowledge = async (markdown = props.content) => {
       const command = messages().at(-1).payload;
       await fireEvent(
@@ -723,7 +724,7 @@ describe('StructuredReplyComposer', () => {
       );
       const webView = view.getByTestId('structured-composer-webview');
       await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
-      const messages = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+      const messages = () => postedMessages(webView);
       const acknowledge = (command: { uploadId: string; name: string }, accepted = true) =>
         fireEvent(
           webView,
@@ -865,7 +866,7 @@ describe('StructuredReplyComposer', () => {
     await view.rerender(<StructuredReplyComposer {...props} content="模板乙" />);
     await fireEvent(webView, 'message', message('READY', { documentEpoch: 1, revision: 0 }));
     await view.rerender(<StructuredReplyComposer {...props} content="模板乙新增要求" />);
-    const messages = webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+    const messages = postedMessages(webView);
     expect(
       messages
         .filter((event: { type: string }) => event.type === 'INIT')
@@ -901,7 +902,7 @@ describe('StructuredReplyComposer', () => {
     expect(view.queryByTestId('structured-composer-footer')).toBeNull();
     expect(view.queryByLabelText('源码')).toBeNull();
     const webView = view.getByTestId('structured-composer-webview');
-    const messages = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+    const messages = () => postedMessages(webView);
     await fireEvent(webView, 'loadEnd');
     expect(JSON.parse(webView.props.source.html.match(/id="composer-initial-document">(.*?)<\/script>/s)?.[1])).toEqual(
       expect.objectContaining({
@@ -1098,7 +1099,7 @@ describe('StructuredReplyComposer', () => {
         />
       );
       const webView = view.getByTestId('structured-composer-webview');
-      const sent = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+      const sent = () => postedMessages(webView);
       await fireEvent(webView, 'loadEnd');
       await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
       webView.props.postMessageMock.mockClear();
@@ -1166,7 +1167,7 @@ describe('StructuredReplyComposer', () => {
       );
       const webView = view.getByTestId('structured-composer-webview');
       await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
-      const sent = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+      const sent = () => postedMessages(webView);
       const request = (id: string) =>
         fireEvent(
           webView,
@@ -1251,7 +1252,7 @@ describe('StructuredReplyComposer', () => {
         })
       );
       expect(onUploadImage).not.toHaveBeenCalled();
-      expect(webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw))).toContainEqual({
+      expect(postedMessages(webView)).toContainEqual({
         type: 'COMMAND',
         payload: {
           name: 'host-action-result',
@@ -1358,7 +1359,7 @@ describe('StructuredReplyComposer', () => {
     const view = await render(<StructuredReplyComposer {...props} />);
     const webView = view.getByTestId('structured-composer-webview');
     await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
-    const sent = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+    const sent = () => postedMessages(webView);
     const request = (id: string) =>
       fireEvent(
         webView,
@@ -1449,7 +1450,7 @@ describe('StructuredReplyComposer', () => {
     const view = await render(<StructuredReplyComposer {...props} />);
     const webView = view.getByTestId('structured-composer-webview');
     await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
-    const sent = () => webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+    const sent = () => postedMessages(webView);
     const state = AppState.currentState;
     try {
       await fireEvent(
@@ -1553,7 +1554,7 @@ describe('StructuredReplyComposer', () => {
     );
     await waitFor(() => expect(onResolveLinuxDoUpload).toHaveBeenCalledWith('upload://abc.png'));
     await waitFor(() =>
-      expect(webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw))).toContainEqual({
+      expect(postedMessages(webView)).toContainEqual({
         type: 'COMMAND',
         payload: {
           name: 'host-action-result',
@@ -1563,7 +1564,7 @@ describe('StructuredReplyComposer', () => {
       })
     );
     await waitFor(() =>
-      expect(webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw))).toContainEqual({
+      expect(postedMessages(webView)).toContainEqual({
         type: 'COMMAND',
         payload: {
           name: 'host-action-result',
@@ -1895,7 +1896,7 @@ describe('StructuredReplyComposer', () => {
     webView.props.postMessageMock.mockClear();
     await view.rerender(editor('10', '另一段文本'));
     await waitFor(() => expect(view.queryByText('Markdown 解析失败')).toBeNull());
-    expect(webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw))).toContainEqual({
+    expect(postedMessages(webView)).toContainEqual({
       type: 'INIT',
       payload: expect.objectContaining({ markdown: '另一段文本' })
     });

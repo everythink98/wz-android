@@ -1,4 +1,5 @@
-import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import { normalizeTopicId } from '@/domain/forum/numericValues';
+import { withBrowserFetchIntent, withDefaultBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
@@ -23,12 +24,7 @@ import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnost
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import { discourseAccountCount } from '@/sources/discourse/level';
-import {
-  LINUXDO_BASE_URL as BASE_URL,
-  linuxDoAvatarUrl as avatarUrl,
-  linuxDoUserUrl as userUrl,
-  normalizeLinuxDoTopicId as normalizeTopicId
-} from './protocol';
+import { LINUXDO_BASE_URL as BASE_URL, linuxDoAvatarUrl as avatarUrl, linuxDoUserUrl as userUrl } from './protocol';
 import {
   LIST_PAGE_SIZE,
   categoryMapForTopics,
@@ -36,7 +32,6 @@ import {
   fetchLinuxDoJson,
   linuxDoErrorText,
   linuxDoLevelLabel,
-  linuxDoOptionsWithBrowserIntent,
   normalizeTopic,
   type LinuxDoOptions
 } from './reader';
@@ -88,7 +83,7 @@ export async function getLinuxDoUserDetails(
   username: string,
   options: LinuxDoOptions = {}
 ): Promise<UserDetails> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'user', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'user', 'foreground');
   const name = (username || id).trim();
   if (!name) throw new Error('linux.do 用户信息不完整');
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
@@ -147,7 +142,7 @@ export async function getLinuxDoUserTopics(
   profile: UserDetails,
   options: LinuxDoOptions = {}
 ): Promise<UserTopicsPage> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'user', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'user', 'foreground');
   const page = parsePositiveInteger(options.cursor);
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
     `/topics/created-by/${encodeURIComponent(profile.username)}.json`,
@@ -190,7 +185,7 @@ export async function getLinuxDoUserReplies(
   profile: UserDetails,
   options: LinuxDoOptions = {}
 ): Promise<UserRepliesPage> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'user', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'user', 'foreground');
   const offset = parsePositiveInteger(options.cursor);
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
     '/user_actions.json',
@@ -226,7 +221,7 @@ export async function getLinuxDoUserReplies(
 }
 
 export async function getLinuxDoCurrentUserIdentity(options: LinuxDoCurrentUserOptions = {}): Promise<UserIdentity> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'account', 'background');
+  options = withDefaultBrowserFetchIntent(options, 'account', 'background');
   const response = await fetchWithTimeout(
     `${BASE_URL}/session/current.json`,
     withBrowserFetchIntent(

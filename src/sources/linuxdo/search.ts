@@ -1,3 +1,4 @@
+import { withDefaultBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } from '@/domain/forum/models';
 import { isRecord, textExcerpt } from '@/domain/forum/html';
 import {
@@ -16,7 +17,6 @@ import {
   categoryMapForTopics,
   categoryMapFromData,
   fetchLinuxDoJson,
-  linuxDoOptionsWithBrowserIntent,
   normalizeTopic,
   type LinuxDoOptions
 } from './reader';
@@ -36,7 +36,7 @@ export async function searchLinuxDoTags(
     limit?: number;
   } = {}
 ): Promise<DiscourseTagOption[]> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'search', 'foreground');
   const limit = Math.min(8, Math.max(1, Math.floor(options.limit || 8)));
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
     '/tags/filter/search',
@@ -58,7 +58,7 @@ export async function searchLinuxDoUsers(
     limit?: number;
   }
 ): Promise<DiscourseUserOption[]> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'search', 'foreground');
   const term = options.term.trim();
   if (!term) {
     return [];
@@ -128,7 +128,7 @@ async function topicsFromLinuxDoSearchData(
 }
 
 export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions = {}): Promise<SearchResponse> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'search', 'foreground');
   const limit = options.limit || 30;
   const page = options.page || 1;
   const cleanQuery = query.trim();
@@ -199,7 +199,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
 }
 
 export async function searchLinuxDoSemantic(query: string, options: LinuxDoOptions = {}): Promise<SearchResponse> {
-  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
+  options = withDefaultBrowserFetchIntent(options, 'search', 'foreground');
   const cleanQuery = query.trim();
   if (!cleanQuery) {
     return annotateSourceDiagnosticSummary(

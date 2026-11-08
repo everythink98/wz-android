@@ -1,9 +1,6 @@
+import { jsonResponse } from '../../../tests/helpers/jsonResponse';
 import { describe, expect, it, vi } from 'vitest';
 import { fetchLinuxDoPollCapabilities, normalizeLinuxDoPollCapabilities } from './pollCapabilities';
-
-function json(value: unknown) {
-  return new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
-}
 
 describe('LinuxDo poll capabilities', () => {
   it.each([
@@ -43,8 +40,8 @@ describe('LinuxDo poll capabilities', () => {
   it('loads site and current-session facts through the existing LinuxDo action client', async () => {
     const fetcher = vi.fn(async (url: string) =>
       url.endsWith('/site.json')
-        ? json({ groups: [{ id: 10, name: 'trust_level_1', display_name: '信任级别 1' }] })
-        : json({ current_user: { staff: false } })
+        ? jsonResponse({ groups: [{ id: 10, name: 'trust_level_1', display_name: '信任级别 1' }] })
+        : jsonResponse({ current_user: { staff: false } })
     );
 
     await expect(fetchLinuxDoPollCapabilities({ fetcher, userAgent: 'ua' })).resolves.toEqual({

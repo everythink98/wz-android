@@ -1,3 +1,4 @@
+import { sameMediaSequence } from './mediaSequence';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PixelRatio } from 'react-native';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
@@ -24,15 +25,6 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
-}
-
-function sameDescriptorSequence(
-  previous: readonly ForumImagePreviewDescriptor[],
-  next: readonly ForumImagePreviewDescriptor[]
-) {
-  return (
-    previous === next || (previous.length === next.length && previous.every((item, index) => item === next[index]))
-  );
 }
 
 export function useImagePreviewController({
@@ -91,7 +83,7 @@ export function useImagePreviewController({
       const current = catalogRegistrationRef.current;
       const canReusePrepared =
         current !== null &&
-        sameDescriptorSequence(current.descriptors, descriptors) &&
+        sameMediaSequence(current.descriptors, descriptors) &&
         current.prepared.pixelRatio === pixelRatio &&
         current.prepared.contentWidth === contentWidth;
       if (canReusePrepared && current.mediaRevision === mediaRevision) {

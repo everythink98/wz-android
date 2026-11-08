@@ -1,3 +1,4 @@
+import { jsonResponse } from '../helpers/jsonResponse';
 import { describe, expect, it, vi } from 'vitest';
 import { Buffer } from 'node:buffer';
 
@@ -18,12 +19,6 @@ import {
 import { parseYaohuoListHtml } from '@/sources/yaohuo/feedParser';
 import { parseYaohuoTopicHtml } from '@/sources/yaohuo/topicParser';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';
-
-function json(value: unknown) {
-  return new Response(JSON.stringify(value), {
-    headers: { 'content-type': 'application/json' }
-  });
-}
 
 describe('Android local access requirement detection', () => {
   it('matches already decoded DOM text without reinterpreting literal markup or entities', () => {
@@ -184,7 +179,7 @@ describe('Android local access requirement detection', () => {
 
   it('does not mark readable linux.do feed topics as requiring a level', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         categories: [
           {
             id: 12,
@@ -220,7 +215,7 @@ describe('Android local access requirement detection', () => {
 
   it.each([2, 4])('keeps linux.do category trust level Lv%i on list topics', async (level) => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         categories: [
           {
             id: 12,
@@ -258,7 +253,7 @@ describe('Android local access requirement detection', () => {
 
   it('uses linux.do category levels when a topic only has a generic restricted marker', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         categories: [
           {
             id: 12,
@@ -297,7 +292,7 @@ describe('Android local access requirement detection', () => {
 
   it('does not mark readable linux.do topic detail as requiring a level', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 123,
         title: '公开可读主题',
         slug: 'public-topic',
@@ -348,7 +343,7 @@ describe('Android local access requirement detection', () => {
 
   it('keeps readable linux.do topic details out of the permission state', async () => {
     const fetcher = vi.fn(async () =>
-      json({
+      jsonResponse({
         id: 2777081,
         title: '受限分类中的可读主题',
         slug: 'readable-restricted-category-topic',
@@ -852,7 +847,7 @@ describe('Android local access requirement detection', () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/api/topics/show.json')) {
-        return json([
+        return jsonResponse([
           {
             id: 202,
             title: '受限主题',
@@ -865,7 +860,7 @@ describe('Android local access requirement detection', () => {
         ]);
       }
       if (url.includes('/api/replies/show.json')) {
-        return json([]);
+        return jsonResponse([]);
       }
       return new Response('<html><body><div class="box">This topic is private.</div></body></html>', {
         headers: { 'content-type': 'text/html' }
@@ -886,7 +881,7 @@ describe('Android local access requirement detection', () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/api/topics/show.json')) {
-        return json([
+        return jsonResponse([
           {
             id: 204,
             title: '受限主题',
@@ -899,7 +894,7 @@ describe('Android local access requirement detection', () => {
         ]);
       }
       if (url.includes('/api/replies/show.json')) {
-        return json([]);
+        return jsonResponse([]);
       }
       return new Response(
         `
@@ -933,7 +928,7 @@ describe('Android local access requirement detection', () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/api/topics/show.json')) {
-        return json([
+        return jsonResponse([
           {
             id: 203,
             title: '公开空正文主题',
@@ -946,7 +941,7 @@ describe('Android local access requirement detection', () => {
         ]);
       }
       if (url.includes('/api/replies/show.json')) {
-        return json([]);
+        return jsonResponse([]);
       }
       return new Response(
         `

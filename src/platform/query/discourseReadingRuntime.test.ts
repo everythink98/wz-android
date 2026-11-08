@@ -1,3 +1,4 @@
+import { createDiscourseReadingClock } from '../../../tests/helpers/discourseReadingClock';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime, discourseReadingQueryKey, type ReadingBatch } from './discourseReadingRuntime';
@@ -8,7 +9,7 @@ afterEach(() => vi.useRealTimers());
 
 function setup() {
   vi.useFakeTimers();
-  let clock = 0;
+  const { now, advance } = createDiscourseReadingClock();
   let identity = 'alice';
   const queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
   const send = vi.fn<(batch: ReadingBatch, scope: string, signal: AbortSignal) => Promise<void>>(async () => undefined);
@@ -18,14 +19,8 @@ function setup() {
     scope: () => identity,
     send,
     onVerificationRequired: verify,
-    now: () => clock
+    now
   });
-  const advance = async (ms: number) => {
-    for (let elapsed = 0; elapsed < ms; elapsed += 1000) {
-      clock += Math.min(1000, ms - elapsed);
-      await vi.advanceTimersByTimeAsync(Math.min(1000, ms - elapsed));
-    }
-  };
   return {
     runtime,
     queryClient,

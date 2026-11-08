@@ -1,3 +1,4 @@
+import { preparedReply } from '../../../../tests/helpers/preparedReply';
 import { describe, expect, it } from 'vitest';
 import {
   buildReplyListItems,
@@ -10,19 +11,6 @@ import {
 import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
 import type { Reply, Source, TopicDetail } from '@/domain/forum/models';
 import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
-
-function preparedReply<T extends Reply>(reply: T, source: Source) {
-  const signatureHtml = String(reply.signatureHtml || '');
-  reply.preparedContent = prepareForumContentHtml(reply.contentHtml, {
-    polls: reply.polls,
-    role: 'reply',
-    source
-  });
-  reply.preparedSignature = signatureHtml.trim()
-    ? prepareForumContentHtml(signatureHtml, { role: 'signature', source })
-    : undefined;
-  return reply;
-}
 
 function buildVirtualizedReplyItems(options: Parameters<typeof buildVirtualizedReplyItemsFromPlan>[0]) {
   const source = options.source;

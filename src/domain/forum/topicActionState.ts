@@ -1,3 +1,4 @@
+import { positiveInteger } from './numericValues';
 import type { Reply, Source, TopicDetail, TopicPoll } from './models';
 import { prepareReplyContent, prepareTopicContent } from './topicContentSplit';
 
@@ -47,11 +48,6 @@ function nextReactionSummary<T extends TopicDetail | Reply>(item: T, reactionId:
     )
     .filter((reaction) => reaction.count > 0);
   return next.length ? next : undefined;
-}
-
-function positiveInteger(value: unknown): number | undefined {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 ? number : undefined;
 }
 
 function applyInteractionFields<T extends TopicDetail | Reply>(item: T, patch: InteractionPatch): T {

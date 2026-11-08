@@ -1,16 +1,11 @@
+import {
+  useComposerKeyboardSource,
+  type KeyboardSource,
+  type PublishKeyboardSource
+} from '@/ui/hooks/useComposerKeyboardSource';
 import { AppSwitch as Switch, AppTextInput } from '@/ui/controls/InputControls';
 import { ActivityIndicator } from 'react-native-paper';
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction
-} from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Keyboard,
@@ -25,7 +20,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   KeyboardState,
-  useAnimatedKeyboard,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -394,7 +388,6 @@ const IMAGE_EXTENSIONS = new Set([
   'ico'
 ]);
 type Controller = ReturnType<typeof useTopicComposerController>;
-type KeyboardSource = ReturnType<typeof useAnimatedKeyboard>;
 
 function TopicComposerKeyboardObserver({
   bottomInset,
@@ -403,18 +396,11 @@ function TopicComposerKeyboardObserver({
   onOpened
 }: {
   bottomInset: number;
-  publish: Dispatch<SetStateAction<KeyboardSource | null>>;
+  publish: PublishKeyboardSource;
   pickerReady: SharedValue<boolean>;
   onOpened: () => void;
 }) {
-  const keyboard = useAnimatedKeyboard({
-    isStatusBarTranslucentAndroid: true,
-    isNavigationBarTranslucentAndroid: true
-  });
-  useLayoutEffect(() => {
-    publish(keyboard);
-    return () => publish((current) => (current === keyboard ? null : current));
-  }, [keyboard, publish]);
+  const keyboard = useComposerKeyboardSource(publish);
   useAnimatedReaction(
     () =>
       keyboard.height.value === 0 &&

@@ -20,19 +20,6 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.facebook.react.bridge.Callback
-import com.facebook.react.bridge.JavaScriptContextHolder
-import com.facebook.react.bridge.JavaScriptModule
-import com.facebook.react.bridge.NativeModule
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.UIManager
-import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,7 +28,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.lang.ref.WeakReference
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -156,15 +142,8 @@ class ForumSelectionRecyclerViewProofTest {
   private class RecyclerSelectionFixture(val activity: Activity) {
     val density = activity.resources.displayMetrics.density
     val rows = List(16) { index -> "row-${index.toString().padStart(2, '0')} content" }
-    private val reactContext = RecyclerProofReactContext(activity.applicationContext)
-    private val appContext = AppContext(
-      object : ModulesProvider {
-        override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-      },
-      ModuleRegistry(emptyList(), emptyList()),
-      WeakReference(reactContext)
-    )
-    val surface = ForumContentSelectionView(reactContext, appContext)
+    private val reactContext = SelectionTestReactContext(activity.applicationContext)
+    val surface = ForumContentSelectionView(reactContext, selectionTestAppContext(reactContext))
     val layoutManager = LinearLayoutManager(reactContext).apply { isItemPrefetchEnabled = false }
     val adapter = RowAdapter(
       reactContext,
@@ -370,72 +349,7 @@ class ForumSelectionRecyclerViewProofTest {
     }
   }
 
-  private class RecyclerProofReactContext(context: Context) : ReactApplicationContext(context) {
-    override fun <T : JavaScriptModule> getJSModule(jsInterface: Class<T>): T? = null
-
-    override fun <T : NativeModule> hasNativeModule(nativeModuleInterface: Class<T>): Boolean = false
-
-    override fun getNativeModules(): Collection<NativeModule> = emptyList()
-
-    override fun <T : NativeModule> getNativeModule(nativeModuleInterface: Class<T>): T? = null
-
-    override fun getNativeModule(moduleName: String): NativeModule? = null
-
-    @Suppress("DEPRECATION")
-    override fun getCatalystInstance(): com.facebook.react.bridge.CatalystInstance? = null
-
-    @Deprecated("Required by ReactContext; use hasActiveReactInstance in production code.")
-    override fun hasActiveCatalystInstance(): Boolean = false
-
-    override fun hasActiveReactInstance(): Boolean = false
-
-    @Deprecated("Required by ReactContext; use hasReactInstance in production code.")
-    override fun hasCatalystInstance(): Boolean = false
-
-    override fun hasReactInstance(): Boolean = false
-
-    override fun destroy() = Unit
-
-    override fun handleException(exception: Exception) {
-      throw exception
-    }
-
-    @Deprecated("Required by the ReactContext compatibility contract.")
-    override fun isBridgeless(): Boolean = false
-
-    override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
-
-    override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
-
-    @Deprecated("Required by the ReactContext compatibility contract.")
-    override fun getFabricUIManager(): UIManager? = null
-
-    override fun getSourceURL(): String? = null
-
-    override fun registerSegment(segmentId: Int, path: String?, callback: Callback?) = Unit
-  }
-
   private companion object {
     fun nativeId(position: Int): String = "recycler-native-$position"
-
-    fun textToken(text: String, trailing: String): String {
-      val trailingSegments = JSONArray()
-      if (trailing.isNotEmpty()) {
-        trailingSegments.put(JSONObject().put("kind", "separator").put("text", trailing))
-      }
-      return JSONObject()
-        .put("version", 1)
-        .put("prefix", JSONArray())
-        .put(
-          "owners",
-          JSONArray().put(
-            JSONObject()
-              .put("text", text)
-              .put("tape", JSONArray())
-              .put("trailing", trailingSegments)
-          )
-        )
-        .toString()
-    }
   }
 }
