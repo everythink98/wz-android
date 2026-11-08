@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
 import type { Fetcher } from '@/platform/network/request';
 import {
@@ -7,6 +7,7 @@ import {
   getNodeSeekCredits,
   getNodeSeekStardustCredits
 } from './accountData';
+import { extractNodeSeekEmbeddedData } from './protocol';
 
 const record = {
   id: 91,
@@ -29,6 +30,17 @@ const stardustRecord = {
 };
 
 describe('NodeSeek private account data', () => {
+  it('decodes unpadded embedded account data and preserves malformed UTF-8 bytes in a profile field', () => {
+    const prefix = Buffer.from('{"user":{"name":"');
+    const suffix = Buffer.from('"}}');
+    const bytes = Buffer.concat([prefix, Buffer.from([0xef, 0xbb, 0xbf, 0xe2, 0x82, 0xf0, 0x9f, 0x92]), suffix]);
+    const encoded = bytes.toString('base64').replace(/=+$/, '');
+
+    expect(extractNodeSeekEmbeddedData(`<script>window.config = "${encoded}"</script>`)).toEqual({
+      user: { name: '\uFEFF' + '�'.repeat(5) }
+    });
+  });
+
   it('reads the current account overview without dropping zero balances or public profile fields', async () => {
     const embedded = Buffer.from(
       JSON.stringify({

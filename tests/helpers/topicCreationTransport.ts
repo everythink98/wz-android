@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 import type { TopicCreationSource } from '@/domain/forum/topicComposer';
 import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 

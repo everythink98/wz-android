@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_NODESEEK_MARKDOWN_BYTES, nodeSeekMarkdownToHtml } from './markdown';
+import { MAX_NODESEEK_MARKDOWN_BYTES, nodeSeekMarkdownCandidateHtml, nodeSeekMarkdownToHtml } from './markdown';
 
 describe('NodeSeek Markdown', () => {
   it('keeps ordinary Markdown and linkify rendering enabled', () => {
@@ -43,6 +43,28 @@ describe('NodeSeek Markdown', () => {
     expect(html).toContain('style="text-align: left"');
     expect(html).toContain('style="text-align: center"');
     expect(html).toContain('style="text-align: right"');
+  });
+
+  it('renders task markers, list classes and spacing in mixed nested lists', () => {
+    const html = nodeSeekMarkdownCandidateHtml('- [ ] outer\n  1. [X] **inner**\n  2. plain\n- [x]  last');
+
+    expect(html).toBe(
+      '<ul class="contains-task-list">\n' +
+        '<li class="task-list-item"><span class="task-list-marker">☐</span>  outer\n' +
+        '<ol class="contains-task-list">\n' +
+        '<li class="task-list-item"><span class="task-list-marker">☑</span>  <strong>inner</strong></li>\n' +
+        '<li>plain</li>\n</ol>\n</li>\n' +
+        '<li class="task-list-item"><span class="task-list-marker">☑</span>   last</li>\n</ul>\n'
+    );
+  });
+
+  it('leaves marker text outside the first list paragraph or without its literal space untouched', () => {
+    const html = nodeSeekMarkdownCandidateHtml('[x] outside\n\n- [x]\n- [x]\ttext\n- \\[x] escaped\n\n  [ ] later');
+
+    expect(html).toBe(
+      '<p>[x] outside</p>\n<ul>\n<li>\n<p>[x]</p>\n</li>\n<li>\n<p>[x]\ttext</p>\n</li>\n' +
+        '<li>\n<p>[x] escaped</p>\n<p>[ ] later</p>\n</li>\n</ul>\n'
+    );
   });
 
   it('renders known NodeSeek sticker shortcodes without rewriting code literals', () => {

@@ -151,6 +151,21 @@ function activateToolbarUpload(
 }
 
 describe('Composer editor runtime codec', () => {
+  it('preserves nested task items and checked states in editable Markdown', async () => {
+    const { host } = await mountRuntime({ site: 'nodeseek', markdown: '- [ ] parent\n  - [x] child' });
+    const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
+    const list = editor.state.doc.firstChild!;
+    const parent = list.firstChild!;
+    const child = parent.lastChild!.firstChild!;
+
+    expect(list.type.name).toBe('taskList');
+    expect(parent.type.name).toBe('taskItem');
+    expect(parent.attrs.checked).toBe(false);
+    expect(child.type.name).toBe('taskItem');
+    expect(child.attrs.checked).toBe(true);
+    expect(editor.getMarkdown()).toMatch(/- \[ \] parent\n\s+- \[x\] child/);
+  });
+
   it.each(['linuxdo', 'nodeseek'] as const)(
     'serializes each unchanged %s rich document once while keeping snapshots current',
     async (site) => {

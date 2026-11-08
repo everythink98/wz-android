@@ -5,7 +5,7 @@ import { loadNodeSeekTopicEditContext } from '@/sources/nodeseek/topicEditing';
 import { loadYaohuoTopicEditContext } from '@/sources/yaohuo/topicEditing';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 import { Alert } from 'react-native';
 import type { DatabaseSync } from 'node:sqlite';
 import { useTopicComposerController } from '@/features/topic-composer/useTopicComposerController';

@@ -3,7 +3,7 @@ import { renderHook } from '@testing-library/react-native';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { type ComponentProps } from 'react';
 import { createRoot } from 'test-renderer';
-import { Pressable, StyleSheet, Text, ToastAndroid, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, ToastAndroid } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
@@ -47,9 +47,6 @@ import {
   DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
 } from '@/domain/forum/callouts';
 
-const mockAnimatedKeyboardStateSet = jest.fn();
-const mockComposerBottomSheetClose = jest.fn();
-
 jest.mock('scheduler', () => jest.requireActual('scheduler/unstable_mock'));
 
 jest.mock('@shopify/flash-list', () => {
@@ -68,83 +65,6 @@ jest.mock('@shopify/flash-list', () => {
     useRecyclingState,
     useMappingHelper: () => ({
       getMappingKey: (key: string | number) => String(key)
-    })
-  };
-});
-
-jest.mock('@gorhom/bottom-sheet', () => {
-  const ReactModule = require('react') as typeof React;
-  const {
-    Pressable: NativePressable,
-    TextInput,
-    View: NativeView
-  } = require('react-native') as typeof import('react-native');
-  const BottomSheet = ReactModule.forwardRef(function BottomSheet(
-    {
-      android_keyboardInputMode,
-      backdropComponent,
-      bottomInset,
-      children,
-      enableContentPanningGesture,
-      enablePanDownToClose,
-      keyboardBehavior,
-      onChange,
-      onClose
-    }: {
-      android_keyboardInputMode?: string;
-      backdropComponent?: (props: Record<string, unknown>) => React.ReactNode;
-      bottomInset?: number;
-      children?: React.ReactNode;
-      enableContentPanningGesture?: boolean;
-      enablePanDownToClose?: boolean;
-      index: number;
-      keyboardBehavior?: string;
-      onChange?: (index: number) => void;
-      onClose?: () => void;
-      snapPoints?: number[];
-    },
-    ref
-  ) {
-    ReactModule.useImperativeHandle(ref, () => ({ close: mockComposerBottomSheetClose }));
-    return ReactModule.createElement(
-      NativeView,
-      {
-        android_keyboardInputMode,
-        bottomInset,
-        enableContentPanningGesture,
-        enablePanDownToClose,
-        keyboardBehavior,
-        onChange,
-        testID: 'composer-bottom-sheet'
-      } as React.ComponentProps<typeof NativeView>,
-      backdropComponent?.({ animatedIndex: { value: -0.9999999626794105 } }),
-      children,
-      ReactModule.createElement(
-        NativePressable,
-        { accessibilityRole: 'button', accessibilityLabel: '模拟关闭回复面板', onPress: onClose },
-        ReactModule.createElement(require('react-native').Text, null, '模拟关闭回复面板')
-      )
-    );
-  });
-  return {
-    __esModule: true,
-    default: BottomSheet,
-    BottomSheetBackdrop: (props: Record<string, unknown>) =>
-      ReactModule.createElement(NativeView, { ...props, testID: 'composer-bottom-sheet-backdrop' }),
-    BottomSheetFlatList: (props: Record<string, unknown>) => ReactModule.createElement(NativeView, props),
-    BottomSheetTextInput: ReactModule.forwardRef(function BottomSheetTextInput(props: Record<string, unknown>, ref) {
-      void ref;
-      return ReactModule.createElement(TextInput, props);
-    }),
-    BottomSheetView: ({ children, ...props }: { children?: React.ReactNode; style?: StyleProp<ViewStyle> }) =>
-      ReactModule.createElement(NativeView, { ...props, testID: 'composer-bottom-sheet-content' }, children),
-    useBottomSheetInternal: () => ({
-      animatedIndex: { get: () => -1 },
-      animatedAnimationState: { get: () => ({ nextIndex: undefined }) },
-      animatedPosition: { get: () => 0 },
-      animatedDetentsState: { get: () => ({ detents: [] }) },
-      animatedKeyboardState: { set: mockAnimatedKeyboardStateSet },
-      animatedLayoutState: { get: () => ({ rawContainerHeight: 800, containerHeight: 800 }), modify: jest.fn() }
     })
   };
 });
@@ -2279,7 +2199,6 @@ describe('Topic real child components', () => {
   });
 
   it('keeps composer visibility and the close button connected to the parent state', async () => {
-    mockAnimatedKeyboardStateSet.mockClear();
     const onReplyComposerOpenChange = jest.fn();
     const onReplySnapshot = jest.fn();
     const props: ComponentProps<typeof ReplyComposerSheet> = {
@@ -2303,7 +2222,6 @@ describe('Topic real child components', () => {
     expect(view.getByText('回复')).toBeTruthy();
     const sheetProps = view.getByTestId('composer-bottom-sheet').props;
     expect(sheetProps.pointerEvents).toBe('auto');
-    expect(mockAnimatedKeyboardStateSet).not.toHaveBeenCalled();
     expect(view.getByLabelText('富文本').props.accessibilityState.selected).toBe(true);
     expect(view.getByLabelText('全屏')).toBeTruthy();
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);

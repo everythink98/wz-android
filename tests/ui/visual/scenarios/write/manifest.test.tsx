@@ -4,11 +4,6 @@ jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({ getMappingKey: (value: string | number) => String(value) })
 }));
 
-jest.mock('@gorhom/bottom-sheet', () => {
-  const { TextInput } = require('react-native') as typeof import('react-native');
-  return { BottomSheetTextInput: TextInput };
-});
-
 jest.mock('react-native-gesture-handler', () => {
   const { ScrollView } = require('react-native') as typeof import('react-native');
   return { ScrollView };

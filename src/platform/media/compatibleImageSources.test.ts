@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -8,6 +8,7 @@ import {
   refreshCompatibleSvgPoster
 } from './compatibleImageSources';
 import type { Fetcher } from '@/platform/network/request';
+import * as svgPosterRenderer from './svgPosterRenderer';
 
 const complexSvg = readFileSync('tests/fixtures/complex-svg-document.svg', 'utf8');
 
@@ -42,6 +43,28 @@ describe('compatible remote image sources', () => {
       expect.any(Number)
     );
     expect(cachedCompatibleSvgArtifact(source)).toEqual(artifact);
+  });
+
+  it('normalizes loose native base64 while preserving the original SVG bytes', async () => {
+    const bytes = Buffer.concat([
+      Buffer.from('<svg><desc>'),
+      Buffer.from([0xfb, 0xff, 0xe2, 0x82]),
+      Buffer.from('</desc></svg>')
+    ]);
+    const base64 = bytes.toString('base64');
+    const loose = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const fetchDocument = vi.spyOn(svgPosterRenderer, 'fetchBoundedSvgDocument').mockResolvedValueOnce({
+      base64: `${loose.substring(0, 4)}!\n${loose.substring(4)}=ignored`
+    });
+    try {
+      const artifact = await recoverCompatibleSvgArtifact(
+        { uri: 'https://images.example.com/loose-native.svg' },
+        { renderPoster: async () => poster(1, 1, 'file:///cache/loose-native.png') }
+      );
+      expect(artifact?.documentDataUri).toBe(`data:image/svg+xml;base64,${base64}`);
+    } finally {
+      fetchDocument.mockRestore();
+    }
   });
 
   it('does not strip link elements or otherwise rewrite accepted SVG bytes', async () => {

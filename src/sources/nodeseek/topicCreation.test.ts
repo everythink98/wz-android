@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
 import { emptyTopicDraft, type CreateTopicInput } from '@/domain/forum/topicComposer';
 import { createNodeSeekTopic, loadNodeSeekTopicCreationContext } from './topicCreation';

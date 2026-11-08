@@ -14,30 +14,6 @@ jest.mock('react-native-reanimated', () => ({
     (require('react') as typeof React).useRef({ height: { value: 0 }, state: { value: 4 } }).current,
   useAnimatedReaction: () => {}
 }));
-jest.mock('@gorhom/bottom-sheet', () => {
-  const ReactModule = require('react') as typeof React;
-  const { View, TextInput } = require('react-native');
-  return {
-    __esModule: true,
-    default: ReactModule.forwardRef(function Sheet(
-      props: { children: React.ReactNode; index: number; onChange: (index: number) => void; onClose: () => void },
-      ref
-    ) {
-      ReactModule.useImperativeHandle(ref, () => ({ close: props.onClose }));
-      ReactModule.useEffect(() => {
-        if (props.index === 0) props.onChange(0);
-      }, [props.index, props.onChange]);
-      return ReactModule.createElement(View, {}, props.children);
-    }),
-    BottomSheetView: View,
-    BottomSheetTextInput: TextInput,
-    useBottomSheetInternal: () => ({
-      animatedIndex: { get: () => -1 },
-      animatedAnimationState: { get: () => ({ nextIndex: undefined }) },
-      animatedLayoutState: { modify: () => {}, get: () => ({ rawContainerHeight: 800, containerHeight: 800 }) }
-    })
-  };
-});
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 24, bottom: 16, left: 0, right: 0 }),

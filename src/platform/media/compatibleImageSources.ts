@@ -1,4 +1,5 @@
-import { Buffer } from 'buffer';
+import { fromByteArray } from 'base64-js';
+import { decodeLooseBase64, decodeResponseUtf8 } from '@/platform/network/responseBytes';
 import type { ImageURISource } from 'react-native';
 import { normalizeImagePreviewUrl } from './imageRequestSource';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
@@ -239,15 +240,15 @@ async function loadCompatibleSvgArtifact(
   const bytes =
     nativeDocument === undefined
       ? await fetchCompatibleSvgBytes(uri, headers, options.fetcher || fetch, fetchTimeoutMs, signal)
-      : nativeDocument && Buffer.from(nativeDocument.base64, 'base64');
+      : nativeDocument && decodeLooseBase64(nativeDocument.base64);
   if (signal.aborted || !bytes || bytes.length > MAX_COMPATIBLE_SVG_BYTES) {
     return null;
   }
-  const svg = bytes.toString('utf8');
+  const svg = decodeResponseUtf8(bytes);
   if (!/<svg[\s>]/i.test(svg)) {
     return null;
   }
-  const svgBase64 = bytes.toString('base64');
+  const svgBase64 = fromByteArray(bytes);
   const remainingMs = remainingCompatibleSvgTime(deadlineAt);
   if (signal.aborted || remainingMs <= 0) {
     return null;
@@ -435,7 +436,7 @@ async function boundedResponseBytes(response: Response) {
     if (blob.size > MAX_COMPATIBLE_SVG_BYTES) {
       return null;
     }
-    return Buffer.from(await readBlobArrayBuffer(blob));
+    return new Uint8Array(await readBlobArrayBuffer(blob));
   } finally {
     (blob as Blob & { close?: () => void }).close?.();
   }

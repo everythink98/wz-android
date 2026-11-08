@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),

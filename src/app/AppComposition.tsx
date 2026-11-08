@@ -1,5 +1,4 @@
-import { Image, KeyboardAvoidingView, View } from 'react-native';
-import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import { Image, KeyboardAvoidingView, StatusBar, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
@@ -28,7 +27,7 @@ export function AppFrame({
         <KeyboardAvoidingView style={styles.screen}>
           <SafeAreaView edges={['left', 'right']} style={styles.screen}>
             <PortalProvider>
-              <ExpoStatusBar style={dark ? 'light' : 'dark'} />
+              <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
               <View pointerEvents="none" style={styles.statusBarScrim} />
               {children}
             </PortalProvider>

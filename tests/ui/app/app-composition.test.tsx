@@ -5,9 +5,9 @@ import { useAppStartupRuntime } from '@/app/useAppStartupRuntime';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
-import { Text } from 'react-native';
+import { StatusBar, Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { AppComposition } from '@/app/AppComposition';
+import { AppComposition, AppFrame } from '@/app/AppComposition';
 import { AppRoutes } from '@/app/AppRoutes';
 import { createAppStyles } from '@/app/styles';
 import { useAppRuntime } from '@/app/useAppRuntime';
@@ -47,6 +47,29 @@ describe('App composition bootstrap', () => {
     });
     globalThis.cancelIdleCallback = jest.fn();
     jest.mocked(pruneDiagnosticExports).mockReset();
+  });
+
+  it.each([
+    { dark: false, barStyle: 'dark-content' },
+    { dark: true, barStyle: 'light-content' }
+  ])('applies the Android status-bar contrast for dark=$dark', async ({ dark, barStyle }) => {
+    const push = jest.spyOn(StatusBar, 'pushStackEntry');
+    try {
+      const styles = createAppStyles(createTheme(createEmptyReaderData().settings));
+      const view = await render(
+        <AppFrame dark={dark} styles={styles}>
+          <Text>Content</Text>
+        </AppFrame>
+      );
+      expect(push.mock.results.at(-1)?.value).toMatchObject({
+        barStyle: { value: barStyle, animated: false },
+        backgroundColor: null,
+        hidden: null
+      });
+      await view.unmount();
+    } finally {
+      push.mockRestore();
+    }
   });
 
   it('keeps navigation delivery stable across root updates and uses a replaced handler', async () => {

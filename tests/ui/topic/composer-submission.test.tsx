@@ -25,34 +25,6 @@ jest.mock('react-native-reanimated', () => ({
   useAnimatedReaction: () => {}
 }));
 // This owner tests the production submission wiring, not native sheet geometry.
-jest.mock('@gorhom/bottom-sheet', () => {
-  const ReactModule = require('react') as typeof React;
-  const { View, TextInput } = require('react-native');
-  return {
-    __esModule: true,
-    default: ReactModule.forwardRef(function Sheet(
-      props: { children: React.ReactNode; index: number; onChange: (index: number) => void; onClose: () => void },
-      ref
-    ) {
-      ReactModule.useImperativeHandle(ref, () => ({ close: props.onClose }));
-      ReactModule.useEffect(() => {
-        if (props.index === 0) props.onChange(0);
-      }, [props.index, props.onChange]);
-      return ReactModule.createElement(
-        View,
-        { testID: 'submission-sheet', accessibilityState: { expanded: props.index === 0 } },
-        props.children
-      );
-    }),
-    BottomSheetView: View,
-    BottomSheetTextInput: TextInput,
-    useBottomSheetInternal: () => ({
-      animatedIndex: { get: () => -1 },
-      animatedAnimationState: { get: () => ({ nextIndex: undefined }) },
-      animatedLayoutState: { modify: () => {}, get: () => ({ rawContainerHeight: 800, containerHeight: 800 }) }
-    })
-  };
-});
 jest.mock('@/platform/network/managedCookies', () => ({
   readManagedCookieHeader: async () => ({ status: 'ok', header: 'sidyaohuo=synthetic' })
 }));
@@ -146,10 +118,7 @@ function editWithoutSnapshot(view: Rendered, markdown: string) {
   });
 }
 function sheetOpen(view: Rendered) {
-  const fixed = view.queryByTestId('composer-bottom-sheet', { includeHiddenElements: true });
-  return fixed
-    ? fixed.props.pointerEvents === 'auto'
-    : view.getByTestId('submission-sheet').props.accessibilityState.expanded;
+  return view.getByTestId('composer-bottom-sheet', { includeHiddenElements: true }).props.pointerEvents === 'auto';
 }
 function state(view: Rendered) {
   return JSON.parse(view.getByTestId('composer-proof-state').props.children);

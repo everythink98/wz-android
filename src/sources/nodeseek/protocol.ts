@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer';
+import { decodeLooseBase64, decodeResponseUtf8 } from '@/platform/network/responseBytes';
 import type { HTMLElement } from 'node-html-parser';
 import {
   canContainCloudflareChallengePage,
@@ -218,7 +218,7 @@ function embeddedCandidates(html: string) {
 export function extractNodeSeekEmbeddedData(html: string) {
   for (const candidate of embeddedCandidates(html)) {
     try {
-      const parsed = JSON.parse(Buffer.from(candidate, 'base64').toString('utf8'));
+      const parsed = JSON.parse(decodeResponseUtf8(decodeLooseBase64(candidate)));
       if (
         isRecord(parsed) &&
         (parsed.user ||
