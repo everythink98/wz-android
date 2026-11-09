@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { saveBackupDocument } from '@/platform/storage/backupExport';
@@ -17,22 +18,39 @@ export function useBackupStatusController({
   importBackup: (json: string) => Promise<void>;
   exportBackup: () => Promise<string>;
 }) {
-  const backupBusyRef = useRef(false);
+  const lifetimeRef = useRef(new AbortController());
+  const gate = useRef({ current: false, owner: lifetimeRef.current.signal }).current;
+  const notifyRef = useCommittedRef(notify);
   const [backupBusy, setBackupBusy] = useState(false);
 
+  useLayoutEffect(() => {
+    if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
+    const lifetime = lifetimeRef.current;
+    if (gate.current) gate.owner = lifetime.signal;
+    return () => lifetime.abort();
+  }, [gate]);
+
   const exportBackupFile = useCallback(async () => {
+    if (lifetimeRef.current.signal.aborted) return;
     const trace = beginDiagnosticTrace('backup', 'export');
-    if (backupBusyRef.current) {
+    if (gate.current) {
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
     let failureReason: DiagnosticReason = 'unknown';
     let canceled = false;
+    gate.owner = lifetimeRef.current.signal;
+    const isCurrent = () => !gate.owner.aborted && lifetimeRef.current.signal === gate.owner;
+    const report = (message: string) => {
+      if (isCurrent()) notifyRef.current(message);
+    };
     const completed = await runBackupOperation({
-      busyRef: backupBusyRef,
-      notify,
-      setBusy: setBackupBusy,
+      busyRef: gate,
+      notify: report,
+      setBusy: (value) => {
+        if (isCurrent()) setBackupBusy(value);
+      },
       task: async () => {
         try {
           markDiagnosticStage(trace, 'guard', { state: 'waiting-for-save' });
@@ -42,7 +60,7 @@ export function useBackupStatusController({
           canceled = result.status === 'canceled';
           if (canceled) return;
           markDiagnosticStage(trace, 'apply', { state: 'saved' });
-          notify('备份已保存到所选位置');
+          report('备份已保存到所选位置');
         } catch (error) {
           failureReason = normalizeDiagnosticReason(error);
           markDiagnosticStage(trace, failureReason === 'invalid_response' ? 'parse' : 'persist', {
@@ -58,21 +76,29 @@ export function useBackupStatusController({
       canceled ? 'canceled' : completed ? 'success' : 'failure',
       canceled ? { reason: 'canceled' } : completed ? {} : { reason: failureReason }
     );
-  }, [notify, exportBackup]);
+  }, [gate, notifyRef, exportBackup]);
 
   const importBackupFile = useCallback(async () => {
+    if (lifetimeRef.current.signal.aborted) return;
     const trace = beginDiagnosticTrace('backup', 'import');
-    if (backupBusyRef.current) {
+    if (gate.current) {
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
     let canceled = false;
     let failureReason: DiagnosticReason = 'unknown';
+    gate.owner = lifetimeRef.current.signal;
+    const isCurrent = () => !gate.owner.aborted && lifetimeRef.current.signal === gate.owner;
+    const report = (message: string) => {
+      if (isCurrent()) notifyRef.current(message);
+    };
     const completed = await runBackupOperation({
-      busyRef: backupBusyRef,
-      notify,
-      setBusy: setBackupBusy,
+      busyRef: gate,
+      notify: report,
+      setBusy: (value) => {
+        if (isCurrent()) setBackupBusy(value);
+      },
       task: async () => {
         try {
           markDiagnosticStage(trace, 'guard', { state: 'document-picker' });
@@ -91,7 +117,7 @@ export function useBackupStatusController({
             markDiagnosticStage(trace, 'parse', { byteCount: new TextEncoder().encode(content).byteLength });
             markDiagnosticStage(trace, 'apply', { state: 'merge-started' });
             await importBackup(content);
-            notify('备份已恢复，本机资料已合并');
+            report('备份已恢复，本机资料已合并');
           } finally {
             if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
               await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);
@@ -112,7 +138,7 @@ export function useBackupStatusController({
       canceled ? 'canceled' : completed ? 'success' : 'failure',
       canceled ? { reason: 'canceled' } : completed ? {} : { reason: failureReason }
     );
-  }, [notify, importBackup]);
+  }, [gate, notifyRef, importBackup]);
 
   return {
     backupBusy,

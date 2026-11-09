@@ -301,8 +301,10 @@ export function useNotificationsRuntime({
       mountedRef.current = false;
       foregroundGenerationRef.current += 1;
       pendingDeliveries.clear();
-      if (pendingOpenSourceRef.current) {
-        finishDiagnosticTrace(pendingOpenSourceRef.current.trace, 'canceled', { reason: 'canceled' });
+      const pending = pendingOpenSourceRef.current;
+      pendingOpenSourceRef.current = undefined;
+      if (pending) {
+        finishDiagnosticTrace(pending.trace, 'canceled', { reason: 'canceled' });
       }
     };
   }, []);
@@ -813,11 +815,13 @@ export function useNotificationsRuntime({
         return;
       }
       lastResponseRef.current = key;
+      const previous = pendingOpenSourceRef.current;
+      pendingOpenSourceRef.current = undefined;
+      if (previous) {
+        finishDiagnosticTrace(previous.trace, 'canceled', { reason: 'superseded' });
+      }
       try {
         if (!openSource(source)) {
-          if (pendingOpenSourceRef.current) {
-            finishDiagnosticTrace(pendingOpenSourceRef.current.trace, 'canceled', { reason: 'superseded' });
-          }
           pendingOpenSourceRef.current = { source, trace };
           markDiagnosticStage(trace, 'apply', { source, state: 'queued' });
         } else {
@@ -845,6 +849,7 @@ export function useNotificationsRuntime({
   }, [handleNotificationResponse, runtimeReady]);
 
   const onNavigationReady = useCallback(() => {
+    if (!mountedRef.current) return;
     const pending = pendingOpenSourceRef.current;
     if (!pending) return;
     const { source, trace } = pending;
@@ -854,11 +859,12 @@ export function useNotificationsRuntime({
       return;
     }
     try {
-      if (openSource(source)) {
+      if (openSource(source) && pendingOpenSourceRef.current === pending) {
         pendingOpenSourceRef.current = undefined;
         finishDiagnosticTrace(trace, 'success', { source, state: 'open' });
       }
     } catch (error) {
+      if (pendingOpenSourceRef.current === pending) pendingOpenSourceRef.current = undefined;
       finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
       throw error;
     }

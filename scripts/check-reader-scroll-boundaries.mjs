@@ -32,6 +32,8 @@ const remote = `/data/local/tmp/wz-reader-boundaries-${Date.now()}.jar`;
 adb('push', path.join(evidence, 'touch.jar'), remote);
 const results = [];
 let expandedAppearance = false;
+/** @type {{ kind: 'none' } | { kind: 'failed', error: unknown }} */
+let businessFailure = { kind: 'none' };
 try {
   for (const surface of ['more', 'rail']) {
     if (surface === 'more') {
@@ -95,9 +97,29 @@ try {
       writeFileSync(path.join(evidence, 'results.json'), JSON.stringify({ serial, results }, null, 2));
     }
   }
+} catch (error) {
+  businessFailure = { kind: 'failed', error };
+  throw error;
 } finally {
-  adb('shell', 'rm', remote);
-  if (expandedAppearance) device('press', 'label="收起外观"');
+  /** @type {unknown[]} */
+  const errors = [];
+  for (const cleanup of [
+    () => adb('shell', 'rm', remote),
+    () => {
+      if (expandedAppearance) device('press', 'label="收起外观"');
+    }
+  ]) {
+    try {
+      cleanup();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length) {
+    if (businessFailure.kind === 'failed') errors.unshift(businessFailure.error);
+    if (errors.length === 1) throw errors[0];
+    throw new AggregateError(errors, 'Scroll proof and cleanup failed');
+  }
 }
 assert(
   results.every((result) => Math.abs(result.movement - result.expected) <= 4),

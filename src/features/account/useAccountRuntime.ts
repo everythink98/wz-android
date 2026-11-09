@@ -75,6 +75,20 @@ import { useVerificationController } from './useVerificationController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
 import { AccountHosts, type AccountHostsProps } from './AccountHosts';
 
+type AuthSurfacePreparation = {
+  ready: boolean;
+  pending: boolean;
+  error: string;
+  promise: Promise<void>;
+  confirmed?: AccountSessionSnapshot;
+};
+
+type LinuxDoCookiePreparation = {
+  owner: AbortSignal;
+  generation: number;
+  promise: Promise<void>;
+};
+
 export function useAccountRuntime({
   appActive,
   beforeRequest,
@@ -298,7 +312,7 @@ export function useAccountRuntime({
   const mountedLinuxDoWebViewRef = useRef(false);
   const linuxDoUnmountWaitersRef = useRef<(() => void)[]>([]);
   const linuxDoCookieHandoffRef = useRef<Promise<void> | null>(null);
-  const linuxDoCookiePreparationRef = useRef<Promise<void> | null>(null);
+  const linuxDoCookiePreparationRef = useRef<LinuxDoCookiePreparation | null>(null);
   const linuxDoDeferredCreditReconcileRef = useRef<Promise<void> | null>(null);
   const awaitLinuxDoWebViewUnmount = useCallback(
     () =>
@@ -329,14 +343,8 @@ export function useAccountRuntime({
   }, []);
   const forumSessionEpochsRef = useRef<ForumSessionEpochs>(initialForumSessionEpochs);
   const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
-  const authSurfacePreparationsRef = useRef<
-    Partial<
-      Record<
-        SessionSite,
-        { ready: boolean; pending: boolean; error: string; promise: Promise<void>; confirmed?: AccountSessionSnapshot }
-      >
-    >
-  >({});
+  const authSurfaceLifetimeRef = useRef(new AbortController());
+  const authSurfacePreparationsRef = useRef<Partial<Record<SessionSite, AuthSurfacePreparation>>>({});
   const [authSurfaceRevision, refreshAuthSurfaces] = useState(0);
   const visibleAuthSurface = authSurfaceRegistryRef.current.visible;
   const showLoginPanel = visibleAuthSurface === 'nodeseek-login';
@@ -402,6 +410,58 @@ export function useAccountRuntime({
     },
     [readSessionRuntimeSnapshot]
   );
+  const watchAuthSurfacePreparation = useCallback(
+    (source: SessionSite, preparation: AuthSurfacePreparation, owner: AbortSignal) => {
+      const isCurrent = () =>
+        !owner.aborted &&
+        authSurfaceLifetimeRef.current.signal === owner &&
+        authSurfacePreparationsRef.current[source] === preparation;
+      void preparation.promise.then(
+        () => {
+          if (!isCurrent()) return;
+          preparation.ready = true;
+          refreshAuthSurfaces((revision) => revision + 1);
+        },
+        () => {
+          if (!isCurrent() || preparation.error) return;
+          preparation.error = '登录会话保存失败，请关闭后重试';
+          refreshAuthSurfaces((revision) => revision + 1);
+          notifyRef.current(preparation.error);
+        }
+      );
+    },
+    []
+  );
+  useLayoutEffect(() => {
+    const previousOwner = authSurfaceLifetimeRef.current.signal;
+    if (previousOwner.aborted) {
+      authSurfaceLifetimeRef.current = new AbortController();
+      const owner = authSurfaceLifetimeRef.current.signal;
+      const registry = authSurfaceRegistryRef.current;
+      for (const source of sessionSources) {
+        const preparation = authSurfacePreparationsRef.current[source];
+        if (
+          preparation &&
+          !preparation.ready &&
+          !preparation.error &&
+          enabledSourcesRef.current.includes(source) &&
+          hasAuthSurfaceBarrierForSource(registry, source)
+        )
+          watchAuthSurfacePreparation(source, preparation, owner);
+      }
+      const cookiePreparation = linuxDoCookiePreparationRef.current;
+      if (
+        cookiePreparation?.owner === previousOwner &&
+        enabledSourcesRef.current.includes('linuxdo') &&
+        (hasAuthSurfaceBarrierForSource(registry, 'linuxdo') ||
+          registry.visible === 'linuxdo-login' ||
+          registry.visible === 'linuxdo-credit')
+      )
+        cookiePreparation.owner = owner;
+    }
+    const owner = authSurfaceLifetimeRef.current;
+    return () => owner.abort();
+  }, [watchAuthSurfacePreparation]);
   const beginAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, source: SessionSite, checkIdentity = true, visible = true) => {
       const account = readSessionRuntimeSnapshot(source);
@@ -416,47 +476,38 @@ export function useAccountRuntime({
         },
         visible
       );
-      const preparation = {
+      const owner = authSurfaceLifetimeRef.current.signal;
+      const preparation: AuthSurfacePreparation = {
         ready: wasVisible && authSurfacePreparationsRef.current[source]?.ready === true,
         pending: true,
         error: '',
         promise: markAccountSessionHandoffPending(source)
       };
       authSurfacePreparationsRef.current[source] = preparation;
-      void preparation.promise.then(
-        () => {
-          if (authSurfacePreparationsRef.current[source] !== preparation) return;
-          preparation.ready = true;
-          refreshAuthSurfaces((revision) => revision + 1);
-        },
-        () => {
-          if (authSurfacePreparationsRef.current[source] !== preparation) return;
-          preparation.error = '登录会话保存失败，请关闭后重试';
-          refreshAuthSurfaces((revision) => revision + 1);
-          notify(preparation.error);
-        }
-      );
+      watchAuthSurfacePreparation(source, preparation, owner);
       refreshAuthSurfaces((revision) => revision + 1);
       if (checkIdentity) beginAccountIdentityCheckRef.current(source, ticket.generation);
       return ticket;
     },
-    [notify, readSessionRuntimeSnapshot]
+    [readSessionRuntimeSnapshot, watchAuthSurfacePreparation]
   );
   const handoffLinuxDoCookies = useCallback(
     (parentTraceId?: string): Promise<void> => {
       if (linuxDoCookieHandoffRef.current) return linuxDoCookieHandoffRef.current;
       const generation = authSurfaceRegistryRef.current.generation;
-      const handoff = Promise.all([awaitLinuxDoWebViewUnmount(), linuxDoCookiePreparationRef.current]).then(() => {
-        // A refreshed/replaced WebView owns a new handoff; the old one must not unlock it.
-        if (linuxDoCookieHandoffRef.current !== handoff) throw new CancelledError();
-        return setLinuxDoCookieResponseBarrier(
-          !enabledSourcesRef.current.includes('linuxdo'),
-          'surface-close',
-          generation,
-          undefined,
-          parentTraceId
-        );
-      });
+      const handoff = Promise.all([awaitLinuxDoWebViewUnmount(), linuxDoCookiePreparationRef.current?.promise]).then(
+        () => {
+          // A refreshed/replaced WebView owns a new handoff; the old one must not unlock it.
+          if (linuxDoCookieHandoffRef.current !== handoff) throw new CancelledError();
+          return setLinuxDoCookieResponseBarrier(
+            !enabledSourcesRef.current.includes('linuxdo'),
+            'surface-close',
+            generation,
+            undefined,
+            parentTraceId
+          );
+        }
+      );
       linuxDoCookieHandoffRef.current = handoff;
       void handoff.catch(() => {
         if (linuxDoCookieHandoffRef.current === handoff) linuxDoCookieHandoffRef.current = null;
@@ -894,16 +945,26 @@ export function useAccountRuntime({
   const prepareLinuxDoCookieResponseBarrier = useCallback(() => {
     cancelLinuxDoBrowserHandoff();
     linuxDoCookieHandoffRef.current = null;
-    const preparation = Promise.resolve(authSurfacePreparationsRef.current.linuxdo?.promise).then(() =>
-      setLinuxDoCookieResponseBarrier(true, 'surface-open', authSurfaceRegistryRef.current.generation)
-    );
+    const preparation: LinuxDoCookiePreparation = {
+      owner: authSurfaceLifetimeRef.current.signal,
+      generation: authSurfaceRegistryRef.current.generation,
+      promise: Promise.resolve(authSurfacePreparationsRef.current.linuxdo?.promise).then(() => {
+        if (
+          preparation.owner.aborted ||
+          authSurfaceLifetimeRef.current.signal !== preparation.owner ||
+          linuxDoCookiePreparationRef.current !== preparation
+        )
+          throw new CancelledError();
+        return setLinuxDoCookieResponseBarrier(true, 'surface-open', preparation.generation);
+      })
+    };
     linuxDoCookiePreparationRef.current = preparation;
-    void preparation
+    void preparation.promise
       .finally(() => {
         if (linuxDoCookiePreparationRef.current === preparation) linuxDoCookiePreparationRef.current = null;
       })
       .catch(() => undefined);
-    return preparation;
+    return preparation.promise;
   }, [cancelLinuxDoBrowserHandoff]);
   const beginLinuxDoCreditSurface = useCallback(
     (mode: 'manual' | 'silent') => beginAuthSurfaceTicket('linuxdo-credit', 'linuxdo', false, mode === 'manual'),
@@ -1070,6 +1131,8 @@ export function useAccountRuntime({
   const linuxDoSourceEnabled = enabledSessionSourceSet.has('linuxdo');
   const linuxDoCookieBarrierInitializedRef = useRef(false);
   useEffect(() => {
+    const owner = authSurfaceLifetimeRef.current.signal;
+    const observation = new AbortController();
     if (!linuxDoSourceEnabled) cancelLinuxDoBrowserHandoff();
     linuxDoCookieHandoffRef.current = null;
     const reason = linuxDoCookieBarrierInitializedRef.current ? 'source-change' : 'startup';
@@ -1079,7 +1142,11 @@ export function useAccountRuntime({
         isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login') ||
         authSurfaceRegistryRef.current.active['linuxdo-credit']?.phase === 'open',
       reason
-    ).catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
+    ).catch(() => {
+      if (observation.signal.aborted || owner.aborted || authSurfaceLifetimeRef.current.signal !== owner) return;
+      notifyRef.current('登录会话交接未完成，请刷新账号页面重试。');
+    });
+    return () => observation.abort();
   }, [linuxDoSourceEnabled, notify, cancelLinuxDoBrowserHandoff]);
   useEffect(() => {
     if (appActive) return;

@@ -8,16 +8,20 @@ import { type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   nodeImageAuthPayloadScript,
   nodeImageSessionScript,
-  nodeSeekNodeImageAuthScript,
-  type NodeImageAuthPayload
+  nodeSeekNodeImageAuthScript
 } from '@/platform/network/loginWebViewScripts';
 import {
-  closeNodeImageAuthOpening,
+  cancelNodeImageAuthOpening,
   createNodeImageAuthNonce,
+  createNodeImageAuthResult,
   processNodeImageAuthMessage,
   runNodeImageAuthOpening,
   terminateNodeImageAuthFlow,
-  type NodeImageAuthPhase
+  type NodeImageAuthFlow,
+  type NodeImageAuthOpeningState,
+  type NodeImageAuthOwner,
+  type NodeImageAuthPhase,
+  type NodeImageAuthState
 } from '@/sources/nodeimage/authFlow';
 import {
   beginNodeImageApiKeyAuthorization,
@@ -40,20 +44,27 @@ export type NodeImageAuthDocument = {
   url: string;
 };
 
-type ActiveNodeImageAuthFlow = {
-  connectStarted: boolean;
+type NodeImageAuthRequest = Pick<ReturnType<typeof createNodeImageAuthResult>, 'promise' | 'resolve'> & {
   credentialGeneration: number;
+  lifetime: object;
   nonce: string;
-  ownerIdentityKey: string | null;
-  ownerSessionEpoch: number | null;
-  payload: NodeImageAuthPayload | null;
-  phase: NodeImageAuthPhase;
-  promise: Promise<string | null>;
-  resolve: (apiKey: string | null) => void;
   surfaceGeneration: number;
-  terminal: boolean;
   trace: DiagnosticTrace;
 };
+type ActiveNodeImageAuthFlow = NodeImageAuthRequest & NodeImageAuthFlow;
+type NodeImageHostState =
+  | { phase: 'idle'; lifetime: object }
+  | { phase: 'reconciling' | 'settling'; flow: NodeImageAuthRequest }
+  | { phase: 'document'; flow: ActiveNodeImageAuthFlow; document: NodeImageAuthDocument; load: 'loading' | 'ready' }
+  | { phase: 'failed'; flow: NodeImageAuthRequest; error: string }
+  | { phase: 'disposed' };
+type KeyOperation =
+  | { phase: 'idle' }
+  | { phase: 'saving'; generation: number; owner: NodeImageAuthOwner; lifetime: object }
+  | { phase: 'clearing'; lifetime: object };
+type NodeImageKeyState = { summary: 'unknown' | 'stored' | 'empty'; operation: KeyOperation };
+type NodeImageAuthConclusion =
+  { kind: 'success'; apiKey: string; owner: NodeImageAuthOwner } | { kind: 'canceled'; reason: AuthSurfaceCloseReason };
 
 const NODEIMAGE_AUTH_PHASE_TIMEOUT_MS: Record<NodeImageAuthPhase, number> = {
   'nodeimage-session': 30_000,
@@ -61,12 +72,16 @@ const NODEIMAGE_AUTH_PHASE_TIMEOUT_MS: Record<NodeImageAuthPhase, number> = {
   'nodeimage-verify': 30_000
 };
 
-function nodeImageAuthTimeoutMessage(flow: ActiveNodeImageAuthFlow) {
-  if (flow.phase === 'nodeimage-session') {
+function hostLifetime(host: NodeImageHostState) {
+  return host.phase === 'disposed' ? null : host.phase === 'idle' ? host.lifetime : host.flow.lifetime;
+}
+
+function nodeImageAuthTimeoutMessage(state: Exclude<NodeImageAuthState, { phase: 'terminal' }>) {
+  if (state.phase === 'nodeimage-session') {
     return 'NodeImage 登录态检查超时；本次未发起 NodeSeek Connect。请关闭后重试或手动粘贴 API Key。';
   }
-  if (flow.phase === 'nodeseek-cauth') {
-    return flow.connectStarted
+  if (state.phase === 'nodeseek-cauth') {
+    return state.connect === 'started'
       ? 'NodeSeek Connect 结果等待超时；结果未知，本次可能已占用一次连接额度。请勿自动重试。'
       : 'NodeSeek Connect 握手超时；本次未发起连接。请关闭后重试。';
   }
@@ -74,28 +89,29 @@ function nodeImageAuthTimeoutMessage(flow: ActiveNodeImageAuthFlow) {
 }
 
 function nodeImageAuthDocumentForFlow(flow: ActiveNodeImageAuthFlow): NodeImageAuthDocument | null {
-  if (flow.phase === 'nodeimage-session') {
-    return {
-      injectedJavaScript: nodeImageSessionScript(flow.nonce),
-      key: `${flow.surfaceGeneration}:${flow.phase}`,
-      url: NODEIMAGE_URL
-    };
+  const state = flow.state;
+  switch (state.phase) {
+    case 'nodeimage-session':
+      return {
+        injectedJavaScript: nodeImageSessionScript(flow.nonce),
+        key: `${flow.surfaceGeneration}:${state.phase}`,
+        url: NODEIMAGE_URL
+      };
+    case 'nodeseek-cauth':
+      return {
+        injectedJavaScript: nodeSeekNodeImageAuthScript(flow.nonce),
+        key: `${flow.surfaceGeneration}:${state.phase}`,
+        url: NODEIMAGE_AUTH_URL
+      };
+    case 'nodeimage-verify':
+      return {
+        injectedJavaScript: nodeImageAuthPayloadScript(flow.nonce, state.payload),
+        key: `${flow.surfaceGeneration}:${state.phase}`,
+        url: NODEIMAGE_URL
+      };
+    case 'terminal':
+      return null;
   }
-  if (flow.phase === 'nodeseek-cauth') {
-    return {
-      injectedJavaScript: nodeSeekNodeImageAuthScript(flow.nonce),
-      key: `${flow.surfaceGeneration}:${flow.phase}`,
-      url: NODEIMAGE_AUTH_URL
-    };
-  }
-  if (!flow.payload) {
-    return null;
-  }
-  return {
-    injectedJavaScript: nodeImageAuthPayloadScript(flow.nonce, flow.payload),
-    key: `${flow.surfaceGeneration}:${flow.phase}`,
-    url: NODEIMAGE_URL
-  };
 }
 
 export function useNodeImageAuthController({
@@ -116,167 +132,178 @@ export function useNodeImageAuthController({
   surfaceVisible: boolean;
 }) {
   const webViewRef = useRef<WebView>(null);
-  const activeFlowRef = useRef<ActiveNodeImageAuthFlow | null>(null);
-  const openingRef = useRef<Promise<string | null> | null>(null);
-  const apiKeyBusyRef = useRef(false);
-  const [apiKeySaved, setApiKeySaved] = useState(false);
-  const [apiKeyBusy, setApiKeyBusy] = useState(false);
-  const [document, setDocument] = useState<NodeImageAuthDocument | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const openingRef = useRef<NodeImageAuthOpeningState>({ phase: 'idle' });
+  const hostRef = useRef<NodeImageHostState>({ phase: 'idle', lifetime: {} });
+  const [host, setHost] = useState(hostRef.current);
+  const keyRef = useRef<NodeImageKeyState>({ summary: 'unknown', operation: { phase: 'idle' } });
+  const [keyState, setKeyState] = useState(keyRef.current);
 
-  const reportFailure = useCallback((message: string, reason?: 'timeout') => {
-    const flow = activeFlowRef.current;
-    if (flow) {
-      terminateNodeImageAuthFlow(flow);
-      webViewRef.current?.stopLoading();
-      setDocument(null);
-      markDiagnosticStage(flow.trace, 'guard', {
-        state: reason === 'timeout' ? 'timeout' : 'failed'
-      });
-      finishDiagnosticTrace(flow.trace, 'failure', reason === 'timeout' ? { reason } : undefined);
-    }
-    setLoading(false);
-    setError(String(message));
+  const publishHost = useCallback((next: NodeImageHostState) => {
+    hostRef.current = next;
+    setHost(next);
+  }, []);
+  const publishKey = useCallback((next: NodeImageKeyState) => {
+    keyRef.current = next;
+    if (hostRef.current.phase !== 'disposed') setKeyState(next);
+  }, []);
+  const keyOperationIsCurrent = useCallback(
+    (operation: Exclude<KeyOperation, { phase: 'idle' }>) => keyRef.current.operation === operation,
+    []
+  );
+  const requestIsCurrent = useCallback((flow: NodeImageAuthRequest) => {
+    const current = hostRef.current;
+    return 'flow' in current && current.flow === flow;
   }, []);
 
+  const failFlow = useCallback(
+    (flow: NodeImageAuthRequest, message: string, reason?: 'timeout') => {
+      const current = hostRef.current;
+      if (!('flow' in current) || current.flow !== flow || current.phase === 'settling' || current.phase === 'failed')
+        return;
+      if (current.phase === 'document') terminateNodeImageAuthFlow(current.flow);
+      webViewRef.current?.stopLoading();
+      publishHost({ phase: 'failed', flow, error: message });
+      markDiagnosticStage(flow.trace, 'guard', { state: reason === 'timeout' ? 'timeout' : 'failed' });
+      finishDiagnosticTrace(flow.trace, 'failure', reason === 'timeout' ? { reason } : undefined);
+    },
+    [publishHost]
+  );
+  const mountDocument = useCallback(
+    (flow: ActiveNodeImageAuthFlow) => {
+      if (!requestIsCurrent(flow)) return;
+      const document = nodeImageAuthDocumentForFlow(flow);
+      if (document) publishHost({ phase: 'document', flow, document, load: 'loading' });
+    },
+    [publishHost, requestIsCurrent]
+  );
+
+  const document = host.phase === 'document' ? host.document : null;
   useEffect(() => {
-    const flow = activeFlowRef.current;
-    if (!document || !flow || flow.terminal) {
-      return;
-    }
-    const phase = flow.phase;
+    const current = hostRef.current;
+    if (!document || current.phase !== 'document' || current.document !== document) return;
+    const { flow } = current;
+    const phase = flow.state.phase;
+    if (phase === 'terminal') return;
     const timeout = setTimeout(() => {
-      if (activeFlowRef.current === flow && !flow.terminal && flow.phase === phase) {
-        reportFailure(nodeImageAuthTimeoutMessage(flow), 'timeout');
+      const latest = hostRef.current;
+      if (latest.phase === 'document' && latest.document === document && flow.state.phase !== 'terminal') {
+        failFlow(flow, nodeImageAuthTimeoutMessage(flow.state), 'timeout');
       }
     }, NODEIMAGE_AUTH_PHASE_TIMEOUT_MS[phase]);
     return () => clearTimeout(timeout);
-  }, [document, reportFailure]);
+  }, [document, failFlow]);
 
   useEffect(() => {
-    let active = true;
+    const pending = new AbortController();
+    const generation = currentNodeImageApiKeyGeneration();
     loadNodeImageApiKey()
       .then((apiKey) => {
-        if (active) {
-          setApiKeySaved(Boolean(apiKey));
+        if (!pending.signal.aborted && generation === currentNodeImageApiKeyGeneration()) {
+          publishKey({ ...keyRef.current, summary: apiKey ? 'stored' : 'empty' });
         }
       })
       .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
+    return () => pending.abort();
+  }, [publishKey]);
 
   const save = useCallback(
     async (value: string) => {
-      if (apiKeyBusyRef.current) {
+      const lifetime = hostLifetime(hostRef.current);
+      if (!lifetime || keyRef.current.operation.phase !== 'idle') return;
+      const runtime = readRuntime();
+      if (runtime.identityTrust !== 'confirmed' || runtime.identityKey === 'nodeseek:anonymous') {
+        notify('请先确认 NodeSeek 登录状态，再手动保存 NodeImage API Key');
         return;
       }
-      apiKeyBusyRef.current = true;
-      setApiKeyBusy(true);
+      const operation: KeyOperation = {
+        phase: 'saving',
+        generation: beginNodeImageApiKeyAuthorization(),
+        owner: { identityKey: runtime.identityKey, sessionEpoch: runtime.sessionEpoch },
+        lifetime
+      };
+      publishKey({ ...keyRef.current, operation });
       try {
-        const runtime = readRuntime();
-        if (runtime.identityTrust !== 'confirmed' || runtime.identityKey === 'nodeseek:anonymous') {
-          notify('请先确认 NodeSeek 登录状态，再手动保存 NodeImage API Key');
-          return;
-        }
-        const generation = beginNodeImageApiKeyAuthorization();
         const saved = await saveNodeImageApiKeyForGeneration(
-          generation,
+          operation.generation,
           value,
-          runtime.identityKey,
-          runtime.identityKey,
+          operation.owner.identityKey,
+          operation.owner.identityKey,
           () => {
             const current = readRuntime();
             return (
+              hostLifetime(hostRef.current) === operation.lifetime &&
               current.identityTrust === 'confirmed' &&
-              current.identityKey === runtime.identityKey &&
-              current.sessionEpoch === runtime.sessionEpoch
+              current.identityKey === operation.owner.identityKey &&
+              current.sessionEpoch === operation.owner.sessionEpoch
             );
           }
         );
         if (!saved) {
-          notify('NodeImage API Key 未保存：NodeSeek 身份或会话已变化');
+          if (hostLifetime(hostRef.current) === operation.lifetime)
+            notify('NodeImage API Key 未保存：NodeSeek 身份或会话已变化');
           return;
         }
-        setApiKeySaved(true);
-        notify('NodeImage API Key 已保存');
+        publishKey({ ...keyRef.current, summary: 'stored' });
+        if (hostLifetime(hostRef.current) === operation.lifetime) notify('NodeImage API Key 已保存');
       } catch (saveError) {
-        notify(errorMessage(saveError));
+        if (hostLifetime(hostRef.current) === operation.lifetime) notify(errorMessage(saveError));
       } finally {
-        apiKeyBusyRef.current = false;
-        setApiKeyBusy(false);
+        if (keyOperationIsCurrent(operation)) publishKey({ ...keyRef.current, operation: { phase: 'idle' } });
       }
     },
-    [notify, readRuntime]
+    [keyOperationIsCurrent, notify, publishKey, readRuntime]
   );
 
   const clear = useCallback(async () => {
-    if (apiKeyBusyRef.current) {
-      return;
-    }
-    apiKeyBusyRef.current = true;
-    setApiKeyBusy(true);
+    const lifetime = hostLifetime(hostRef.current);
+    if (!lifetime || keyRef.current.operation.phase !== 'idle') return;
+    const operation: KeyOperation = { phase: 'clearing', lifetime };
+    publishKey({ ...keyRef.current, operation });
     try {
       const cleared = await clearNodeImageApiKey();
-      if (!cleared) {
-        return;
-      }
-      setApiKeySaved(false);
-      notify('NodeImage API Key 已清除');
+      if (!cleared) return;
+      publishKey({ ...keyRef.current, summary: 'empty' });
+      if (hostLifetime(hostRef.current) === operation.lifetime) notify('NodeImage API Key 已清除');
     } catch (clearError) {
-      notify(errorMessage(clearError));
+      if (hostLifetime(hostRef.current) === operation.lifetime) notify(errorMessage(clearError));
     } finally {
-      apiKeyBusyRef.current = false;
-      setApiKeyBusy(false);
+      if (keyOperationIsCurrent(operation)) publishKey({ ...keyRef.current, operation: { phase: 'idle' } });
     }
-  }, [notify]);
+  }, [keyOperationIsCurrent, notify, publishKey]);
 
   const finish = useCallback(
-    async (apiKey: string | null, closeReason: AuthSurfaceCloseReason = 'cancel') => {
-      const flow = activeFlowRef.current;
-      if (!flow) {
-        return;
-      }
-      activeFlowRef.current = null;
+    async (flow: NodeImageAuthRequest, conclusion: NodeImageAuthConclusion) => {
+      const current = hostRef.current;
+      if (!requestIsCurrent(flow) || current.phase === 'settling') return;
+      publishHost({ phase: 'settling', flow });
       webViewRef.current?.stopLoading();
-      setDocument(null);
-      setLoading(false);
-      if (apiKey) {
-        setError('');
-      } else {
-        invalidateNodeImageApiKeyAuthorization();
-      }
-      const reconciliation = finishSurface(apiKey ? 'success' : closeReason);
+      if (conclusion.kind === 'canceled') invalidateNodeImageApiKeyAuthorization();
       let usableApiKey: string | null = null;
       try {
+        const reconciliation = finishSurface(conclusion.kind === 'success' ? 'success' : conclusion.reason);
         const result = reconciliation ? await reconciliation : { status: 'stale' as const };
-        if (
-          apiKey &&
-          flow.ownerIdentityKey &&
-          flow.ownerSessionEpoch !== null &&
-          (result.status === 'same' || result.status === 'changed')
-        ) {
+        if (conclusion.kind === 'success' && (result.status === 'same' || result.status === 'changed')) {
+          const { owner } = conclusion;
           const settledIdentityKey = siteSessionIdentityKey(result.session);
-          if (readRuntime().sessionEpoch === flow.ownerSessionEpoch) {
+          if (hostLifetime(hostRef.current) === flow.lifetime && readRuntime().sessionEpoch === owner.sessionEpoch) {
             const saved = await saveNodeImageApiKeyForGeneration(
               flow.credentialGeneration,
-              apiKey,
-              flow.ownerIdentityKey,
+              conclusion.apiKey,
+              owner.identityKey,
               settledIdentityKey,
               () => {
                 const runtime = readRuntime();
                 return (
+                  hostLifetime(hostRef.current) === flow.lifetime &&
                   runtime.identityTrust === 'confirmed' &&
-                  runtime.identityKey === flow.ownerIdentityKey &&
-                  runtime.sessionEpoch === flow.ownerSessionEpoch
+                  runtime.identityKey === owner.identityKey &&
+                  runtime.sessionEpoch === owner.sessionEpoch
                 );
               }
             );
-            if (saved) {
+            if (saved && hostLifetime(hostRef.current) === flow.lifetime) {
               usableApiKey = saved;
-              setApiKeySaved(true);
+              publishKey({ ...keyRef.current, summary: 'stored' });
               markDiagnosticStage(flow.trace, 'persist', { state: 'key-saved' });
               finishDiagnosticTrace(flow.trace, 'success');
               notify('NodeImage API Key 已保存');
@@ -284,83 +311,76 @@ export function useNodeImageAuthController({
           }
         }
         if (!usableApiKey) {
-          if (apiKey) {
-            notify('NodeImage 授权结果未保存：NodeSeek 身份或会话已变化');
+          if (conclusion.kind === 'success') {
+            if (hostLifetime(hostRef.current) === flow.lifetime)
+              notify('NodeImage 授权结果未保存：NodeSeek 身份或会话已变化');
             markDiagnosticStage(flow.trace, 'guard', { state: 'failed' });
             finishDiagnosticTrace(flow.trace, 'failure');
           } else {
             finishDiagnosticTrace(flow.trace, 'canceled', { reason: 'canceled' });
           }
-          setApiKeySaved(Boolean(await loadNodeImageApiKey()));
+          const apiKey = await loadNodeImageApiKey();
+          if (hostLifetime(hostRef.current) === flow.lifetime)
+            publishKey({ ...keyRef.current, summary: apiKey ? 'stored' : 'empty' });
         }
       } catch (finishError) {
         markDiagnosticStage(flow.trace, 'persist', { state: 'failed' });
         finishDiagnosticTrace(flow.trace, 'failure', { reason: 'storage_error' });
-        notify(`NodeImage 授权结果未保存：${errorMessage(finishError)}`);
+        if (hostLifetime(hostRef.current) === flow.lifetime)
+          notify(`NodeImage 授权结果未保存：${errorMessage(finishError)}`);
       } finally {
+        if (requestIsCurrent(flow)) publishHost({ phase: 'idle', lifetime: flow.lifetime });
         flow.resolve(usableApiKey);
       }
     },
-    [finishSurface, notify, readRuntime]
+    [finishSurface, notify, publishHost, publishKey, readRuntime, requestIsCurrent]
   );
 
   const close = useCallback(
     (reason: AuthSurfaceCloseReason = 'close-button') => {
-      closeNodeImageAuthOpening(openingRef, () => finish(null, reason));
+      cancelNodeImageAuthOpening(openingRef);
+      const current = hostRef.current;
+      if ('flow' in current) void finish(current.flow, { kind: 'canceled', reason });
     },
     [finish]
   );
 
   const open = useCallback(() => {
-    if (readRuntime().sourceEnabled === false) {
-      return Promise.resolve(null);
-    }
-    if (activeFlowRef.current) {
-      return activeFlowRef.current.promise;
-    }
+    const current = hostRef.current;
+    const lifetime = hostLifetime(current);
+    if (!lifetime || readRuntime().sourceEnabled === false) return Promise.resolve(null);
+    if ('flow' in current) return current.flow.promise;
     return runNodeImageAuthOpening(openingRef, {
       createNonce: () => createNodeImageAuthNonce(nativeSecureRandomHex),
       onError: (openError) => {
-        notify(`NodeImage 授权无法启动：${errorMessage(openError)}`);
+        if (hostLifetime(hostRef.current) === lifetime) notify(`NodeImage 授权无法启动：${errorMessage(openError)}`);
       },
       open: async (nonce) => {
+        if (hostLifetime(hostRef.current) !== lifetime || readRuntime().sourceEnabled === false) return null;
         prepareSurfaceOpen();
-        setDocument(null);
-        setError('');
-        setLoading(true);
         const surfaceTicket = beginSurface();
         const credentialGeneration = beginNodeImageApiKeyAuthorization();
         const trace = beginDiagnosticTrace('credential', 'auth', {
           credentialSource: 'nodeimage',
           state: 'session-check'
         });
-        let resolveFlow!: (apiKey: string | null) => void;
-        const promise = new Promise<string | null>((resolve) => {
-          resolveFlow = resolve;
-        });
-        const flow: ActiveNodeImageAuthFlow = {
-          connectStarted: false,
+        const { promise, resolve } = createNodeImageAuthResult();
+        const flow: NodeImageAuthRequest = {
           credentialGeneration,
+          lifetime,
           nonce,
-          ownerIdentityKey: null,
-          ownerSessionEpoch: null,
-          payload: null,
-          phase: 'nodeimage-session',
           promise,
-          resolve: resolveFlow,
+          resolve,
           surfaceGeneration: surfaceTicket.generation,
-          terminal: false,
           trace
         };
-        activeFlowRef.current = flow;
+        publishHost({ phase: 'reconciling', flow });
         void (async () => {
           try {
             const result = await reconcileAccountStatus(flow.surfaceGeneration);
-            if (activeFlowRef.current !== flow) {
-              return;
-            }
+            if (!requestIsCurrent(flow)) return;
             if (result.status === 'unknown') {
-              reportFailure(`NodeSeek 身份暂时无法确认：${result.error}`);
+              failFlow(flow, `NodeSeek 身份暂时无法确认：${result.error}`);
               return;
             }
             if (
@@ -369,98 +389,123 @@ export function useNodeImageAuthController({
               result.session.status !== 'logged-in' ||
               !result.session.currentUser?.id
             ) {
-              reportFailure('请先完成 NodeSeek 登录，再重新打开 NodeImage 授权。');
+              failFlow(flow, '请先完成 NodeSeek 登录，再重新打开 NodeImage 授权。');
               return;
             }
-            flow.ownerIdentityKey = siteSessionIdentityKey(result.session);
-            flow.ownerSessionEpoch = readRuntime().sessionEpoch;
-            setError('');
-            setDocument(nodeImageAuthDocumentForFlow(flow));
+            const active: ActiveNodeImageAuthFlow = {
+              ...flow,
+              owner: { identityKey: siteSessionIdentityKey(result.session), sessionEpoch: readRuntime().sessionEpoch },
+              state: { phase: 'nodeimage-session' }
+            };
+            const document = nodeImageAuthDocumentForFlow(active);
+            if (document) publishHost({ phase: 'document', flow: active, document, load: 'loading' });
           } catch (reconcileError) {
-            if (activeFlowRef.current === flow) {
-              reportFailure(`NodeSeek 身份暂时无法确认：${errorMessage(reconcileError)}`);
-            }
+            failFlow(flow, `NodeSeek 身份暂时无法确认：${errorMessage(reconcileError)}`);
           }
         })();
         return promise;
       }
     });
-  }, [beginSurface, notify, prepareSurfaceOpen, readRuntime, reconcileAccountStatus, reportFailure]);
+  }, [
+    beginSurface,
+    failFlow,
+    notify,
+    prepareSurfaceOpen,
+    publishHost,
+    readRuntime,
+    reconcileAccountStatus,
+    requestIsCurrent
+  ]);
 
   const ensure = useCallback(async () => {
-    const identityKey = readRuntime().identityKey;
+    const lifetime = hostLifetime(hostRef.current);
+    const before = readRuntime();
+    const generation = currentNodeImageApiKeyGeneration();
+    if (!lifetime || before.identityTrust !== 'confirmed' || before.sourceEnabled === false) return null;
     const credential = await loadNodeImageApiKeyCredential();
-    if (credential && nodeImageApiKeyUseStatus(credential, identityKey) === 'usable') {
-      setApiKeySaved(true);
+    const current = readRuntime();
+    if (
+      hostLifetime(hostRef.current) !== lifetime ||
+      current.identityKey !== before.identityKey ||
+      current.sessionEpoch !== before.sessionEpoch ||
+      current.identityTrust !== 'confirmed' ||
+      current.sourceEnabled === false ||
+      generation !== currentNodeImageApiKeyGeneration()
+    )
+      return null;
+    if (credential && nodeImageApiKeyUseStatus(credential, current.identityKey) === 'usable') {
+      publishKey({ ...keyRef.current, summary: 'stored' });
       return credential.apiKey;
     }
     return null;
-  }, [readRuntime]);
+  }, [publishKey, readRuntime]);
 
   const authorize = useCallback(() => {
-    void open();
-  }, [open]);
+    const lifetime = hostLifetime(hostRef.current);
+    if (!lifetime) return;
+    void open().catch((error) => {
+      if (hostLifetime(hostRef.current) === lifetime) notify(`NodeImage 授权无法启动：${errorMessage(error)}`);
+    });
+  }, [notify, open]);
 
-  const handleMessage = useCallback(
-    (event: WebViewMessageEvent) => {
-      void (async () => {
-        const flow = activeFlowRef.current;
-        if (!flow || flow.terminal) {
-          return;
+  const handleDocumentMessage = useCallback(
+    (document: NodeImageAuthDocument, event: WebViewMessageEvent) => {
+      const current = hostRef.current;
+      if (current.phase !== 'document' || current.document !== document) return;
+      const { flow } = current;
+      void processNodeImageAuthMessage(
+        flow,
+        { data: event.nativeEvent.data, sourceUrl: event.nativeEvent.url },
+        readRuntime(),
+        currentNodeImageApiKeyGeneration(),
+        {
+          complete: async (apiKey) => {
+            await finish(flow, { kind: 'success', apiKey, owner: flow.owner });
+          },
+          connectTarget: webViewRef.current,
+          fail: (message) => failFlow(flow, message),
+          mark: (state) => {
+            markDiagnosticStage(flow.trace, state.startsWith('connect-') ? 'transport' : 'credential', { state });
+          },
+          mountCurrentPhase: () => mountDocument(flow)
         }
-        try {
-          await processNodeImageAuthMessage(
-            flow,
-            {
-              data: event.nativeEvent.data,
-              sourceUrl: event.nativeEvent.url
-            },
-            readRuntime(),
-            currentNodeImageApiKeyGeneration(),
-            {
-              complete: async (apiKey) => {
-                if (activeFlowRef.current === flow) {
-                  await finish(String(apiKey));
-                }
-              },
-              connectTarget: webViewRef.current,
-              fail: reportFailure,
-              mark: (state) => {
-                markDiagnosticStage(flow.trace, state.startsWith('connect-') ? 'transport' : 'credential', { state });
-              },
-              mountCurrentPhase: () => {
-                if (activeFlowRef.current !== flow || flow.terminal) {
-                  return;
-                }
-                setError('');
-                setLoading(true);
-                setDocument(nodeImageAuthDocumentForFlow(flow));
-              }
-            }
-          );
-        } catch (messageError) {
-          if (activeFlowRef.current === flow) {
-            reportFailure(errorMessage(messageError));
-          }
-        }
-      })();
+      ).catch((messageError) => failFlow(flow, errorMessage(messageError)));
     },
-    [finish, readRuntime, reportFailure]
+    [failFlow, finish, mountDocument, readRuntime]
   );
 
-  useEffect(
-    () => () => {
-      openingRef.current = null;
-      const flow = activeFlowRef.current;
-      activeFlowRef.current = null;
-      if (flow) {
+  useEffect(() => {
+    if (hostRef.current.phase === 'disposed') publishHost({ phase: 'idle', lifetime: {} });
+    return () => {
+      const current = hostRef.current;
+      hostRef.current = { phase: 'disposed' };
+      cancelNodeImageAuthOpening(openingRef);
+      if ('flow' in current) {
         invalidateNodeImageApiKeyAuthorization();
+        current.flow.resolve(null);
       }
-      flow?.resolve(null);
-    },
-    []
-  );
+    };
+  }, [publishHost]);
 
+  const documentCommands = useMemo(
+    () => ({
+      fail: (message: string) => {
+        const current = hostRef.current;
+        if (current.phase === 'document' && current.document === document) failFlow(current.flow, message);
+      },
+      handleMessage: (event: WebViewMessageEvent) => {
+        if (document) handleDocumentMessage(document, event);
+      },
+      setLoading: (loading: boolean) => {
+        const current = hostRef.current;
+        if (current.phase === 'document' && current.document === document)
+          publishHost({ ...current, load: loading ? 'loading' : 'ready' });
+      }
+    }),
+    [document, failFlow, handleDocumentMessage, publishHost]
+  );
+  const apiKeyBusy = keyState.operation.phase !== 'idle';
+  const apiKeySaved = keyState.summary === 'stored';
   const key = useMemo(
     () => ({
       authorize,
@@ -476,16 +521,13 @@ export function useNodeImageAuthController({
     () => ({
       close,
       document,
-      error,
-      fail: reportFailure,
-      handleMessage,
-      loading,
-      setLoading,
+      error: host.phase === 'failed' ? host.error : '',
+      ...documentCommands,
+      loading: host.phase === 'reconciling' || (host.phase === 'document' && host.load === 'loading'),
       visible: surfaceVisible,
       webViewRef
     }),
-    [close, document, error, handleMessage, loading, reportFailure, surfaceVisible]
+    [close, document, documentCommands, host, surfaceVisible]
   );
-
   return useMemo(() => ({ key, panel }), [key, panel]);
 }

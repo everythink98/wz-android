@@ -267,8 +267,7 @@ export function YaohuoReplyComposer({
   const contentRef = useCommittedRef(inputContent);
   // Let the IME own selection while composing; only toolbar actions move it.
   const selectionRef = useRef<Selection>({ start: content.length, end: content.length });
-  const [facePanelOpen, setFacePanelOpen] = useState(false);
-  const [formatPanelOpen, setFormatPanelOpen] = useState(false);
+  const [panel, setPanel] = useState<'face' | 'format' | null>(null);
   const [panelPending, setPanelPending] = useState(false);
   const panelRequestRef = useRef<object | null>(null);
   const cancelPanelRequest = useCallback(() => {
@@ -277,8 +276,7 @@ export function YaohuoReplyComposer({
   }, []);
   const closePanels = useCallback(() => {
     cancelPanelRequest();
-    setFacePanelOpen(false);
-    setFormatPanelOpen(false);
+    setPanel(null);
   }, [cancelPanelRequest]);
   useLayoutEffect(() => {
     if (actionBusy || disabledReason || dismissPanels) cancelPanelRequest();
@@ -292,7 +290,7 @@ export function YaohuoReplyComposer({
       inputRef.current?.blur();
     }
   }, [closePanels, dismissPanels]);
-  const panelActive = panelPending || facePanelOpen || formatPanelOpen;
+  const panelActive = panelPending || panel !== null;
   useLayoutEffect(() => {
     onPanelChange?.(panelActive);
   }, [panelActive, onPanelChange]);
@@ -373,9 +371,9 @@ export function YaohuoReplyComposer({
       }
     }
   };
-  const togglePanel = async (panel: 'face' | 'format') => {
+  const togglePanel = async (nextPanel: 'face' | 'format') => {
     if (actionBusy || disabledReason || imageRequestRef.current || panelRequestRef.current) return;
-    if (panel === 'face' ? facePanelOpen : formatPanelOpen) {
+    if (panel === nextPanel) {
       closePanels();
       return;
     }
@@ -388,8 +386,7 @@ export function YaohuoReplyComposer({
       await awaitKeyboardSettled();
       if (panelRequestRef.current !== request || !uploadAllowed.current) return;
       inputRef.current?.blur();
-      setFacePanelOpen(panel === 'face');
-      setFormatPanelOpen(panel === 'format');
+      setPanel(nextPanel);
     } catch (cause) {
       if (panelRequestRef.current === request)
         setImageError(cause instanceof Error ? cause.message : '键盘尚未收起，请重试');
@@ -399,7 +396,7 @@ export function YaohuoReplyComposer({
   };
   const applyFormat = (action: FormatAction) => {
     if (imageRequestRef.current || panelRequestRef.current) return;
-    setFacePanelOpen(false);
+    setPanel((current) => (current === 'face' ? null : current));
     if (action === 'image' && onUploadImage) {
       void uploadAtSelection();
       return;
@@ -409,7 +406,7 @@ export function YaohuoReplyComposer({
     const cursor = Math.max(0, Math.min(selectionRef.current.start, contentRef.current.length)) + replacement.length;
     changeContent(next);
     selectionRef.current = { start: cursor, end: cursor };
-    if (!formatPanelOpen) focusAtSelection({ start: cursor, end: cursor });
+    if (panel !== 'format') focusAtSelection({ start: cursor, end: cursor });
   };
 
   useEffect(() => {
@@ -417,7 +414,7 @@ export function YaohuoReplyComposer({
   }, [focusAtSelection, focusSignal]);
 
   const formatTools =
-    format === 'ubb' && (presentation !== 'embedded' || formatPanelOpen) ? (
+    format === 'ubb' && (presentation !== 'embedded' || panel === 'format') ? (
       <GestureScrollView
         testID="yaohuo-reply-composer-toolbar"
         horizontal={presentation !== 'embedded'}
@@ -450,47 +447,48 @@ export function YaohuoReplyComposer({
         ))}
       </GestureScrollView>
     ) : null;
-  const facePanel = facePanelOpen ? (
-    <GestureScrollView
-      nestedScrollEnabled
-      style={styles.facePanel}
-      contentContainerStyle={styles.faceGrid}
-      keyboardShouldPersistTaps="handled"
-    >
-      {YAOHUO_FACE_ITEMS.filter((item) => faceMode === 'selection' || item.value).map((item) => (
-        <Pressable
-          key={item.value || 'empty'}
-          accessibilityRole="button"
-          accessibilityLabel={item.label}
-          accessibilityState={{ selected: faceMode === 'selection' && item.value === face }}
-          disabled={inputBusy}
-          style={[styles.faceChip, item.value === face && styles.faceChipActive, inputBusy && styles.disabled]}
-          onPress={() => {
-            if (faceMode === 'inline') {
-              const replacement = formatUbb('image', yaohuoFaceImageUrl(item.value));
-              const next = replaceSelection(contentRef.current, selectionRef.current, replacement);
-              const cursor =
-                Math.max(0, Math.min(selectionRef.current.start, contentRef.current.length)) + replacement.length;
-              changeContent(next);
-              selectionRef.current = { start: cursor, end: cursor };
-            } else onFaceChange(item.value);
-          }}
-        >
-          {item.value ? (
-            <ExpoImage
-              accessible={false}
-              cachePolicy="memory-disk"
-              contentFit="contain"
-              source={imageSourceFromUrl(yaohuoFaceImageUrl(item.value), { mediaContext })}
-              style={styles.faceImage}
-              testID={`yaohuo-face-preview-${item.value}`}
-            />
-          ) : null}
-          <Text style={styles.faceText}>{item.label}</Text>
-        </Pressable>
-      ))}
-    </GestureScrollView>
-  ) : null;
+  const facePanel =
+    panel === 'face' ? (
+      <GestureScrollView
+        nestedScrollEnabled
+        style={styles.facePanel}
+        contentContainerStyle={styles.faceGrid}
+        keyboardShouldPersistTaps="handled"
+      >
+        {YAOHUO_FACE_ITEMS.filter((item) => faceMode === 'selection' || item.value).map((item) => (
+          <Pressable
+            key={item.value || 'empty'}
+            accessibilityRole="button"
+            accessibilityLabel={item.label}
+            accessibilityState={{ selected: faceMode === 'selection' && item.value === face }}
+            disabled={inputBusy}
+            style={[styles.faceChip, item.value === face && styles.faceChipActive, inputBusy && styles.disabled]}
+            onPress={() => {
+              if (faceMode === 'inline') {
+                const replacement = formatUbb('image', yaohuoFaceImageUrl(item.value));
+                const next = replaceSelection(contentRef.current, selectionRef.current, replacement);
+                const cursor =
+                  Math.max(0, Math.min(selectionRef.current.start, contentRef.current.length)) + replacement.length;
+                changeContent(next);
+                selectionRef.current = { start: cursor, end: cursor };
+              } else onFaceChange(item.value);
+            }}
+          >
+            {item.value ? (
+              <ExpoImage
+                accessible={false}
+                cachePolicy="memory-disk"
+                contentFit="contain"
+                source={imageSourceFromUrl(yaohuoFaceImageUrl(item.value), { mediaContext })}
+                style={styles.faceImage}
+                testID={`yaohuo-face-preview-${item.value}`}
+              />
+            ) : null}
+            <Text style={styles.faceText}>{item.label}</Text>
+          </Pressable>
+        ))}
+      </GestureScrollView>
+    ) : null;
 
   return (
     <View style={[styles.composer, presentation === 'embedded' && styles.embedded]}>

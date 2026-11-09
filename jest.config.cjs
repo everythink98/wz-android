@@ -9,6 +9,7 @@ module.exports = {
     '^react-native-worklets$': '<rootDir>/node_modules/react-native-worklets/src/mock.ts'
   },
   modulePathIgnorePatterns: ['<rootDir>/.codex-tmp/'],
-  testMatch: ['<rootDir>/tests/ui/**/*.test.tsx'],
+  roots: ['<rootDir>/tests/ui'],
+  testMatch: ['**/tests/ui/**/*.test.tsx'],
   setupFilesAfterEnv: ['<rootDir>/tests/ui/nativeEnvironment.ts', '<rootDir>/tests/ui/setup.ts']
 };

@@ -924,6 +924,44 @@ describe('background notification digest', () => {
     expect(state.sources.nodeseek.notificationIdentifier).toBe('existing-digest');
   });
 
+  it.each(['missing', 'repeated'] as const)(
+    'rejects a %s continuation before consuming delivery state',
+    async (continuation) => {
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.sources.nodeseek = {
+        ...state.sources.nodeseek,
+        intentEnabled: true,
+        identityKey: 'nodeseek:7',
+        baselineReady: true,
+        deliveredIds: ['old'],
+        notificationIdentifier: 'existing-digest'
+      };
+      const previous = structuredClone(state);
+      const record = vi.fn(testRecord(state));
+      const presentDigest = vi.fn();
+      const listPage = vi.fn(async () => ({
+        ...(await unreadNodeSeekReplyPage()),
+        cursor: continuation === 'missing' ? null : 'page-2',
+        hasMore: true
+      }));
+
+      const result = await runNotificationBackgroundWorker({
+        sources: ['nodeseek'],
+        sourceAllowed,
+        network: { restoreProxy: async () => undefined, probeAccess: nodeSeekWorkerAccess, listPage },
+        store: { load: async () => state, record, clearForContentDisable },
+        system: { permissionGranted, reconcileDigests, presentDigest, dismissDigest }
+      });
+
+      expect(result).toEqual({ status: 'success', delivered: 0, failedSources: 1, timedOut: false });
+      expect(listPage).toHaveBeenCalledTimes(continuation === 'missing' ? 1 : 2);
+      expect(record).not.toHaveBeenCalled();
+      expect(presentDigest).not.toHaveBeenCalled();
+      expect(state).toEqual(previous);
+    }
+  );
+
   it('stops pagination before page two when notification intent changes after page one', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;

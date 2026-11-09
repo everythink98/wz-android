@@ -15,7 +15,8 @@ const harness = vi.hoisted(() => ({
   legacy: new Map<string, string>(),
   queries: [] as string[],
   pagePlans: [] as string[][],
-  fail: new Array<string>()
+  fail: new Array<string>(),
+  closeFailure: undefined as Error | undefined
 }));
 vi.mock('expo-sqlite', async () => {
   const { DatabaseSync } = await import('node:sqlite');
@@ -57,6 +58,11 @@ vi.mock('expo-sqlite', async () => {
           return db.prepare(sql).get(...sqliteParameters(args)) ?? null;
         },
         closeAsync: async () => {
+          if (harness.closeFailure) {
+            const error = harness.closeFailure;
+            harness.closeFailure = undefined;
+            throw error;
+          }
           db.close();
           harness.connections = harness.connections.filter((item) => item !== db);
         }
@@ -106,6 +112,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   harness.fail = [];
+  harness.closeFailure = undefined;
   harness.queries = [];
   harness.pagePlans = [];
   harness.legacy.clear();
@@ -553,6 +560,30 @@ describe('reader data storage authority', () => {
     expect(harness.legacy.size).toBe(0);
   });
 
+  it('keeps cold settings reads temporary and shares the initialized owner with queued readers', async () => {
+    const data = createEmptyReaderData();
+    data.settings.fontScale = 1.2;
+    data.history[topicKey(topic)] = { topic, savedAt: at };
+    seed(data);
+    const store = await reopen();
+
+    expect(await store.loadReaderSettings()).toEqual(data.settings);
+    expect(harness.connections).toHaveLength(0);
+    expect(harness.legacy.size).toBe(2);
+    expect(inspect('SELECT count(*) AS count FROM reader_meta')).toEqual({ count: 0 });
+
+    const [state, settings, page] = await Promise.all([
+      store.loadReaderState(),
+      store.loadReaderSettings(),
+      store.queryReaderPage({ collection: 'history', sources: ['nodeseek'], source: 'all', category: 'all' })
+    ]);
+    expect(state.counts.history).toBe(1);
+    expect(settings).toEqual(data.settings);
+    expect(page.records).toMatchObject([{ topic }]);
+    expect(harness.connections).toHaveLength(1);
+    expect(harness.legacy.size).toBe(0);
+  });
+
   it.each(['settings', 'history'] as const)(
     'rejects queued and subsequent %s reads after an uncertain write and reopens committed data',
     async (kind) => {
@@ -883,6 +914,80 @@ describe('reader data storage authority', () => {
     const final = JSON.parse(await store.exportReaderDataBackup());
     expect(Object.keys(final.favorites)).toEqual(['nodeseek:1']);
     expect(Object.keys(final.history)).toEqual(['nodeseek:3']);
+  });
+
+  it.each(['complete', 'pending'] as const)(
+    'retains a verified cold backup after %s legacy cleanup and accepts later writes',
+    async (cleanup) => {
+      const incoming = createEmptyReaderData();
+      incoming.settings.fontScale = 1.3;
+      incoming.history[topicKey(topic)] = { topic, savedAt: at };
+      harness.legacy.set('reader-data', '{unreadable');
+      const storage = (await import('@react-native-async-storage/async-storage')).default;
+      if (cleanup === 'pending') vi.mocked(storage.removeMany).mockRejectedValueOnce(new Error('cleanup failed'));
+      const store = await reopen();
+
+      await expect(store.importReaderDataBackup(JSON.stringify(incoming), true)).resolves.toMatchObject({
+        settings: { fontScale: 1.3 },
+        counts: { history: 1 }
+      });
+      expect(harness.connections).toHaveLength(1);
+      expect(inspect('SELECT status FROM reader_meta')).toEqual({
+        status: cleanup === 'pending' ? 'cleanup_pending' : 'ready'
+      });
+      await store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: '2' }, at });
+      expect((await store.loadReaderState()).counts.history).toBe(2);
+      expect(await store.loadReaderSettings()).toEqual(incoming.settings);
+      const exported = await store.exportReaderDataBackup();
+      expect(harness.connections).toHaveLength(1);
+      expect(await (await reopen()).exportReaderDataBackup()).toBe(exported);
+      expect(harness.legacy.size).toBe(0);
+    }
+  );
+
+  it('rejects cold backup recovery when cleanup cannot confirm its transaction and reopens committed data', async () => {
+    const incoming = createEmptyReaderData();
+    incoming.settings.fontScale = 1.3;
+    incoming.history[topicKey(topic)] = { topic, savedAt: at };
+    harness.legacy.set('reader-data', '{unreadable');
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    vi.mocked(storage.removeMany).mockImplementationOnce(async (keys) => {
+      for (const key of keys) harness.legacy.delete(key);
+      harness.fail = ['COMMIT', 'ROLLBACK'];
+    });
+    const store = await reopen();
+
+    await expect(store.importReaderDataBackup(JSON.stringify(incoming), true)).rejects.toThrow('事务状态不明');
+    expect(harness.connections).toHaveLength(0);
+    expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'cleanup_pending' });
+    expect(harness.queries.slice(harness.queries.lastIndexOf('ROLLBACK') + 1)).toEqual([]);
+    const queries = [...harness.queries];
+    await expect(store.loadReaderSettings()).rejects.toThrow('事务状态不明');
+    await expect(store.readHistoryReplyBaseline(topicKey(topic))).rejects.toThrow('事务状态不明');
+    await expect(store.importReaderDataBackup(JSON.stringify(incoming), true)).rejects.toThrow('事务状态不明');
+    expect(harness.queries).toEqual(queries);
+
+    const next = await reopen();
+    expect((await next.loadReaderState()).settings.fontScale).toBe(1.3);
+    expect(JSON.parse(await next.exportReaderDataBackup())).toEqual(incoming);
+    expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'ready' });
+  });
+
+  it('preserves cold recovery write and connection-close failures together', async () => {
+    const incoming = createEmptyReaderData();
+    incoming.history[topicKey(topic)] = { topic, savedAt: at };
+    const closeFailure = new Error('injected close failure');
+    harness.fail = ['INSERT INTO reader_records'];
+    harness.closeFailure = closeFailure;
+    const store = await reopen();
+
+    const failure: unknown = await store.importReaderDataBackup(JSON.stringify(incoming), true).catch((error) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) throw new Error('Missing storage failure details');
+    expect(failure.errors).toHaveLength(2);
+    expect(failure.errors[0]).toMatchObject({ message: 'injected storage failure' });
+    expect(failure.errors[1]).toBe(closeFailure);
+    expect(inspect('SELECT count(*) AS count FROM reader_meta')).toEqual({ count: 0 });
   });
 
   it.each(['favorites', 'history'] as const)(

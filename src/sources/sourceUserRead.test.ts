@@ -42,6 +42,51 @@ import {
   mergeSourceDiagnosticSummaries
 } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
+describe('Yaohuo activity scan resources', () => {
+  const listUrl = 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub';
+  const row = (id: number) =>
+    `<div class="listdata"><a href="/bbs-${id}.html?classid=177">主题 ${id}</a>/火友/阅1/2026-05-20 10:00</div>`;
+  const profile = `<div class="content">昵称:火友<br/><a href="${listUrl}">贴子(1000)</a></div>`;
+
+  it.each(['initial', 'cursor'] as const)(
+    'keeps list reads within the %s activity budget and returns its continuation',
+    async (mode) => {
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/bbs/userinfo.aspx') return new Response(profile);
+        if (url.pathname !== '/bbs/book_list.aspx') throw new Error('Unexpected local fixture request ' + input);
+        const page = Number(url.searchParams.get('page') || '1');
+        return new Response(row(100 + page) + `<a href="${listUrl}&page=${page + 1}">下一页</a>`);
+      });
+      const result = await getUserTopics({
+        source: 'yaohuo',
+        profile: yaohuoCursorUser,
+        fetcher,
+        ...(mode === 'cursor' ? { cursor: listUrl + '&page=7' } : {})
+      });
+      const listCalls = fetcher.mock.calls.filter(([url]) => new URL(url).pathname === '/bbs/book_list.aspx');
+      expect(listCalls).toHaveLength(mode === 'initial' ? 10 : 1);
+      expect(result.topics).toHaveLength(mode === 'initial' ? 10 : 1);
+      expect(result.hasMoreTopics).toBe(true);
+      expect(new URL(result.nextTopicsCursor!).searchParams.get('page')).toBe(mode === 'initial' ? '11' : '8');
+    }
+  );
+
+  it('deduplicates repeated topics and stops when a resolved page returns to a visited continuation', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (new URL(input).pathname === '/bbs/userinfo.aspx') return new Response(profile);
+      const response = new Response(row(101) + `<a href="${listUrl}&page=2">下一页</a>`);
+      Object.defineProperty(response, 'url', { value: listUrl });
+      return response;
+    });
+    const result = await getUserTopics({ source: 'yaohuo', profile: yaohuoCursorUser, fetcher });
+    expect(result.topics.map((topic) => topic.id)).toEqual(['101']);
+    expect(fetcher.mock.calls.filter(([url]) => new URL(url).pathname === '/bbs/book_list.aspx')).toHaveLength(2);
+    expect(sourceDiagnosticSummary(result)).toMatchObject({ hasRepeatedCursor: true });
+    expect(result.nextTopicsCursor).toBe(listUrl + '&page=2');
+  });
+});
+
 describe('source user read', () => {
   it.each([8, 0, undefined])(
     'reads LinuxDo post_count as replies without subtracting topics (%s)',

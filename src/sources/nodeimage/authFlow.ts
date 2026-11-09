@@ -3,36 +3,67 @@ import type { NodeImageAuthPayload } from '@/platform/network/loginWebViewScript
 import { nodeImageApiKeyFromResponse } from './upload';
 
 export type NodeImageAuthPhase = 'nodeimage-session' | 'nodeseek-cauth' | 'nodeimage-verify';
+export type NodeImageAuthOwner = Readonly<{ identityKey: string; sessionEpoch: number }>;
+export type NodeImageAuthState =
+  | { phase: 'nodeimage-session' }
+  | { phase: 'nodeseek-cauth'; connect: 'awaiting-ready' | 'started' }
+  | { phase: 'nodeimage-verify'; payload: NodeImageAuthPayload }
+  | { phase: 'terminal' };
+export type NodeImageAuthFlow = {
+  credentialGeneration: number;
+  nonce: string;
+  owner: NodeImageAuthOwner;
+  state: NodeImageAuthState;
+};
+
+export function createNodeImageAuthResult() {
+  let resolve: (apiKey: string | null) => void = () => {
+    throw new Error('Authorization result is not initialized');
+  };
+  let reject: (error: unknown) => void = () => {
+    throw new Error('Authorization result is not initialized');
+  };
+  const promise = new Promise<string | null>((complete, fail) => {
+    resolve = complete;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+export type NodeImageAuthOpeningState =
+  { phase: 'idle' } | { phase: 'pending'; result: ReturnType<typeof createNodeImageAuthResult> };
 
 const NODEIMAGE_NONCE_BYTES = 16;
 
-export function cancelNodeImageAuthOpening(slot: { current: Promise<string | null> | null }) {
-  slot.current = null;
+export function cancelNodeImageAuthOpening(slot: { current: NodeImageAuthOpeningState }) {
+  slot.current = { phase: 'idle' };
 }
 
 export function runNodeImageAuthSingleFlight(
-  slot: { current: Promise<string | null> | null },
+  slot: { current: NodeImageAuthOpeningState },
   initialize: (isCurrent: () => boolean) => Promise<string | null>
 ) {
-  if (slot.current) {
-    return slot.current;
+  if (slot.current.phase === 'pending') {
+    return slot.current.result.promise;
   }
-  let opening!: Promise<string | null>;
-  opening = (async () => {
+  const opening: NodeImageAuthOpeningState = { phase: 'pending', result: createNodeImageAuthResult() };
+  slot.current = opening;
+  void (async () => {
     try {
-      return await initialize(() => slot.current === opening);
+      opening.result.resolve(await initialize(() => slot.current === opening));
+    } catch (error) {
+      opening.result.reject(error);
     } finally {
       if (slot.current === opening) {
-        slot.current = null;
+        slot.current = { phase: 'idle' };
       }
     }
   })();
-  slot.current = opening;
-  return opening;
+  return opening.result.promise;
 }
 
 export function runNodeImageAuthOpening(
-  slot: { current: Promise<string | null> | null },
+  slot: { current: NodeImageAuthOpeningState },
   {
     createNonce,
     onError,
@@ -58,7 +89,7 @@ export function runNodeImageAuthOpening(
 }
 
 export function closeNodeImageAuthOpening(
-  slot: { current: Promise<string | null> | null },
+  slot: { current: NodeImageAuthOpeningState },
   finish: () => void | Promise<void>
 ) {
   cancelNodeImageAuthOpening(slot);
@@ -106,12 +137,7 @@ export function nodeImageAuthBridgeEvidenceMatchesPhase(
 }
 
 export function nodeImageAuthFlowCanAcceptMessage(
-  flow: {
-    credentialGeneration: number;
-    ownerIdentityKey: string | null;
-    ownerSessionEpoch: number | null;
-    terminal: boolean;
-  },
+  flow: Pick<NodeImageAuthFlow, 'credentialGeneration' | 'owner' | 'state'>,
   runtime: {
     identityKey: string;
     identityTrust: string;
@@ -120,43 +146,32 @@ export function nodeImageAuthFlowCanAcceptMessage(
   credentialGeneration: number
 ) {
   return (
-    !flow.terminal &&
-    Boolean(flow.ownerIdentityKey) &&
-    flow.ownerSessionEpoch !== null &&
+    flow.state.phase !== 'terminal' &&
     runtime.identityTrust === 'confirmed' &&
-    runtime.identityKey === flow.ownerIdentityKey &&
-    runtime.sessionEpoch === flow.ownerSessionEpoch &&
+    runtime.identityKey === flow.owner.identityKey &&
+    runtime.sessionEpoch === flow.owner.sessionEpoch &&
     credentialGeneration === flow.credentialGeneration
   );
 }
 
-export function terminateNodeImageAuthFlow(flow: { terminal: boolean }) {
-  if (flow.terminal) {
+export function terminateNodeImageAuthFlow(flow: Pick<NodeImageAuthFlow, 'state'>) {
+  if (flow.state.phase === 'terminal') {
     return false;
   }
-  flow.terminal = true;
+  flow.state = { phase: 'terminal' };
   return true;
 }
 
-export function claimNodeImageConnectAttempt(flow: { connectStarted: boolean }) {
-  if (flow.connectStarted) {
+export function claimNodeImageConnectAttempt(flow: Pick<NodeImageAuthFlow, 'state'>) {
+  if (flow.state.phase !== 'nodeseek-cauth' || flow.state.connect !== 'awaiting-ready') {
     return false;
   }
-  flow.connectStarted = true;
+  flow.state = { phase: 'nodeseek-cauth', connect: 'started' };
   return true;
 }
 
 export async function processNodeImageAuthMessage(
-  flow: {
-    connectStarted: boolean;
-    credentialGeneration: number;
-    nonce: string;
-    ownerIdentityKey: string | null;
-    ownerSessionEpoch: number | null;
-    payload: NodeImageAuthPayload | null;
-    phase: NodeImageAuthPhase;
-    terminal: boolean;
-  },
+  flow: NodeImageAuthFlow,
   message: { data: string; sourceUrl: string },
   runtime: {
     identityKey: string;
@@ -172,7 +187,7 @@ export async function processNodeImageAuthMessage(
     mountCurrentPhase: () => void;
   }
 ) {
-  if (flow.terminal) {
+  if (flow.state.phase === 'terminal') {
     return;
   }
   const fail = (error: string) => {
@@ -193,14 +208,14 @@ export async function processNodeImageAuthMessage(
   if (data.nonce !== flow.nonce) {
     return;
   }
-  if (!nodeImageAuthBridgeEvidenceMatchesPhase(flow.phase, message.sourceUrl, String(data.documentUrl || ''))) {
+  if (!nodeImageAuthBridgeEvidenceMatchesPhase(flow.state.phase, message.sourceUrl, String(data.documentUrl || ''))) {
     return;
   }
   const messageType = String(data.type || '');
   const expectedMessage =
-    flow.phase === 'nodeimage-session'
+    flow.state.phase === 'nodeimage-session'
       ? ['nodeimage-session-key', 'nodeimage-session-expired', 'nodeimage-session-error'].includes(messageType)
-      : flow.phase === 'nodeseek-cauth'
+      : flow.state.phase === 'nodeseek-cauth'
         ? ['nodeimage-connect-ready', 'nodeimage-auth-data', 'nodeimage-auth-error'].includes(messageType)
         : messageType === 'nodeimage-api-key';
   if (!expectedMessage) {
@@ -210,7 +225,7 @@ export async function processNodeImageAuthMessage(
     fail('NodeSeek 身份、会话或 NodeImage 凭据已变化，请关闭后重试。');
     return;
   }
-  if (flow.phase === 'nodeimage-session') {
+  if (flow.state.phase === 'nodeimage-session') {
     if (messageType === 'nodeimage-session-key') {
       const apiKey = nodeImageApiKeyFromResponse(data);
       if (!apiKey) {
@@ -228,12 +243,12 @@ export async function processNodeImageAuthMessage(
         fail('NodeImage 登录态返回了未识别的失效结果，请关闭后重试。');
         return;
       }
-      const nextPhase = nextNodeImageAuthPhase(flow.phase, messageType);
-      if (!nextPhase) {
+      const nextPhase = nextNodeImageAuthPhase(flow.state.phase, messageType);
+      if (nextPhase !== 'nodeseek-cauth') {
         return;
       }
       effects.mark('session-expired');
-      flow.phase = nextPhase;
+      flow.state = { phase: nextPhase, connect: 'awaiting-ready' };
       effects.mountCurrentPhase();
       return;
     }
@@ -242,7 +257,7 @@ export async function processNodeImageAuthMessage(
     }
     return;
   }
-  if (flow.phase === 'nodeseek-cauth') {
+  if (flow.state.phase === 'nodeseek-cauth') {
     if (messageType === 'nodeimage-connect-ready') {
       if (!effects.connectTarget || !claimNodeImageConnectAttempt(flow)) {
         return;
@@ -256,7 +271,7 @@ export async function processNodeImageAuthMessage(
       );
       return;
     }
-    if (!flow.connectStarted) {
+    if (flow.state.connect !== 'started') {
       return;
     }
     if (messageType === 'nodeimage-auth-error') {
@@ -275,17 +290,16 @@ export async function processNodeImageAuthMessage(
       fail('NodeSeek Connect 返回缺少必要信息。');
       return;
     }
-    const nextPhase = nextNodeImageAuthPhase(flow.phase, messageType);
-    if (!nextPhase) {
+    const nextPhase = nextNodeImageAuthPhase(flow.state.phase, messageType);
+    if (nextPhase !== 'nodeimage-verify') {
       return;
     }
-    flow.payload = payload;
-    flow.phase = nextPhase;
+    flow.state = { phase: nextPhase, payload };
     effects.mark('connect-finished');
     effects.mountCurrentPhase();
     return;
   }
-  if (messageType !== 'nodeimage-api-key' || !flow.payload) {
+  if (messageType !== 'nodeimage-api-key') {
     return;
   }
   const apiKey = nodeImageApiKeyFromResponse(data);

@@ -257,6 +257,28 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   startNext();
 }
 
+export function retireBrowserFetchRequests<T extends BrowserFetchQueueRequest>({
+  currentRef,
+  queueRef,
+  webViewRef
+}: {
+  currentRef: MutableRef<T | null>;
+  queueRef: MutableRef<T[]>;
+  webViewRef: WebViewStopRef;
+}) {
+  const current = currentRef.current;
+  const requests = current ? [current, ...queueRef.current] : queueRef.current;
+  currentRef.current = null;
+  queueRef.current = [];
+  try {
+    if (current) webViewRef.current?.stopLoading();
+  } finally {
+    for (const request of requests) {
+      settleBrowserFetchRequestOnce(request, () => request.reject(new Error('请求已取消')));
+    }
+  }
+}
+
 function browserFetchPriorityRank(intent: BrowserFetchIntent | undefined) {
   if (intent?.priority === 'write') {
     return 3;

@@ -608,3 +608,47 @@ describe('Yaohuo notifications', () => {
     ).rejects.toThrow('妖火消息对应的正文未找到');
   });
 });
+
+describe('Yaohuo unread snapshot scan', () => {
+  it('finishes a legitimate long read-only history without treating 60 unread items as a raw page budget', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(new URL(input).searchParams.get('page'));
+      return html(
+        messageListRow({ id: String(page), unread: page === 65 }) + `<div class="showpage">${page}/65 页</div>`
+      );
+    });
+    const result = await yaohuoNotificationAdapter.readUnreadSnapshot({
+      fetcher,
+      identityKey: 'yaohuo:7',
+      userId: '7'
+    });
+    expect(result.total).toBe(1);
+    expect(fetcher).toHaveBeenCalledTimes(65);
+  });
+
+  it('rejects repeated unread cursors before reporting an exact total', async () => {
+    const fetcher = vi.fn(async () => html(messageListRow({ unread: true }) + '<div class="showpage">1/2 页</div>'));
+    await expect(
+      yaohuoNotificationAdapter.readUnreadSnapshot({ fetcher, identityKey: 'yaohuo:7', userId: '7' })
+    ).rejects.toThrow('妖火消息分页格式不正确');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a long unread scan at the caller signal without publishing a partial total', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(new URL(input).searchParams.get('page'));
+      if (page === 3) controller.abort();
+      return html(messageListRow({ id: String(page) }) + `<div class="showpage">${page}/65 页</div>`);
+    });
+    await expect(
+      yaohuoNotificationAdapter.readUnreadSnapshot({
+        fetcher,
+        identityKey: 'yaohuo:7',
+        userId: '7',
+        signal: controller.signal
+      })
+    ).rejects.toMatchObject({ name: 'RequestCanceledError' });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+});

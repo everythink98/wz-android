@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import { JSDOM } from 'jsdom';
 import {
   assertComposerExpressionGeometry,
   assertComposerExpressionInsets
 } from '../../scripts/composer-expression-geometry.mjs';
 import {
+  connectComposerImeDom,
   assertComposerClosed,
   openComposerFixture,
   assertComposerFullscreen,
@@ -687,4 +688,291 @@ describe('composer device evidence', () => {
       )
     ).toThrow();
   });
+});
+
+async function withComposerDomConnection(
+  run: (fixture: {
+    dom: Awaited<ReturnType<typeof connectComposerImeDom>>;
+    socket: FakeComposerSocket;
+    adb: Mock<(...args: string[]) => string>;
+    pending: Promise<unknown>[];
+  }) => Promise<void>,
+  configure?: (socket: FakeComposerSocket) => void
+) {
+  vi.useFakeTimers();
+  const sockets: FakeComposerSocket[] = [];
+  const pending: Promise<unknown>[] = [];
+  const adb = vi.fn((...args: string[]) => {
+    if (args.includes('pidof')) return '1212';
+    if (args[0] === 'forward' && args[1] === 'tcp:0') return '37001';
+    if (args[0] === 'forward' && args[1] === '--remove') {
+      return '';
+    }
+    throw new Error(`Unexpected fake adb: ${args.join(' ')}`);
+  });
+  const initialAdb = adb.getMockImplementation();
+  class ConnectionSocket extends FakeComposerSocket {
+    constructor() {
+      super();
+      sockets.push(this);
+      configure?.(this);
+      void Promise.resolve().then(() => this.dispatchEvent(new Event('open')));
+    }
+  }
+  vi.stubGlobal('WebSocket', ConnectionSocket);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => Response.json([{ type: 'page', webSocketDebuggerUrl: 'ws://fake.invalid' }]))
+  );
+  let dom: Awaited<ReturnType<typeof connectComposerImeDom>> | undefined;
+  try {
+    dom = await connectComposerImeDom(adb);
+    const socket = sockets[0];
+    if (!socket) throw new Error('No actual connection socket created');
+    await run({ dom, socket, adb, pending });
+  } finally {
+    try {
+      if (initialAdb) adb.mockImplementation(initialAdb);
+      for (const socket of sockets) {
+        socket.sendFailure = undefined;
+        socket.closeFailure = undefined;
+      }
+      try {
+        dom?.close();
+      } finally {
+        await vi.advanceTimersByTimeAsync(5000);
+        await Promise.allSettled(pending);
+      }
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  }
+}
+
+class FakeComposerSocket extends EventTarget {
+  initial = true;
+  sendFailure: Error | undefined;
+  closeFailure: Error | undefined;
+  requests: number[] = [];
+  send = vi.fn((raw: string) => {
+    if (this.sendFailure) throw this.sendFailure;
+    const { id } = JSON.parse(raw);
+    this.requests.push(id);
+    if (this.initial) {
+      this.initial = false;
+      void Promise.resolve().then(() =>
+        this.reply(id, { baseURI: 'https://composer.local/', editors: [{ className: 'ProseMirror' }] })
+      );
+    }
+  });
+  close = vi.fn(() => {
+    if (this.closeFailure) throw this.closeFailure;
+    this.dispatchEvent(new Event('close'));
+  });
+  reply(id: number, value: unknown) {
+    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id, result: { result: { value } } }) }));
+  }
+}
+
+it('retires a failed synchronous send timer and response listener', async () => {
+  await withComposerDomConnection(async ({ dom, socket }) => {
+    const failure = new Error('controlled send failure');
+    const remove = vi.spyOn(socket, 'removeEventListener');
+    socket.sendFailure = failure;
+    await expect(dom.evaluate('failed')).rejects.toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(remove.mock.calls.filter(([event]) => event === 'message')).toHaveLength(1);
+  });
+});
+
+it('settles an owned pending RPC when the connection is closed', async () => {
+  await withComposerDomConnection(async ({ dom, pending }) => {
+    let outcome = 'pending';
+    const waiting = dom.evaluate('pending').then(
+      () => {
+        outcome = 'resolved';
+      },
+      () => {
+        outcome = 'rejected';
+      }
+    );
+    pending.push(waiting);
+    dom.close();
+    await Promise.resolve();
+    expect(outcome).toBe('rejected');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+it('consumes the owned port cleanup once across repeated close', async () => {
+  await withComposerDomConnection(async ({ dom, adb }) => {
+    dom.close();
+    dom.close();
+    expect(adb.mock.calls.filter((args) => args[0] === 'forward' && args[1] === '--remove')).toHaveLength(1);
+  });
+});
+
+it('still removes the owned port when socket close throws', async () => {
+  await withComposerDomConnection(async ({ dom, socket, adb }) => {
+    const failure = new Error('controlled socket close failure');
+    socket.closeFailure = failure;
+    expect(() => dom.close()).toThrow(failure);
+    expect(adb.mock.calls.filter((args) => args[0] === 'forward' && args[1] === '--remove')).toHaveLength(1);
+  });
+});
+
+it('keeps concurrent RPC identity and the existing request deadline', async () => {
+  await withComposerDomConnection(async ({ dom, socket, pending }) => {
+    const a = dom.evaluate('a');
+    const b = dom.evaluate('b');
+    socket.reply(socket.requests[2], 'b-result');
+    socket.reply(socket.requests[1], 'a-result');
+    expect(await Promise.all([a, b])).toEqual(['a-result', 'b-result']);
+    expect(vi.getTimerCount()).toBe(0);
+    const expired = expect(dom.evaluate('expired')).rejects.toThrow('Composer DOM capture timed out');
+    pending.push(expired);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expired;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+it.each(['close', 'error'])('settles all owned RPCs after a native socket %s event', async (event) => {
+  await withComposerDomConnection(async ({ dom, socket, pending }) => {
+    const outcomes = ['pending', 'pending'];
+    for (const index of [0, 1]) {
+      pending.push(
+        dom.evaluate(String(index)).then(
+          () => {
+            outcomes[index] = 'resolved';
+          },
+          () => {
+            outcomes[index] = 'rejected';
+          }
+        )
+      );
+    }
+    socket.dispatchEvent(new Event(event));
+    await Promise.resolve();
+    expect(outcomes).toEqual(['rejected', 'rejected']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+it('rejects a retired connection before allocating another RPC or timer', async () => {
+  await withComposerDomConnection(async ({ dom, socket, pending }) => {
+    dom.close();
+    const rejected = expect(dom.evaluate('retired')).rejects.toThrow('Composer DOM connection closed');
+    pending.push(rejected);
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await rejected;
+  });
+});
+
+it('retries only the unconfirmed port cleanup after a successful socket close', async () => {
+  await withComposerDomConnection(async ({ dom, socket, adb }) => {
+    const original = adb.getMockImplementation();
+    if (!original) throw new Error('Missing fake adb');
+    const failure = new Error('controlled port removal failure');
+    adb.mockImplementation((...args) => {
+      if (args[0] === 'forward' && args[1] === '--remove') throw failure;
+      return original(...args);
+    });
+    let caught: unknown;
+    try {
+      dom.close();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(failure);
+    adb.mockImplementation(original);
+    dom.close();
+    expect(socket.close).toHaveBeenCalledTimes(1);
+    expect(adb.mock.calls.filter((args) => args[0] === 'forward' && args[1] === '--remove')).toHaveLength(2);
+  });
+});
+
+it('preserves both socket and port cleanup failures', async () => {
+  await withComposerDomConnection(async ({ dom, socket, adb }) => {
+    const original = adb.getMockImplementation();
+    if (!original) throw new Error('Missing fake adb');
+    const socketFailure = new Error('controlled socket cleanup');
+    const portFailure = new Error('controlled port cleanup');
+    socket.closeFailure = socketFailure;
+    adb.mockImplementation((...args) => {
+      if (args[0] === 'forward' && args[1] === '--remove') throw portFailure;
+      return original(...args);
+    });
+    try {
+      let caught: unknown;
+      try {
+        dom.close();
+      } catch (error) {
+        caught = error;
+      }
+      if (!(caught instanceof AggregateError)) throw new Error('Missing compound cleanup failure');
+      expect(caught.errors).toHaveLength(2);
+      expect(caught.errors[0]).toBe(socketFailure);
+      expect(caught.errors[1]).toBe(portFailure);
+    } finally {
+      socket.closeFailure = undefined;
+      adb.mockImplementation(original);
+    }
+  });
+});
+
+it('preserves the original connection failure when cleanup also fails', async () => {
+  const original = new Error('controlled initial capture send');
+  const cleanup = new Error('controlled initial capture close');
+  let caught: unknown;
+  try {
+    await withComposerDomConnection(
+      async () => {
+        throw new Error('Connection must not succeed');
+      },
+      (socket) => {
+        socket.sendFailure = original;
+        socket.closeFailure = cleanup;
+      }
+    );
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof AggregateError)) throw new Error('Missing connection and cleanup causes');
+  expect(caught.errors).toHaveLength(2);
+  expect(caught.errors[0]).toBe(original);
+  expect(caught.errors[1]).toBe(cleanup);
+});
+
+it('retires completed RPC cancellation callbacks before closing the connection', async () => {
+  await withComposerDomConnection(async ({ dom, socket }) => {
+    const remove = vi.spyOn(socket, 'removeEventListener');
+    for (let index = 0; index < 25; index++) {
+      const reply = dom.evaluate(String(index));
+      socket.reply(socket.requests[socket.requests.length - 1], index);
+      expect(await reply).toBe(index);
+    }
+    const removed = () => remove.mock.calls.filter(([event]) => event === 'message').length;
+    expect(removed()).toBe(25);
+    dom.close();
+    expect(removed()).toBe(25);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+it('retires the opening wait when a native connection error precedes open', async () => {
+  await expect(
+    withComposerDomConnection(
+      async () => {
+        throw new Error('Connection must not succeed');
+      },
+      (socket) => {
+        void Promise.resolve().then(() => socket.dispatchEvent(new Event('error')));
+      }
+    )
+  ).rejects.toThrow('Composer DOM connection failed');
 });

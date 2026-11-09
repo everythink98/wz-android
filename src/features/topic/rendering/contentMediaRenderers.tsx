@@ -1,5 +1,5 @@
 import { ActivityIndicator } from 'react-native-paper';
-import { useEffect, useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { CustomBlockRenderer } from 'react-native-render-html';
@@ -69,18 +69,49 @@ function ForumVideoStickerWebView({
     kind: 'video',
     requestIdentity
   });
-  const [ready, setReady] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
-  useEffect(() => {
-    setReady(false);
-    setLoadFailed(Boolean(lease.failure));
-  }, [lease.attemptId, lease.failure]);
-  const fail = () => {
-    lease.settle('error');
-    setReady(false);
-    if (lease.attemptId === 'unmanaged') setLoadFailed(true);
+  if (!lease.admitted) return <View pointerEvents="none" style={embedStyles.stickerVideoFill} />;
+  return (
+    <ForumVideoStickerDocument
+      key={`${requestIdentity}:${lease.attemptId}`}
+      document={document}
+      lease={lease}
+      loadingColor={loadingColor}
+      nodeSeekUserAgent={nodeSeekUserAgent}
+    />
+  );
+}
+
+function ForumVideoStickerDocument({
+  document,
+  lease,
+  loadingColor,
+  nodeSeekUserAgent
+}: {
+  document: NonNullable<ReturnType<typeof videoStickerBrowserDocument>>;
+  lease: ReturnType<typeof useTopicBodyMediaLease>;
+  loadingColor: string;
+  nodeSeekUserAgent?: string;
+}) {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const currentStatus = useRef(status);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const isCurrent = () => mounted.current && currentStatus.current !== 'failed';
+  const publish = (next: typeof status) => {
+    currentStatus.current = next;
+    setStatus(next);
   };
-  if (!lease.admitted || loadFailed) {
+  const fail = () => {
+    if (!isCurrent()) return;
+    lease.settle('error');
+    publish('failed');
+  };
+  if (status === 'failed') {
     return <View pointerEvents="none" style={embedStyles.stickerVideoFill} />;
   }
   return (
@@ -102,14 +133,16 @@ function ForumVideoStickerWebView({
         onContentProcessDidTerminate={fail}
         onError={fail}
         onHttpError={fail}
-        onLoadProgress={(event) => lease.progress(event.nativeEvent.progress)}
+        onLoadProgress={(event) => {
+          if (isCurrent()) lease.progress(event.nativeEvent.progress);
+        }}
         onMessage={(event) => {
+          if (!isCurrent()) return;
           if (event.nativeEvent.data.startsWith(`${VIDEO_STICKER_PROGRESS_MESSAGE}:`)) {
             lease.progress(Number(event.nativeEvent.data.slice(VIDEO_STICKER_PROGRESS_MESSAGE.length + 1)));
           } else if (event.nativeEvent.data === VIDEO_STICKER_READY_MESSAGE) {
             lease.settle('displayed');
-            setReady(true);
-            setLoadFailed(false);
+            publish('ready');
           } else if (event.nativeEvent.data === VIDEO_STICKER_ERROR_MESSAGE) {
             fail();
           }
@@ -126,12 +159,12 @@ function ForumVideoStickerWebView({
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
         source={document.source}
-        style={[embedStyles.stickerVideoFill, embedStyles.transparentWebView, { opacity: ready ? 1 : 0 }]}
+        style={[embedStyles.stickerVideoFill, embedStyles.transparentWebView, { opacity: status === 'ready' ? 1 : 0 }]}
         thirdPartyCookiesEnabled={false}
         userAgent={nodeSeekUserAgent}
         testID={`topic-video-sticker-${lease.attemptId}`}
       />
-      {!ready && !loadFailed ? (
+      {status === 'loading' ? (
         <View style={embedStyles.stickerVideoLoading}>
           <ActivityIndicator color={loadingColor} size="small" />
         </View>

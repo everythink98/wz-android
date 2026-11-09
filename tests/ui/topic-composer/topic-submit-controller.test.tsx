@@ -1212,3 +1212,48 @@ describe('创建主题发布控制器', () => {
     expect(await loadTopicDraft('nodeseek', siteSessionIdentityKey(test.runtime.sessions.nodeseek))).not.toBeNull();
   });
 });
+
+it('keeps a child poll dispatch separate from an unsent main-topic edit and retains its unknown journal', async () => {
+  const test = await setup('nodeseek', true);
+  try {
+    await waitFor(() => expect(test.result.current.editContext?.source).toBe('nodeseek'));
+    const poll = normalizePendingNodeSeekPoll({
+      localId: 'edit-child-poll-proof',
+      title: '未确认编辑投票',
+      multiple: false,
+      isPublic: true,
+      options: ['A', 'B']
+    });
+    await act(() =>
+      test.result.current.change((draft) => ({
+        ...draft,
+        body: nodeSeekPendingPollToken(poll.localId),
+        pendingNodeSeekPolls: [poll]
+      }))
+    );
+    test.editTransport.respond((path) => {
+      if (path === '/api/vote/info') throw new Error('connection lost after edit child poll dispatch');
+      return undefined;
+    });
+    await act(async () => {
+      await test.result.current.submit();
+    });
+    const firstStatus = test.result.current.attempt?.status;
+    const identity = siteSessionIdentityKey(test.runtime.sessions.nodeseek);
+    const db = mockDatabases.get('composer-journal.db');
+    const rows =
+      db
+        ?.prepare('SELECT local_id, remote_id FROM nodeseek_poll_journal WHERE identity_key = ? AND local_id = ?')
+        .all(identity, poll.localId) ?? [];
+    await act(async () => {
+      await test.result.current.submit();
+    });
+    expect(test.posts()).toHaveLength(1);
+    expect(test.posts()[0]?.[0]).toBe('https://www.nodeseek.com/api/vote/info');
+    expect(firstStatus).toBe('rejected');
+    expect(rows).toEqual([{ local_id: poll.localId, remote_id: null }]);
+    expect(test.result.current.error).toContain('上次创建结果未知');
+  } finally {
+    test.unmount();
+  }
+});

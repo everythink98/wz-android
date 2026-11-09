@@ -3,7 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { sanitizeLinuxDoContentHtml } from './parser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
-import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic } from './reader';
+import type { Fetcher } from '@/platform/network/request';
+import {
+  categoryMapForTopics,
+  getLinuxDoCategories,
+  getLinuxDoFeed,
+  getLinuxDoReplies,
+  getLinuxDoReply,
+  getLinuxDoTopic
+} from './reader';
 
 function topic(index: number) {
   return {
@@ -434,5 +442,149 @@ describe('linux.do reader', () => {
     expect(accountA.items[0]?.name).toBe('Account A');
     expect(accountB.items[0]?.name).toBe('Account B');
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('linux.do catalog ownership', () => {
+  const catalog = (name: string) => ({ categories: [{ id: 5, name, slug: 'catalog' }] });
+
+  it.each([null, false])('does not retain a falsy catalog document (%s) as a successful cache entry', async (data) => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(jsonResponse(data))
+      .mockResolvedValue(jsonResponse(catalog('retry')));
+    const options = { fetcher, linuxDoAccess: { categoryCacheScope: `falsy-document:${data}` } };
+    await getLinuxDoCategories(options).catch(() => undefined);
+    expect((await getLinuxDoCategories(options)).items[0]?.name).toBe('retry');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'keeps the newer A request when the old A request %s after a scope round trip',
+    async (outcome) => {
+      const pending = Array.from({ length: 3 }, () => Promise.withResolvers<Response>());
+      let request = 0;
+      const fetcher = vi.fn<Fetcher>(() => pending[request++]!.promise);
+      const read = (scope: string) => getLinuxDoCategories({ fetcher, linuxDoAccess: { categoryCacheScope: scope } });
+      const scopeA = `round-trip:${outcome}:A`;
+      const oldA = read(scopeA).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      const oldB = read(`round-trip:${outcome}:B`);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      const currentA = read(scopeA);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+      const anotherA = read(` ${scopeA} `);
+      try {
+        if (outcome === 'resolve') pending[0]!.resolve(jsonResponse(catalog('old A')));
+        else pending[0]!.reject(new Error('old A failed'));
+        await oldA;
+        pending[1]!.resolve(jsonResponse(catalog('old B')));
+        await oldB;
+        const lastA = read(scopeA);
+        pending[2]!.resolve(jsonResponse(catalog('current A')));
+        const results = await Promise.all([currentA, anotherA, lastA]);
+        expect(results.map((result) => result.items[0]?.name)).toEqual(['current A', 'current A', 'current A']);
+        expect((await read(scopeA)).items[0]?.name).toBe('current A');
+        expect(fetcher).toHaveBeenCalledTimes(3);
+      } finally {
+        for (const request of pending) request.resolve(jsonResponse(catalog('cleanup')));
+        await Promise.allSettled([oldA, oldB, currentA, anotherA]);
+      }
+    }
+  );
+
+  it('lets one category waiter cancel without aborting the shared request or the remaining waiter', async () => {
+    const pending = Promise.withResolvers<Response>();
+    const fetcher = vi.fn<Fetcher>(async () => pending.promise);
+    const first = new AbortController();
+    const options = { fetcher, linuxDoAccess: { categoryCacheScope: 'waiter-cancel' } };
+    const canceled = getLinuxDoCategories({ ...options, signal: first.signal });
+    const rejected = expect(canceled).rejects.toThrow('请求已取消');
+    const survivor = getLinuxDoCategories({ ...options, signal: new AbortController().signal });
+    try {
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      first.abort();
+      await rejected;
+      expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(false);
+      pending.resolve(jsonResponse(catalog('survived')));
+      expect((await survivor).items[0]?.name).toBe('survived');
+      expect((await getLinuxDoCategories(options)).items[0]?.name).toBe('survived');
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      pending.resolve(jsonResponse(catalog('cleanup')));
+      await Promise.allSettled([canceled, survivor]);
+    }
+  });
+
+  it('releases a failed shared category request so a later call can retry and cache its success', async () => {
+    const pending = Promise.withResolvers<Response>();
+    const failure = new Error('catalog unavailable');
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValue(jsonResponse(catalog('retry')));
+    const options = { fetcher, linuxDoAccess: { categoryCacheScope: 'failed-shared' } };
+    const first = getLinuxDoCategories(options);
+    const second = getLinuxDoCategories(options);
+    const rejected = Promise.all([expect(first).rejects.toBe(failure), expect(second).rejects.toBe(failure)]);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    pending.reject(failure);
+    await rejected;
+    await expect(getLinuxDoCategories(options)).resolves.toMatchObject({ items: [{ name: 'retry' }] });
+    await expect(getLinuxDoCategories(options)).resolves.toMatchObject({ items: [{ name: 'retry' }] });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse a scoped catalog for null or whitespace scopes', async () => {
+    let request = 0;
+    const fetcher = vi.fn<Fetcher>().mockImplementation(async () => jsonResponse(catalog(`request ${++request}`)));
+    await getLinuxDoCategories({ fetcher, linuxDoAccess: { categoryCacheScope: 'private-catalog' } });
+    expect((await getLinuxDoCategories({ fetcher })).items[0]?.name).toBe('request 2');
+    expect((await getLinuxDoCategories({ fetcher, linuxDoAccess: { categoryCacheScope: '  ' } })).items[0]?.name).toBe(
+      'request 3'
+    );
+    expect(
+      (await getLinuxDoCategories({ fetcher, linuxDoAccess: { categoryCacheScope: 'private-catalog' } })).items[0]?.name
+    ).toBe('request 4');
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps inline category metadata ahead of caller metadata and a ready cached catalog', async () => {
+    const fetcher = vi.fn<Fetcher>(async () => jsonResponse(catalog('cached')));
+    const options = { fetcher, linuxDoAccess: { categoryCacheScope: 'map-precedence' } };
+    await getLinuxDoCategories(options);
+    const supplied = new Map([['5', { name: 'supplied' }]]);
+    expect((await categoryMapForTopics({}, [{ category_id: 5 }], supplied, options)).get('5')?.name).toBe('supplied');
+    expect(
+      (await categoryMapForTopics(catalog('inline'), [{ category_id: 5 }], supplied, options)).get('5')?.name
+    ).toBe('inline');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('linux.do successful emoji cache', () => {
+  it('retries a failed emoji request and then reuses the exact successful map', async () => {
+    vi.resetModules();
+    const { getLinuxDoEmojiUrls } = await import('./reader');
+    const failure = new Error('emoji unavailable');
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(jsonResponse({ standard: [{ name: 'heart', url: '/heart.png' }] }));
+    await expect(getLinuxDoEmojiUrls({ fetcher })).rejects.toBe(failure);
+    const result = await getLinuxDoEmojiUrls({ fetcher });
+    expect(result).toEqual({ heart: 'https://linux.do/heart.png' });
+    await expect(getLinuxDoEmojiUrls({ fetcher })).resolves.toBe(result);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches an empty successful emoji map without treating it as a failed request', async () => {
+    vi.resetModules();
+    const { getLinuxDoEmojiUrls } = await import('./reader');
+    const fetcher = vi.fn<Fetcher>(async () => jsonResponse({}));
+    const result = await getLinuxDoEmojiUrls({ fetcher });
+    expect(result).toEqual({});
+    expect(await getLinuxDoEmojiUrls({ fetcher })).toBe(result);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

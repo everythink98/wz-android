@@ -89,7 +89,7 @@ async function linuxDoCsrfToken(options: LinuxDoOptions) {
 async function topicsFromLinuxDoSearchData(
   data: Record<string, unknown>,
   options: LinuxDoOptions
-): Promise<{ items: Topic[]; hasMore: boolean }> {
+): Promise<{ items: Topic[]; rawItems: (Topic | null)[]; hasMore: boolean }> {
   const users = discourseUsersById(data.users);
   const postsByTopicId = new Map<string, Record<string, unknown>>();
   if (Array.isArray(data.posts)) {
@@ -97,25 +97,25 @@ async function topicsFromLinuxDoSearchData(
   }
   const topics = Array.isArray(data.topics) ? data.topics : [];
   const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
-  const items = topics
-    .map((topic) => {
-      const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
-      const authorData =
-        (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined) ||
-        (Number(post?.post_number) === 1 ? post : undefined);
-      const author = String(authorData?.username || '').trim();
-      const normalized = normalizeTopic(topic, categoryMap, author || null, authorData);
-      return normalized
-        ? {
-            ...normalized,
-            excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || normalized.excerpt || ''))
-          }
-        : null;
-    })
-    .filter(Boolean) as Topic[];
+  const rawItems: (Topic | null)[] = topics.map((topic) => {
+    const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
+    const authorData =
+      (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined) ||
+      (Number(post?.post_number) === 1 ? post : undefined);
+    const author = String(authorData?.username || '').trim();
+    const normalized = normalizeTopic(topic, categoryMap, author || null, authorData);
+    return normalized
+      ? {
+          ...normalized,
+          excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || normalized.excerpt || ''))
+        }
+      : null;
+  });
+  const items = rawItems.filter((topic): topic is Topic => topic !== null);
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
   const result = {
     items,
+    rawItems,
     hasMore: Boolean(grouped.more_full_page_results)
   };
   return annotateSourceDiagnosticSummary(result, {
@@ -146,7 +146,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   const firstSearchPage = Math.floor(start / SEARCH_PAGE_SIZE) + 1;
   const firstOffset = start % SEARCH_PAGE_SIZE;
   const needed = firstOffset + limit;
-  const collected: Topic[] = [];
+  const collected: (Topic | null)[] = [];
   let searchPage = firstSearchPage;
   let searchHasMore = false;
   let candidateCount = 0;
@@ -165,23 +165,16 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
     const pageSummary = sourceDiagnosticSummary(result);
     candidateCount += pageSummary?.candidateCount || result.items.length;
     droppedCount += pageSummary?.droppedCount || 0;
-    if (!result.items.length) {
-      searchHasMore = result.hasMore;
-      if (result.hasMore && (pageSummary?.candidateCount || 0) > 0) {
-        searchPage += 1;
-        continue;
-      }
-      break;
-    }
-    collected.push(...result.items);
     searchHasMore = result.hasMore;
+    if (!result.rawItems.length) break;
+    collected.push(...result.rawItems);
     if (!result.hasMore) {
       break;
     }
     searchPage += 1;
   }
-  const items = collected.slice(firstOffset, firstOffset + limit);
-  const hasMore = collected.length > firstOffset + limit || searchHasMore;
+  const items = collected.slice(firstOffset, needed).filter((topic): topic is Topic => topic !== null);
+  const hasMore = collected.length > needed || searchHasMore;
   const result = {
     items,
     errors: {},

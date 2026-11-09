@@ -297,11 +297,8 @@ function rowPresentationPart(row: CompiledForumContentRow) {
   return row.ancestorFrames[0]?.part || row.part;
 }
 
-type QuoteContentLayoutProgress = {
-  contentToken: string;
-  frame: number | null;
-  primed: boolean;
-};
+type QuoteContentLayoutProgress =
+  { contentToken: string; primed: false; frame: number | null } | { contentToken: string; primed: true };
 
 function TopicListItemFrame({
   children,
@@ -698,7 +695,7 @@ export const TopicContentList = memo(function TopicContentList({
     );
     return () => {
       layoutProgress.forEach((progress) => {
-        if (progress.frame !== null) cancelAnimationFrame(progress.frame);
+        if (!progress.primed && progress.frame !== null) cancelAnimationFrame(progress.frame);
       });
       layoutProgress.clear();
     };
@@ -709,16 +706,16 @@ export const TopicContentList = memo(function TopicContentList({
       const progressKey = `${detailTopicStateKey}:${instanceKey}`;
       let progress = quoteContentLayoutProgressRef.current.get(progressKey);
       if (!progress || progress.contentToken !== contentToken) {
-        if (progress?.frame !== null && progress?.frame !== undefined) cancelAnimationFrame(progress.frame);
+        if (progress && !progress.primed && progress.frame !== null) cancelAnimationFrame(progress.frame);
         progress = { contentToken, frame: null, primed: false };
         quoteContentLayoutProgressRef.current.set(progressKey, progress);
       }
       if (progress.primed) return;
       if (progress.frame !== null) return;
-      progress.frame = requestAnimationFrame(() => {
-        if (quoteContentLayoutProgressRef.current.get(progressKey) !== progress) return;
-        progress!.frame = null;
-        progress!.primed = true;
+      const pending = progress;
+      pending.frame = requestAnimationFrame(() => {
+        if (quoteContentLayoutProgressRef.current.get(progressKey) !== pending) return;
+        quoteContentLayoutProgressRef.current.set(progressKey, { contentToken, primed: true });
         setPrimedReplyQuoteContent((current) => {
           const currentTokens = current.topicKey === detailTopicStateKey ? current.tokens : EMPTY_QUOTE_CONTENT_TOKENS;
           if (currentTokens.get(instanceKey) === contentToken) return current;

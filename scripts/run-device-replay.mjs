@@ -294,6 +294,7 @@ export async function runReplayBatch(replayFiles, executeReplay) {
   }
 }
 
+/** @param {{apkPath?: string, selectedDevice?: string, device?: {id: string, name: string}, replayDirectory?: string}} [options] */
 export async function runDeviceReplay({
   apkPath: apkValue,
   selectedDevice: selectedValue,
@@ -323,8 +324,10 @@ export async function runDeviceReplay({
     const replayArtifactsDir = path.join(artifactsDir, replayName);
     const junitPath = path.join(artifactsDir, `${replayName}.junit.xml`);
     mkdirSync(replayArtifactsDir, { recursive: true });
-    let replayError;
-    let cleanupError;
+    /** @type {{kind:'none'} | {kind:'failed', error:unknown}} */
+    let replayOutcome = { kind: 'none' };
+    /** @type {{kind:'none'} | {kind:'failed', error:unknown}} */
+    let cleanupOutcome = { kind: 'none' };
     try {
       runAgentDevice(
         [
@@ -347,21 +350,22 @@ export async function runDeviceReplay({
         { cwd: rootDir }
       );
     } catch (error) {
-      replayError = error;
+      replayOutcome = { kind: 'failed', error };
     }
     try {
       recoverOwnedReplayRecording(device, replaySession);
     } catch (error) {
-      cleanupError = error;
+      cleanupOutcome = { kind: 'failed', error };
     }
-    if (cleanupError) {
-      const cause = replayError
-        ? new AggregateError([replayError, cleanupError], `${replayName} 执行和清理均失败`)
-        : cleanupError;
+    if (cleanupOutcome.kind === 'failed') {
+      const cause =
+        replayOutcome.kind === 'failed'
+          ? new AggregateError([replayOutcome.error, cleanupOutcome.error], `${replayName} 执行和清理均失败`)
+          : cleanupOutcome.error;
       throw new ReplayCleanupError(replayFile, cause);
     }
-    if (replayError) {
-      throw replayError;
+    if (replayOutcome.kind === 'failed') {
+      throw replayOutcome.error;
     }
   });
   console.log('DEVICE_REPLAY_PASS');

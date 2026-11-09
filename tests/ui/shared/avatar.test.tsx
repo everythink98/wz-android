@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
+import { createRoot } from 'test-renderer';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { createTheme } from '@/ui/theme/tokens';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
@@ -47,28 +51,6 @@ describe('Avatar image fallback', () => {
 
     expect(view.getByTestId('native-avatar')).toBeTruthy();
     expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
-  });
-
-  it('retries the native image once before rendering the SVG fallback', async () => {
-    mockLoadRemoteAvatarSvgText.mockResolvedValue('<svg><path /></svg>');
-    const uri = 'https://www.nodeseek.com/avatar/58160.png';
-    const view = await render(<Avatar contentSource="nodeseek" name="Alice" uri={uri} />);
-
-    await fireEvent(view.getByTestId('native-avatar'), 'error');
-    expect(view.getByTestId('native-avatar')).toBeTruthy();
-    expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
-
-    await fireEvent(view.getByTestId('native-avatar'), 'error');
-
-    await waitFor(() => expect(view.getByTestId('svg-avatar')).toBeTruthy());
-    expect(view.getByLabelText('<svg><path /></svg>')).toBeTruthy();
-    expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(1);
-    expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledWith(uri, undefined, {
-      mediaContext: {
-        contentSource: 'nodeseek',
-        sessionIdentity: mediaSessionIdentityForSource('nodeseek', initialForumSessionEpochs)
-      }
-    });
   });
 
   it('discards a pending fallback when the URI or session identity changes', async () => {
@@ -144,5 +126,169 @@ describe('Avatar image fallback', () => {
     expect(view.queryByTestId('native-avatar')).toBeNull();
     expect(view.queryByTestId('svg-avatar')).toBeNull();
     expect(view.getByText('B')).toBeTruthy();
+  });
+});
+
+describe('Avatar request ownership', () => {
+  const firstUri = 'https://www.nodeseek.com/avatar/58161.png';
+  const secondUri = 'https://www.nodeseek.com/avatar/58162.png';
+  const avatar = (uri: string, sessionEpoch: number) => (
+    <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: sessionEpoch }}>
+      <Avatar contentSource="nodeseek" name="Alice" uri={uri} />
+    </ForumSessionEpochProvider>
+  );
+
+  it('consumes each native attempt once before retrying or starting a fallback', async () => {
+    const pending = Promise.withResolvers<string | null>();
+    mockLoadRemoteAvatarSvgText.mockReturnValue(pending.promise);
+    const view = await render(<Avatar contentSource="nodeseek" name="Alice" uri={firstUri} />);
+    const initialError = view.getByTestId('native-avatar').props.onError;
+    await act(async () => {
+      initialError();
+      initialError();
+    });
+    expect(view.getByTestId('native-avatar').props.cachePolicy).toBe('none');
+    expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
+    const retryError = view.getByTestId('native-avatar').props.onError;
+    await act(async () => {
+      retryError();
+      retryError();
+    });
+    expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.resolve('<svg aria-label="current" />');
+      await pending.promise;
+    });
+    expect(view.getByTestId('svg-avatar')).toBeTruthy();
+    expect(view.getByLabelText('<svg aria-label="current" />')).toBeTruthy();
+    expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledWith(firstUri, undefined, {
+      mediaContext: {
+        contentSource: 'nodeseek',
+        sessionIdentity: mediaSessionIdentityForSource('nodeseek', initialForumSessionEpochs)
+      }
+    });
+  });
+
+  it('does not start a fallback from a retry callback after unmount', async () => {
+    mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
+    const view = await render(avatar(firstUri, 0));
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    const retiredError = view.getByTestId('native-avatar').props.onError;
+    await view.unmount();
+    await act(async () => retiredError());
+    expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
+  });
+
+  it('retires the previous content source even when both sources use the same public media identity', async () => {
+    mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
+    const view = await render(<Avatar contentSource={null} name="Alice" uri={firstUri} />);
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    const retiredError = view.getByTestId('native-avatar').props.onError;
+    await view.rerender(<Avatar contentSource="v2ex" name="Alice" uri={firstUri} />);
+    await act(async () => retiredError());
+    expect(view.getByTestId('native-avatar').props.cachePolicy).toBeUndefined();
+    expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
+  });
+
+  it('keeps the pending fallback when only the name or size changes', async () => {
+    const pending = Promise.withResolvers<string | null>();
+    mockLoadRemoteAvatarSvgText.mockReturnValueOnce(pending.promise);
+    const view = await render(<Avatar contentSource="nodeseek" name="Alice" uri={firstUri} />);
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    await view.rerender(<Avatar large contentSource="nodeseek" name="Bob" uri={firstUri} />);
+    expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.resolve('<svg aria-label="same-request" />');
+      await pending.promise;
+    });
+    expect(view.getByTestId('svg-avatar')).toBeTruthy();
+    expect(view.getByText('B')).toBeTruthy();
+  });
+
+  it('keeps the current native retry and fallback usable after StrictMode rebuilds effects', async () => {
+    const pending = Promise.withResolvers<string | null>();
+    mockLoadRemoteAvatarSvgText.mockReturnValueOnce(pending.promise);
+    const settings = createEmptyReaderData().settings;
+    let setups = 0;
+    function Harness() {
+      useLayoutEffect(() => {
+        setups += 1;
+      }, []);
+      return avatar(firstUri, 0);
+    }
+    const root = createRoot({ isStrictMode: true });
+    const nativeAvatar = () => {
+      const [native] = root.container.queryAll((instance) => instance.props.testID === 'native-avatar');
+      if (!native) throw new Error('Expected current native avatar');
+      return native;
+    };
+    try {
+      await act(async () =>
+        root.render(
+          <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+            <Harness />
+          </ReaderStyleProvider>
+        )
+      );
+      expect(setups).toBe(2);
+      await act(async () => nativeAvatar().props.onError());
+      expect(nativeAvatar().props.cachePolicy).toBe('none');
+      expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
+      await act(async () => nativeAvatar().props.onError());
+      expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        pending.resolve('<svg aria-label="strict-current" />');
+        await pending.promise;
+      });
+      expect(root.container.queryAll((instance) => instance.props.testID === 'svg-avatar')).toHaveLength(1);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it('does not spend the next URI native retry on a retired initial callback', async () => {
+    mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
+    const view = await render(avatar(firstUri, 0));
+    const retiredError = view.getByTestId('native-avatar').props.onError;
+    await view.rerender(avatar(secondUri, 0));
+    await act(async () => retiredError());
+    expect(view.getByTestId('native-avatar').props.cachePolicy).toBeUndefined();
+    expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    expect(view.getByTestId('native-avatar').props.cachePolicy).toBe('none');
+    expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
+  });
+
+  it.each(['URI', 'session'] as const)('ignores a retired retry callback after changing %s', async (changed) => {
+    mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
+    const view = await render(avatar(firstUri, 0));
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    const retiredError = view.getByTestId('native-avatar').props.onError;
+    await view.rerender(avatar(changed === 'URI' ? secondUri : firstUri, changed === 'session' ? 1 : 0));
+    await act(async () => retiredError());
+    expect(view.queryByTestId('native-avatar')).not.toBeNull();
+    expect(mockLoadRemoteAvatarSvgText).not.toHaveBeenCalled();
+  });
+
+  it('does not accept an earlier same-URI fallback after the URI leaves and returns', async () => {
+    let resolveFallback!: (xml: string | null) => void;
+    const fallback = new Promise<string | null>((resolve) => {
+      resolveFallback = resolve;
+    });
+    mockLoadRemoteAvatarSvgText.mockReturnValue(fallback);
+    const view = await render(avatar(firstUri, 0));
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(1);
+    await view.rerender(avatar(secondUri, 0));
+    await view.rerender(avatar(firstUri, 0));
+    expect(view.getByTestId('native-avatar')).toBeTruthy();
+    await act(async () => {
+      resolveFallback('<svg aria-label="retired-a" />');
+      await fallback;
+    });
+    expect(view.queryByTestId('svg-avatar')).toBeNull();
+    expect(view.getByTestId('native-avatar')).toBeTruthy();
   });
 });

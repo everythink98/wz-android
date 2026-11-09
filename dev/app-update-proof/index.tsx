@@ -41,16 +41,31 @@ function UpdateDownloadProof() {
     if (running.current) return;
     running.current = true;
     setBusy(true);
+    const failures: unknown[] = [];
     try {
-      await action();
-    } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'ERROR';
-      setMessage(`测试操作失败：${code} ${error instanceof Error ? error.message : ''}`);
+      try {
+        await action();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        setBytes(complete.exists ? complete.size : partial.exists ? partial.size : 0);
+      } catch (error) {
+        failures.push(error);
+      }
     } finally {
-      setBytes(complete.exists ? complete.size : partial.exists ? partial.size : 0);
       running.current = false;
       setBusy(false);
     }
+    if (failures.length)
+      setMessage(
+        failures
+          .map((error) => {
+            const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'ERROR';
+            return `测试操作失败：${code} ${error instanceof Error ? error.message : failures.length > 1 ? String(error) : ''}`;
+          })
+          .join('\n')
+      );
   }
 
   async function loadFixture() {

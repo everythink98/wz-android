@@ -83,6 +83,23 @@ type PreviewImageLoadMetrics = {
   totalBytes?: number;
 };
 
+function createPreviewLoadOwner(requestIdentity: string, sourceIdentity: string, startedAt: number) {
+  const metrics: PreviewImageLoadMetrics = { sourceIdentity, startedAt };
+  const previewDiagnosticRef: { current: { fallback: boolean; trace: DiagnosticTrace } | null } = { current: null };
+  return {
+    requestIdentity,
+    loadMetricsRef: { current: metrics },
+    nativeFailedRef: { current: false },
+    posterRefreshRef: { current: { attempted: false, inFlight: false, sourceIdentity: '' } },
+    previewDiagnosticRef,
+    recoveringRef: { current: false },
+    requestGenerationRef: { current: 0 },
+    settledRef: { current: false },
+    sourceIdentityRef: { current: sourceIdentity },
+    svgArtifactConsumer: new AbortController()
+  };
+}
+
 type ImagePreviewModalProps = {
   preview: ImagePreviewList | null;
   nodeSeekMediaUserAgent?: string;
@@ -1056,26 +1073,14 @@ function PreviewPage({
   const zoomRef = useRef<ResumableZoomRefType>(null);
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
-  const baseSourceIdentity = `${requestIdentity}\u0000${0}`;
+  const sourceIdentity = `${requestIdentity}\u0000${retryVersion}`;
   const [initialLoadStartedAt] = useState(Date.now);
-  const logicalLoadOwner = useMemo(
-    () => ({
-      loadMetricsRef: {
-        current: { sourceIdentity: baseSourceIdentity, startedAt: initialLoadStartedAt } as PreviewImageLoadMetrics
-      },
-      nativeFailedRef: { current: false },
-      posterRefreshRef: { current: { attempted: false, inFlight: false, sourceIdentity: '' } },
-      previewDiagnosticRef: {
-        current: null as { fallback: boolean; trace: DiagnosticTrace } | null
-      },
-      recoveringRef: { current: false },
-      requestGenerationRef: { current: 0 },
-      settledRef: { current: false },
-      sourceIdentityRef: { current: baseSourceIdentity },
-      svgArtifactConsumerRef: { current: null as AbortController | null }
-    }),
-    [baseSourceIdentity, initialLoadStartedAt]
+  const [logicalLoadOwner, setLogicalLoadOwner] = useState(() =>
+    createPreviewLoadOwner(requestIdentity, sourceIdentity, initialLoadStartedAt)
   );
+  if (logicalLoadOwner.requestIdentity !== requestIdentity) {
+    setLogicalLoadOwner(createPreviewLoadOwner(requestIdentity, sourceIdentity, initialLoadStartedAt));
+  }
   const {
     loadMetricsRef,
     nativeFailedRef,
@@ -1085,7 +1090,7 @@ function PreviewPage({
     requestGenerationRef,
     settledRef,
     sourceIdentityRef,
-    svgArtifactConsumerRef
+    svgArtifactConsumer
   } = logicalLoadOwner;
   const cachedArtifact = useMemo(() => cachedCompatibleSvgArtifact(originalSource), [originalSource]);
   useEffect(() => {
@@ -1097,7 +1102,6 @@ function PreviewPage({
     compatibleSvgArtifact?.requestIdentity === requestIdentity ? compatibleSvgArtifact : cachedArtifact;
   const activeArtifact = active ? knownArtifact : null;
   const activeAnimatedArtifact = activeArtifact?.animated ? activeArtifact : null;
-  const sourceIdentity = `${requestIdentity}\u0000${retryVersion}`;
   const svgViewIdentity = activeAnimatedArtifact
     ? `${sourceIdentity}\u0000${activeAnimatedArtifact.requestIdentity}`
     : '';
@@ -1301,7 +1305,7 @@ function PreviewPage({
       const generation = requestGenerationRef.current;
       try {
         const artifact = await recoverCompatibleSvgArtifact(diagnosticSource, {
-          signal: svgArtifactConsumerRef.current?.signal
+          signal: svgArtifactConsumer.signal
         });
         if (
           !mountedRef.current ||
@@ -1347,7 +1351,7 @@ function PreviewPage({
       settleFailure,
       sourceIdentity,
       sourceIdentityRef,
-      svgArtifactConsumerRef
+      svgArtifactConsumer
     ]
   );
 
@@ -1378,7 +1382,7 @@ function PreviewPage({
       setCurrentStatus('loading');
       try {
         const refreshed = await refreshCompatibleSvgPoster(artifact, {
-          signal: svgArtifactConsumerRef.current?.signal
+          signal: svgArtifactConsumer.signal
         });
         if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
           return;
@@ -1409,7 +1413,7 @@ function PreviewPage({
       settleFailure,
       sourceIdentity,
       sourceIdentityRef,
-      svgArtifactConsumerRef
+      svgArtifactConsumer
     ]
   );
 
@@ -1425,18 +1429,25 @@ function PreviewPage({
   }, []);
 
   useLayoutEffect(() => {
-    const svgArtifactConsumer = new AbortController();
-    svgArtifactConsumerRef.current = svgArtifactConsumer;
+    if (svgArtifactConsumer.signal.aborted) {
+      setLogicalLoadOwner(createPreviewLoadOwner(requestIdentity, sourceIdentity, loadMetricsRef.current.startedAt));
+      return;
+    }
     return () => {
       requestGenerationRef.current += 1;
-      if (svgArtifactConsumerRef.current === svgArtifactConsumer) {
-        svgArtifactConsumerRef.current = null;
-      }
       svgArtifactConsumer.abort();
       finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
       sourceIdentityRef.current = '';
     };
-  }, [finishActiveDiagnostic, loadMetricsRef, requestGenerationRef, sourceIdentityRef, svgArtifactConsumerRef]);
+  }, [
+    finishActiveDiagnostic,
+    loadMetricsRef,
+    requestGenerationRef,
+    requestIdentity,
+    sourceIdentity,
+    sourceIdentityRef,
+    svgArtifactConsumer
+  ]);
 
   useEffect(() => {
     if (!activeArtifact) {
@@ -1639,6 +1650,9 @@ function PreviewPage({
                 setDisplayedSvgPosterIdentity(svgPosterIdentity);
               }}
               onAnimatedPosterError={() => {
+                if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                  return;
+                }
                 setDisplayedSvgPosterIdentity((identity) => (identity === svgPosterIdentity ? '' : identity));
                 void refreshSvgPoster(activeAnimatedArtifact!, false);
               }}

@@ -8,6 +8,7 @@ const boundary = vi.hoisted(() => ({
   randomSequence: 0,
   files: new Map<string, Uint8Array>(),
   nativeEvents: [] as Record<string, unknown>[],
+  legacyNativeRead: undefined as undefined | (() => Promise<unknown>),
   nativeJournal: undefined as
     | undefined
     | {
@@ -22,7 +23,8 @@ const boundary = vi.hoisted(() => ({
   writeCount: 0,
   shared: [] as { content: string; uri: string }[],
   sharingAvailable: true,
-  sharingModuleLoads: 0
+  sharingModuleLoads: 0,
+  sharingCompletion: undefined as Promise<void> | undefined
 }));
 
 vi.mock('@/platform/android/secureRandom', () => ({
@@ -35,7 +37,7 @@ vi.mock('react-native', () => ({
       return boundary.nativeJournal;
     },
     NetworkProxyModule: {
-      readNetworkDiagnosticEvents: vi.fn(async () => boundary.nativeEvents)
+      readNetworkDiagnosticEvents: vi.fn(async () => boundary.legacyNativeRead?.() ?? boundary.nativeEvents)
     }
   }
 }));
@@ -162,6 +164,7 @@ vi.mock('expo-sharing', () => {
         content: new TextDecoder().decode(boundary.files.get(uri) || new Uint8Array()),
         uri
       });
+      if (boundary.sharingCompletion) await boundary.sharingCompletion;
       if (boundary.sharingRejects) throw new Error('chooser failed');
     })
   };
@@ -182,6 +185,7 @@ import {
 } from './diagnostics';
 import { diagnosticRef, type DiagnosticFields } from './diagnosticPolicy';
 import { createDiagnosticExport, pruneDiagnosticExports } from './diagnosticExportFiles';
+import { readDiagnosticJournal } from './nativeDiagnosticJournal';
 import { readNativeReadNetworkDiagnosticLines } from './nativeReadNetworkDiagnostics';
 const sharingLoadsAtImport = boundary.sharingModuleLoads;
 
@@ -209,6 +213,7 @@ beforeEach(() => {
   boundary.failDeletes = false;
   boundary.files.clear();
   boundary.nativeEvents.length = 0;
+  boundary.legacyNativeRead = undefined;
   boundary.nativeJournal = undefined;
   boundary.openCount = 0;
   boundary.directoryListCount = 0;
@@ -216,6 +221,7 @@ beforeEach(() => {
   boundary.shared.length = 0;
   boundary.sharingAvailable = true;
   boundary.sharingRejects = false;
+  boundary.sharingCompletion = undefined;
 });
 
 describe('diagnostic file store', () => {
@@ -235,6 +241,139 @@ describe('diagnostic file store', () => {
     await expect(
       readNativeReadNetworkDiagnosticLines({ readNetworkDiagnosticEvents: async () => ({}) })
     ).rejects.toThrow();
+  });
+
+  it('reports an invalid native snapshot as failed and only times out after five seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const late = Promise.withResolvers<unknown>();
+      boundary.nativeJournal = {
+        buildId: 'a'.repeat(32),
+        processSessionId: `process-${'b'.repeat(32)}`,
+        appendBatch: async () => undefined,
+        persistCrashSync: () => true,
+        snapshot: vi.fn<() => Promise<unknown>>().mockResolvedValueOnce(null).mockReturnValueOnce(late.promise)
+      };
+      expect((await readDiagnosticJournal()).status).toBe('failed');
+      expect(vi.getTimerCount()).toBe(0);
+
+      const settled = vi.fn();
+      const read = readDiagnosticJournal().then(settled);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await read;
+      expect(settled).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'timeout' }));
+      late.resolve({ health: { available: true } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the remaining journal deadline without dispatching an exhausted read', async () => {
+    vi.useFakeTimers();
+    const response = Promise.withResolvers<unknown>();
+    const snapshot = vi.fn(() => response.promise);
+    boundary.nativeJournal = {
+      buildId: 'a'.repeat(32),
+      processSessionId: `process-${'b'.repeat(32)}`,
+      appendBatch: async () => undefined,
+      persistCrashSync: () => true,
+      snapshot
+    };
+    const completed = vi.fn();
+    const reading = readDiagnosticJournal(Date.now() + 123).then(completed);
+    try {
+      await vi.advanceTimersByTimeAsync(122);
+      expect(completed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(completed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'timeout' }));
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(readDiagnosticJournal(Date.now())).resolves.toMatchObject({ status: 'timeout' });
+      expect(snapshot).toHaveBeenCalledOnce();
+      response.resolve({ health: { available: true } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(completed).toHaveBeenCalledOnce();
+    } finally {
+      response.resolve({ health: { available: true } });
+      await reading;
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses only the remaining evidence observation time for legacy native fallback', async () => {
+    vi.useFakeTimers();
+    const snapshot = Promise.withResolvers<unknown>();
+    const legacy = Promise.withResolvers<unknown>();
+    const legacyEntered = vi.fn();
+    boundary.nativeJournal = {
+      buildId: 'a'.repeat(32),
+      processSessionId: `process-${'b'.repeat(32)}`,
+      appendBatch: async () => undefined,
+      persistCrashSync: () => true,
+      snapshot: () => snapshot.promise
+    };
+    boundary.legacyNativeRead = () => {
+      legacyEntered();
+      return legacy.promise;
+    };
+    const completed = vi.fn();
+    const exporting = exportDiagnosticLog(metadata).then(completed);
+    try {
+      await vi.advanceTimersByTimeAsync(2_000);
+      snapshot.resolve({ health: { available: false } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(legacyEntered).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(completed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(completed).toHaveBeenCalledOnce();
+      expect(JSON.parse(boundary.shared[0].content.split('\n')[1])).toMatchObject({
+        journalStatus: 'failed',
+        legacyNativeStatus: 'timeout'
+      });
+      expect(vi.getTimerCount()).toBe(0);
+      legacy.resolve([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(completed).toHaveBeenCalledOnce();
+    } finally {
+      snapshot.resolve({ health: { available: false } });
+      legacy.resolve([]);
+      await vi.advanceTimersByTimeAsync(0);
+      await exporting;
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds a stalled local read and retains the buffered JS snapshot', async () => {
+    vi.useFakeTimers();
+    const local = Promise.withResolvers<string>();
+    const originalText = File.prototype.text;
+    const text = vi.spyOn(File.prototype, 'text').mockImplementation(function (this: File) {
+      return this.name.endsWith('-current.jsonl') ? local.promise : originalText.call(this);
+    });
+    appendDiagnosticLogLine('{"sequence":"buffered-local-stage"}');
+    const completed = vi.fn();
+    const exporting = exportDiagnosticLog(metadata).then(completed);
+    try {
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(completed).toHaveBeenCalledOnce();
+      expect(boundary.shared[0].content).toContain('"sequence":"buffered-local-stage"');
+      expect(JSON.parse(boundary.shared[0].content.split('\n')[1])).toMatchObject({
+        legacyReadFailures: 1,
+        sources: { legacyCurrent: { status: 'timeout' } }
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      local.resolve('');
+      await vi.advanceTimersByTimeAsync(0);
+      await exporting;
+      text.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it('exports every persisted native request beyond the former 512-event memory window', async () => {
@@ -317,6 +456,44 @@ describe('diagnostic file store', () => {
     }
   });
 
+  it('shares one five-second evidence observation budget across a stalled writer and snapshot', async () => {
+    vi.useFakeTimers();
+    const append = Promise.withResolvers<void>();
+    const snapshot = Promise.withResolvers<unknown>();
+    const appendBatch = vi.fn(() => append.promise);
+    const snapshotRead = vi.fn(() => snapshot.promise);
+    boundary.nativeJournal = {
+      buildId: 'a'.repeat(32),
+      processSessionId: `process-${'b'.repeat(32)}`,
+      appendBatch,
+      persistCrashSync: () => true,
+      snapshot: snapshotRead
+    };
+    appendDiagnosticLogLine('{"sequence":"pending-stage"}');
+    const completed = vi.fn();
+    const exporting = exportDiagnosticLog(metadata).then(completed);
+    try {
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(completed).toHaveBeenCalledOnce();
+      expect(boundary.shared[0]?.content).toContain('"sequence":"pending-stage"');
+      const coverage = JSON.parse(boundary.shared[0].content.split('\n')[1]);
+      expect(coverage).toMatchObject({ writerStatus: 'timeout', journalStatus: 'timeout' });
+      appendDiagnosticLogLine('{"sequence":"queued-after-export"}');
+      snapshot.resolve({ jsLines: '{"sequence":"late-snapshot"}', health: { available: true } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(appendBatch).toHaveBeenCalledOnce();
+      expect(snapshotRead).toHaveBeenCalledOnce();
+      expect(boundary.shared).toHaveLength(1);
+      expect(boundary.shared[0].content).not.toContain('late-snapshot');
+    } finally {
+      append.resolve();
+      snapshot.resolve({ health: { available: true } });
+      await vi.advanceTimersByTimeAsync(0);
+      await exporting;
+      vi.useRealTimers();
+    }
+  });
+
   it('waits for native persistence and exports previous-process events with their original build', async () => {
     let persisted = '';
     let crash = '';
@@ -363,6 +540,27 @@ describe('diagnostic file store', () => {
     expect(lines.at(-1)).toMatchObject({ buildId: 'b'.repeat(32), processSessionId: `process-${'c'.repeat(32)}` });
     expect(boundary.openCount).toBe(0);
     expect(boundary.shared[0].content).not.toContain('PRIVATE_SECRET');
+  });
+
+  it('dispatches the pending native batch before requesting its ordered snapshot', async () => {
+    const events: string[] = [];
+    boundary.nativeJournal = {
+      buildId: 'a'.repeat(32),
+      processSessionId: `process-${'b'.repeat(32)}`,
+      appendBatch: async () => {
+        events.push('append');
+      },
+      persistCrashSync: () => true,
+      snapshot: async () => {
+        events.push('snapshot');
+        return { health: { available: true } };
+      }
+    };
+    appendDiagnosticLogLine('{"sequence":"ordered-stage"}');
+
+    await exportDiagnosticLog(metadata);
+
+    expect(events).toEqual(['append', 'snapshot']);
   });
 
   it('exports persisted cookie decisions and separates an old protocol check from the local identity', async () => {
@@ -491,6 +689,87 @@ describe('diagnostic file store', () => {
     expect(boundary.openCount).toBe(1);
     expect(boundary.writeCount).toBe(1);
     expect(boundary.shared[0].content).toContain('"sequence":99');
+  });
+
+  it('closes a newly opened fallback handle when positioning it fails', async () => {
+    const handles: { close: () => void }[] = [];
+    const originalOpen = File.prototype.open;
+    const open = vi.spyOn(File.prototype, 'open').mockImplementationOnce(function (this: File) {
+      const handle = originalOpen.call(this);
+      handles.push(handle);
+      vi.spyOn(handle, 'offset', 'set').mockImplementationOnce(() => {
+        throw new Error('seek failed');
+      });
+      return handle;
+    });
+    try {
+      appendDiagnosticLogLine('{"sequence":1}');
+      await vi.waitFor(() => expect(boundary.openCount).toBe(1));
+      expect(handles[0]?.close).toHaveBeenCalledOnce();
+    } finally {
+      for (const handle of handles) handle.close();
+      open.mockRestore();
+    }
+  });
+
+  it('closes the old fallback handle before rotation and retires the new handle before export', async () => {
+    const events: string[] = [];
+    const originalOpen = File.prototype.open;
+    const originalMove = File.prototype.moveSync;
+    let handles = 0;
+    const open = vi.spyOn(File.prototype, 'open').mockImplementation(function (this: File) {
+      const handle = originalOpen.call(this);
+      const index = handles++;
+      const write = handle.writeBytes;
+      events.push(`open:${index}`);
+      vi.spyOn(handle, 'close').mockImplementation(() => {
+        events.push(`close:${index}`);
+      });
+      vi.spyOn(handle, 'writeBytes').mockImplementation((bytes) => {
+        events.push(`write:${index}`);
+        write.call(handle, bytes);
+      });
+      return handle;
+    });
+    const move = vi.spyOn(File.prototype, 'moveSync').mockImplementation(function (this: File, destination) {
+      events.push('move');
+      originalMove.call(this, destination);
+    });
+    try {
+      for (let sequence = 0; sequence < 270; sequence++)
+        appendDiagnosticLogLine(JSON.stringify({ sequence, padding: 'x'.repeat(4_000) }));
+      await exportDiagnosticLog(metadata);
+
+      expect(events).toEqual(['open:0', 'write:0', 'close:0', 'move', 'open:1', 'write:1', 'close:1']);
+      expect(boundary.shared[0].content).toContain('"sequence":269');
+    } finally {
+      open.mockRestore();
+      move.mockRestore();
+    }
+  });
+
+  it('keeps the OS chooser outside the evidence observation deadline and retains its handed-off file', async () => {
+    vi.useFakeTimers();
+    const chooser = Promise.withResolvers<void>();
+    boundary.sharingCompletion = chooser.promise;
+    const completed = vi.fn();
+    const exporting = exportDiagnosticLog(metadata).then(completed);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(boundary.shared).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(completed).not.toHaveBeenCalled();
+      expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      chooser.resolve();
+      await exporting;
+      expect(completed).toHaveBeenCalledOnce();
+      expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
+    } finally {
+      chooser.resolve();
+      await exporting;
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the shared diagnostic file readable after the chooser returns', async () => {

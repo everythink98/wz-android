@@ -9,6 +9,8 @@ import {
 export const NODEIMAGE_API_KEY_STORAGE_KEY = 'nodeimage-api-key';
 
 const nodeImageApiKeyWriteGate = createCredentialWriteGate();
+type CredentialPersistenceState = { phase: 'stable' } | { phase: 'restore-required'; previousValue: string | null };
+let credentialPersistence: CredentialPersistenceState = { phase: 'stable' };
 
 export type NodeImageApiKeyCredential = Readonly<{
   version: 1;
@@ -65,6 +67,18 @@ async function writeNodeImageCredential(credential: NodeImageApiKeyCredential) {
   await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, JSON.stringify(credential));
 }
 
+// Called only within the credential write queue. This obligation survives failures in this process, not restarts.
+async function restoreNodeImageCredential() {
+  const persistence = credentialPersistence;
+  if (persistence.phase === 'stable') return;
+  if (persistence.previousValue === null) {
+    await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+  } else {
+    await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, persistence.previousValue);
+  }
+  credentialPersistence = { phase: 'stable' };
+}
+
 export function nodeImageApiKeyUseStatus(
   credential: NodeImageApiKeyCredential | null,
   identityKey: string
@@ -89,17 +103,34 @@ export function invalidateNodeImageApiKeyAuthorization() {
 export async function loadNodeImageApiKeyCredential() {
   for (;;) {
     const generation = currentNodeImageApiKeyGeneration();
-    let rawValue: string | null;
-    try {
-      rawValue = await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
-    } catch (error) {
-      if (generation !== currentNodeImageApiKeyGeneration()) {
-        continue;
+    const pendingWrites = nodeImageApiKeyWriteGate.queue;
+    const isCurrent = () =>
+      generation === currentNodeImageApiKeyGeneration() && pendingWrites === nodeImageApiKeyWriteGate.queue;
+    await pendingWrites;
+    if (!isCurrent()) continue;
+    if (credentialPersistence.phase === 'restore-required') {
+      const repairing = enqueueCredentialWriteForGeneration(
+        nodeImageApiKeyWriteGate,
+        generation,
+        restoreNodeImageCredential
+      );
+      const repairQueue = nodeImageApiKeyWriteGate.queue;
+      try {
+        await repairing;
+      } catch (error) {
+        if (generation !== currentNodeImageApiKeyGeneration() || repairQueue !== nodeImageApiKeyWriteGate.queue) {
+          continue;
+        }
+        throw error;
       }
-      throw error;
+      continue;
     }
-    if (generation === currentNodeImageApiKeyGeneration()) {
-      return parseNodeImageCredential(rawValue);
+    try {
+      const rawValue = await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+      if (isCurrent()) return parseNodeImageCredential(rawValue);
+    } catch (error) {
+      if (!isCurrent()) continue;
+      throw error;
     }
   }
 }
@@ -128,19 +159,21 @@ export async function saveNodeImageApiKeyForGeneration(
     if (!isAuthorizationCurrent()) {
       return undefined;
     }
+    await restoreNodeImageCredential();
+    if (!isCurrent() || !isAuthorizationCurrent()) {
+      return undefined;
+    }
     const previousValue = await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
     if (!isCurrent() || !isAuthorizationCurrent()) {
       return undefined;
     }
+    credentialPersistence = { phase: 'restore-required', previousValue };
     await writeNodeImageCredential(verifiedNodeImageCredential(apiKey, settledIdentityKey));
     if (!isCurrent() || !isAuthorizationCurrent()) {
-      if (previousValue === null) {
-        await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
-      } else {
-        await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, previousValue);
-      }
+      await restoreNodeImageCredential();
       return undefined;
     }
+    credentialPersistence = { phase: 'stable' };
     return apiKey;
   });
 }
@@ -148,6 +181,7 @@ export async function saveNodeImageApiKeyForGeneration(
 export async function clearNodeImageApiKey() {
   return replaceCredentialWrite(nodeImageApiKeyWriteGate, async () => {
     await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+    credentialPersistence = { phase: 'stable' };
     return true;
   });
 }

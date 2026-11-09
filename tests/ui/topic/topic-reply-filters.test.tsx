@@ -4555,9 +4555,10 @@ describe('Topic reply filters', () => {
 
   it('measures a staged quote row before materializing the complete post', async () => {
     const pendingFrames: FrameRequestCallback[] = [];
+    let nextFrameId = 0;
     const requestFrame = jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
       pendingFrames.push(callback);
-      return pendingFrames.length;
+      return ++nextFrameId;
     });
     const cancelFrame = jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
     const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 1 };
@@ -4659,6 +4660,29 @@ describe('Topic reply filters', () => {
       const changedReply = { ...quotedReply, contentHtml: `${quotedReply.contentHtml}<p>changed content</p>` };
       await view.rerender(<TopicFilterHarness {...props} loadedQuotedReplies={{ 'linuxdo:342888:1': changedReply }} />);
       expect(quoteContentKeys()).toHaveLength(2);
+      await fireEvent(view.getAllByTestId(/^reply-quote-materialization-/)[0], 'layout', {
+        nativeEvent: { layout: { height: 300, width: 720, x: 0, y: 0 } }
+      });
+      const obsoleteFrames = pendingFrames.splice(0);
+      expect(obsoleteFrames).toHaveLength(1);
+      const replacementReply = { ...quotedReply, contentHtml: `${quotedReply.contentHtml}<p>current replacement</p>` };
+      await view.rerender(
+        <TopicFilterHarness {...props} loadedQuotedReplies={{ 'linuxdo:342888:1': replacementReply }} />
+      );
+      await fireEvent(view.getAllByTestId(/^reply-quote-materialization-/)[0], 'layout', {
+        nativeEvent: { layout: { height: 300, width: 720, x: 0, y: 0 } }
+      });
+      expect(cancelFrame).toHaveBeenCalled();
+      await act(async () => {
+        pendingFrames.splice(0).forEach((callback) => callback(32));
+      });
+      await waitFor(() => expect(quoteContentKeys().length).toBeGreaterThan(2));
+      const replacementKeys = quoteContentKeys();
+
+      await act(async () => {
+        obsoleteFrames.forEach((callback) => callback(48));
+      });
+      expect(quoteContentKeys()).toEqual(replacementKeys);
     } finally {
       requestFrame.mockRestore();
       cancelFrame.mockRestore();

@@ -748,6 +748,24 @@ describe('NodeImage API key WebView probe script', () => {
     });
   });
 
+  it('stops after a rejected verification without reading the API key', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ error: 'authorization denied' }), { status: 403 })
+    );
+    const postMessage = runNodeImageApiKeyProbe('', fetchMock);
+
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('https://api.nodeimage.com/api/auth/verify', expect.anything());
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({
+      type: 'nodeimage-api-key',
+      nonce: NODEIMAGE_AUTH_NONCE,
+      error: 'authorization denied',
+      status: 403
+    });
+  });
+
   it('does nothing outside the exact top-level NodeImage root URL', async () => {
     window.history.pushState(null, '', '/account');
     const fetchMock = vi.fn();

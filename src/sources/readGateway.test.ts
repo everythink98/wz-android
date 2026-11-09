@@ -725,6 +725,198 @@ describe('source gateway reads', () => {
     reading.dispose();
   });
 
+  function sharedReadingFixture() {
+    let account = { id: 'alice', epoch: 1 };
+    const reading = createDiscourseReadingRuntime({
+      queryClient: new QueryClient(),
+      scope: () => `${account.id}:${account.epoch}`,
+      send: async () => undefined
+    });
+    const requests: {
+      response: PromiseWithResolvers<Response>;
+      signal: AbortSignal | null | undefined;
+      abort: ReturnType<typeof vi.fn>;
+    }[] = [];
+    const fetcher = vi.fn<Fetcher>(async (_input, init) => {
+      const response = Promise.withResolvers<Response>();
+      const signal = init?.signal;
+      const abort = vi.fn();
+      signal?.addEventListener('abort', abort, { once: true });
+      requests.push({ response, signal, abort });
+      return response.promise.finally(() => signal?.removeEventListener('abort', abort));
+    });
+    const gateway = createReadGateway({
+      reading,
+      fetcher,
+      anonymousFetcher: fetcher,
+      nodeSeekUserAgent: () => 'test',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: true,
+        identityTrust: 'confirmed',
+        identityKey: account.id,
+        sessionEpoch: account.epoch,
+        authSurfaceOpen: false,
+        sourceEnabled: true
+      })
+    });
+    return {
+      reading,
+      gateway,
+      requests,
+      fetcher,
+      changeAccount: () => {
+        account = { id: 'bob', epoch: account.epoch + 1 };
+        reading.sessionChanged();
+      }
+    };
+  }
+
+  it('cancels a later reading waiter without changing another reader or the shared request', async () => {
+    const { reading, gateway, requests, fetcher } = sharedReadingFixture();
+    const canceled = new AbortController();
+    const added = vi.spyOn(canceled.signal, 'addEventListener');
+    const removed = vi.spyOn(canceled.signal, 'removeEventListener');
+    const first = gateway.getReadingBatch(['2']);
+    const second = gateway.getReadingBatch(['2'], canceled.signal).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+      canceled.abort();
+      expect(await second).toBeInstanceOf(RequestCanceledError);
+      expect(requests[0].abort).not.toHaveBeenCalled();
+      requests[0].response.resolve(Response.json({ topic_list: { topics: [{ id: 2, last_read_post_number: 5 }] } }));
+
+      await expect(first).resolves.toMatchObject([{ topicId: '2', lastReadPostNumber: 5 }]);
+      expect(reading.state()['2'].visited).toBe(true);
+      for (const [type, listener] of added.mock.calls) {
+        if (type === 'abort') expect(removed).toHaveBeenCalledWith('abort', listener);
+      }
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it('keeps a reading batch alive for Library after its original page cancels', async () => {
+    const { reading, gateway, requests, fetcher } = sharedReadingFixture();
+    const canceled = new AbortController();
+    const first = gateway.getReadingBatch(['2'], canceled.signal).catch((error: unknown) => error);
+    const library = gateway.getReadingBatch(['2']).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+      canceled.abort();
+      requests[0].response.resolve(Response.json({ topic_list: { topics: [{ id: 2, last_read_post_number: 5 }] } }));
+
+      expect(await first).toBeInstanceOf(RequestCanceledError);
+      expect(await library).toMatchObject([{ topicId: '2', lastReadPostNumber: 5 }]);
+      expect(requests[0].abort).not.toHaveBeenCalled();
+      expect(reading.state()['2'].visited).toBe(true);
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it('aborts only after the last reading waiter leaves and keeps a replacement job registered', async () => {
+    const { reading, gateway, requests, fetcher } = sharedReadingFixture();
+    const events: unknown[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = gateway.getReadingBatch(['2'], firstController.signal).catch((error: unknown) => error);
+    const second = gateway.getReadingBatch(['2'], secondController.signal).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+      firstController.abort();
+      expect(await first).toBeInstanceOf(RequestCanceledError);
+      expect(requests[0].abort).not.toHaveBeenCalled();
+      secondController.abort();
+      const replacement = gateway.getReadingBatch(['2']);
+      expect(await second).toBeInstanceOf(RequestCanceledError);
+      await vi.waitFor(() =>
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ operation: 'reading-state', phase: 'finish', outcome: 'canceled' })
+          ])
+        )
+      );
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      const joined = gateway.getReadingBatch(['2']);
+      requests[0].response.resolve(Response.json({ topic_list: { topics: [{ id: 2, last_read_post_number: 9 }] } }));
+      requests[1].response.resolve(Response.json({ topic_list: { topics: [{ id: 2, last_read_post_number: 5 }] } }));
+
+      await expect(replacement).resolves.toMatchObject([{ topicId: '2', lastReadPostNumber: 5 }]);
+      await expect(joined).resolves.toMatchObject([{ topicId: '2', lastReadPostNumber: 5 }]);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(requests[0].abort).toHaveBeenCalledOnce();
+      expect(requests[1].abort).not.toHaveBeenCalled();
+      expect(reading.state()['2'].server.lastReadPostNumber).toBe(5);
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it('rejects an already canceled reading waiter without joining or starting a batch', async () => {
+    const { reading, gateway, requests, fetcher } = sharedReadingFixture();
+    const canceled = new AbortController();
+    canceled.abort();
+    try {
+      await expect(gateway.getReadingBatch(['2'], canceled.signal)).rejects.toBeInstanceOf(RequestCanceledError);
+      expect(fetcher).not.toHaveBeenCalled();
+      const live = gateway.getReadingBatch(['2']);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+      await expect(gateway.getReadingBatch(['2'], canceled.signal)).rejects.toBeInstanceOf(RequestCanceledError);
+      expect(fetcher).toHaveBeenCalledOnce();
+      requests[0].response.resolve(Response.json({ topic_list: { topics: [] } }));
+      await expect(live).resolves.toEqual([]);
+      expect(requests[0].abort).not.toHaveBeenCalled();
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it('keeps reading jobs in the captured account scope and ignores the old account result', async () => {
+    const { reading, gateway, requests, fetcher, changeAccount } = sharedReadingFixture();
+    const previous = gateway.getReadingBatch(['2']).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+      changeAccount();
+      const current = gateway.getReadingBatch(['2']);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      requests[0].response.resolve(Response.json({ topic_list: { topics: [{ id: 2, last_read_post_number: 9 }] } }));
+      expect(await previous).toHaveProperty('message', '请求已取消');
+      expect(reading.state()['2']).toBeUndefined();
+      const joined = gateway.getReadingBatch(['2']);
+      requests[1].response.resolve(Response.json({ topic_list: { topics: [{ id: 2, last_read_post_number: 3 }] } }));
+
+      await expect(current).resolves.toMatchObject([{ topicId: '2', lastReadPostNumber: 3 }]);
+      await expect(joined).resolves.toMatchObject([{ topicId: '2', lastReadPostNumber: 3 }]);
+      expect(reading.state()['2'].server.lastReadPostNumber).toBe(3);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      reading.dispose();
+    }
+  });
+
+  it('releases a failed reading job so the same IDs can be fetched again', async () => {
+    const { reading, gateway, requests, fetcher } = sharedReadingFixture();
+    const first = gateway.getReadingBatch(['2']).catch((error: unknown) => error);
+    const second = gateway.getReadingBatch(['2']).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+      requests[0].response.reject(new Error('batch failed'));
+      expect(await first).toHaveProperty('message', 'batch failed');
+      expect(await second).toHaveProperty('message', 'batch failed');
+      expect(reading.state()['2']).toBeUndefined();
+      const retry = gateway.getReadingBatch(['2']);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+      requests[1].response.resolve(Response.json({ topic_list: { topics: [{ id: 2, last_read_post_number: 5 }] } }));
+      await expect(retry).resolves.toMatchObject([{ topicId: '2', lastReadPostNumber: 5 }]);
+    } finally {
+      reading.dispose();
+    }
+  });
+
   it.each(['linuxdo', 'all'] as const)(
     'requests one account recheck for a parsed %s search login failure',
     async (source) => {

@@ -7,7 +7,7 @@ import { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
-import { act, createElement } from 'react';
+import { act, createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { NODESEEK_STICKER_CATEGORIES } from '@/domain/forum/nodeSeekStickers';
 import {
@@ -47,10 +47,12 @@ async function mountRuntime({
   markdown = '',
   mode = 'rich',
   nodeSeekMemberId,
+  onReady,
   pendingNodeSeekPolls = [],
   readOnly,
   runtimeStyle = false,
   site = 'linuxdo',
+  strict = false,
   theme = TEST_THEME,
   waitForFrame = true
 }: {
@@ -61,10 +63,12 @@ async function mountRuntime({
   markdown?: string;
   mode?: 'rich' | 'source';
   nodeSeekMemberId?: string | null;
+  onReady?: (host: HTMLDivElement) => void;
   pendingNodeSeekPolls?: PendingNodeSeekPoll[];
   readOnly?: boolean;
   runtimeStyle?: boolean;
   site?: 'linuxdo' | 'nodeseek';
+  strict?: boolean;
   theme?: typeof TEST_THEME;
   waitForFrame?: boolean;
 } = {}) {
@@ -78,7 +82,9 @@ async function mountRuntime({
     configurable: true,
     value: () => ({ bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0, toJSON: () => ({}) })
   });
-  const postMessage = vi.fn();
+  const postMessage = vi.fn((raw: string) => {
+    if (JSON.parse(raw).type === 'READY') onReady?.(host);
+  });
   window.ReactNativeWebView = { postMessage };
   if (runtimeStyle) {
     const style = document.createElement('style');
@@ -121,7 +127,13 @@ async function mountRuntime({
     data.textContent = JSON.stringify(initialMessage);
     document.head.append(data);
   }
-  await act(async () => root.render(createElement(ComposerEditorRuntime)));
+  await act(async () =>
+    root.render(
+      strict
+        ? createElement(StrictMode, null, createElement(ComposerEditorRuntime))
+        : createElement(ComposerEditorRuntime)
+    )
+  );
   if (!initialDocument) await send(initialMessage);
   const finishPanelHandoff = async (since: number) => {
     const request = postMessage.mock.calls
@@ -1289,15 +1301,96 @@ describe('Composer editor runtime codec', () => {
     expect(dialog.querySelector('.builder-body .primary')).toBeNull();
     expect(dialog.querySelector('.builder-actions .primary')?.textContent).toBe('插入投票');
   });
-  it('restores the local initial document without waiting for a host message', async () => {
-    const { host, postMessage, send } = await mountRuntime({ initialDocument: true, markdown: '本机草稿末字' });
-    const types = () => postMessage.mock.calls.map(([raw]) => JSON.parse(raw).type);
-    expect(types()).toContain('READY');
-    expect(host.querySelector('.ProseMirror')?.textContent).toBe('本机草稿末字');
-    expect(document.getElementById('composer-initial-document')).toBeNull();
-    await send({ type: 'SET_MODE', payload: { mode: 'source' } });
-    expect(types().filter((type: string) => type === 'READY')).toHaveLength(1);
-  });
+  it.each(['rich', 'source'] as const)(
+    'restores the local initial document without waiting for a host message in %s mode',
+    async (mode) => {
+      const { host, postMessage, send, toolbarState } = await mountRuntime({
+        initialDocument: true,
+        markdown: '本机草稿末字',
+        documentEpoch: 7,
+        mode,
+        onReady:
+          mode === 'source'
+            ? (host) => {
+                const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+                source.dispatch({
+                  changes: { from: source.state.doc.length, insert: '新输入' },
+                  selection: { anchor: 2 }
+                });
+                window.dispatchEvent(
+                  new MessageEvent('message', {
+                    data: JSON.stringify({
+                      type: 'COMMAND',
+                      payload: { name: 'toolbar-action', documentEpoch: 7, action: 'upload-image' }
+                    })
+                  })
+                );
+                expect(source.contentDOM.getAttribute('virtualkeyboardpolicy')).toBe('manual');
+              }
+            : undefined,
+        strict: true
+      });
+      const markdown = mode === 'source' ? '本机草稿末字新输入' : '本机草稿末字';
+      const types = () => postMessage.mock.calls.map(([raw]) => JSON.parse(raw).type);
+      expect(types()).toContain('READY');
+      expect(host.querySelector('.ProseMirror')?.textContent).toBe('本机草稿末字');
+      expect(document.getElementById('composer-initial-document')).toBeNull();
+      if (mode === 'source') {
+        const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+        expect(source.state.doc.toString()).toBe(markdown);
+        expect(source.state.selection.main.anchor).toBe(2);
+        expect(source.contentDOM.getAttribute('virtualkeyboardpolicy')).toBeNull();
+        expect(toolbarState().imageBusy).toBe(false);
+        const request = postMessage.mock.calls
+          .map(([raw]) => JSON.parse(String(raw)))
+          .findLast((message) => message.payload?.action === 'upload-image');
+        await send({
+          type: 'COMMAND',
+          payload: {
+            name: 'finish-image-upload',
+            documentEpoch: 7,
+            uploadId: request.payload.data.uploadId,
+            markdown: '不应进入正文的旧上传'
+          }
+        });
+        expect(
+          postMessage.mock.calls
+            .map(([raw]) => JSON.parse(String(raw)))
+            .findLast((message) => message.type === 'UPLOAD_COMMAND_RESULT')?.payload.accepted
+        ).toBe(false);
+      }
+      await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+      expect(host.querySelector('.source-pane')?.classList.contains('active')).toBe(true);
+      expect(host.querySelector('.cm-content')?.textContent).toBe(markdown);
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'strict-initial-document' } });
+      expect(
+        postMessage.mock.calls
+          .map(([raw]) => JSON.parse(String(raw)))
+          .findLast((message) => message.payload?.requestId === 'strict-initial-document')
+      ).toEqual({
+        type: 'SNAPSHOT',
+        payload: {
+          documentEpoch: 7,
+          requestId: 'strict-initial-document',
+          snapshot: {
+            revision: mode === 'source' ? 1 : 0,
+            markdown,
+            mode: 'source',
+            isEmpty: false,
+            validationIssues: [],
+            pendingNodeSeekPolls: []
+          }
+        }
+      });
+      expect(types().filter((type: string) => type === 'READY')).toHaveLength(1);
+      if (mode === 'source') {
+        await send({ type: 'COMMAND', payload: { name: 'undo' } });
+        expect(host.querySelector('.cm-content')?.textContent).toBe('本机草稿末字');
+        await send({ type: 'COMMAND', payload: { name: 'redo' } });
+        expect(host.querySelector('.cm-content')?.textContent).toBe(markdown);
+      }
+    }
+  );
 
   it.each(
     (['linuxdo', 'nodeseek'] as const).flatMap((site) => (['rich', 'source'] as const).map((mode) => ({ site, mode })))
@@ -1804,14 +1897,41 @@ describe('Composer editor runtime codec', () => {
     ['rich', 'unmount'],
     ['source', 'unmount']
   ] as const)('restores the %s input policy when pending upload ends by %s', async (mode, cleanup) => {
-    const { host, root, send, toolbarAction } = await mountRuntime({ mode, markdown: '保留正文' });
+    const { host, root, send, toolbarAction, postMessage } = await mountRuntime({ mode, markdown: '保留正文' });
     const input = host.querySelector<HTMLElement>(mode === 'rich' ? '.composer-document' : '.cm-content')!;
     input.setAttribute('virtualkeyboardpolicy', 'auto');
     await send({ type: 'COMMAND', payload: { name: 'focus' } });
     await toolbarAction('upload-image');
     expect(input.getAttribute('virtualkeyboardpolicy')).toBe('manual');
     if (cleanup === 'destroy') await send({ type: 'DESTROY' });
-    else await act(async () => root.unmount());
+    else {
+      const schedule = vi.spyOn(window, 'setTimeout');
+      const clear = vi.spyOn(window, 'clearTimeout');
+      await act(async () => {
+        if (mode === 'rich') {
+          const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
+          editor.view.dispatch(editor.state.tr.insertText('待保存输入', 1));
+        } else {
+          const view = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+          view.dispatch({ changes: { from: view.state.doc.length, insert: '待保存输入' } });
+        }
+      });
+      const pendingTimers = [100, 600].map((delay) => {
+        const index = schedule.mock.calls.findLastIndex(([, milliseconds]) => milliseconds === delay);
+        expect(index).toBeGreaterThanOrEqual(0);
+        return schedule.mock.results[index]!.value;
+      });
+      await act(async () => root.unmount());
+      pendingTimers.forEach((timer) => expect(clear).toHaveBeenCalledWith(timer));
+      const since = postMessage.mock.calls.length;
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
+      expect(
+        postMessage.mock.calls
+          .slice(since)
+          .map(([raw]) => JSON.parse(String(raw)))
+          .filter((event) => event.type === 'SNAPSHOT' || event.type === 'STATE_CHANGED')
+      ).toEqual([]);
+    }
     expect(input.getAttribute('virtualkeyboardpolicy')).toBe('auto');
   });
 
@@ -2763,8 +2883,8 @@ describe('Composer editor runtime codec', () => {
       host.remove();
     }
     delete window.ReactNativeWebView;
-    vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     document.querySelectorAll('style[data-tiptap-style]').forEach((node) => node.remove());
     document.querySelectorAll('[data-editor-runtime-test-style]').forEach((node) => node.remove());
@@ -4038,5 +4158,210 @@ describe('Composer editor runtime codec', () => {
       search.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(panel.querySelector('button[aria-label="emoji 249"]')).not.toBeNull();
+  });
+
+  it.each([
+    { order: 'old-first', outcome: 'success' },
+    { order: 'old-first', outcome: 'failure' },
+    { order: 'new-first', outcome: 'success' }
+  ] as const)('keeps the latest template request owned when $outcome settles $order', async ({ order, outcome }) => {
+    const { host, postMessage, send, toolbarAction } = await mountRuntime();
+    const requests = () =>
+      postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .filter((event) => event.type === 'REQUEST_HOST_ACTION' && event.payload.action === 'load-linuxdo-templates');
+    await toolbarAction('templates');
+    await toolbarAction('templates');
+    expect(requests()).toHaveLength(2);
+    const respond = (index: number, old = false) =>
+      send({
+        type: 'COMMAND',
+        payload: {
+          name: 'host-action-result',
+          requestId: requests()[index].payload.requestId,
+          ...(old && outcome === 'failure'
+            ? { error: '较早读取失败' }
+            : {
+                result: {
+                  templates: [
+                    old
+                      ? { id: 'old', title: '早一轮模板', content: '旧正文' }
+                      : { id: 'new', title: '最新模板', content: '新正文' }
+                  ]
+                }
+              })
+        }
+      });
+    if (order === 'new-first') {
+      await respond(1);
+      expect(host.textContent).toContain('最新模板');
+      expect(host.textContent).not.toContain('正在读取模板…');
+      await respond(0, true);
+    } else {
+      await respond(0, true);
+      expect(host.textContent).toContain('正在读取模板…');
+      expect(host.textContent).not.toContain('早一轮模板');
+      expect(host.querySelector('.error')).toBeNull();
+      await respond(1);
+    }
+    expect(host.textContent).toContain('最新模板');
+    expect(host.textContent).not.toContain('正在读取模板…');
+    expect(host.textContent).not.toContain('早一轮模板');
+    expect(host.querySelector('.error')).toBeNull();
+  });
+
+  it.each(['source', 'rich'] as const)(
+    'keeps a failed %s document out of new-epoch snapshots and recovers only after explicit INIT',
+    async (mode) => {
+      const { host, postMessage, send } = await mountRuntime({ mode, markdown: '原文档正文', documentEpoch: 1 });
+      const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+      const editor = host.querySelector<HTMLElement & { editor: Editor }>('.composer-document')!.editor;
+      if (mode === 'source')
+        await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '待保存编辑' } }));
+      else await act(async () => editor.view.dispatch(editor.state.tr.insertText('待保存编辑', 2)));
+      let failed = false;
+      let restore: () => void;
+      if (mode === 'source') {
+        const originalDispatch = source.dispatch;
+        const failure = vi.spyOn(source, 'dispatch').mockImplementation(function (this: EditorView, ...transactions) {
+          if (
+            !failed &&
+            transactions.some((value) => typeof value === 'object' && value !== null && 'changes' in value)
+          ) {
+            failed = true;
+            throw new Error('controlled view replacement failure');
+          }
+          return originalDispatch.apply(this, transactions);
+        });
+        restore = () => failure.mockRestore();
+      } else {
+        const failure = vi.spyOn(editor, 'chain').mockImplementationOnce(() => {
+          failed = true;
+          throw new Error('controlled editor replacement failure');
+        });
+        restore = () => failure.mockRestore();
+      }
+      try {
+        await send({
+          type: 'INIT',
+          payload: {
+            documentEpoch: 2,
+            site: 'linuxdo',
+            intentKind: 'reply',
+            markdown: '新文档正文',
+            pendingNodeSeekPolls: [],
+            mode,
+            theme: TEST_THEME
+          }
+        });
+      } finally {
+        restore();
+      }
+      expect(failed).toBe(true);
+      const since = postMessage.mock.calls.length;
+      const inactiveMarkdown = mode === 'source' ? source.state.doc.toString() : editor.getMarkdown();
+      if (mode === 'source')
+        await act(async () =>
+          source.dispatch({ changes: { from: source.state.doc.length, insert: '失效文档期间输入' } })
+        );
+      else await act(async () => editor.view.dispatch(editor.state.tr.insertText('失效文档期间输入', 2)));
+      expect.soft(mode === 'source' ? source.state.doc.toString() : editor.getMarkdown()).toBe(inactiveMarkdown);
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'inactive-document' } });
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
+      const afterFailure = postMessage.mock.calls.slice(since).map(([raw]) => JSON.parse(String(raw)));
+      expect.soft(afterFailure.filter((event) => event.type === 'SNAPSHOT')).toEqual([]);
+      expect.soft(afterFailure.filter((event) => event.type === 'READY')).toHaveLength(0);
+      await send({
+        type: 'INIT',
+        payload: {
+          documentEpoch: 3,
+          site: 'linuxdo',
+          intentKind: 'reply',
+          markdown: '显式重试新正文',
+          pendingNodeSeekPolls: [],
+          mode,
+          theme: TEST_THEME
+        }
+      });
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'recovered-document' } });
+      const recovered = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((event) => event.payload?.requestId === 'recovered-document');
+      expect(recovered.payload.documentEpoch).toBe(3);
+      expect(recovered.payload.snapshot).toMatchObject({ markdown: '显式重试新正文', revision: 0 });
+      if (mode === 'source')
+        await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '后续输入' } }));
+      else await act(async () => editor.view.dispatch(editor.state.tr.insertText('后续输入', 2)));
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'after-recovery-edit' } });
+      const edited = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((event) => event.payload?.requestId === 'after-recovery-edit');
+      expect(edited.payload.snapshot.revision).toBe(1);
+      expect(edited.payload.snapshot.markdown).toContain('后续输入');
+    }
+  );
+
+  it('retires a pending old-document autosnapshot before a replacement becomes ready', async () => {
+    const { host, send, postMessage } = await mountRuntime({ mode: 'source', markdown: '原正文', documentEpoch: 1 });
+    const source = EditorView.findFromDOM(host.querySelector('.cm-editor')!)!;
+    const schedule = vi.spyOn(window, 'setTimeout');
+    const clear = vi.spyOn(window, 'clearTimeout');
+    await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '旧输入' } }));
+    const pendingTimers = [100, 600].map((delay) => {
+      const index = schedule.mock.calls.findLastIndex(([, milliseconds]) => milliseconds === delay);
+      expect(index).toBeGreaterThanOrEqual(0);
+      return { handle: schedule.mock.results[index]!.value, callback: schedule.mock.calls[index]![0] };
+    });
+    await send({
+      type: 'INIT',
+      payload: {
+        documentEpoch: 2,
+        site: 'linuxdo',
+        intentKind: 'reply',
+        markdown: '替换正文',
+        pendingNodeSeekPolls: [],
+        mode: 'source',
+        theme: TEST_THEME
+      }
+    });
+    pendingTimers.forEach(({ handle }) => expect(clear).toHaveBeenCalledWith(handle));
+    const since = postMessage.mock.calls.length;
+    await act(async () => {
+      // A callback already dequeued before retirement still belongs to the old observer generation.
+      pendingTimers.forEach(({ callback }) => {
+        expect(callback).toBeTypeOf('function');
+        if (typeof callback === 'function') callback();
+      });
+    });
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
+    const inherited = postMessage.mock.calls.slice(since).map(([raw]) => JSON.parse(String(raw)));
+    expect(inherited.filter((event) => event.type === 'SNAPSHOT' || event.type === 'STATE_CHANGED')).toEqual([]);
+    await act(async () => source.dispatch({ changes: { from: source.state.doc.length, insert: '新输入' } }));
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
+    const current = postMessage.mock.calls
+      .slice(since)
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((event) => event.type === 'SNAPSHOT');
+    expect(current.payload).toMatchObject({ documentEpoch: 2, snapshot: { markdown: '替换正文新输入', revision: 1 } });
+  });
+
+  it('settles a template bridge dispatch failure through the existing request error path', async () => {
+    const { host, postMessage, send, toolbarAction } = await mountRuntime();
+    await toolbarAction('templates');
+    const request = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((event) => event.payload?.action === 'load-linuxdo-templates');
+    await send({
+      type: 'COMMAND',
+      payload: { name: 'host-action-result', requestId: request.payload.requestId, result: { templates: [] } }
+    });
+    postMessage.mockImplementation((raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === 'REQUEST_HOST_ACTION' && message.payload.action === 'load-linuxdo-templates')
+        throw new Error('模板桥接不可用');
+    });
+    await send({ type: 'COMMAND', payload: { name: 'toolbar-action', documentEpoch: 0, action: 'templates' } });
+    expect(host.querySelector('.error')?.textContent).toBe('模板桥接不可用');
+    expect(host.textContent).not.toContain('正在读取模板…');
   });
 });

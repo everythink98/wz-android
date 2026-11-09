@@ -4,6 +4,7 @@ import {
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
+  retireBrowserFetchRequests,
   requestHeaderValue,
   settleBrowserFetchRequestOnce,
   shouldHandleBrowserHttpError,
@@ -304,5 +305,64 @@ describe('browser fetch queue', () => {
     expect(currentRef.current).toBeNull();
     expect(setActiveRequest).toHaveBeenCalledWith(null);
     expect(startNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('detaches and settles all retired work without starting another renderer', () => {
+    vi.useFakeTimers();
+    const controllers = [new AbortController(), new AbortController()];
+    const requests = controllers.map((controller, index) => {
+      const abortHandler = vi.fn();
+      controller.signal.addEventListener('abort', abortHandler);
+      return createRequest(index + 1, {
+        abortSignal: controller.signal,
+        abortHandler,
+        ...(index === 0 ? { timeout: setTimeout(() => undefined, 15_000) } : {})
+      });
+    });
+    const currentRef = ref<BrowserFetchQueueRequest | null>(requests[0]!);
+    const queueRef = ref([requests[1]!]);
+    const stopLoading = vi.fn();
+    for (const request of requests) {
+      vi.mocked(request.reject).mockImplementation(() => {
+        expect(currentRef.current).toBeNull();
+        expect(queueRef.current).toEqual([]);
+      });
+    }
+
+    retireBrowserFetchRequests({ currentRef, queueRef, webViewRef: ref({ stopLoading }) });
+    retireBrowserFetchRequests({ currentRef, queueRef, webViewRef: ref({ stopLoading }) });
+    controllers.forEach((controller) => controller.abort());
+
+    expect(stopLoading).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    for (const request of requests) {
+      expect(request.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
+      expect(request.abortHandler).toBeUndefined();
+    }
+  });
+
+  it('settles detached requests even when stopping the renderer throws', () => {
+    vi.useFakeTimers();
+    const active = createRequest(1, { timeout: setTimeout(() => undefined, 15_000) });
+    const queued = createRequest(2);
+    const currentRef = ref<BrowserFetchQueueRequest | null>(active);
+    const queueRef = ref([queued]);
+    const failure = new Error('renderer command failed');
+
+    expect(() =>
+      retireBrowserFetchRequests({
+        currentRef,
+        queueRef,
+        webViewRef: ref({
+          stopLoading: () => {
+            throw failure;
+          }
+        })
+      })
+    ).toThrow(failure);
+
+    expect(active.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
+    expect(queued.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

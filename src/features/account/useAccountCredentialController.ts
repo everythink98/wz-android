@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { errorMessage } from '@/platform/network/errors';
 import {
@@ -15,6 +15,7 @@ import {
   parseLoginFormMessage
 } from '@/domain/session/loginFormAdapters';
 import type { SessionSite } from '@/domain/session/siteSessionState';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import {
   normalizeDiagnosticReason,
@@ -30,6 +31,8 @@ import {
 } from './credentialDiagnostics';
 
 type WebViewRef = RefObject<WebView | null>;
+type CredentialFill = CredentialFillTraceState & { owner: AbortSignal };
+type CredentialWrite = { owner: AbortSignal };
 
 export function useAccountCredentialController({
   changeLinuxDoPanel,
@@ -60,29 +63,49 @@ export function useAccountCredentialController({
   const [credentialFillAttempt, setCredentialFillAttempt] = useState<AccountCredentialFillAttempt | null>(null);
   const credentialLoginSiteRef = useRef<CredentialSite | null>(null);
   const pendingCredentialFillSiteRef = useRef<CredentialSite | null>(null);
-  const credentialFillTraceRef = useRef<CredentialFillTraceState | null>(null);
+  const credentialFillTraceRef = useRef<CredentialFill | null>(null);
   const credentialFillAttemptRef = useRef(0);
   const summaryLoadGenerationRef = useRef(0);
   const summaryRevisionRef = useRef(0);
+  const lifetimeRef = useRef(new AbortController());
+  const pendingWritesRef = useRef(new Set<CredentialWrite>());
+  const notifyRef = useCommittedRef(notify);
+
+  useLayoutEffect(() => {
+    if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
+    const lifetime = lifetimeRef.current;
+    const owner = lifetime.signal;
+    const fill = credentialFillTraceRef.current;
+    // Strict effect reconstruction keeps the same logical fill and dispatched writes.
+    if (fill && credentialLoginSiteRef.current === fill.site) fill.owner = owner;
+    for (const write of pendingWritesRef.current) write.owner = owner;
+    return () => lifetime.abort();
+  }, []);
 
   const reloadCredentialSummaries = useCallback(async () => {
+    const owner = lifetimeRef.current.signal;
+    if (owner.aborted) return false;
     const generation = ++summaryLoadGenerationRef.current;
     const revision = summaryRevisionRef.current;
     const result = await loadCredentialSummariesWithTrace((site) => credentialVault.getSummary(site), {
       generation,
-      isCurrent: () => summaryLoadGenerationRef.current === generation && summaryRevisionRef.current === revision
+      isCurrent: () =>
+        !owner.aborted &&
+        lifetimeRef.current.signal === owner &&
+        summaryLoadGenerationRef.current === generation &&
+        summaryRevisionRef.current === revision
     });
     if (!result.ok) {
       if ('stale' in result) {
         return false;
       }
       setCredentialSummaries((current) => ({ ...current, ...result.summaries }));
-      notify(`读取保存的登录信息失败：${errorMessage(result.error)}`);
+      notifyRef.current(`读取保存的登录信息失败：${errorMessage(result.error)}`);
       return false;
     }
     setCredentialSummaries(result.summaries);
     return true;
-  }, [notify]);
+  }, [notifyRef]);
 
   const finishCredentialFillTrace = useCallback(
     (
@@ -137,6 +160,7 @@ export function useAccountCredentialController({
 
   const openAccountLogin = useCallback(
     (site: SessionSite, fill: boolean) => {
+      if (lifetimeRef.current.signal.aborted) return;
       const previousSite = credentialLoginSiteRef.current;
       if (previousSite && previousSite !== site) {
         clearCredentialLoginIntent(previousSite);
@@ -173,7 +197,7 @@ export function useAccountCredentialController({
         generation: attempt
       });
       markDiagnosticStage(trace, 'guard', { site, state: 'pending', generation: attempt });
-      credentialFillTraceRef.current = { site, attempt, trace };
+      credentialFillTraceRef.current = { site, attempt, trace, owner: lifetimeRef.current.signal };
       credentialLoginSiteRef.current = site;
       pendingCredentialFillSiteRef.current = site;
       setCredentialLoginSite(site);
@@ -203,6 +227,7 @@ export function useAccountCredentialController({
       if (!message) {
         return false;
       }
+      if (lifetimeRef.current.signal.aborted) return true;
       const site = message.site;
       if (credentialLoginSiteRef.current !== site) {
         return true;
@@ -226,7 +251,7 @@ export function useAccountCredentialController({
           filled ? {} : { reason: 'unsupported' },
           fillTrace
         );
-        notify(filled ? '已填入保存的登录信息，请完成验证后手动提交。' : '表单已变化，请手动登录。');
+        notifyRef.current(filled ? '已填入保存的登录信息，请完成验证后手动提交。' : '表单已变化，请手动登录。');
         return true;
       }
       if (pendingCredentialFillSiteRef.current !== site) {
@@ -239,7 +264,7 @@ export function useAccountCredentialController({
           markDiagnosticStage(fillTrace, 'guard', { site, state: 'failure', reason: 'unsupported' });
           finishCredentialFillTrace(site, 'blocked', { reason: 'unsupported' }, fillTrace);
         }
-        notify('表单已变化，请手动登录。');
+        notifyRef.current('表单已变化，请手动登录。');
         return true;
       }
 
@@ -252,7 +277,11 @@ export function useAccountCredentialController({
       void credentialVault
         .readForFill(site)
         .then((credential) => {
-          if (credentialFillTraceRef.current?.trace !== fillTrace) {
+          if (
+            fillState.owner.aborted ||
+            lifetimeRef.current.signal !== fillState.owner ||
+            credentialFillTraceRef.current !== fillState
+          ) {
             return;
           }
           if (!credential || credentialLoginSiteRef.current !== site) {
@@ -264,7 +293,7 @@ export function useAccountCredentialController({
                 reason: 'missing_credential'
               });
               finishCredentialFillTrace(site, 'blocked', { reason: 'missing_credential' }, fillTrace);
-              notify('没有可用的保存登录信息，请重新保存。');
+              notifyRef.current('没有可用的保存登录信息，请重新保存。');
               void reloadCredentialSummaries();
             } else {
               finishCredentialFillTrace(site, 'stale', { reason: 'superseded' }, fillTrace);
@@ -276,14 +305,18 @@ export function useAccountCredentialController({
           if (!target.current) {
             markDiagnosticStage(fillTrace, 'apply', { site, state: 'failure', reason: 'not_ready' });
             finishCredentialFillTrace(site, 'blocked', { reason: 'not_ready' }, fillTrace);
-            notify('登录页面尚未准备好，请重试填入。');
+            notifyRef.current('登录页面尚未准备好，请重试填入。');
             return;
           }
           target.current.injectJavaScript(LOGIN_FORM_ADAPTERS[site].fillScript(credential, fillState.attempt));
           markDiagnosticStage(fillTrace, 'apply', { site, state: 'pending' });
         })
         .catch((error) => {
-          if (credentialFillTraceRef.current?.trace !== fillTrace) {
+          if (
+            fillState.owner.aborted ||
+            lifetimeRef.current.signal !== fillState.owner ||
+            credentialFillTraceRef.current !== fillState
+          ) {
             return;
           }
           markDiagnosticStage(fillTrace, 'credential', {
@@ -293,16 +326,17 @@ export function useAccountCredentialController({
             reason: 'storage_error'
           });
           finishCredentialFillTrace(site, 'failure', { reason: 'storage_error' }, fillTrace);
-          notify(`未填入登录信息：${errorMessage(error)}`);
+          notifyRef.current(`未填入登录信息：${errorMessage(error)}`);
           void reloadCredentialSummaries();
         });
       return true;
     },
-    [finishCredentialFillTrace, linuxDoWebViewRef, notify, reloadCredentialSummaries, webViewRef, yaohuoWebViewRef]
+    [finishCredentialFillTrace, linuxDoWebViewRef, notifyRef, reloadCredentialSummaries, webViewRef, yaohuoWebViewRef]
   );
 
   const handleAccountCenterCommand = useCallback(
     async (command: Exclude<AccountCenterCommand, { type: 'open-user' }>) => {
+      if (lifetimeRef.current.signal.aborted) return;
       if (command.type === 'refresh') {
         await refreshAccountStatus();
         return;
@@ -327,6 +361,8 @@ export function useAccountCredentialController({
           state: isAuthenticationRequired ? 'pending' : 'not-required',
           isAuthenticationRequired
         });
+        const write = { owner: lifetimeRef.current.signal };
+        pendingWritesRef.current.add(write);
         try {
           const summary = await credentialVault.save(command.site, {
             account: command.account,
@@ -340,10 +376,14 @@ export function useAccountCredentialController({
             state: 'saved',
             didUseBiometric
           });
+          if (write.owner.aborted || lifetimeRef.current.signal !== write.owner) {
+            finishDiagnosticTrace(trace, 'stale', { site: command.site, reason: 'canceled' });
+            return;
+          }
           setCredentialSummaries((current) => ({ ...current, [command.site]: summary }));
           markDiagnosticStage(trace, 'apply', { site: command.site, state: 'status-updated' });
           finishDiagnosticTrace(trace, 'success', { site: command.site, didUseBiometric });
-          notify('登录信息已安全保存。');
+          notifyRef.current('登录信息已安全保存。');
           return;
         } catch (error) {
           const blocked =
@@ -361,6 +401,7 @@ export function useAccountCredentialController({
           });
           throw error;
         } finally {
+          pendingWritesRef.current.delete(write);
           summaryRevisionRef.current += 1;
         }
       }
@@ -372,15 +413,21 @@ export function useAccountCredentialController({
       });
       markDiagnosticStage(trace, 'guard', { site: command.site, state: 'confirmed', generation });
       let deleted = false;
+      const write = { owner: lifetimeRef.current.signal };
+      pendingWritesRef.current.add(write);
       try {
         await credentialVault.delete(command.site);
         deleted = true;
         markDiagnosticStage(trace, 'persist', { site: command.site, store: 'secure-store', state: 'cleared' });
         const summary = await credentialVault.getSummary(command.site);
+        if (write.owner.aborted || lifetimeRef.current.signal !== write.owner) {
+          finishDiagnosticTrace(trace, 'stale', { site: command.site, reason: 'canceled' });
+          return;
+        }
         setCredentialSummaries((current) => ({ ...current, [command.site]: summary }));
         markDiagnosticStage(trace, 'apply', { site: command.site, state: 'status-updated' });
         finishDiagnosticTrace(trace, 'success', { site: command.site });
-        notify('已删除保存的登录信息，当前网站登录未受影响。');
+        notifyRef.current('已删除保存的登录信息，当前网站登录未受影响。');
       } catch (error) {
         markDiagnosticStage(trace, deleted ? 'apply' : 'persist', {
           site: command.site,
@@ -390,10 +437,11 @@ export function useAccountCredentialController({
         finishDiagnosticTrace(trace, 'failure', { site: command.site, reason: 'storage_error' });
         throw error;
       } finally {
+        pendingWritesRef.current.delete(write);
         summaryRevisionRef.current += 1;
       }
     },
-    [notify, openAccountLogin, refreshAccountStatus]
+    [notifyRef, openAccountLogin, refreshAccountStatus]
   );
 
   return {

@@ -210,3 +210,90 @@ describe('V2EX topic reader', () => {
     });
   });
 });
+
+describe('V2EX feed continuation', () => {
+  const row = (id: number) =>
+    `<div class="cell item"><a class="topic-link" href="/t/${id}#reply0">Topic ${id}</a><a class="node" href="/go/create">create</a><a href="/member/neo">neo</a><span title="2026-05-20 00:00:00 +08:00"></span></div>`;
+
+  it('retains the last 200 distinct seen identities in the existing cursor format', async () => {
+    const { getV2exFeed } = await import('./reader');
+    const fetcher = vi.fn(
+      async () =>
+        new Response(Array.from({ length: 205 }, (_, index) => row(index + 1)).join('') + '<a href="/recent">more</a>')
+    );
+    const result = await getV2exFeed({
+      limit: 205,
+      cursor: encodeURIComponent(JSON.stringify({ seenIds: ['0'] })),
+      fetcher
+    });
+    expect(result.nextCursor).toBeTruthy();
+    expect(JSON.parse(decodeURIComponent(result.nextCursor!))).toEqual({
+      seenIds: Array.from({ length: 200 }, (_, index) => String(index + 6))
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('fills a continuation page with distinct unseen topic identities across overlapping upstream pages', async () => {
+    const { getV2exFeed } = await import('./reader');
+    const fetcher = vi.fn(async (input: string) => {
+      const page = new URL(input).searchParams.get('p');
+      if (page === '1') return new Response(row(1) + row(2) + '<a href="/recent?p=2">next</a>');
+      if (page === '2') return new Response(row(2) + row(3));
+      throw new Error('Unexpected local fixture request ' + input);
+    });
+    const result = await getV2exFeed({
+      page: 2,
+      limit: 2,
+      cursor: encodeURIComponent(JSON.stringify({ seenIds: ['1'] })),
+      fetcher
+    });
+    expect(result.items.map((item) => item.id)).toEqual(['2', '3']);
+    expect(result.hasMore).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets the caller cancel non-progressing seen pages without dispatching another page', async () => {
+    const { getV2exFeed } = await import('./reader');
+    const controller = new AbortController();
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(new URL(input).searchParams.get('p'));
+      if (page === 4) controller.abort();
+      return new Response(row(1) + `<a href="/recent?p=${page + 1}">next</a>`);
+    });
+    await expect(
+      getV2exFeed({
+        page: 2,
+        limit: 2,
+        cursor: encodeURIComponent(JSON.stringify({ seenIds: ['1'] })),
+        signal: controller.signal,
+        fetcher
+      })
+    ).rejects.toMatchObject({ name: 'RequestCanceledError' });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps the first topic payload and stronger access evidence from overlapping continuation rows', async () => {
+    const { getV2exFeed } = await import('./reader');
+    const fetcher = vi.fn(async (input: string) => {
+      if (new URL(input).searchParams.get('p') === '1') {
+        return new Response(row(1) + row(2) + '<a href="/recent?p=2">next</a>');
+      }
+      return new Response(
+        row(2).replace('Topic 2', 'Updated title').replace('</div>', '<span>This topic is private.</span></div>') +
+          row(3)
+      );
+    });
+    const result = await getV2exFeed({
+      page: 2,
+      limit: 2,
+      cursor: encodeURIComponent(JSON.stringify({ seenIds: ['1'] })),
+      fetcher
+    });
+    expect(result.items.map((item) => item.id)).toEqual(['2', '3']);
+    expect(result.items[0]).toMatchObject({
+      title: 'Topic 2',
+      accessRequirement: { type: 'permission' }
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});

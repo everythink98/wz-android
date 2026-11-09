@@ -234,6 +234,104 @@ describe('linux.do visible verification coordinator', () => {
     );
   });
 
+  it.each(['visible', 'result'] as const)(
+    'finishes a %s close and permits another login when the native stop command throws',
+    async (surface) => {
+      vi.useFakeTimers();
+      const {
+        controller,
+        linuxDoWebViewRef,
+        onLinuxDoSurfaceClosed,
+        onLinuxDoSurfaceOpened,
+        setMountLinuxDoWebView,
+        showLinuxDoPanelRef
+      } = createController();
+      if (surface === 'result') {
+        await controller.showLinuxDoVerification('读取验证', {
+          queryKey: recoveryQueryKeyFor('native-stop-result'),
+          resume: vi.fn(async () => 'verification-required' as const)
+        });
+        await controller.checkLinuxDoCookie();
+        expect(showLinuxDoPanelRef.current).toBe(false);
+      } else {
+        await controller.showLinuxDoVerification();
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      const previousCloses = onLinuxDoSurfaceClosed.mock.calls.length;
+      const previousOpens = onLinuxDoSurfaceOpened.mock.calls.length;
+      const nativeFailure = new Error('native stop failed');
+      linuxDoWebViewRef.current.stopLoading.mockImplementationOnce(() => {
+        throw nativeFailure;
+      });
+      let thrown: unknown;
+      try {
+        controller.closeLinuxDoPanel();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBe(nativeFailure);
+      expect(showLinuxDoPanelRef.current).toBe(false);
+      expect(setMountLinuxDoWebView).toHaveBeenLastCalledWith(false);
+      expect(onLinuxDoSurfaceClosed).toHaveBeenCalledTimes(previousCloses + Number(surface === 'visible'));
+      expect(controller.changeLinuxDoPanel(true)).toBe(true);
+      if (surface === 'visible') {
+        await vi.advanceTimersByTimeAsync(349);
+        expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(previousOpens);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(previousOpens + 1);
+      expect(showLinuxDoPanelRef.current).toBe(true);
+    }
+  );
+
+  it('finishes repeated close cleanup and cancels queued reading when the native stop command throws', async () => {
+    vi.useFakeTimers();
+    const {
+      controller,
+      linuxDoWebViewRef,
+      onLinuxDoSurfaceClosed,
+      onLinuxDoSurfaceOpened,
+      setLinuxDoWebViewError,
+      setMountLinuxDoWebView
+    } = createController();
+    await controller.showLinuxDoVerification();
+    await vi.advanceTimersByTimeAsync(100);
+    controller.closeLinuxDoPanel();
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 8123905,
+      isCurrent: () => true,
+      cancel: vi.fn(),
+      resume: vi.fn(async () => 'completed' as const)
+    };
+    const queued = controller.showLinuxDoVerification('queued reading', reading);
+    const nativeFailure = new Error('repeated native stop failed');
+    linuxDoWebViewRef.current.stopLoading.mockImplementationOnce(() => {
+      throw nativeFailure;
+    });
+    setMountLinuxDoWebView.mockClear();
+    setLinuxDoWebViewError.mockClear();
+    let thrown: unknown;
+    try {
+      controller.closeLinuxDoPanel();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(nativeFailure);
+    await expect(queued).resolves.toBe(false);
+    expect(reading.cancel).toHaveBeenCalledTimes(1);
+    expect(reading.resume).not.toHaveBeenCalled();
+    expect(onLinuxDoSurfaceClosed).toHaveBeenCalledTimes(1);
+    expect(setMountLinuxDoWebView).toHaveBeenCalledWith(false);
+    expect(setLinuxDoWebViewError).toHaveBeenCalledWith('');
+    await vi.advanceTimersByTimeAsync(350);
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
+    expect(controller.changeLinuxDoPanel(true)).toBe(true);
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(2);
+  });
+
   it.each(['close', 'navigation', 'disabled', 'background', 'unmount'] as const)(
     'discards an explicit login open queued during closing on %s',
     async (exit) => {

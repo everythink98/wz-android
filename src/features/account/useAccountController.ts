@@ -30,6 +30,8 @@ type LoginTraceState = {
   trace: DiagnosticTrace;
   panelRequestId: number;
 };
+type LinuxDoLevelRequest =
+  { kind: 'command'; resolve: (completed: boolean) => void } | { kind: 'verification'; recovery: LinuxDoReadRecovery };
 
 function webViewFailureReason(state: LoginWebViewDiagnosticState): LoginWebViewFailureReason {
   return state === 'renderer-gone' ? 'renderer_gone' : state === 'timeout' ? 'timeout' : 'network_error';
@@ -98,11 +100,8 @@ export function useAccountController({
   const yaohuoTerminalRequestRef = useRef<number | null>(null);
   const wasYaohuoLoginPanelVisibleRef = useRef(false);
   const observedYaohuoLoginPanelRequestRef = useRef(yaohuoLoginPanelRequestRef.current);
-  const [linuxDoLevelRequested, setLinuxDoLevelRequested] = useState(false);
-  const linuxDoLevelCommandRef = useRef<{ resolve: (completed: boolean) => void } | null>(null);
-  const linuxDoLevelRecoveryRef = useRef<LinuxDoReadRecovery | null>(null);
-  const linuxDoLevelRequestedRef = useRef(false);
-  const linuxDoLevelWaitingForVerificationRef = useRef(false);
+  const [linuxDoLevelRequest, setLinuxDoLevelRequest] = useState<LinuxDoLevelRequest | null>(null);
+  const linuxDoLevelRequestRef = useRef<LinuxDoLevelRequest | null>(null);
   const linuxDoLevelScreenRef = useRef(screen);
   const linuxDoVerificationWasActiveRef = useRef(linuxDoVerificationActive);
   useCommitRefValue(linuxDoLevelScreenRef, screen);
@@ -112,7 +111,7 @@ export function useAccountController({
     source: 'linuxdo'
   });
   const linuxDoLevelQuery = useQuery({
-    enabled: screen === 'more' && linuxDoLevelRequested && !linuxDoIdentityPending,
+    enabled: screen === 'more' && Boolean(linuxDoLevelRequest) && !linuxDoIdentityPending,
     queryKey: linuxDoLevelQueryKey,
     queryFn: ({ signal }) =>
       readGateway.getLinuxDoLevelProfile({
@@ -123,21 +122,20 @@ export function useAccountController({
   });
 
   const finishLinuxDoLevelRequest = useCallback(() => {
-    linuxDoLevelRecoveryRef.current = null;
-    linuxDoLevelRequestedRef.current = false;
-    linuxDoLevelWaitingForVerificationRef.current = false;
-    setLinuxDoLevelRequested(false);
+    linuxDoLevelRequestRef.current = null;
+    setLinuxDoLevelRequest(null);
   }, []);
 
   const cancelLinuxDoLevelRequest = useCallback(() => {
-    const command = linuxDoLevelCommandRef.current;
-    linuxDoLevelCommandRef.current = null;
-    command?.resolve(false);
+    const request = linuxDoLevelRequestRef.current;
     finishLinuxDoLevelRequest();
+    if (request?.kind === 'command') request.resolve(false);
     void queryClient.cancelQueries({
       predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === 'linuxdo' && queryKey[2] === 'level'
     });
   }, [finishLinuxDoLevelRequest, queryClient]);
+
+  useEffect(() => () => cancelLinuxDoLevelRequest(), [cancelLinuxDoLevelRequest]);
 
   useEffect(() => {
     if (screen !== 'more') {
@@ -148,23 +146,17 @@ export function useAccountController({
   useEffect(() => {
     const wasActive = linuxDoVerificationWasActiveRef.current;
     linuxDoVerificationWasActiveRef.current = linuxDoVerificationActive;
-    if (
-      wasActive &&
-      !linuxDoVerificationActive &&
-      linuxDoLevelRequestedRef.current &&
-      linuxDoLevelWaitingForVerificationRef.current
-    ) {
+    if (wasActive && !linuxDoVerificationActive && linuxDoLevelRequestRef.current?.kind === 'verification') {
       cancelLinuxDoLevelRequest();
     }
   }, [cancelLinuxDoLevelRequest, linuxDoVerificationActive]);
 
   useEffect(() => {
-    const command = linuxDoLevelCommandRef.current;
-    if (!command || linuxDoLevelQuery.isFetching || linuxDoLevelQuery.status === 'pending') {
+    const command = linuxDoLevelRequestRef.current;
+    if (command?.kind !== 'command' || linuxDoLevelQuery.isFetching || linuxDoLevelQuery.status === 'pending') {
       return;
     }
-    linuxDoLevelCommandRef.current = null;
-    if (linuxDoLevelScreenRef.current !== 'more' || !linuxDoLevelRequestedRef.current) {
+    if (linuxDoLevelScreenRef.current !== 'more') {
       command.resolve(false);
       cancelLinuxDoLevelRequest();
       return;
@@ -184,21 +176,20 @@ export function useAccountController({
       return;
     }
 
-    linuxDoLevelWaitingForVerificationRef.current = true;
     const recovery: LinuxDoReadRecovery = {
       queryKey: linuxDoLevelQueryKey,
       resume: async (): Promise<LinuxDoReadResumeOutcome> => {
         if (
-          linuxDoLevelRecoveryRef.current !== recovery ||
-          !linuxDoLevelRequestedRef.current ||
+          linuxDoLevelRequestRef.current?.kind !== 'verification' ||
+          linuxDoLevelRequestRef.current.recovery !== recovery ||
           linuxDoLevelScreenRef.current !== 'more'
         ) {
           return 'stale';
         }
         const result = await linuxDoLevelQuery.refetch({ cancelRefetch: false });
         if (
-          linuxDoLevelRecoveryRef.current !== recovery ||
-          !linuxDoLevelRequestedRef.current ||
+          linuxDoLevelRequestRef.current?.kind !== 'verification' ||
+          linuxDoLevelRequestRef.current.recovery !== recovery ||
           linuxDoLevelScreenRef.current !== 'more'
         ) {
           return 'stale';
@@ -219,7 +210,9 @@ export function useAccountController({
         return 'failed';
       }
     };
-    linuxDoLevelRecoveryRef.current = recovery;
+    const request: LinuxDoLevelRequest = { kind: 'verification', recovery };
+    linuxDoLevelRequestRef.current = request;
+    setLinuxDoLevelRequest(request);
     let showing: ReturnType<typeof showLinuxDoVerification>;
     try {
       showing = showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证', recovery);
@@ -229,12 +222,12 @@ export function useAccountController({
     }
     void Promise.resolve(showing).then(
       (accepted) => {
-        if (accepted === false && linuxDoLevelRecoveryRef.current === recovery) {
+        if (accepted === false && linuxDoLevelRequestRef.current === request) {
           cancelLinuxDoLevelRequest();
         }
       },
       () => {
-        if (linuxDoLevelRecoveryRef.current === recovery) {
+        if (linuxDoLevelRequestRef.current === request) {
           cancelLinuxDoLevelRequest();
         }
       }
@@ -509,20 +502,18 @@ export function useAccountController({
   }, [clearLinuxDoLoginState, notify, resetLinuxDoLevelState, resetLinuxDoWebView]);
 
   const refreshLinuxDoLevel = useCallback(() => {
-    if (linuxDoIdentityPending || linuxDoLevelScreenRef.current !== 'more' || linuxDoLevelRequestedRef.current) {
+    if (linuxDoIdentityPending || linuxDoLevelScreenRef.current !== 'more' || linuxDoLevelRequestRef.current) {
       return Promise.resolve(false);
     }
-    linuxDoLevelRequestedRef.current = true;
-    linuxDoLevelWaitingForVerificationRef.current = false;
-    linuxDoLevelRecoveryRef.current = null;
     void queryClient.invalidateQueries({
       exact: true,
       queryKey: linuxDoLevelQueryKey,
       refetchType: 'none'
     });
-    setLinuxDoLevelRequested(true);
     return new Promise<boolean>((resolve) => {
-      linuxDoLevelCommandRef.current = { resolve };
+      const request: LinuxDoLevelRequest = { kind: 'command', resolve };
+      linuxDoLevelRequestRef.current = request;
+      setLinuxDoLevelRequest(request);
     });
   }, [linuxDoIdentityPending, linuxDoLevelQueryKey, queryClient]);
 

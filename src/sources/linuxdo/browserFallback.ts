@@ -37,6 +37,13 @@ type LinuxDoConnectSessionRecoveryInit = RequestInit & {
   [LINUXDO_CONNECT_SESSION_RECOVERY_INTENT]?: true;
 };
 
+type LinuxDoEvidenceWindow = Readonly<{
+  epoch: number;
+  latestConfirmedDirectOrdinal: number;
+}>;
+
+type LinuxDoReadTransport = { channel: 'direct'; response: Response } | { channel: 'webview'; response: Response };
+
 class LinuxDoDirectFetchTimeoutError extends Error {}
 
 async function fetchLinuxDoDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
@@ -237,13 +244,12 @@ export function createLinuxDoWebViewFallbackFetcher({
   recoverReadChannel?: (expectedGeneration: number, trace: DiagnosticTrace) => Promise<unknown>;
   webViewFetcher: Fetcher;
 }): Fetcher {
-  let evidenceEpoch = 0;
-  let latestConfirmedDirectOrdinal = 0;
+  let evidenceWindow: LinuxDoEvidenceWindow = { epoch: 0, latestConfirmedDirectOrdinal: 0 };
   let requestOrdinal = 0;
   const recordQualifiedReadFallback = async (
     reason: 'network_error' | 'timeout',
     ordinal: number,
-    expectedEvidenceEpoch: number,
+    expectedWindow: LinuxDoEvidenceWindow,
     expectedGeneration: number,
     diagnosticFields: DiagnosticFields
   ) => {
@@ -252,9 +258,9 @@ export function createLinuxDoWebViewFallbackFetcher({
       evidenceKind: 'fallback',
       ordinal,
       generation: expectedGeneration,
-      evidenceEpoch
+      evidenceEpoch: evidenceWindow.epoch
     } as const;
-    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) {
+    if (expectedWindow !== evidenceWindow || ordinal <= evidenceWindow.latestConfirmedDirectOrdinal) {
       recordForumRecoveryDecision('linuxdo', 'superseded', fields);
       return;
     }
@@ -263,7 +269,7 @@ export function createLinuxDoWebViewFallbackFetcher({
       return;
     }
     recordForumRecoveryDecision('linuxdo', 'commit', fields);
-    evidenceEpoch += 1;
+    evidenceWindow = { ...evidenceWindow, epoch: evidenceWindow.epoch + 1 };
     const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
       ...diagnosticFields,
       source: 'linuxdo',
@@ -289,12 +295,14 @@ export function createLinuxDoWebViewFallbackFetcher({
     }
     const isIdempotentRead = isLinuxDoRequestUrl(url) && (method === 'GET' || method === 'HEAD');
     const requestStartGeneration = readNetworkRuntimeGeneration();
-    let qualifiedFallback = false;
-    let response: Response;
+    let transport: LinuxDoReadTransport;
     try {
-      response = isIdempotentRead
-        ? await fetchLinuxDoDirectly(defaultFetcher, url, init)
-        : await defaultFetcher(input, init);
+      transport = {
+        channel: 'direct',
+        response: isIdempotentRead
+          ? await fetchLinuxDoDirectly(defaultFetcher, url, init)
+          : await defaultFetcher(input, init)
+      };
     } catch (error) {
       if (
         error instanceof LinuxDoDirectFetchTimeoutError &&
@@ -302,19 +310,13 @@ export function createLinuxDoWebViewFallbackFetcher({
         url !== LINUXDO_CONNECT_URL &&
         allowWebViewFallback(url)
       ) {
-        response = await fetchLinuxDoWebViewOnly(webViewFetcher, url, init, { reason: 'timeout' });
+        const response = await fetchLinuxDoWebViewOnly(webViewFetcher, url, init, { reason: 'timeout' });
+        transport = { channel: 'webview', response };
         if (response.ok) {
-          qualifiedFallback = true;
-          const expectedEvidenceEpoch = evidenceEpoch;
+          const expectedWindow = evidenceWindow;
           registerForumReadResponseEvidence(init, response, {
             commit: () =>
-              recordQualifiedReadFallback(
-                'timeout',
-                ordinal,
-                expectedEvidenceEpoch,
-                requestStartGeneration,
-                recoveryFields
-              ),
+              recordQualifiedReadFallback('timeout', ordinal, expectedWindow, requestStartGeneration, recoveryFields),
             kind: 'fallback',
             ordinal,
             source: 'linuxdo'
@@ -335,13 +337,13 @@ export function createLinuxDoWebViewFallbackFetcher({
             reason: 'network_error'
           });
           if (fallbackResponse.ok) {
-            const expectedEvidenceEpoch = evidenceEpoch;
+            const expectedWindow = evidenceWindow;
             registerForumReadResponseEvidence(init, fallbackResponse, {
               commit: () =>
                 recordQualifiedReadFallback(
                   'network_error',
                   ordinal,
-                  expectedEvidenceEpoch,
+                  expectedWindow,
                   requestStartGeneration,
                   recoveryFields
                 ),
@@ -355,6 +357,7 @@ export function createLinuxDoWebViewFallbackFetcher({
         throw error;
       }
     }
+    const { response } = transport;
     if (!isLinuxDoRequestUrl(url) || method !== 'GET') {
       return response;
     }
@@ -387,17 +390,16 @@ export function createLinuxDoWebViewFallbackFetcher({
         ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response, bodyText)
         : response;
     }
-    if (response.ok && !qualifiedFallback) {
+    if (response.ok && transport.channel === 'direct') {
       registerForumReadResponseEvidence(init, response, {
         commit: async () => {
-          if (ordinal > latestConfirmedDirectOrdinal) {
-            latestConfirmedDirectOrdinal = ordinal;
-            evidenceEpoch += 1;
+          if (ordinal > evidenceWindow.latestConfirmedDirectOrdinal) {
+            evidenceWindow = { epoch: evidenceWindow.epoch + 1, latestConfirmedDirectOrdinal: ordinal };
             recordForumRecoveryDecision('linuxdo', 'direct-reset', {
               ...recoveryFields,
               evidenceKind: 'direct',
               ordinal,
-              evidenceEpoch,
+              evidenceEpoch: evidenceWindow.epoch,
               generation: requestStartGeneration
             });
           }

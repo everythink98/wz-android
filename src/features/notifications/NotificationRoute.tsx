@@ -63,6 +63,14 @@ type NotificationListPage = {
   historyNotices?: Partial<Record<NotificationSource, string>>;
 };
 
+type NotificationMarkState =
+  | { phase: 'idle' | 'confirmed' | 'retryable' }
+  | { phase: 'pending'; attempt: { controller: AbortController; messageIds: string[] } };
+
+type NotificationReplyOperation =
+  | { phase: 'uploading' | 'confirmed'; controller: AbortController }
+  | { phase: 'sending'; controller: AbortController; content: string; dispatchState: RequestDispatchState };
+
 export function NotificationsRoute({
   navigation,
   route
@@ -755,18 +763,15 @@ function EnabledNotificationDetailRoute({
   const gateway = runtime.gateway;
   const notify = runtime.notify;
   const refreshSnapshots = runtime.refreshSnapshots;
-  const markPhaseRef = useRef<'idle' | 'pending' | 'confirmed' | 'retryable'>('idle');
+  const markStateRef = useRef<NotificationMarkState>({ phase: 'idle' });
   const markAttemptedThisVisit = useRef(false);
   const attemptedMessageIds = useRef(new Set<string>());
   const confirmedMessageIds = useRef(new Set<string>());
-  const [markPhase, setMarkPhase] = useState(markPhaseRef.current);
-  const markControllerRef = useRef<{ controller: AbortController; messageIds: string[] } | undefined>(undefined);
-  const replyControllerRef = useRef<AbortController | undefined>(undefined);
-  const pendingReplyRef = useRef<{ content: string; dispatchState: RequestDispatchState } | undefined>(undefined);
+  const [markPhase, setMarkPhase] = useState(markStateRef.current.phase);
+  const replyOperationRef = useRef<NotificationReplyOperation | undefined>(undefined);
   const uncertainRepliesRef = useRef(new Set<string>());
   const replyConfirmationRef = useRef<AbortController | undefined>(undefined);
   const composerControllersRef = useRef(new Set<AbortController>());
-  const replyBusyRef = useRef(false);
   const routeFocused = useIsFocused();
   const appFocused = useSyncExternalStore(focusManager.subscribe, () => focusManager.isFocused());
   const replySessionEpoch = runtime.sessionEpochs[item.source];
@@ -836,12 +841,11 @@ function EnabledNotificationDetailRoute({
     replyConfirmationRef.current = undefined;
   }, []);
   const cancelReply = useCallback(() => {
-    const attempt = pendingReplyRef.current;
-    if (attempt?.dispatchState.mayHaveSent) uncertainRepliesRef.current.add(attempt.content);
-    pendingReplyRef.current = undefined;
-    replyControllerRef.current?.abort();
-    replyControllerRef.current = undefined;
-    replyBusyRef.current = false;
+    const operation = replyOperationRef.current;
+    if (operation?.phase === 'sending' && operation.dispatchState.mayHaveSent)
+      uncertainRepliesRef.current.add(operation.content);
+    operation?.controller.abort();
+    replyOperationRef.current = undefined;
     cancelReplyConfirmation();
   }, [cancelReplyConfirmation]);
   useEffect(
@@ -853,7 +857,7 @@ function EnabledNotificationDetailRoute({
       focusManager.subscribe((focused) => {
         if (focused) return;
         cancelReplyConfirmation();
-        if (pendingReplyRef.current) {
+        if (replyOperationRef.current?.phase === 'sending') {
           cancelReply();
           setReplyBusy(false);
         }
@@ -1323,27 +1327,28 @@ function EnabledNotificationDetailRoute({
     setReplyStatus('');
     setReplyVisible(false);
   }, [cancelReply, canAccessSource, currentIdentityKey, identityKey]);
-  const updateMarkPhase = useCallback((phase: typeof markPhaseRef.current) => {
-    markPhaseRef.current = phase;
-    setMarkPhase(phase);
+  const updateMarkState = useCallback((state: NotificationMarkState) => {
+    markStateRef.current = state;
+    setMarkPhase(state.phase);
   }, []);
   useEffect(() => {
     markAttemptedThisVisit.current = false;
-    setMarkPhase(markPhaseRef.current);
+    setMarkPhase(markStateRef.current.phase);
     const cancelMark = () => {
-      const attempt = markControllerRef.current;
-      attempt?.controller.abort();
-      attempt?.messageIds.forEach((id) => {
-        if (!confirmedMessageIds.current.has(id)) attemptedMessageIds.current.delete(id);
-      });
-      markControllerRef.current = undefined;
-      if (markPhaseRef.current === 'pending') markPhaseRef.current = 'retryable';
+      const state = markStateRef.current;
+      if (state.phase === 'pending') {
+        state.attempt.controller.abort();
+        state.attempt.messageIds.forEach((id) => {
+          if (!confirmedMessageIds.current.has(id)) attemptedMessageIds.current.delete(id);
+        });
+        markStateRef.current = { phase: 'retryable' };
+      }
       markAttemptedThisVisit.current = false;
     };
     const unsubscribe = focusManager.subscribe((focused) => {
       if (!focused) {
         cancelMark();
-        setMarkPhase(markPhaseRef.current);
+        setMarkPhase(markStateRef.current.phase);
       }
     });
     return () => {
@@ -1356,18 +1361,21 @@ function EnabledNotificationDetailRoute({
       !routeFocused ||
       !focusManager.isFocused() ||
       !canAccessSource ||
-      markPhaseRef.current === 'pending' ||
-      (!nodeSeekConversation && (!item.unread || markPhaseRef.current === 'confirmed'))
+      markStateRef.current.phase === 'pending' ||
+      (!nodeSeekConversation && (!item.unread || markStateRef.current.phase === 'confirmed'))
     )
       return;
     markAttemptedThisVisit.current = true;
     const controller = new AbortController();
     let unreadMessageIds: string[] = [];
     const attempt = { controller, messageIds: unreadMessageIds };
-    markControllerRef.current = attempt;
-    updateMarkPhase('pending');
-    const current = () =>
-      markControllerRef.current === attempt && !controller.signal.aborted && focusManager.isFocused();
+    updateMarkState({ phase: 'pending', attempt });
+    const current = () => {
+      const state = markStateRef.current;
+      return (
+        state.phase === 'pending' && state.attempt === attempt && !controller.signal.aborted && focusManager.isFocused()
+      );
+    };
     try {
       const refreshed = refreshDetail ? await detailQuery.refetch() : undefined;
       if (!current()) return;
@@ -1379,10 +1387,11 @@ function EnabledNotificationDetailRoute({
       );
       attempt.messageIds = unreadMessageIds;
       if (nodeSeekConversation && !unreadMessageIds.length) {
-        updateMarkPhase(
-          detail.unreadMessageIds?.some((id) => !confirmedMessageIds.current.has(id)) ? 'retryable' : 'confirmed'
-        );
-        if (markPhaseRef.current === 'confirmed') setMarkMessage('');
+        const phase = detail.unreadMessageIds?.some((id) => !confirmedMessageIds.current.has(id))
+          ? 'retryable'
+          : 'confirmed';
+        updateMarkState({ phase });
+        if (phase === 'confirmed') setMarkMessage('');
         return;
       }
       unreadMessageIds.forEach((id) => attemptedMessageIds.current.add(id));
@@ -1396,7 +1405,7 @@ function EnabledNotificationDetailRoute({
         if (result.confirmed) unreadMessageIds.forEach((id) => confirmedMessageIds.current.add(id));
         const remainingUnread =
           nodeSeekConversation && detail.unreadMessageIds?.some((id) => !confirmedMessageIds.current.has(id));
-        updateMarkPhase(result.confirmed && !remainingUnread ? 'confirmed' : 'retryable');
+        updateMarkState({ phase: result.confirmed && !remainingUnread ? 'confirmed' : 'retryable' });
         setMarkMessage(
           result.confirmed
             ? remainingUnread
@@ -1407,11 +1416,10 @@ function EnabledNotificationDetailRoute({
       }
     } catch (error) {
       if (current()) {
-        updateMarkPhase('retryable');
+        updateMarkState({ phase: 'retryable' });
         setMarkMessage(`已读状态未更新：${errorMessage(error)}`);
       }
     } finally {
-      if (markControllerRef.current === attempt) markControllerRef.current = undefined;
       // A canceled response cannot undo a server write. Reconciliation failure
       // must not turn a confirmed write back into a retryable attempt.
       await Promise.allSettled([
@@ -1566,7 +1574,7 @@ function EnabledNotificationDetailRoute({
         !routeFocused ||
         !focusManager.isFocused() ||
         !canAccessSource ||
-        replyBusyRef.current ||
+        replyOperationRef.current ||
         !submittedContent.trim() ||
         submittedSnapshot?.validationIssues.length ||
         detailQuery.data?.reply?.disabledReason
@@ -1577,26 +1585,24 @@ function EnabledNotificationDetailRoute({
       const send = () => {
         const controller = new AbortController();
         const dispatchState: RequestDispatchState = { mayHaveSent: false };
-        replyBusyRef.current = true;
-        replyControllerRef.current = controller;
-        pendingReplyRef.current = { content: contentKey, dispatchState };
+        replyOperationRef.current = { phase: 'sending', controller, content: contentKey, dispatchState };
         setReplyBusy(true);
         setReplyError('');
         setReplyStatus('');
         void gateway
           .replyToConversation(item, submittedContent, identityKey, controller.signal, dispatchState)
           .then(async (result) => {
-            if (controller.signal.aborted || replyControllerRef.current !== controller) return;
+            if (controller.signal.aborted || replyOperationRef.current?.controller !== controller) return;
             if (!result.confirmed) {
               uncertainRepliesRef.current.add(contentKey);
               setReplyError(result.message || '原站未确认发送成功，请刷新会话后确认。');
               return;
             }
             uncertainRepliesRef.current.delete(contentKey);
-            pendingReplyRef.current = undefined;
+            replyOperationRef.current = { phase: 'confirmed', controller };
             const isCurrent = () =>
               !controller.signal.aborted &&
-              replyControllerRef.current === controller &&
+              replyOperationRef.current?.controller === controller &&
               replyScopeRef.current.canAccessSource &&
               replyScopeRef.current.identityKey === identityKey &&
               replyScopeRef.current.itemId === item.id &&
@@ -1624,7 +1630,7 @@ function EnabledNotificationDetailRoute({
             ]);
           })
           .catch((error) => {
-            if (controller.signal.aborted || replyControllerRef.current !== controller) return;
+            if (controller.signal.aborted || replyOperationRef.current?.controller !== controller) return;
             const rejected =
               isRecord(error) &&
               (error.serverRejected === true ||
@@ -1640,10 +1646,8 @@ function EnabledNotificationDetailRoute({
             );
           })
           .finally(() => {
-            if (replyControllerRef.current !== controller) return;
-            pendingReplyRef.current = undefined;
-            replyControllerRef.current = undefined;
-            replyBusyRef.current = false;
+            if (replyOperationRef.current?.controller !== controller) return;
+            replyOperationRef.current = undefined;
             setReplyBusy(false);
           });
       };
@@ -1703,7 +1707,7 @@ function EnabledNotificationDetailRoute({
   const uploadReplyImage = useCallback(async () => {
     if (
       !canAccessSource ||
-      replyBusyRef.current ||
+      replyOperationRef.current ||
       detailQuery.data?.reply?.format !== 'markdown' ||
       detailQuery.data.reply.disabledReason ||
       item.source === 'yaohuo'
@@ -1711,9 +1715,7 @@ function EnabledNotificationDetailRoute({
       return undefined;
     }
     const controller = new AbortController();
-    replyBusyRef.current = true;
-    replyControllerRef.current?.abort();
-    replyControllerRef.current = controller;
+    replyOperationRef.current = { phase: 'uploading', controller };
     setReplyBusy(true);
     setReplyError('');
     setReplyStatus('');
@@ -1771,9 +1773,8 @@ function EnabledNotificationDetailRoute({
       );
       return undefined;
     } finally {
-      if (replyControllerRef.current === controller) {
-        replyControllerRef.current = undefined;
-        replyBusyRef.current = false;
+      if (replyOperationRef.current?.controller === controller) {
+        replyOperationRef.current = undefined;
         setReplyBusy(false);
       }
     }

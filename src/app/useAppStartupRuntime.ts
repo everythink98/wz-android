@@ -4,6 +4,7 @@ import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError } fr
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import { pruneDiagnosticExports } from '@/platform/diagnostics/diagnosticExportFiles';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { navigationRef } from './appNavigation';
 
 const iconSource = { uri: 'reader_app_icon' };
@@ -19,81 +20,112 @@ function currentRouteKey() {
   return navigationRef.getCurrentRoute()?.key || '';
 }
 
+type PendingPage = {
+  phase: 'awaiting-navigation' | 'delivering-navigation' | 'awaiting-layout' | 'check-queued';
+  layouts: Set<string>;
+};
+type StartupPage = PendingPage | { phase: 'ready' };
+type StartupMount = { idleTask?: number };
+
+function hideNativeSplash() {
+  try {
+    SplashScreen.hide();
+    recordStartupPhase('splash-hidden');
+  } catch (error) {
+    recordDiagnosticError('app', 'startup', error);
+  }
+}
+
+function maintainExports() {
+  const trace = beginDiagnosticTrace('diagnostic', 'export-cleanup');
+  try {
+    pruneDiagnosticExports();
+    finishDiagnosticTrace(trace, 'success');
+  } catch (error) {
+    finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+  }
+}
+
 export function useAppStartupRuntime(onNavigationReady?: () => void, getCurrentRouteKey = currentRouteKey) {
-  const navigationReady = useRef(false);
-  const laidOutRoutes = useRef(new Set<string>());
-  const completed = useRef(false);
-  const scheduled = useRef(false);
-  const active = useRef(true);
-  const maintenance = useRef<number | null>(null);
-  const splashHidden = useRef(false);
+  const callbacks = useCommittedRef({ onNavigationReady, getCurrentRouteKey });
+  const page = useRef<StartupPage>({ phase: 'awaiting-navigation', layouts: new Set() });
+  const mount = useRef<StartupMount | null>({});
+  const pendingSplashHide = useRef<(() => void) | null>(hideNativeSplash);
 
   const hideSplashOnce = useCallback(() => {
-    if (!active.current || splashHidden.current) return;
-    splashHidden.current = true;
-    try {
-      SplashScreen.hide();
-      recordStartupPhase('splash-hidden');
-    } catch (error) {
-      recordDiagnosticError('app', 'startup', error);
-    }
+    if (!mount.current) return;
+    const hide = pendingSplashHide.current;
+    pendingSplashHide.current = null;
+    hide?.();
   }, []);
 
-  useEffect(() => {
-    active.current = true;
-    recordStartupPhase('react-mounted');
-    return () => {
-      active.current = false;
-      if (maintenance.current !== null) cancelIdleCallback(maintenance.current);
-    };
-  }, []);
+  const checkVisibleLayout = useCallback(() => {
+    const owner = mount.current;
+    const pending = page.current;
+    if (!owner || pending.phase !== 'awaiting-layout') return;
+    const check: PendingPage = { phase: 'check-queued', layouts: pending.layouts };
+    page.current = check;
 
-  const finish = useCallback(() => {
-    if (!navigationReady.current || completed.current || scheduled.current) return;
-    scheduled.current = true;
-    // Let navigation callbacks dispatch their pending deep link before choosing the visible route.
+    // The navigation callback may dispatch a pending deep link before this runs.
     queueMicrotask(() => {
-      scheduled.current = false;
-      if (!active.current || completed.current || !laidOutRoutes.current.has(getCurrentRouteKey())) return;
-      completed.current = true;
-      laidOutRoutes.current.clear();
+      if (page.current !== check || mount.current !== owner) return;
+      if (!check.layouts.has(callbacks.current.getCurrentRouteKey())) {
+        page.current = { phase: 'awaiting-layout', layouts: check.layouts };
+        return;
+      }
+      page.current = { phase: 'ready' };
       recordStartupPhase('page-layout');
       recordStartupPhase('page-ready');
       hideSplashOnce();
       try {
-        maintenance.current = requestIdleCallback(() => {
-          maintenance.current = null;
-          if (!active.current) return;
-          const trace = beginDiagnosticTrace('diagnostic', 'export-cleanup');
-          try {
-            pruneDiagnosticExports();
-            finishDiagnosticTrace(trace, 'success');
-          } catch (error) {
-            finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-          }
+        owner.idleTask = requestIdleCallback(() => {
+          if (mount.current !== owner) return;
+          delete owner.idleTask;
+          maintainExports();
         });
       } catch (error) {
         recordDiagnosticError('app', 'startup', error);
       }
     });
-  }, [getCurrentRouteKey, hideSplashOnce]);
+  }, [callbacks, hideSplashOnce]);
+
+  useEffect(() => {
+    const owner = (mount.current ??= {});
+    recordStartupPhase('react-mounted');
+    checkVisibleLayout();
+    return () => {
+      mount.current = null;
+      const pending = page.current;
+      if (pending.phase === 'check-queued') page.current = { phase: 'awaiting-layout', layouts: pending.layouts };
+      if (owner.idleTask !== undefined) cancelIdleCallback(owner.idleTask);
+    };
+  }, [checkVisibleLayout]);
 
   const onReady = useCallback(() => {
-    if (navigationReady.current) return;
-    onNavigationReady?.();
-    navigationReady.current = true;
+    const waiting = page.current;
+    if (!mount.current || waiting.phase !== 'awaiting-navigation') return;
+    page.current = { phase: 'delivering-navigation', layouts: waiting.layouts };
+    try {
+      callbacks.current.onNavigationReady?.();
+    } catch (error) {
+      page.current = waiting;
+      throw error;
+    }
+    page.current = { phase: 'awaiting-layout', layouts: waiting.layouts };
+    if (!mount.current) return;
     recordStartupPhase('navigation-ready');
-    finish();
-  }, [finish, onNavigationReady]);
+    checkVisibleLayout();
+  }, [callbacks, checkVisibleLayout]);
 
   const onLayout = useCallback(
     (routeKey: string) => {
-      if (completed.current || !routeKey) return;
-      laidOutRoutes.current.add(routeKey);
-      finish();
+      const pending = page.current;
+      if (!mount.current || pending.phase === 'ready' || !routeKey) return;
+      pending.layouts.add(routeKey);
+      checkVisibleLayout();
     },
-    [finish]
+    [checkVisibleLayout]
   );
 
-  return { iconSource, onLayout, onReady, onRecoveryLayout: hideSplashOnce, onRouteChange: finish };
+  return { iconSource, onLayout, onReady, onRecoveryLayout: hideSplashOnce, onRouteChange: checkVisibleLayout };
 }

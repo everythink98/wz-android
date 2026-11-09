@@ -16,10 +16,11 @@ jest.mock('react-native-webview', () => {
     WebView: ReactModule.forwardRef(function MockWebView(props: Record<string, any>, ref) {
       mockWebViewProps = props;
       mockWebViewPropsByUrl.set(props.source.uri, props);
-      ReactModule.useImperativeHandle(ref, () => ({
-        injectJavaScript: mockInjectJavaScript,
-        stopLoading: jest.fn()
-      }));
+      const handle = ReactModule.useMemo(
+        () => ({ injectJavaScript: mockInjectJavaScript, stopLoading: jest.fn() }),
+        []
+      );
+      ReactModule.useImperativeHandle(ref, () => handle, [handle]);
       return ReactModule.createElement(Native.View);
     })
   };
@@ -30,6 +31,75 @@ describe('HiddenBrowserHost linux.do transport', () => {
     jest.clearAllMocks();
     mockWebViewPropsByUrl.clear();
   });
+
+  it.each(['nodeSeek', 'linuxDo'] as const)(
+    'does not inject a retired %s load-end into the next renderer',
+    async (site) => {
+      const url = site === 'nodeSeek' ? 'https://www.nodeseek.com/post-1-1' : 'https://linux.do/latest.json';
+      const props: React.ComponentProps<typeof HiddenBrowserHost> = {
+        blockedMessage: '',
+        failLinuxDoBrowserFetchById: jest.fn(),
+        failNodeSeekBrowserFetchById: jest.fn(),
+        handleLinuxDoBrowserFetchMessage: jest.fn(),
+        handleNodeSeekBrowserFetchMessage: jest.fn(),
+        linuxDoBrowserWebViewRef: createRef<WebView>(),
+        nodeSeekBrowserWebViewRef: createRef<WebView>(),
+        onLinuxDoHttpErrorStatus: jest.fn(),
+        onNodeSeekHttpErrorStatus: jest.fn(),
+        state: {
+          linuxDo: { request: null, userAgent: '' },
+          nodeSeek: { request: null, userAgent: '' }
+        },
+        styles: {} as never
+      };
+      props.state[site].request = { id: 1, url };
+      const view = await render(<HiddenBrowserHost {...props} />);
+      const retiredLoadEnd = mockWebViewPropsByUrl.get(url)?.onLoadEnd;
+      props.state = { ...props.state, [site]: { request: { id: 2, url }, userAgent: '' } };
+      await view.rerender(<HiddenBrowserHost {...props} />);
+
+      await act(async () => retiredLoadEnd());
+
+      expect(mockInjectJavaScript).not.toHaveBeenCalled();
+      mockWebViewPropsByUrl.get(url)?.onLoadEnd();
+      expect(mockInjectJavaScript).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['nodeSeek', 'linuxDo'] as const)(
+    'does not remount the next %s renderer for a retired process callback',
+    async (site) => {
+      const url = site === 'nodeSeek' ? 'https://www.nodeseek.com/post-1-1' : 'https://linux.do/latest.json';
+      const props: React.ComponentProps<typeof HiddenBrowserHost> = {
+        blockedMessage: '',
+        failLinuxDoBrowserFetchById: jest.fn(),
+        failNodeSeekBrowserFetchById: jest.fn(),
+        handleLinuxDoBrowserFetchMessage: jest.fn(),
+        handleNodeSeekBrowserFetchMessage: jest.fn(),
+        linuxDoBrowserWebViewRef: createRef<WebView>(),
+        nodeSeekBrowserWebViewRef: createRef<WebView>(),
+        onLinuxDoHttpErrorStatus: jest.fn(),
+        onNodeSeekHttpErrorStatus: jest.fn(),
+        state: {
+          linuxDo: { request: null, userAgent: '' },
+          nodeSeek: { request: null, userAgent: '' }
+        },
+        styles: {} as never
+      };
+      props.state[site].request = { id: 1, url };
+      const view = await render(<HiddenBrowserHost {...props} />);
+      const retiredProcessGone = mockWebViewPropsByUrl.get(url)?.onRenderProcessGone;
+      props.state = { ...props.state, [site]: { request: { id: 2, url }, userAgent: '' } };
+      await view.rerender(<HiddenBrowserHost {...props} />);
+      const rendererRef = site === 'nodeSeek' ? props.nodeSeekBrowserWebViewRef : props.linuxDoBrowserWebViewRef;
+      const renderer = rendererRef.current;
+      expect(renderer).not.toBeNull();
+
+      await act(async () => retiredProcessGone());
+
+      expect(rendererRef.current).toBe(renderer);
+    }
+  );
 
   it('keeps shared site WebViews cookie-clean and unmounted while blocked', async () => {
     const failLinuxDoBrowserFetchById = jest.fn();
@@ -177,6 +247,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
   it('keeps the unrelated hidden-browser request running when the other renderer exits', async () => {
     const failLinuxDoBrowserFetchById = jest.fn();
     const failNodeSeekBrowserFetchById = jest.fn();
+    const linuxDoBrowserWebViewRef = createRef<WebView>();
     await render(
       <HiddenBrowserHost
         blockedMessage=""
@@ -184,7 +255,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
         failNodeSeekBrowserFetchById={failNodeSeekBrowserFetchById}
         handleLinuxDoBrowserFetchMessage={jest.fn()}
         handleNodeSeekBrowserFetchMessage={jest.fn()}
-        linuxDoBrowserWebViewRef={createRef<WebView>()}
+        linuxDoBrowserWebViewRef={linuxDoBrowserWebViewRef}
         nodeSeekBrowserWebViewRef={createRef<WebView>()}
         onLinuxDoHttpErrorStatus={jest.fn()}
         onNodeSeekHttpErrorStatus={jest.fn()}
@@ -202,7 +273,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
       />
     );
     const nodeSeekProps = mockWebViewPropsByUrl.get('https://www.nodeseek.com/post-11-1');
-    const linuxDoKey = mockWebViewPropsByUrl.get('https://linux.do/latest.json')?.key;
+    const linuxDoRenderer = linuxDoBrowserWebViewRef.current;
 
     await act(async () => {
       nodeSeekProps?.onRenderProcessGone();
@@ -212,6 +283,6 @@ describe('HiddenBrowserHost linux.do transport', () => {
       skipStopLoading: true
     });
     expect(failLinuxDoBrowserFetchById).not.toHaveBeenCalled();
-    expect(mockWebViewPropsByUrl.get('https://linux.do/latest.json')?.key).toBe(linuxDoKey);
+    expect(linuxDoBrowserWebViewRef.current).toBe(linuxDoRenderer);
   });
 });

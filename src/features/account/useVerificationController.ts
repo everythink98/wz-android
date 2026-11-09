@@ -32,8 +32,7 @@ const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
 
 type Ref<T> = RefObject<T>;
 
-type LinuxDoVerificationPhase =
-  'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'resuming-read' | 'closing';
+type LinuxDoVerificationPhase = 'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'closing';
 
 type RecoveryTarget = {
   id: string;
@@ -53,7 +52,7 @@ export type LinuxDoVerificationPageEvent = Required<Pick<DiagnosticFields, 'veri
 
 type RecoverySession = {
   scope: string;
-  phase: LinuxDoRecoveryPanel['phase'];
+  phase: Exclude<LinuxDoRecoveryPanel['phase'], 'idle'>;
   dedicated: boolean;
   targets: RecoveryTarget[];
   lastCheckTraceId?: string;
@@ -688,10 +687,13 @@ export function useVerificationController({
         }
       }
       if (linuxDoPanelClosingSessionRef.current !== null) {
-        linuxDoWebViewRef.current?.stopLoading();
-        setMountLinuxDoWebView(false);
-        setLoadingLinuxDoPage(false);
-        setLinuxDoWebViewError('');
+        try {
+          linuxDoWebViewRef.current?.stopLoading();
+        } finally {
+          setMountLinuxDoWebView(false);
+          setLoadingLinuxDoPage(false);
+          setLinuxDoWebViewError('');
+        }
         return;
       }
       const wasVisible = isLinuxDoSurfaceVisible();
@@ -705,14 +707,6 @@ export function useVerificationController({
         clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
         linuxDoPanelCloseSettleTimerRef.current = null;
       }
-      linuxDoWebViewRef.current?.stopLoading();
-      setMountLinuxDoWebView(false);
-      setLoadingLinuxDoPageForSession(false, nextSession);
-      setLinuxDoWebViewErrorForSession('', nextSession);
-      if (wasVisible) {
-        onLinuxDoSurfaceClosed({ authoritativeResult, reason });
-      }
-
       const settleClosingPanel = () => {
         if (linuxDoPanelClosingSessionRef.current !== nextSession || isLinuxDoSurfaceVisible()) {
           return;
@@ -770,14 +764,22 @@ export function useVerificationController({
         );
       };
 
-      if (!wasVisible) {
-        settleClosingPanel();
-        return;
+      try {
+        linuxDoWebViewRef.current?.stopLoading();
+      } finally {
+        setMountLinuxDoWebView(false);
+        setLoadingLinuxDoPageForSession(false, nextSession);
+        setLinuxDoWebViewErrorForSession('', nextSession);
+        if (wasVisible) {
+          onLinuxDoSurfaceClosed({ authoritativeResult, reason });
+          linuxDoPanelCloseSettleTimerRef.current = setTimeout(() => {
+            linuxDoPanelCloseSettleTimerRef.current = null;
+            settleClosingPanel();
+          }, LINUXDO_PANEL_CLOSE_SETTLE_MS);
+        } else {
+          settleClosingPanel();
+        }
       }
-      linuxDoPanelCloseSettleTimerRef.current = setTimeout(() => {
-        linuxDoPanelCloseSettleTimerRef.current = null;
-        settleClosingPanel();
-      }, LINUXDO_PANEL_CLOSE_SETTLE_MS);
     },
     [
       cancelLinuxDoEgressProbe,

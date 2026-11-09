@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook } from '@testing-library/react-native';
+import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { useLayoutEffect } from 'react';
+import { createRoot } from 'test-renderer';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { exportReaderBackupJson } from '@/domain/reader/readerBackup';
 import { useBackupStatusController } from '@/features/more/useBackupStatusController';
@@ -67,6 +69,111 @@ describe('Backup status controller', () => {
     mockGetInfoAsync.mockResolvedValue({ exists: true, isDirectory: false, size: 8 });
     mockReadAsStringAsync.mockResolvedValue('{broken');
   });
+  it.each(['success', 'failure'] as const)(
+    'keeps one real backup job through StrictMode and settles its current %s observation',
+    async (outcome) => {
+      const pending = Promise.withResolvers<Awaited<ReturnType<typeof mockSaveBackupDocument>>>();
+      mockSaveBackupDocument.mockReturnValueOnce(pending.promise);
+      const notify = jest.fn();
+      const latestNotify = jest.fn();
+      const exportBackup = jest.fn(async () => '{}');
+      const importBackup = jest.fn(async () => undefined);
+      let controller!: ReturnType<typeof useBackupStatusController>;
+      let result!: Promise<void>;
+      let setups = 0;
+      function Harness({ notice }: { notice: (message: string) => void }) {
+        controller = useBackupStatusController({ notify: notice, importBackup, exportBackup });
+        useLayoutEffect(() => {
+          setups += 1;
+          if (setups === 1) result = controller.exportBackupFile();
+        }, []);
+        return null;
+      }
+      const root = createRoot({ isStrictMode: true });
+      try {
+        await act(async () => root.render(<Harness notice={notify} />));
+        expect(setups).toBe(2);
+        expect(controller.backupBusy).toBe(true);
+        expect(mockSaveBackupDocument).toHaveBeenCalledTimes(1);
+        await act(async () => {
+          await controller.importBackupFile();
+        });
+        expect(mockGetDocumentAsync).not.toHaveBeenCalled();
+        await act(async () => root.render(<Harness notice={latestNotify} />));
+        await act(async () => {
+          if (outcome === 'success') pending.resolve({ status: 'saved' });
+          else pending.reject(new Error('current backup failure'));
+          await result;
+        });
+        expect(exportBackup).toHaveBeenCalledTimes(1);
+        expect(latestNotify).toHaveBeenCalledTimes(1);
+        expect(latestNotify).toHaveBeenCalledWith(
+          outcome === 'success' ? '备份已保存到所选位置' : 'current backup failure'
+        );
+        expect(notify).not.toHaveBeenCalled();
+        expect(controller.backupBusy).toBe(false);
+      } finally {
+        pending.resolve({ status: 'canceled' });
+        await act(async () => root.unmount());
+      }
+    }
+  );
+  it.each(['success', 'failure'] as const)(
+    'settles a dispatched import and its cache cleanup without a retired %s notice',
+    async (outcome) => {
+      const pending = Promise.withResolvers<void>();
+      const notify = jest.fn();
+      const importBackup = jest.fn(() => pending.promise);
+      const hook = await renderHook(() =>
+        useBackupStatusController({ notify, importBackup, exportBackup: async () => '{}' })
+      );
+      let result!: Promise<void>;
+      try {
+        await act(async () => {
+          result = hook.result.current.importBackupFile();
+        });
+        await waitFor(() => expect(importBackup).toHaveBeenCalledTimes(1));
+        await hook.unmount();
+        await act(async () => {
+          if (outcome === 'success') pending.resolve();
+          else pending.reject(new Error('retired import failure'));
+          await result;
+        });
+        expect(mockDeleteAsync).toHaveBeenCalledWith('file:///cache/backup.json', { idempotent: true });
+        expect(notify).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve();
+      }
+    }
+  );
+
+  it.each(['success', 'failure'] as const)(
+    'settles a dispatched document save without a retired %s notice',
+    async (outcome) => {
+      const pending = Promise.withResolvers<Awaited<ReturnType<typeof mockSaveBackupDocument>>>();
+      mockSaveBackupDocument.mockReturnValueOnce(pending.promise);
+      const notify = jest.fn();
+      const hook = await renderHook(() =>
+        useBackupStatusController({ notify, importBackup: async () => undefined, exportBackup: async () => '{}' })
+      );
+      let result!: Promise<void>;
+      try {
+        await act(async () => {
+          result = hook.result.current.exportBackupFile();
+        });
+        await waitFor(() => expect(mockSaveBackupDocument).toHaveBeenCalledTimes(1));
+        await hook.unmount();
+        await act(async () => {
+          if (outcome === 'success') pending.resolve({ status: 'saved' });
+          else pending.reject(new Error('retired document failure'));
+          await result;
+        });
+        expect(notify).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve({ status: 'canceled' });
+      }
+    }
+  );
   it('reports a rejected import and removes only the picker cache copy', async () => {
     const notify = jest.fn();
     const importBackup = jest.fn(async () => {

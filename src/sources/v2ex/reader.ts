@@ -1,4 +1,5 @@
 import { normalizeTopicId } from '@/domain/forum/numericValues';
+import { mergeTopics } from '@/domain/forum/feed';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type {
   CategoriesResponse,
@@ -692,13 +693,16 @@ async function fetchHtmlWindow(
     return null;
   }
   if (!options.category && options.seenIds?.size) {
-    const collected: Topic[] = [];
+    let collected: Topic[] = [];
     let htmlPage = 1;
     let lastHasMore = false;
     while (collected.length < options.limit) {
       const html = await fetchText(`${BASE_URL}${path}?p=${htmlPage}`, options);
       const pageResult = parseV2exListPage(html, htmlPage, path, options.category);
-      collected.push(...pageResult.items.filter((item) => !options.seenIds?.has(item.id)));
+      collected = mergeTopics(
+        collected,
+        pageResult.items.filter((item) => !options.seenIds?.has(item.id))
+      );
       lastHasMore = pageResult.hasMore;
       if (!pageResult.hasMore || pageResult.items.length === 0) {
         break;

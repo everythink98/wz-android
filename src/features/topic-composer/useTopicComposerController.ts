@@ -825,7 +825,7 @@ export function useTopicComposerController({
           notify: runtimeRef.current.notify,
           createPoll: async (poll, options) => {
             const response = await runNodeSeekAction({
-              fetcher: withRequestBeforeSend(access.fetcher, assertCurrent, options.dispatchState),
+              fetcher: withRequestBeforeSend(access.accountFetcher, assertCurrent, options.dispatchState),
               userAgent: access.userAgent,
               request: buildNodeSeekPollCreateRequest({ poll })
             });

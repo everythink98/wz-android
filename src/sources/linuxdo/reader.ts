@@ -62,10 +62,16 @@ export const LIST_PAGE_SIZE = 30;
 
 let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
 type LinuxDoCategoryMap = Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>;
-let categoryCacheScope: string | null = null;
-let categoryCache: LinuxDoCategoryMap = new Map();
-let categoryData: Record<string, unknown> | null = null;
-let categoryRequest: Promise<Record<string, unknown>> | null = null;
+type LinuxDoCategoryCache =
+  | { scope: null }
+  | {
+      scope: string;
+      state:
+        | { kind: 'empty' }
+        | { kind: 'pending'; request: Promise<Record<string, unknown>> }
+        | { kind: 'ready'; data: Record<string, unknown>; map: LinuxDoCategoryMap };
+    };
+let categoryCache: LinuxDoCategoryCache = { scope: null };
 
 export type LinuxDoReadAuth = {
   authenticated?: boolean;
@@ -118,41 +124,36 @@ function topicsNeedCategoryMap(topics: unknown[], categoryMap: LinuxDoCategoryMa
 
 function activateCategoryCacheScope(options: LinuxDoOptions) {
   const scope = options.linuxDoAccess?.categoryCacheScope?.trim() || null;
-  if (scope !== categoryCacheScope) {
-    categoryCacheScope = scope;
-    categoryCache = new Map();
-    categoryData = null;
-    categoryRequest = null;
+  if (scope !== categoryCache.scope) {
+    categoryCache = scope === null ? { scope } : { scope, state: { kind: 'empty' } };
   }
-  return scope;
+  return categoryCache;
 }
 
 function fetchCategoryData(options: LinuxDoOptions) {
-  const scope = activateCategoryCacheScope(options);
-  if (!scope) {
+  const owner = activateCategoryCacheScope(options);
+  if (owner.scope === null) {
     return fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
   }
-  if (categoryData) return Promise.resolve(categoryData);
-  if (!categoryRequest) {
-    const request = fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, {
-      ...options,
-      signal: undefined
+  if (owner.state.kind === 'ready') return Promise.resolve(owner.state.data);
+  if (owner.state.kind === 'pending') return owner.state.request;
+  const request = fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, {
+    ...options,
+    signal: undefined
+  })
+    .then((data) => {
+      if (categoryCache === owner && owner.state.kind === 'pending' && owner.state.request === request) {
+        owner.state = data ? { kind: 'ready', data, map: categoryMapFromData(data) } : { kind: 'empty' };
+      }
+      return data;
     })
-      .then((data) => {
-        if (categoryCacheScope === scope && categoryRequest === request) {
-          categoryData = data;
-          categoryCache = new Map([...categoryCache, ...categoryMapFromData(data)]);
-        }
-        return data;
-      })
-      .finally(() => {
-        if (categoryCacheScope === scope && categoryRequest === request) {
-          categoryRequest = null;
-        }
-      });
-    categoryRequest = request;
-  }
-  return categoryRequest;
+    .finally(() => {
+      if (categoryCache === owner && owner.state.kind === 'pending' && owner.state.request === request) {
+        owner.state = { kind: 'empty' };
+      }
+    });
+  owner.state = { kind: 'pending', request };
+  return request;
 }
 
 function waitForCategoryData(options: LinuxDoOptions) {
@@ -166,8 +167,9 @@ export async function categoryMapForTopics(
   categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>,
   options: LinuxDoOptions
 ) {
-  activateCategoryCacheScope(options);
-  let nextCategoryMap = new Map([...categoryCache, ...categoryMap, ...categoryMapFromData(data)]);
+  const cache = activateCategoryCacheScope(options);
+  const cachedMap = cache.scope !== null && cache.state.kind === 'ready' ? cache.state.map : [];
+  let nextCategoryMap = new Map([...cachedMap, ...categoryMap, ...categoryMapFromData(data)]);
   if (!topicsNeedCategoryMap(topics, nextCategoryMap)) {
     return nextCategoryMap;
   }

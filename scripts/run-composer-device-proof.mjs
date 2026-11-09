@@ -242,14 +242,50 @@ export function captureComposerSnapshotReply(window, requestId) {
     bridge.postMessage = original;
   }
 }
-async function connectComposerImeDom(adb) {
+/** @param {(...args: string[]) => string} adb */
+export async function connectComposerImeDom(adb) {
   const pid = adb('shell', 'pidof', pkg);
   if (!/^\d+$/.test(pid)) throw new Error('Expected one composer proof process for DOM diagnostics');
   const port = adb('forward', 'tcp:0', `localabstract:webview_devtools_remote_${pid}`);
+  const owner = new AbortController();
+  /** @type {Set<(error: unknown) => void>} */
+  const pending = new Set();
+  owner.signal.addEventListener(
+    'abort',
+    () => {
+      for (const cancel of pending) cancel(owner.signal.reason);
+    },
+    { once: true }
+  );
   let socket;
-  const close = () => {
-    socket?.close();
+  /** @type {(() => void) | null} */
+  let releaseSocket = null;
+  /** @type {(() => void) | null} */
+  let releaseForward = () => {
     adb('forward', '--remove', `tcp:${port}`);
+  };
+  const close = () => {
+    owner.abort(new Error('Composer DOM connection closed'));
+    /** @type {unknown[]} */
+    const failures = [];
+    try {
+      if (releaseSocket) {
+        releaseSocket();
+        releaseSocket = null;
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      if (releaseForward) {
+        releaseForward();
+        releaseForward = null;
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Composer DOM cleanup failed');
   };
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(5000) });
@@ -258,56 +294,77 @@ async function connectComposerImeDom(adb) {
     const pages = (await response.json()).filter((page) => page.type === 'page');
     if (pages.length !== 1) throw new Error(`Expected one composer DOM target, found ${pages.length}`);
     socket = new WebSocket(pages[0].webSocketDebuggerUrl);
+    const failed = () => owner.abort(new Error('Composer DOM connection failed'));
+    const closed = () => owner.abort(new Error('Composer DOM connection closed'));
+    socket.addEventListener('error', failed);
+    socket.addEventListener('close', closed);
+    releaseSocket = () => {
+      socket.removeEventListener('error', failed);
+      socket.removeEventListener('close', closed);
+      socket.close();
+    };
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Composer DOM connection timed out')), 5000);
-      socket.addEventListener(
-        'open',
-        () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true }
-      );
-      socket.addEventListener(
-        'error',
-        () => {
-          clearTimeout(timer);
-          reject(new Error('Composer DOM connection failed'));
-        },
-        { once: true }
-      );
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.removeEventListener('open', opened);
+        owner.signal.removeEventListener('abort', canceled);
+      };
+      const opened = () => {
+        cleanup();
+        resolve();
+      };
+      const canceled = () => {
+        cleanup();
+        reject(owner.signal.reason);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Composer DOM connection timed out'));
+      }, 5000);
+      socket.addEventListener('open', opened, { once: true });
+      owner.signal.addEventListener('abort', canceled, { once: true });
+      if (owner.signal.aborted) canceled();
     });
     let id = 0;
     const connection = {
       close,
       evaluate: (expression) =>
         new Promise((resolve, reject) => {
+          if (owner.signal.aborted) {
+            reject(owner.signal.reason);
+            return;
+          }
           const requestId = ++id;
-          const finish = (error, value) => {
+          /** @param {{error: unknown} | {value: unknown}} result */
+          const finish = (result) => {
+            if (!pending.delete(cancel)) return;
             clearTimeout(timer);
             socket.removeEventListener('message', listener);
-            if (error) reject(error);
-            else resolve(value);
+            if ('error' in result) reject(result.error);
+            else resolve(result.value);
           };
+          const cancel = (error) => finish({ error });
           const listener = (event) => {
             const message = JSON.parse(event.data);
             if (message.id !== requestId) return;
             if (message.error || message.result?.exceptionDetails)
-              finish(new Error(`Composer DOM capture failed: ${JSON.stringify(message)}`));
-            else finish(null, message.result.result.value);
+              cancel(new Error(`Composer DOM capture failed: ${JSON.stringify(message)}`));
+            else finish({ value: message.result.result.value });
           };
-          const timer = setTimeout(() => finish(new Error('Composer DOM capture timed out')), 5000);
+          const timer = setTimeout(() => cancel(new Error('Composer DOM capture timed out')), 5000);
+          pending.add(cancel);
           socket.addEventListener('message', listener);
-          socket.send(
-            JSON.stringify({
-              id: requestId,
-              method: 'Runtime.evaluate',
-              params: {
-                expression,
-                returnByValue: true
-              }
-            })
-          );
+          try {
+            socket.send(
+              JSON.stringify({
+                id: requestId,
+                method: 'Runtime.evaluate',
+                params: { expression, returnByValue: true }
+              })
+            );
+          } catch (error) {
+            cancel(error);
+          }
         })
     };
     const capture = (phase) =>
@@ -321,7 +378,11 @@ async function connectComposerImeDom(adb) {
       expressions: () => connection.evaluate(`(${captureComposerExpressionGeometry.toString()})(document)`)
     };
   } catch (error) {
-    close();
+    try {
+      close();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Composer DOM connection and cleanup failed');
+    }
     throw error;
   }
 }
@@ -1051,6 +1112,7 @@ async function main() {
       dom.close();
     }
   };
+  let primaryFailure;
   try {
     for (const scenario of chosen) {
       const token = randomUUID().replaceAll('-', '');
@@ -1751,16 +1813,32 @@ async function main() {
         `${result.passed ? 'PASS' : 'FAIL'} ${scenario.id}: ${result.error || 'settled and visually closed'}`
       );
     }
+  } catch (error) {
+    primaryFailure = { error };
+    throw error;
   } finally {
-    try {
+    const errors = [];
+    for (const cleanup of [
+      () => {
+        try {
+          agent(['close']);
+        } catch (error) {
+          if (!String(error?.stderr).includes('SESSION_NOT_FOUND')) throw error;
+        }
+      },
+      () => adb('shell', 'ime', 'set', ime),
+      () => setWindowAnimationScale(windowAnimationScale)
+    ]) {
       try {
-        agent(['close']);
+        cleanup();
       } catch (error) {
-        if (!String(error.stderr).includes('SESSION_NOT_FOUND')) throw error;
+        errors.push(error);
       }
-    } finally {
-      adb('shell', 'ime', 'set', ime);
-      setWindowAnimationScale(windowAnimationScale);
+    }
+    if (errors.length) {
+      if (primaryFailure) errors.unshift(primaryFailure.error);
+      if (errors.length === 1) throw errors[0];
+      throw new AggregateError(errors, 'Composer proof cleanup failed');
     }
   }
   if (report.results.some((result) => !result.passed)) process.exitCode = 1;

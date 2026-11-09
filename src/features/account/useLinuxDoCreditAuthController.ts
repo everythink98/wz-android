@@ -51,8 +51,7 @@ export function useLinuxDoCreditAuthController({
 }) {
   const webViewRef = useRef<WebView>(null);
   const openingRef = useRef<CreditAuthOpening | null>(null);
-  const closingRef = useRef<Promise<void> | null>(null);
-  const closingModeRef = useRef<CreditAuthMode | null>(null);
+  const closingRef = useRef<{ promise: Promise<void>; mode: CreditAuthMode } | null>(null);
   const revisionRef = useRef(0);
   const manualIntentRef = useRef(0);
   const attemptedOwnerRef = useRef<string | null>(null);
@@ -67,51 +66,52 @@ export function useLinuxDoCreditAuthController({
     (reason: AuthSurfaceCloseReason = 'close-button'): Promise<void> => {
       ++manualIntentRef.current;
       const opening = openingRef.current;
-      if (!opening) return closingRef.current || Promise.resolve();
+      if (!opening) return closingRef.current?.promise || Promise.resolve();
       openingRef.current = null;
       opening.controller.abort();
       clearTimeout(opening.timeout);
       const revision = ++revisionRef.current;
-      webViewRef.current?.stopLoading();
-      setDocument(null);
-      setLoading(false);
-      const reconciliation = finishSurface(reason);
-      const closing = Promise.resolve(reconciliation)
-        .then((result) => {
-          if (
-            revisionRef.current !== revision ||
-            !result ||
-            (result.status !== 'same' && result.status !== 'changed') ||
-            (opening.mode === 'silent' && reason !== 'success')
-          )
-            return;
-          const runtime = readRuntime();
-          if (
-            runtime.sourceEnabled === false ||
-            runtime.authSurfaceOpen ||
-            runtime.identityKey !== siteSessionIdentityKey(result.session)
-          )
-            return;
-          void appQueryClient.invalidateQueries({
-            predicate: ({ queryKey }) =>
-              queryKey[0] === 'forum' &&
-              queryKey[1] === 'linuxdo' &&
-              queryKey[2] === 'account-data' &&
-              (queryKey[3] === 'ldc-account' || queryKey[3] === 'ldc-transactions')
+      try {
+        webViewRef.current?.stopLoading();
+      } finally {
+        setDocument(null);
+        setLoading(false);
+        const reconciliation = finishSurface(reason);
+        const closing = Promise.resolve(reconciliation)
+          .then((result) => {
+            if (
+              revisionRef.current !== revision ||
+              !result ||
+              (result.status !== 'same' && result.status !== 'changed') ||
+              (opening.mode === 'silent' && reason !== 'success')
+            )
+              return;
+            const runtime = readRuntime();
+            if (
+              runtime.sourceEnabled === false ||
+              runtime.authSurfaceOpen ||
+              runtime.identityKey !== siteSessionIdentityKey(result.session)
+            )
+              return;
+            void appQueryClient.invalidateQueries({
+              predicate: ({ queryKey }) =>
+                queryKey[0] === 'forum' &&
+                queryKey[1] === 'linuxdo' &&
+                queryKey[2] === 'account-data' &&
+                (queryKey[3] === 'ldc-account' || queryKey[3] === 'ldc-transactions')
+            });
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            opening.resolve();
+            if (closingRef.current?.promise === closing) {
+              closingRef.current = null;
+            }
+            if (revisionRef.current === revision) setBusy(false);
           });
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          opening.resolve();
-          if (closingRef.current === closing) {
-            closingRef.current = null;
-            closingModeRef.current = null;
-          }
-          if (revisionRef.current === revision) setBusy(false);
-        });
-      closingRef.current = closing;
-      closingModeRef.current = opening.mode;
-      return closing;
+        closingRef.current = { promise: closing, mode: opening.mode };
+      }
+      return closingRef.current.promise;
     },
     [finishSurface, readRuntime]
   );
@@ -180,7 +180,7 @@ export function useLinuxDoCreditAuthController({
   const open = useCallback(async () => {
     if (openingRef.current?.mode === 'manual') return;
     const expectedIdentity = readRuntime().identityKey;
-    if (openingRef.current?.mode === 'silent' || closingModeRef.current === 'silent') {
+    if (openingRef.current?.mode === 'silent' || closingRef.current?.mode === 'silent') {
       const closing = close('switch-surface');
       const closeIntent = manualIntentRef.current;
       await closing;
@@ -204,7 +204,7 @@ export function useLinuxDoCreditAuthController({
   const connectSilently = useCallback((): Promise<void> => {
     if (openingRef.current)
       return openingRef.current.mode === 'silent' ? openingRef.current.completion : Promise.resolve();
-    if (closingRef.current) return closingRef.current;
+    if (closingRef.current) return closingRef.current.promise;
     const runtime = readRuntime();
     const owner = runtime.identityKey + ':' + runtime.sessionEpoch;
     if (

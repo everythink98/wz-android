@@ -279,17 +279,7 @@ export function nodeSeekNodeImageAuthScript(nonce: string) {
 (() => {
   const nonce = ${safeInjectedJson(safeNonce)};
 ${nodeImageDocumentGuardScript(NODEIMAGE_AUTH_URL)}
-  let requested = false;
-  const removeStartListeners = () => {
-    window.removeEventListener("message", handleStart);
-    document.removeEventListener("message", handleStart);
-  };
   const requestAuthData = async () => {
-    if (requested) {
-      return;
-    }
-    requested = true;
-    removeStartListeners();
     try {
       const response = await fetch("/api/cAuth?target=NodeImage", {
         credentials: "include",
@@ -333,6 +323,8 @@ ${nodeImageDocumentGuardScript(NODEIMAGE_AUTH_URL)}
     ) {
       return;
     }
+    window.removeEventListener("message", handleStart);
+    document.removeEventListener("message", handleStart);
     clearInterval(readyTimer);
     void requestAuthData();
   }
@@ -356,12 +348,7 @@ export function nodeImageAuthPayloadScript(nonce: string, authPayload: NodeImage
   const nodeImageApiBaseUrl = "${NODEIMAGE_API_BASE_URL}";
 ${nodeImageDocumentGuardScript(NODEIMAGE_URL)}
   const readInputKey = () => String(document.querySelector("#apiKeyInput")?.value || "").trim();
-  let verified = false;
   const verifyNodeImageAuth = async () => {
-    if (verified) {
-      return true;
-    }
-    verified = true;
     const response = await fetch(nodeImageApiBaseUrl + "/api/auth/verify", {
       method: "POST",
       credentials: "include",

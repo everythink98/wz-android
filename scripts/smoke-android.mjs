@@ -29,6 +29,8 @@ const defaultApkPath = path.join(
 );
 const smokeSession = 'wz-apk-sanity';
 
+/** @typedef {{ kind: 'none' } | { kind: 'failed', error: unknown }} SmokeFailure */
+
 const runtimeFailurePatterns = [
   ['Android 崩溃', /FATAL EXCEPTION|AndroidRuntime[^\n]*FATAL|keeps stopping|has stopped/i],
   ['Android ANR', /ANR in com\.wz\.reader|Application Not Responding(?:: com\.wz\.reader)?/i],
@@ -190,18 +192,19 @@ export function withSmokeSession(
     ['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName, '--json'],
     { capture: true, cwd: rootDir }
   );
-  let failure;
+  /** @type {SmokeFailure} */
+  let failure = { kind: 'none' };
   try {
     return action(parseBootedAndroidDevice(bootOutput));
   } catch (error) {
-    failure = error;
+    failure = { kind: 'failed', error };
     throw error;
   } finally {
     try {
       runAgentDeviceCommand(['close', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
     } catch (closeError) {
-      if (failure) {
-        throw new AggregateError([failure, closeError], 'Android Smoke session 清理失败');
+      if (failure.kind === 'failed') {
+        throw new AggregateError([failure.error, closeError], 'Android Smoke session 清理失败');
       }
       throw closeError;
     }
@@ -217,7 +220,8 @@ export function runApkSanity({
   verifySessionLog
 }) {
   const firstInstallTimeBefore = readFirstInstallTime(device.id, '前', runAdbCommand);
-  let installFailure;
+  /** @type {SmokeFailure} */
+  let installation = { kind: 'none' };
   try {
     runAgentDeviceCommand(
       [
@@ -233,16 +237,17 @@ export function runApkSanity({
       { cwd: rootDir }
     );
   } catch (error) {
-    installFailure = error;
+    installation = { kind: 'failed', error };
   }
 
   const firstInstallTimeAfter = readFirstInstallTime(device.id, '后', runAdbCommand);
   if (firstInstallTimeAfter !== firstInstallTimeBefore) {
     throw new Error(`BLOCKED_BY_ENV：覆盖安装改变了 ${appPackage} 的 firstInstallTime，已在首次启动前停止 Smoke。`);
   }
-  if (installFailure) {
+  if (installation.kind === 'failed') {
     throw new Error(
-      `BLOCKED_BY_ENV：覆盖安装失败；未卸载 App，也未清数据、Cookie 或登录态。${installFailure instanceof Error ? ` ${installFailure.message}` : ''}`
+      `BLOCKED_BY_ENV：覆盖安装失败；未卸载 App，也未清数据、Cookie 或登录态。${installation.error instanceof Error ? ` ${installation.error.message}` : ''}`,
+      { cause: installation.error }
     );
   }
 
@@ -289,15 +294,21 @@ export function runApkSanity({
       errors.push(error);
     }
     if (logging) {
-      try {
-        runAgentDeviceCommand(
-          ['logs', 'mark', 'wz-apk-sanity-end', '--session', smokeSession, '--platform', 'android'],
-          { cwd: rootDir }
-        );
-        runAgentDeviceCommand(['logs', 'stop', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
-        (verifySessionLog || (() => verifyLogWindow(runAgentDeviceCommand)))();
-      } catch (error) {
-        errors.push(error);
+      for (const cleanup of [
+        () =>
+          runAgentDeviceCommand(
+            ['logs', 'mark', 'wz-apk-sanity-end', '--session', smokeSession, '--platform', 'android'],
+            { cwd: rootDir }
+          ),
+        () =>
+          runAgentDeviceCommand(['logs', 'stop', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir }),
+        verifySessionLog || (() => verifyLogWindow(runAgentDeviceCommand))
+      ]) {
+        try {
+          cleanup();
+        } catch (error) {
+          errors.push(error);
+        }
       }
     }
   }

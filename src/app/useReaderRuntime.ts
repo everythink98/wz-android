@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import { errorMessage } from '@/platform/network/errors';
 import {
@@ -44,15 +45,23 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
   const queryClient = useQueryClient();
   const [readerData, setReaderData] = useState(createEmptyReaderState);
   const [readerStatus, setReaderStatus] = useState<ReaderStatus>('loading');
-  const active = useRef(false);
+  const lifetimeRef = useRef(new AbortController());
+  const notifyRef = useCommittedRef(notify);
   const statusRef = useRef<ReaderStatus>('loading');
   const updateStatus = useCallback((status: ReaderStatus) => {
     statusRef.current = status;
-    if (active.current) setReaderStatus(status);
+    if (!lifetimeRef.current.signal.aborted) setReaderStatus(status);
   }, []);
   const readerDataRef = useRef(readerData);
   const committed = useRef(readerData);
-  const pending = useRef<{ command: ReaderCommand }[]>([]);
+  const pending = useRef<{ command: ReaderCommand; owner: AbortSignal }[]>([]);
+
+  useLayoutEffect(() => {
+    if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
+    const lifetime = lifetimeRef.current;
+    for (const operation of pending.current) operation.owner = lifetime.signal;
+    return () => lifetime.abort();
+  }, []);
 
   const publish = useCallback(() => {
     const state = pending.current.reduce(
@@ -60,13 +69,14 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
       committed.current
     );
     readerDataRef.current = state;
-    if (active.current) setReaderData(state);
+    if (!lifetimeRef.current.signal.aborted) setReaderData(state);
   }, []);
 
   const commitReaderData = useCallback(
     (command: ReaderCommand) => {
+      if (lifetimeRef.current.signal.aborted) return;
       if (statusRef.current !== 'ready') {
-        notify(
+        notifyRef.current(
           statusRef.current === 'recovery'
             ? '本机资料读取失败，请先导入备份再修改本机资料。'
             : '本机资料尚未加载完成，请稍后再试。'
@@ -74,7 +84,7 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
         return;
       }
       const trace = beginDiagnosticTrace('reader-data', 'mutate', { state: 'queued' });
-      const operation = { command };
+      const operation = { command, owner: lifetimeRef.current.signal };
       pending.current.push(operation);
       publish();
       // Storage is the single ordering owner. UI completion handlers preserve the
@@ -90,7 +100,8 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
           (error) => {
             if (error instanceof AggregateError) updateStatus('recovery');
             finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-            notify(errorMessage(error));
+            if (!operation.owner.aborted && lifetimeRef.current.signal === operation.owner)
+              notifyRef.current(errorMessage(error));
           }
         )
         .finally(() => {
@@ -99,7 +110,7 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
         });
       void result;
     },
-    [notify, publish, queryClient, updateStatus]
+    [notifyRef, publish, queryClient, updateStatus]
   );
 
   const importBackup = useCallback(
@@ -134,11 +145,10 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
   }, []);
 
   useEffect(() => {
-    let current = true;
-    active.current = true;
+    const owner = lifetimeRef.current.signal;
     void loadInitialReaderData({
-      isActive: () => current,
-      notify,
+      isActive: () => !owner.aborted && lifetimeRef.current.signal === owner,
+      notify: (message) => notifyRef.current(message),
       onLoaded: (state, status) => {
         committed.current = state;
         publish();
@@ -146,11 +156,7 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
         recordStartupPhase('reader-ready');
       }
     });
-    return () => {
-      current = false;
-      active.current = false;
-    };
-  }, [notify, publish, updateStatus]);
+  }, [notifyRef, publish, updateStatus]);
 
   return {
     commitReaderData,

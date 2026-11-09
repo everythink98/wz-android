@@ -582,6 +582,31 @@ describe('linux.do level profile', () => {
     );
   });
 
+  it('keeps absolute observations isolated per username after replacing a corrupt snapshot', async () => {
+    asyncStorage.__store.set('linuxdo-level-snapshot:alice', '{corrupt');
+    let username = 'alice';
+    let daysVisited = 6;
+    const fetcher = vi.fn(async (input: string) => {
+      expect(input).toBe('https://linux.do/my/summary.json');
+      return Response.json({ user_summary: { user: { username, trust_level: 1 }, days_visited: daysVisited } });
+    });
+
+    const first = await getLinuxDoLevelProfile({ fetcher, userAgent: 'test' });
+    expect(first.requirements.find((item) => item.key === 'days_visited')?.change).toBeUndefined();
+    username = 'bob';
+    daysVisited = 100;
+    const other = await getLinuxDoLevelProfile({ fetcher, userAgent: 'test' });
+    expect(other.requirements.find((item) => item.key === 'days_visited')?.change).toBeUndefined();
+    username = 'alice';
+    daysVisited = 8;
+    const latest = await getLinuxDoLevelProfile({ fetcher, userAgent: 'test' });
+
+    expect(latest.requirements.find((item) => item.key === 'days_visited')?.change).toBe(2);
+    expect(JSON.parse(asyncStorage.__store.get('linuxdo-level-snapshot:alice')!).values.days_visited).toBe(8);
+    expect(JSON.parse(asyncStorage.__store.get('linuxdo-level-snapshot:bob')!).values.days_visited).toBe(100);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it('falls back to the current username summary when my summary is not JSON', async () => {
     const requests: string[] = [];
     const fetcher = vi.fn(async (input: string) => {

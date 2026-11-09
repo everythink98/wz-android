@@ -33,11 +33,43 @@ it('serializes each owner, recovers its queue after failure, and freezes only an
   db.execAsync.mockImplementation(async (sql) => {
     if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error(sql);
   });
-  await expect(first.transaction(db, true, async () => 1)).rejects.toThrow('first rollback failed');
-  expect(() => first.assertUsable()).toThrow('first frozen');
+  const failure: unknown = await first.transaction(db, true, async () => 1).catch((error) => error);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(failure).toMatchObject({ message: 'first rollback failed' });
+  let rejected: unknown;
+  try {
+    first.assertUsable();
+  } catch (error) {
+    rejected = error;
+  }
+  expect(rejected).toMatchObject({ message: 'first frozen', cause: failure });
+  if (!(rejected instanceof Error)) throw new Error('Missing frozen-owner failure');
+  expect(rejected.cause).toBe(failure);
   const calls = db.execAsync.mock.calls.length;
   await expect(first.transaction(db, true, async () => 2)).rejects.toThrow('first frozen');
   expect(db.execAsync).toHaveBeenCalledTimes(calls);
   db.execAsync.mockImplementation(async () => undefined);
   await expect(second.transaction(db, true, async () => 3)).resolves.toBe(3);
+});
+
+it.each(['BEGIN IMMEDIATE', 'COMMIT'])('keeps the owner usable after a recoverable %s failure', async (failedSql) => {
+  const executor = createSqliteExecutor('frozen', 'rollback failed');
+  const failure = new Error(`${failedSql} failed`);
+  const failures = [failedSql];
+  const db = {
+    execAsync: vi.fn(async (sql: string) => {
+      if (sql === failures[0]) {
+        failures.shift();
+        throw failure;
+      }
+    })
+  };
+  const operation = vi.fn(async () => 7);
+
+  await expect(executor.transaction(db, true, operation)).rejects.toBe(failure);
+  expect(db.execAsync.mock.calls.map(([sql]) => sql)).toEqual(
+    failedSql === 'COMMIT' ? ['BEGIN IMMEDIATE', 'COMMIT', 'ROLLBACK'] : ['BEGIN IMMEDIATE']
+  );
+  expect(() => executor.assertUsable()).not.toThrow();
+  await expect(executor.transaction(db, false, operation)).resolves.toBe(7);
 });

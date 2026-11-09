@@ -140,6 +140,16 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 - 状态按事实与生命周期划分，不按变量形状合并：Query 拥有当前远端事实；Search draft/submitted、Feed 单一 `feedSource` 和妖火 Topic 稳定布局分别是搜索输入、来源选择与渲染连续性的 route 投影；ReaderData state/ref/persistence、App screen/ref、通知 headless baseline、Native runtime 投影与媒体 transport cache 服务不同生命周期。commit-safe ref 只桥接命令式回调，不是第二个 writer；只有同一事实、同一生命周期且可互相写回的副本才应删除。
 - `src/platform/concurrency/keyedSerialRunner.ts` 是进程内按 key 串行提交的唯一 primitive；账号 session、credential vault 和 notification worker 分别创建独立 runner，同 key 串行、不同 key 并行，失败不得阻断后续任务，settled tail 必须释放。无 key 的全局队列不进入该抽象。
 
+### 资源与观察者所有权
+
+互斥业务结果由现有 reducer 或判别联合表达；在途工作由实际 Promise、AbortController、Native handle、队列和持久化记录负责。UI 的 busy、进度和诊断摘要是这些事实的投影，不作为第二份流程权威。
+
+Effect 的观察者与已经派发的 I/O 分开退役。切账号、来源、请求或组件实例后，迟到结果必须同时满足其捕获的资源身份和当前会话边界才能发布；已确认的写入仍由原事务结算。卸载不能借机清除持久化状态或进程级 Cookie。
+
+资源永久 dispose 后不复活。React Strict 重建需要新的实际资源，旧回调继续绑定旧对象；普通重渲染复用当前资源。编辑器的 View 可重建，已提交文档及 CodeMirror 的不可变 EditorState 按原身份交接，旧快照不能冒充新文档。
+
+测试工具的停止、权限恢复、连接关闭、工作区还原和报告写入各自结算。独立清理不得因前一步失败而跳过；主错误与清理错误保留原值，包括非 Error 和 falsy 值。实际设备、系统 provider 和 Native 几何的验证边界见测试证据，不能从相邻 mock 或静态检查推导通过。
+
 ### 取消、超时与读取恢复
 
 - Topic 的 `focused`、App 前台状态和请求身份分别负责路由所有权、交互和结果提交。详情、回复窗口与引用只在失焦、卸载、账号/来源/epoch 失效时取消；Home 不取消已开始的读取，仍消耗原 deadline。媒体、阅读计时、自动滚动和交互要求 `focused && appActive`；Account 验证返回的恢复授权仍在切后台时撤销。访问登记与读取终态分开，取消不关闭未完成请求的恢复入口；真实失败或已完成的保留页面返回不自动重读。

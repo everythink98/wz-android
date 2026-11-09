@@ -10,8 +10,19 @@ import {
   runNodeImageAuthOpening,
   runNodeImageAuthSingleFlight,
   terminateNodeImageAuthFlow,
-  type NodeImageAuthPhase
+  type NodeImageAuthState,
+  type NodeImageAuthFlow,
+  type NodeImageAuthOpeningState
 } from './authFlow';
+
+function createFlow(state: NodeImageAuthState = { phase: 'nodeimage-session' }): NodeImageAuthFlow {
+  return {
+    credentialGeneration: 7,
+    nonce: '00112233445566778899aabbccddeeff',
+    owner: { identityKey: 'nodeseek:42', sessionEpoch: 3 },
+    state
+  };
+}
 
 describe('NodeImage authorization flow', () => {
   afterEach(() => {
@@ -67,7 +78,7 @@ describe('NodeImage authorization flow', () => {
   });
 
   it('single-flights async initialization and clears after settlement', async () => {
-    const slot = { current: null as Promise<string | null> | null };
+    const slot: { current: NodeImageAuthOpeningState } = { current: { phase: 'idle' } };
     const nonce = Promise.withResolvers<void>();
     const result = Promise.withResolvers<string | null>();
     const initialize = vi.fn(async (isCurrent: () => boolean) => {
@@ -83,15 +94,33 @@ describe('NodeImage authorization flow', () => {
     nonce.resolve();
     result.resolve('authorized-key');
     await expect(Promise.all([first, second])).resolves.toEqual(['authorized-key', 'authorized-key']);
-    expect(slot.current).toBeNull();
+    expect(slot.current.phase).toBe('idle');
 
     const third = runNodeImageAuthSingleFlight(slot, async () => null);
     expect(third).not.toBe(first);
     await expect(third).resolves.toBeNull();
   });
 
+  it('owns the opening before initialization and does not clear a replacement from an old settlement', async () => {
+    const slot: { current: NodeImageAuthOpeningState } = { current: { phase: 'idle' } };
+    const old = Promise.withResolvers<string | null>();
+    const current = Promise.withResolvers<string | null>();
+    const oldOpening = runNodeImageAuthSingleFlight(slot, async (isCurrent) => {
+      expect(isCurrent()).toBe(true);
+      return old.promise;
+    });
+    closeNodeImageAuthOpening(slot, () => undefined);
+    const replacement = runNodeImageAuthSingleFlight(slot, () => current.promise);
+    old.resolve(null);
+    await oldOpening;
+    expect(runNodeImageAuthSingleFlight(slot, async () => 'unexpected')).toBe(replacement);
+    current.resolve('new-key');
+    await expect(replacement).resolves.toBe('new-key');
+    expect(slot.current.phase).toBe('idle');
+  });
+
   it('closes a pending secure-random continuation before it opens a stale surface', async () => {
-    const slot = { current: null as Promise<string | null> | null };
+    const slot: { current: NodeImageAuthOpeningState } = { current: { phase: 'idle' } };
     const nonce = Promise.withResolvers<string>();
     const open = vi.fn(async () => 'unexpected-key');
     const finish = vi.fn(async () => undefined);
@@ -107,7 +136,7 @@ describe('NodeImage authorization flow', () => {
     await expect(opening).resolves.toBeNull();
     expect(open).not.toHaveBeenCalled();
     expect(finish).toHaveBeenCalledTimes(1);
-    expect(slot.current).toBeNull();
+    expect(slot.current.phase).toBe('idle');
   });
 
   it.each([
@@ -156,12 +185,7 @@ describe('NodeImage authorization flow', () => {
   });
 
   it('rejects late messages after owner, epoch, generation, or terminal changes', () => {
-    const flow = {
-      credentialGeneration: 7,
-      ownerIdentityKey: 'nodeseek:42',
-      ownerSessionEpoch: 3,
-      terminal: false
-    };
+    const flow = createFlow();
     const runtime = {
       identityKey: 'nodeseek:42',
       identityTrust: 'confirmed' as const,
@@ -180,23 +204,23 @@ describe('NodeImage authorization flow', () => {
   });
 
   it('grants one native Connect attempt across repeated document readiness', () => {
-    const flow = { connectStarted: false };
+    const flow = createFlow({ phase: 'nodeseek-cauth', connect: 'awaiting-ready' });
 
     expect(claimNodeImageConnectAttempt(flow)).toBe(true);
     expect(claimNodeImageConnectAttempt(flow)).toBe(false);
   });
 
+  it('does not claim Connect from session, verification or terminal states', () => {
+    const states: NodeImageAuthState[] = [
+      { phase: 'nodeimage-session' },
+      { phase: 'nodeimage-verify', payload: { data: 'data', sign: 'sign', wtf: 'wtf' } },
+      { phase: 'terminal' }
+    ];
+    for (const state of states) expect(claimNodeImageConnectAttempt(createFlow(state))).toBe(false);
+  });
+
   it('never starts Connect without both valid bridge proofs', async () => {
-    const flow = {
-      connectStarted: false,
-      credentialGeneration: 7,
-      nonce: '00112233445566778899aabbccddeeff',
-      ownerIdentityKey: 'nodeseek:42',
-      ownerSessionEpoch: 3,
-      payload: null,
-      phase: 'nodeseek-cauth' as const,
-      terminal: false
-    };
+    const flow = createFlow({ phase: 'nodeseek-cauth', connect: 'awaiting-ready' });
     const connectTarget = { postMessage: vi.fn() };
     const effects = {
       complete: vi.fn(),
@@ -234,23 +258,14 @@ describe('NodeImage authorization flow', () => {
       );
     }
 
-    expect(flow.connectStarted).toBe(false);
+    expect(flow.state).toEqual({ phase: 'nodeseek-cauth', connect: 'awaiting-ready' });
     expect(connectTarget.postMessage).not.toHaveBeenCalled();
     expect(effects.mark).not.toHaveBeenCalled();
     expect(effects.fail).not.toHaveBeenCalled();
   });
 
   it('completes an existing NodeImage session without Connect and settles once', async () => {
-    const flow = {
-      connectStarted: false,
-      credentialGeneration: 7,
-      nonce: '00112233445566778899aabbccddeeff',
-      ownerIdentityKey: 'nodeseek:42',
-      ownerSessionEpoch: 3,
-      payload: null,
-      phase: 'nodeimage-session' as const,
-      terminal: false
-    };
+    const flow = createFlow();
     const connectTarget = { postMessage: vi.fn() };
     const effects = {
       complete: vi.fn(async () => undefined),
@@ -326,20 +341,11 @@ describe('NodeImage authorization flow', () => {
     expect(effects.mountCurrentPhase).not.toHaveBeenCalled();
     expect(connectTarget.postMessage).not.toHaveBeenCalled();
     expect(effects.fail).not.toHaveBeenCalled();
-    expect(flow.terminal).toBe(true);
+    expect(flow.state.phase).toBe('terminal');
   });
 
   it('drives one Connect through verify, then ignores every late result', async () => {
-    const flow = {
-      connectStarted: false,
-      credentialGeneration: 7,
-      nonce: '00112233445566778899aabbccddeeff',
-      ownerIdentityKey: 'nodeseek:42',
-      ownerSessionEpoch: 3,
-      payload: null,
-      phase: 'nodeimage-session' as NodeImageAuthPhase,
-      terminal: false
-    };
+    const flow = createFlow();
     const connectTarget = { postMessage: vi.fn() };
     const effects = {
       complete: vi.fn(async () => undefined),
@@ -360,13 +366,13 @@ describe('NodeImage authorization flow', () => {
           data: JSON.stringify({
             ...data,
             documentUrl:
-              flow.phase === 'nodeseek-cauth'
+              flow.state.phase === 'nodeseek-cauth'
                 ? 'https://www.nodeseek.com/connect?target=NodeImage'
                 : 'https://www.nodeimage.com/',
             nonce: flow.nonce,
             type
           }),
-          sourceUrl: flow.phase === 'nodeseek-cauth' ? 'https://www.nodeseek.com' : 'https://www.nodeimage.com'
+          sourceUrl: flow.state.phase === 'nodeseek-cauth' ? 'https://www.nodeseek.com' : 'https://www.nodeimage.com'
         },
         runtime,
         7,
@@ -380,6 +386,10 @@ describe('NodeImage authorization flow', () => {
       data: 'auth-data',
       sign: 'auth-sign',
       wtf: 'auth-wtf'
+    });
+    expect(flow.state).toEqual({
+      phase: 'nodeimage-verify',
+      payload: { data: 'auth-data', sign: 'auth-sign', wtf: 'auth-wtf' }
     });
     await send('nodeimage-api-key', { apiKey: 'verified-key' });
     await send('nodeimage-api-key', { apiKey: 'late-key' });
@@ -398,21 +408,11 @@ describe('NodeImage authorization flow', () => {
     expect(effects.complete).toHaveBeenCalledTimes(1);
     expect(effects.complete).toHaveBeenCalledWith('verified-key');
     expect(effects.fail).not.toHaveBeenCalled();
-    expect(flow.phase).toBe('nodeimage-verify');
-    expect(flow.terminal).toBe(true);
+    expect(flow.state.phase).toBe('terminal');
   });
 
   it('terminates an unknown session result before a late expired message', async () => {
-    const flow = {
-      connectStarted: false,
-      credentialGeneration: 7,
-      nonce: '00112233445566778899aabbccddeeff',
-      ownerIdentityKey: 'nodeseek:42',
-      ownerSessionEpoch: 3,
-      payload: null,
-      phase: 'nodeimage-session' as NodeImageAuthPhase,
-      terminal: false
-    };
+    const flow = createFlow();
     const connectTarget = { postMessage: vi.fn() };
     const effects = {
       complete: vi.fn(async () => undefined),
@@ -450,6 +450,6 @@ describe('NodeImage authorization flow', () => {
     expect(effects.mountCurrentPhase).not.toHaveBeenCalled();
     expect(connectTarget.postMessage).not.toHaveBeenCalled();
     expect(effects.complete).not.toHaveBeenCalled();
-    expect(flow.terminal).toBe(true);
+    expect(flow.state.phase).toBe('terminal');
   });
 });

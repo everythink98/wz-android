@@ -27,6 +27,20 @@ import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';
 
+type NodeSeekEvidenceWindow = Readonly<{
+  epoch: number;
+  latestConfirmedDirectOrdinal: number;
+}>;
+
+type NodeSeekRecoveringEvidence = {
+  phase: 'recovering';
+  window: NodeSeekEvidenceWindow;
+  qualifiedCount: number;
+};
+
+type NodeSeekRecoveryEvidence =
+  { phase: 'collecting'; window: NodeSeekEvidenceWindow; qualifiedCount: number } | NodeSeekRecoveringEvidence;
+
 export function isNodeSeekRequestUrl(input: string) {
   try {
     const url = new URL(input);
@@ -124,26 +138,37 @@ export function createNodeSeekWebViewFallbackFetcher({
   webViewFetcher: Fetcher;
 }): Fetcher {
   const threshold = Math.max(1, Math.min(5, Math.round(recoveryThreshold)));
-  let qualifiedFallbacks = 0;
-  let evidenceEpoch = 0;
-  let latestConfirmedDirectOrdinal = 0;
+  let recoveryEvidence: NodeSeekRecoveryEvidence = {
+    phase: 'collecting',
+    window: { epoch: 0, latestConfirmedDirectOrdinal: 0 },
+    qualifiedCount: 0
+  };
   let requestOrdinal = 0;
+  const settleRecovery = (owner: NodeSeekRecoveringEvidence, outcome: 'succeeded' | 'failed') => {
+    if (recoveryEvidence.phase !== 'recovering' || recoveryEvidence !== owner) return;
+    recoveryEvidence = {
+      phase: 'collecting',
+      window: owner.window,
+      qualifiedCount: outcome === 'succeeded' ? 0 : owner.qualifiedCount
+    };
+  };
   const recordQualifiedFallback = async (
     reason: 'timeout' | 'network_error',
     ordinal: number,
-    expectedEvidenceEpoch: number,
+    expectedWindow: NodeSeekEvidenceWindow,
     expectedGeneration: number,
     diagnosticFields: DiagnosticFields
   ) => {
+    const current = recoveryEvidence;
     const fields = {
       ...diagnosticFields,
       evidenceKind: 'fallback',
       ordinal,
       generation: expectedGeneration,
-      evidenceEpoch,
+      evidenceEpoch: current.window.epoch,
       threshold
     } as const;
-    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) {
+    if (expectedWindow !== current.window || ordinal <= current.window.latestConfirmedDirectOrdinal) {
       recordForumRecoveryDecision('nodeseek', 'superseded', fields);
       return;
     }
@@ -151,12 +176,19 @@ export function createNodeSeekWebViewFallbackFetcher({
       recordForumRecoveryDecision('nodeseek', 'unavailable', fields);
       return;
     }
-    if (++qualifiedFallbacks < threshold) {
-      recordForumRecoveryDecision('nodeseek', 'threshold', { ...fields, qualifiedCount: qualifiedFallbacks });
+    const qualifiedCount = current.qualifiedCount + 1;
+    if (qualifiedCount < threshold) {
+      recoveryEvidence = { phase: 'collecting', window: current.window, qualifiedCount };
+      recordForumRecoveryDecision('nodeseek', 'threshold', { ...fields, qualifiedCount });
       return;
     }
-    recordForumRecoveryDecision('nodeseek', 'commit', { ...fields, qualifiedCount: qualifiedFallbacks });
-    evidenceEpoch += 1;
+    recordForumRecoveryDecision('nodeseek', 'commit', { ...fields, qualifiedCount });
+    const recovering: NodeSeekRecoveringEvidence = {
+      phase: 'recovering',
+      window: { ...current.window, epoch: current.window.epoch + 1 },
+      qualifiedCount
+    };
+    recoveryEvidence = recovering;
     const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
       ...diagnosticFields,
       source: 'nodeseek',
@@ -164,8 +196,9 @@ export function createNodeSeekWebViewFallbackFetcher({
     });
     try {
       await recoverReadChannel(expectedGeneration, trace);
-      qualifiedFallbacks = 0;
+      settleRecovery(recovering, 'succeeded');
     } catch (error) {
+      settleRecovery(recovering, 'failed');
       recordForumRecoveryDecision('nodeseek', 'failed', { ...fields, reason: normalizeDiagnosticReason(error) });
       // Native owns the terminal event once the trace crosses the bridge.
     }
@@ -193,10 +226,10 @@ export function createNodeSeekWebViewFallbackFetcher({
         const reason = diagnosticReason === 'unknown' ? 'network_error' : diagnosticReason;
         const fallbackResponse = await fetchNodeSeekThroughWebView(webViewFetcher, url, init, reason);
         if (fallbackResponse.ok && (reason === 'timeout' || reason === 'network_error')) {
-          const expectedEvidenceEpoch = evidenceEpoch;
+          const expectedWindow = recoveryEvidence.window;
           registerForumReadResponseEvidence(init, fallbackResponse, {
             commit: () =>
-              recordQualifiedFallback(reason, ordinal, expectedEvidenceEpoch, requestStartGeneration, recoveryFields),
+              recordQualifiedFallback(reason, ordinal, expectedWindow, requestStartGeneration, recoveryFields),
             kind: 'fallback',
             ordinal,
             source: 'nodeseek'
@@ -227,15 +260,14 @@ export function createNodeSeekWebViewFallbackFetcher({
     if (response.ok) {
       registerForumReadResponseEvidence(init, response, {
         commit: async () => {
-          if (ordinal > latestConfirmedDirectOrdinal) {
-            latestConfirmedDirectOrdinal = ordinal;
-            evidenceEpoch += 1;
-            qualifiedFallbacks = 0;
+          if (ordinal > recoveryEvidence.window.latestConfirmedDirectOrdinal) {
+            const window = { epoch: recoveryEvidence.window.epoch + 1, latestConfirmedDirectOrdinal: ordinal };
+            recoveryEvidence = { phase: 'collecting', window, qualifiedCount: 0 };
             recordForumRecoveryDecision('nodeseek', 'direct-reset', {
               ...recoveryFields,
               evidenceKind: 'direct',
               ordinal,
-              evidenceEpoch,
+              evidenceEpoch: window.epoch,
               generation: requestStartGeneration
             });
           }

@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
 import {
   backgroundCycleReceipt,
   backgroundJobRegistration,
@@ -8,6 +9,179 @@ import {
   nativeCompletion,
   verifyJobHistory
 } from '../../scripts/run-notification-background-device-proof.mjs';
+
+async function runBackgroundFixture({
+  body,
+  stage = 'grant',
+  observation,
+  unregister,
+  stop,
+  permission,
+  report
+}: {
+  body: { error: unknown };
+  stage?: 'grant' | 'ready';
+  observation?: { error: unknown };
+  unregister?: { error: unknown };
+  stop?: { error: unknown };
+  permission?: { error: unknown };
+  report?: { error: unknown };
+}) {
+  const operations: string[] = [];
+  const reports: { passed: boolean; restoration?: { phase: string }; causes?: string[] }[] = [];
+  let grants = 0;
+  let stops = 0;
+  let cleanups = 0;
+  let token = '';
+  const finalStop = stage === 'grant' ? 1 : 4;
+  const device = {
+    avd: 'WZ_ReaderStorage_API35_20260910',
+    package: 'com.wz.reader',
+    identity: () => ({}),
+    stop: () => {
+      operations.push('stop');
+      if (++stops === finalStop && stop) throw stop.error;
+    },
+    adb: (...args: string[]) => {
+      const operation = args.join(' ');
+      operations.push(operation);
+      if (operation === 'shell dumpsys package com.wz.reader')
+        return 'android.permission.POST_NOTIFICATIONS: granted=true';
+      if (operation === 'shell pm grant com.wz.reader android.permission.POST_NOTIFICATIONS') {
+        grants++;
+        if (grants === 1 && stage === 'grant') throw body.error;
+        if (grants === 2 && permission) throw permission.error;
+        return '';
+      }
+      if (operation.startsWith('shell am start ')) {
+        const url = new URL(args.at(-1)!);
+        token = url.pathname.split('/').at(-1)!;
+        if (url.hostname === 'background' && url.pathname.startsWith('/success/')) throw body.error;
+        if (++cleanups > 1 && unregister) throw unregister.error;
+        return '';
+      }
+      if (operation === 'shell run-as com.wz.reader cat cache/background-proof.json')
+        return JSON.stringify({ token, checkpoint: 'cleaned' });
+      if (operation === 'shell pidof com.wz.reader') return '';
+      if (operation === 'shell date +%s%3N') {
+        if (observation && (stage === 'grant' || cleanups > 0)) throw observation.error;
+        return '1000000';
+      }
+      if (operation === 'shell cat /proc/uptime') return '1000.0';
+      if (operation === 'shell dumpsys jobscheduler') return '';
+      throw new Error('Unexpected synthetic command: ' + operation);
+    }
+  };
+  vi.resetModules();
+  vi.doMock('node:util', async (actual) => ({
+    ...(await actual<typeof import('node:util')>()),
+    parseArgs: () => ({
+      values: { serial: 'emulator-fixture', output: '.codex-tmp/background-canonical.json', mode: 'success' },
+      positionals: []
+    })
+  }));
+  vi.doMock('node:fs', () => ({
+    existsSync: () => false,
+    mkdirSync: () => {},
+    writeFileSync: (file: string, value: string) => {
+      if (!file.endsWith('.json')) return;
+      if (report) throw report.error;
+      reports.push(JSON.parse(value));
+    }
+  }));
+  vi.doMock('../../scripts/review-proof-checkpoint.mjs', () => ({
+    proofDeviceForSerial: () => device,
+    withProofCheckpoint: async ({ run }: { run: () => Promise<unknown> }) => {
+      try {
+        return { result: await run(), checkpoint: { phase: 'restored' } };
+      } catch (error) {
+        // Preserve the actual checkpoint wrapper's primitive-cause and restored receipt contract.
+        const failure = error instanceof Error ? error : new Error('Device proof failed', { cause: error });
+        try {
+          Object.assign(failure, { checkpoint: { phase: 'restored' } });
+        } catch {
+          throw Object.assign(new Error(failure.message, { cause: error }), { checkpoint: { phase: 'restored' } });
+        }
+        throw failure;
+      }
+    }
+  }));
+  const argv = process.argv;
+  let outcome: { kind: 'passed' } | { kind: 'failed'; error: unknown } = { kind: 'passed' };
+  try {
+    // Exercise the real CLI body without exporting or replacing its control flow.
+    process.argv = [argv[0]!, path.resolve('scripts/run-notification-background-device-proof.mjs')];
+    await import('../../scripts/run-notification-background-device-proof.mjs');
+  } catch (error) {
+    outcome = { kind: 'failed', error };
+  } finally {
+    process.argv = argv;
+    vi.doUnmock('node:util');
+    vi.doUnmock('node:fs');
+    vi.doUnmock('../../scripts/review-proof-checkpoint.mjs');
+    vi.resetModules();
+  }
+  return { outcome, operations, reports, grants };
+}
+
+describe('notification background runner cleanup', () => {
+  it.each([undefined, null, false, 0, '', Symbol('failure'), 0n, Object.freeze({ code: 'failure' })])(
+    'retains a %s primary cause through successful restoration',
+    async (error) => {
+      const result = await runBackgroundFixture({ body: { error } });
+      expect(result.grants).toBe(2);
+      expect(result.reports).toEqual([expect.objectContaining({ passed: false, restoration: { phase: 'restored' } })]);
+      if (result.outcome.kind !== 'failed' || !(result.outcome.error instanceof Error))
+        throw new Error('Expected the real checkpoint error contract');
+      expect(result.outcome.error.cause).toBe(error);
+    }
+  );
+
+  it('attempts permission restoration after stop fails and retains the falsy primary', async () => {
+    const stop = new Error('Stop failed');
+    const result = await runBackgroundFixture({ body: { error: 0 }, stop: { error: stop } });
+    expect(result.grants).toBe(2);
+    if (result.outcome.kind === 'failed') expect(result.outcome.error).toBeInstanceOf(AggregateError);
+    if (result.outcome.kind !== 'failed' || !(result.outcome.error instanceof AggregateError))
+      throw new Error('Expected both causes');
+    expect(result.outcome.error.errors).toEqual([0, stop]);
+  });
+
+  it('retains the primary when evidence collection also fails', async () => {
+    const body = new Error('Body failed');
+    const observation = new Error('Job snapshot failed');
+    const result = await runBackgroundFixture({ body: { error: body }, observation: { error: observation } });
+    expect(result.grants).toBe(2);
+    if (result.outcome.kind === 'failed') expect(result.outcome.error).toBeInstanceOf(AggregateError);
+    if (result.outcome.kind !== 'failed' || !(result.outcome.error instanceof AggregateError))
+      throw new Error('Expected body and evidence failure');
+    expect(result.outcome.error.errors).toEqual([body, observation]);
+  });
+
+  it('attempts task cleanup, stop and permission restoration and retains every unknown cause', async () => {
+    const result = await runBackgroundFixture({
+      body: { error: false },
+      stage: 'ready',
+      unregister: { error: null },
+      stop: { error: undefined },
+      permission: { error: 0 }
+    });
+    expect(result.grants).toBe(2);
+    expect(result.operations.filter((operation) => operation.startsWith('shell am start '))).toHaveLength(3);
+    if (result.outcome.kind !== 'failed' || !(result.outcome.error instanceof AggregateError))
+      throw new Error('Expected all causes');
+    expect(result.outcome.error.errors).toEqual([false, null, undefined, 0]);
+  });
+
+  it('retains the original checkpoint failure when failure-report writing fails', async () => {
+    const body = new Error('Body failed');
+    const result = await runBackgroundFixture({ body: { error: body }, report: { error: false } });
+    if (result.outcome.kind === 'failed') expect(result.outcome.error).toBeInstanceOf(AggregateError);
+    if (result.outcome.kind !== 'failed' || !(result.outcome.error instanceof AggregateError))
+      throw new Error('Expected original and report failure');
+    expect(result.outcome.error.errors).toEqual([body, false]);
+  });
+});
 
 describe('notification background device evidence', () => {
   it('accepts only a completed native worker handing off to a fresh fifteen-minute successor job', () => {

@@ -104,8 +104,8 @@ function writeDiagnosticLogBytes(bytes: Uint8Array) {
   if (!activeLogHandle || activeLogHandle.uri !== current.uri) {
     closeActiveLogHandle();
     const handle = current.open();
-    handle.offset = current.size;
     activeLogHandle = { handle, uri: current.uri };
+    handle.offset = current.size;
   }
   activeLogHandle.handle.writeBytes(bytes);
 }
@@ -120,13 +120,21 @@ function joinedBytes(chunks: Uint8Array[], byteLength: number) {
   return joined;
 }
 
-async function appendNativeBatch(append: () => Promise<void>) {
+class DiagnosticDeadlineError extends Error {
+  constructor() {
+    super('diagnostic preparation timeout');
+  }
+}
+
+async function beforeDiagnosticDeadline<T>(read: () => Promise<T>, deadline: number): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new DiagnosticDeadlineError();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
-      append(),
+    return await Promise.race([
+      read(),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('diagnostic write timeout')), 5_000);
+        timer = setTimeout(() => reject(new DiagnosticDeadlineError()), remaining);
       })
     ]);
   } finally {
@@ -367,42 +375,46 @@ function sourceCoverage(content: string, status: string) {
 }
 
 export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
+  const deadline = Date.now() + 5_000;
+  const bufferedJs = mergeDiagnosticLinesChronologically([
+    inFlightNativeLines + decoder.decode(joinedBytes(pendingLogLines, pendingBytes))
+  ]).lines.join('\n');
   flushPendingDiagnosticLines();
   closeActiveLogHandle();
-  let writerStatus = 'settled';
-  try {
-    await appendNativeBatch(async () => {
-      while (nativeWriting) await nativeWrites;
-    });
-  } catch {
-    writerStatus = 'timeout';
-  }
-  const [previous, current, journal] = await Promise.allSettled([
-    readLog(PREVIOUS_LOG_NAME),
-    readLog(CURRENT_LOG_NAME),
-    readDiagnosticJournal()
+  const writer = beforeDiagnosticDeadline(async () => {
+    while (nativeWriting) await nativeWrites;
+  }, deadline).then(
+    () => 'settled',
+    () => 'timeout'
+  );
+  const local = Promise.allSettled([
+    beforeDiagnosticDeadline(() => readLog(PREVIOUS_LOG_NAME), deadline),
+    beforeDiagnosticDeadline(() => readLog(CURRENT_LOG_NAME), deadline)
+  ]);
+  const native = (async () => {
+    // Dispatch the queued append before requesting the Native journal's ordered snapshot.
+    await Promise.resolve();
+    const persisted = await readDiagnosticJournal(deadline).catch(() => undefined);
+    let legacyNativeLines = '';
+    let legacyNativeStatus = 'not-needed';
+    if (persisted?.status !== 'available') {
+      try {
+        const value = await beforeDiagnosticDeadline(readNativeReadNetworkDiagnosticLines, deadline);
+        legacyNativeLines = value || '';
+        legacyNativeStatus = value === undefined ? 'unavailable' : 'available';
+      } catch (error) {
+        legacyNativeStatus = error instanceof DiagnosticDeadlineError ? 'timeout' : 'failed';
+      }
+    }
+    return { persisted, legacyNativeLines, legacyNativeStatus };
+  })();
+  const [writerStatus, [previous, current], { persisted, legacyNativeLines, legacyNativeStatus }] = await Promise.all([
+    writer,
+    local,
+    native
   ]);
   const legacyReadFailures = [previous, current].filter((result) => result.status === 'rejected').length;
-  const persisted = journal.status === 'fulfilled' ? journal.value : undefined;
-  let legacyNativeLines = '';
-  let legacyNativeStatus = 'not-needed';
-  if (persisted?.status !== 'available') {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const value = await Promise.race([
-        readNativeReadNetworkDiagnosticLines(),
-        new Promise<null>((resolve) => {
-          timer = setTimeout(() => resolve(null), 5_000);
-        })
-      ]);
-      legacyNativeLines = value || '';
-      legacyNativeStatus = value === null ? 'timeout' : value === undefined ? 'unavailable' : 'available';
-    } catch {
-      legacyNativeStatus = 'failed';
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
-  }
+  const jsLines = `${persisted?.jsLines || ''}\n${bufferedJs}`;
   const networkEvents: unknown[] = [];
   const nativeAppLines: string[] = [];
   let damagedNativeLines = 0;
@@ -421,7 +433,7 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
   const merged = mergeDiagnosticLinesChronologically([
     previous.status === 'fulfilled' ? previous.value : '',
     current.status === 'fulfilled' ? current.value : '',
-    persisted?.jsLines || '',
+    jsLines,
     persisted?.crashLines || '',
     nativeAppLines.join('\n'),
     normalizedNetwork.join('\n'),
@@ -450,15 +462,25 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
     sources: {
       legacyPrevious: sourceCoverage(
         previous.status === 'fulfilled' ? previous.value : '',
-        previous.status === 'fulfilled' ? 'available' : 'failed'
+        previous.status === 'fulfilled'
+          ? 'available'
+          : previous.reason instanceof DiagnosticDeadlineError
+            ? 'timeout'
+            : 'failed'
       ),
       legacyCurrent: sourceCoverage(
         current.status === 'fulfilled' ? current.value : '',
-        current.status === 'fulfilled' ? 'available' : 'failed'
+        current.status === 'fulfilled'
+          ? 'available'
+          : current.reason instanceof DiagnosticDeadlineError
+            ? 'timeout'
+            : 'failed'
       ),
       js: sourceCoverage(
-        persisted?.jsLines || '',
-        persisted?.health.jsReadFailureCount ? 'partial' : persisted?.status || 'failed'
+        jsLines,
+        persisted?.health.jsReadFailureCount || (bufferedJs && persisted?.status !== 'available')
+          ? 'partial'
+          : persisted?.status || 'failed'
       ),
       native: sourceCoverage(
         [...nativeAppLines, ...normalizedNetwork].join('\n'),

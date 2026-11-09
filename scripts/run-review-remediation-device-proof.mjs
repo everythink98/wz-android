@@ -7,6 +7,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { buildDeviceProof } from './device-proof-build.mjs';
 import { runAgentDevice } from './agent-device-runtime.mjs';
+import { createStagedProofFiles } from './staged-proof-files.mjs';
+import { withProofNotificationPermission } from './review-proof-notification-permission.mjs';
 import { proofDeviceForSerial, resumeProofCheckpoint, withProofCheckpoint } from './review-proof-checkpoint.mjs';
 import {
   completeContentChainMetrics,
@@ -78,7 +80,7 @@ function writeSuccessfulProof(outcome) {
   );
 }
 
-function writeFailedProof(business, error) {
+function writeFailedProof(business, error, unconfirmedFiles = []) {
   mkdirSync(path.dirname(output), { recursive: true });
   writeFileSync(
     output,
@@ -89,7 +91,8 @@ function writeFailedProof(business, error) {
         restoration: error.checkpoint,
         passed: false,
         error: String(error),
-        causes: error.errors?.map(String)
+        causes: error.errors?.map(String),
+        ...(unconfirmedFiles.length ? { unconfirmedFiles } : {})
       },
       null,
       2
@@ -101,9 +104,10 @@ if (values.acceptance) {
   const mode = values.acceptance;
   const token = randomUUID().replaceAll('-', '');
   const session = `remediation-${mode}-${token}`;
-  const deviceFiles = [];
+  const deviceFiles = createStagedProofFiles((file) => adb('shell', 'rm', '-f', file));
   let businessResult;
-  async function waitForReceipt(completed = false) {
+  /** @param {'first' | 'passed'} expectation */
+  async function waitForReceipt(expectation = 'first') {
     const deadline = Date.now() + 90000;
     while (Date.now() < deadline) {
       let receipt;
@@ -115,7 +119,7 @@ if (values.acceptance) {
         mkdirSync(path.dirname(output), { recursive: true });
         writeFileSync(output, JSON.stringify({ ...context, ...receipt }, null, 2));
         if (receipt.checkpoint === 'failed') throw new Error(`Acceptance failed: ${mode}; see ${output}`);
-        if (!completed || receipt.checkpoint === 'passed') return receipt;
+        if (expectation === 'first' || receipt.checkpoint === 'passed') return receipt;
       }
       await delay(500);
     }
@@ -128,7 +132,8 @@ if (values.acceptance) {
       prepare: install,
       run: async () => {
         context = { ...checkpointDevice.identity(), serial: values.serial };
-        let replayError;
+        /** @type {{ kind: 'none' } | { kind: 'failed', error: unknown }} */
+        let replayFailure = { kind: 'none' };
         try {
           adb('shell', 'am', 'force-stop', pkg);
           adb(
@@ -158,8 +163,8 @@ if (values.acceptance) {
                 writeFileSync(file, adb('shell', 'run-as', pkg, 'cat', `cache/acceptance-${kind}.json`), {
                   flag: 'wx'
                 });
-                deviceFiles.push(`/sdcard/Download/${name}`);
-                adb('push', file, deviceFiles.at(-1));
+                const remote = deviceFiles.register(`/sdcard/Download/${name}`);
+                adb('push', file, remote);
                 environment.push('-e', `${kind.toUpperCase()}_FILE=${name}`);
               }
             }
@@ -190,7 +195,7 @@ if (values.acceptance) {
               ...environment
             ]);
           }
-          const result = await waitForReceipt(true);
+          const result = await waitForReceipt('passed');
           businessResult = result;
           if (
             !result.isHermes ||
@@ -202,24 +207,18 @@ if (values.acceptance) {
             throw new Error('Controlled failure after business replay');
           return result;
         } catch (error) {
-          replayError = error;
+          replayFailure = { kind: 'failed', error };
           try {
             writeFileSync(
               `${output}.png`,
               execFileSync('adb', ['-s', values.serial, 'exec-out', 'screencap', '-p'], { maxBuffer: 16 * 1024 * 1024 })
             );
           } catch (captureError) {
-            error.captureError = String(captureError);
+            if (error instanceof Error) Object.assign(error, { captureError: String(captureError) });
           }
           throw error;
         } finally {
-          try {
-            for (const file of deviceFiles) adb('shell', 'rm', '-f', file);
-          } catch (cleanupError) {
-            if (replayError)
-              throw new AggregateError([replayError, cleanupError], 'Replay and staged-file cleanup failed');
-            throw cleanupError;
-          }
+          deviceFiles.release(replayFailure);
         }
       }
     });
@@ -230,7 +229,7 @@ if (values.acceptance) {
       const latest = JSON.parse(adb('shell', 'run-as', pkg, 'cat', `cache/acceptance-${mode}.json`));
       if (latest.token === token) businessResult = latest;
     } catch {}
-    writeFailedProof(businessResult, error);
+    writeFailedProof(businessResult, error, deviceFiles.unconfirmedFiles());
     throw error;
   }
 } else {
@@ -243,14 +242,7 @@ if (values.acceptance) {
         context = { ...checkpointDevice.identity(), serial: values.serial };
         const token = randomUUID().replaceAll('-', '');
         adb('shell', 'am', 'force-stop', pkg);
-        const permission = 'android.permission.POST_NOTIFICATIONS';
-        const permissionBefore = /android.permission.POST_NOTIFICATIONS: granted=(true|false)/u.exec(
-          adb('shell', 'dumpsys', 'package', pkg)
-        )?.[1];
-        if (!permissionBefore) throw new Error('Cannot establish notification permission baseline');
-        let businessError;
-        try {
-          adb('shell', 'pm', 'revoke', pkg, permission);
+        await withProofNotificationPermission({ adb, pkg }, async (grantNotifications) => {
           adb(
             'shell',
             'am',
@@ -265,7 +257,6 @@ if (values.acceptance) {
           );
           mkdirSync(path.dirname(output), { recursive: true });
           let count = -1;
-          let granted = false;
           const deadline = Date.now() + 8 * 60000;
           for (;;) {
             let receipt;
@@ -274,10 +265,7 @@ if (values.acceptance) {
             } catch {}
             if (receipt?.token === token) {
               writeFileSync(output, JSON.stringify({ ...context, ...receipt }, null, 2));
-              if (receipt.checkpoint === 'grant-notifications' && !granted) {
-                adb('shell', 'pm', 'grant', pkg, permission);
-                granted = true;
-              }
+              if (receipt.checkpoint === 'grant-notifications') grantNotifications();
               if (count !== receipt.results.length) {
                 count = receipt.results.length;
                 console.log(`${receipt.checkpoint}: ${count} device checks`);
@@ -301,19 +289,7 @@ if (values.acceptance) {
             if (Date.now() > deadline) throw new Error('Device proof timed out');
             await delay(1000);
           }
-        } catch (error) {
-          businessError = error;
-          throw error;
-        } finally {
-          try {
-            adb('shell', 'am', 'force-stop', pkg);
-            adb('shell', 'pm', permissionBefore === 'true' ? 'grant' : 'revoke', pkg, permission);
-          } catch (cleanupError) {
-            if (businessError)
-              throw new AggregateError([businessError, cleanupError], 'Proof and permission cleanup failed');
-            throw cleanupError;
-          }
-        }
+        });
         return JSON.parse(readFileSync(output, 'utf8'));
       }
     });

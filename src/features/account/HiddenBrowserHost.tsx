@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { View } from 'react-native';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { WebView, type WebViewMessageEvent, type WebViewProps } from 'react-native-webview';
 import { shouldHandleBrowserHttpError } from './browserFetchQueue';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
@@ -19,6 +19,54 @@ type HiddenBrowserState = {
     userAgent: string;
   };
 };
+
+type HiddenBrowserDocumentProps = Pick<
+  WebViewProps,
+  | 'source'
+  | 'userAgent'
+  | 'injectedJavaScriptBeforeContentLoaded'
+  | 'onShouldStartLoadWithRequest'
+  | 'onLoadStart'
+  | 'onMessage'
+  | 'onError'
+  | 'onHttpError'
+  | 'onRenderProcessGone'
+> & { browserRef: RefObject<WebView | null>; script: string; styles: AccountHostStyles };
+
+function HiddenBrowserDocument(props: HiddenBrowserDocumentProps) {
+  const { browserRef, script, styles } = props;
+  const documentRef = useRef<WebView | null>(null);
+  const bindDocument = useCallback(
+    (view: WebView | null) => {
+      documentRef.current = view;
+      browserRef.current = view;
+    },
+    [browserRef]
+  );
+  return (
+    <WebView
+      ref={bindDocument}
+      source={props.source}
+      javaScriptEnabled
+      javaScriptCanOpenWindowsAutomatically={false}
+      sharedCookiesEnabled
+      setSupportMultipleWindows={false}
+      thirdPartyCookiesEnabled
+      userAgent={props.userAgent}
+      onShouldStartLoadWithRequest={props.onShouldStartLoadWithRequest}
+      injectedJavaScriptBeforeContentLoaded={props.injectedJavaScriptBeforeContentLoaded}
+      containerStyle={styles.hiddenBrowserWebView}
+      style={styles.hiddenBrowserWebView}
+      onLoadStart={props.onLoadStart}
+      onLoadEnd={() => documentRef.current?.injectJavaScript(script)}
+      onMessage={props.onMessage}
+      onError={props.onError}
+      onHttpError={props.onHttpError}
+      onRenderProcessGone={props.onRenderProcessGone}
+      renderError={() => <View style={styles.hiddenBrowserWebView} />}
+    />
+  );
+}
 
 export function HiddenBrowserHost({
   blockedMessage,
@@ -53,8 +101,6 @@ export function HiddenBrowserHost({
         String(nodeSeekBrowserFetchRequest.id)
       ).replace('__NODESEEK_BROWSER_FETCH_OWNER__', JSON.stringify(nodeSeekBrowserFetchRequest.owner ?? null))
     : '';
-  const [linuxDoWebViewGeneration, setLinuxDoWebViewGeneration] = useState(0);
-  const [nodeSeekWebViewGeneration, setNodeSeekWebViewGeneration] = useState(0);
   useEffect(() => {
     if (!blockedMessage) {
       return;
@@ -99,7 +145,6 @@ export function HiddenBrowserHost({
     [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]
   );
   const handleNodeSeekBrowserRenderProcessGone = useCallback(() => {
-    setNodeSeekWebViewGeneration((current) => current + 1);
     if (!nodeSeekBrowserFetchRequest) {
       return;
     }
@@ -108,7 +153,6 @@ export function HiddenBrowserHost({
     });
   }, [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]);
   const handleLinuxDoBrowserRenderProcessGone = useCallback(() => {
-    setLinuxDoWebViewGeneration((current) => current + 1);
     if (linuxDoBrowserFetchRequest) {
       failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面读取进程已停止', {
         skipStopLoading: true
@@ -120,25 +164,17 @@ export function HiddenBrowserHost({
     <>
       {!blockedMessage && nodeSeekBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
-          <WebView
-            key={`nodeseek-browser-fetch-${nodeSeekWebViewGeneration}-${nodeSeekBrowserFetchRequest.id}`}
-            ref={nodeSeekBrowserWebViewRef}
+          <HiddenBrowserDocument
+            key={nodeSeekBrowserFetchRequest.id}
+            browserRef={nodeSeekBrowserWebViewRef}
+            script={nodeSeekBrowserFetchScript}
+            styles={styles}
             source={{ uri: nodeSeekBrowserFetchRequest.url }}
-            javaScriptEnabled
-            javaScriptCanOpenWindowsAutomatically={false}
-            sharedCookiesEnabled
-            setSupportMultipleWindows={false}
-            thirdPartyCookiesEnabled
             userAgent={nodeSeekBrowserFetchRequest.userAgent || state.nodeSeek.userAgent}
             onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}
             injectedJavaScriptBeforeContentLoaded={nodeSeekBrowserFetchScript}
-            containerStyle={styles.hiddenBrowserWebView}
-            style={styles.hiddenBrowserWebView}
             onLoadStart={() => {
               onNodeSeekHttpErrorStatus(nodeSeekBrowserFetchRequest.id, undefined);
-            }}
-            onLoadEnd={() => {
-              nodeSeekBrowserWebViewRef.current?.injectJavaScript(nodeSeekBrowserFetchScript);
             }}
             onMessage={handleNodeSeekBrowserFetchMessage}
             onError={(event) => {
@@ -165,35 +201,24 @@ export function HiddenBrowserHost({
               );
             }}
             onRenderProcessGone={handleNodeSeekBrowserRenderProcessGone}
-            renderError={() => <View style={styles.hiddenBrowserWebView} />}
           />
         </View>
       ) : null}
       {!blockedMessage && linuxDoBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
-          <WebView
-            key={`linuxdo-browser-fetch-${linuxDoWebViewGeneration}-${linuxDoBrowserFetchRequest.id}`}
-            ref={linuxDoBrowserWebViewRef}
+          <HiddenBrowserDocument
+            key={linuxDoBrowserFetchRequest.id}
+            browserRef={linuxDoBrowserWebViewRef}
+            script={LINUXDO_BROWSER_FETCH_SCRIPT.replace(
+              '__LINUXDO_BROWSER_FETCH_ID__',
+              String(linuxDoBrowserFetchRequest.id)
+            )}
+            styles={styles}
             source={{ uri: linuxDoBrowserFetchRequest.url }}
-            javaScriptEnabled
-            javaScriptCanOpenWindowsAutomatically={false}
-            sharedCookiesEnabled
-            setSupportMultipleWindows={false}
-            thirdPartyCookiesEnabled
             userAgent={linuxDoBrowserFetchRequest.userAgent || state.linuxDo.userAgent}
             onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}
-            containerStyle={styles.hiddenBrowserWebView}
-            style={styles.hiddenBrowserWebView}
             onLoadStart={() => {
               onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, undefined);
-            }}
-            onLoadEnd={() => {
-              linuxDoBrowserWebViewRef.current?.injectJavaScript(
-                LINUXDO_BROWSER_FETCH_SCRIPT.replace(
-                  '__LINUXDO_BROWSER_FETCH_ID__',
-                  String(linuxDoBrowserFetchRequest.id)
-                )
-              );
             }}
             onMessage={handleLinuxDoBrowserFetchMessage}
             onError={(event) => {
@@ -213,7 +238,6 @@ export function HiddenBrowserHost({
               onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, event.nativeEvent.statusCode);
             }}
             onRenderProcessGone={handleLinuxDoBrowserRenderProcessGone}
-            renderError={() => <View style={styles.hiddenBrowserWebView} />}
           />
         </View>
       ) : null}

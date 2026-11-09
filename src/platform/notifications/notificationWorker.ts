@@ -45,6 +45,9 @@ export function buildSourceNotificationDigest(source: NotificationSource, items:
 
 type NotificationDigest = ReturnType<typeof buildSourceNotificationDigest>;
 
+type DeliveryCommitState =
+  { status: 'not-started' } | { status: 'started' } | { status: 'recorded'; rollback(): Promise<unknown> };
+
 interface NotificationWorkerAccess {
   fetcher?: Fetcher;
   identityKey: string;
@@ -162,7 +165,6 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
   };
   const controller = new AbortController();
   const deadlineError = new Error('后台消息检查已超时');
-  let timedOut = false;
   const deadlineReached = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener('abort', () => reject(deadlineError), { once: true });
   });
@@ -192,7 +194,6 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
     return latestState;
   };
   const deadline = setTimeout(() => {
-    timedOut = true;
     controller.abort();
   }, dependencies.deadlineMs ?? 50_000);
   try {
@@ -366,15 +367,13 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             }
             const previousIdentifier = latestSourceState.notificationIdentifier;
             let identifier = stagingNotificationIdentifier(source, access.identityKey, previousIdentifier);
-            let rollbackDelivery: (() => Promise<unknown>) | undefined;
-            let deliveryCommitted = false;
-            let commitStarted = false;
+            let commit: DeliveryCommitState = { status: 'not-started' };
             try {
               identifier = await step('apply', 'present', () =>
                 dependencies.system.presentDigest(source, buildSourceNotificationDigest(source, newItems), identifier)
               );
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
-              commitStarted = true;
+              commit = { status: 'started' };
               const commitOperation = step('persist', 'applying', () =>
                 dependencies.store.record(source, access.identityKey, scannedIds, fields, {
                   expectedNewIds: preview.newIds,
@@ -386,8 +385,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               if (!recorded.committed) {
                 throw Object.assign(new Error('消息投递状态已变化'), { reason: 'private-access-stale', source });
               }
-              rollbackDelivery = recorded.rollback;
-              deliveryCommitted = true;
+              commit = { status: 'recorded', rollback: recorded.rollback };
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
               if (previousIdentifier && previousIdentifier !== identifier) {
                 await step('apply', 'dismiss-previous', () =>
@@ -401,20 +399,20 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 source,
                 result: 'failure',
                 reason: normalizeDiagnosticReason(error),
-                isCommitted: deliveryCommitted
+                isCommitted: commit.status === 'recorded'
               });
               if (error === deadlineError) {
-                if (!commitStarted) {
+                if (commit.status === 'not-started') {
                   await step('rollback', 'dismiss-staged', () =>
                     dependencies.system.dismissDigest(source, identifier)
                   ).catch(() => undefined);
                 }
                 throw error;
               }
-              if (rollbackDelivery) await step('rollback', 'rollback-delivery', rollbackDelivery);
+              if (commit.status === 'recorded') await step('rollback', 'rollback-delivery', commit.rollback);
               await step('rollback', 'dismiss-staged', () => dependencies.system.dismissDigest(source, identifier));
               if (
-                deliveryCommitted &&
+                commit.status === 'recorded' &&
                 error &&
                 typeof error === 'object' &&
                 (error as { reason?: unknown }).reason === 'source-disabled'
@@ -459,14 +457,14 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
       }
       throw error;
     }
-    if (timedOut) {
+    if (controller.signal.aborted) {
       return finishRound({ status: 'failed' as const, reason: 'deadline' as const, delivered: 0, failedSources: 0 });
     }
     return finishRound({
       status: 'success' as const,
       delivered,
       failedSources: settled.filter((result) => result.status === 'rejected').length,
-      timedOut
+      timedOut: controller.signal.aborted
     });
   } catch (error) {
     finishDiagnosticTrace(roundTrace, 'failure', { state: roundState, reason: normalizeDiagnosticReason(error) });

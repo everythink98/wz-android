@@ -27,7 +27,8 @@ import {
 
 const DATABASE_NAME = 'reader-data.db';
 const LEGACY_KEYS = ['reader-data', 'reader-settings'];
-let databasePromise: Promise<SQLiteDatabase> | undefined;
+type ReaderConnectionOwner = { kind: 'cold' } | { kind: 'retained'; db: SQLiteDatabase };
+let connection: ReaderConnectionOwner = { kind: 'cold' };
 const { enqueue, transaction, assertUsable } = createSqliteExecutor(
   '本机资料事务状态不明，请重新启动后恢复。',
   '本机资料事务无法确认，已停止修改。'
@@ -53,9 +54,35 @@ async function connect() {
     }
     return db;
   } catch (error) {
-    await db.closeAsync();
-    throw error;
+    return closeAfterFailure(db, error);
   }
+}
+
+async function closeAfterFailure(db: SQLiteDatabase, error: unknown): Promise<never> {
+  try {
+    await db.closeAsync();
+  } catch (closeError) {
+    throw new AggregateError([error, closeError], '本机资料操作失败，且连接无法关闭。');
+  }
+  throw error;
+}
+
+async function withTemporaryDatabase<T>(read: (db: SQLiteDatabase) => Promise<T>): Promise<T> {
+  const db = await connect();
+  let result: T;
+  try {
+    result = await read(db);
+  } catch (error) {
+    return closeAfterFailure(db, error);
+  }
+  await db.closeAsync();
+  return result;
+}
+
+function retainDatabase(db: SQLiteDatabase) {
+  assertUsable();
+  connection = { kind: 'retained', db };
+  return db;
 }
 
 async function boundedLegacyIo<T>(operation: Promise<T>): Promise<T> {
@@ -111,21 +138,19 @@ async function cleanupLegacy(db: SQLiteDatabase) {
       elapsedMs: performance.now() - started,
       reason: normalizeDiagnosticReason(error)
     });
+    assertUsable();
   }
 }
 
 async function verifyCommitted(expected?: import('@/domain/reader/readerData').ReaderData) {
-  const connection = await connect();
-  try {
-    await transaction(connection, false, async () => {
-      await readReaderBootstrap(connection);
-      if (expected && JSON.stringify(await readReaderSnapshot(connection)) !== JSON.stringify(expected)) {
+  await withTemporaryDatabase((db) =>
+    transaction(db, false, async () => {
+      await readReaderBootstrap(db);
+      if (expected && JSON.stringify(await readReaderSnapshot(db)) !== JSON.stringify(expected)) {
         throw new Error('已提交资料核对失败，未清理旧资料。');
       }
-    });
-  } finally {
-    await connection.closeAsync();
-  }
+    })
+  );
 }
 
 async function initializeDatabase() {
@@ -167,17 +192,15 @@ async function initializeDatabase() {
     }
     return db;
   } catch (error) {
-    await db.closeAsync();
-    throw error;
+    return closeAfterFailure(db, error);
   }
 }
 
-function database() {
-  databasePromise ??= initializeDatabase().catch((error) => {
-    databasePromise = undefined;
-    throw error;
-  });
-  return databasePromise;
+async function database() {
+  assertUsable();
+  if (connection.kind === 'retained') return connection.db;
+  // Public operations share the executor queue, so no second opener can overlap initialization.
+  return retainDatabase(await initializeDatabase());
 }
 
 export function loadReaderState() {
@@ -252,52 +275,54 @@ export function exportReaderDataBackup() {
   });
 }
 
-export function importReaderDataBackup(json: string, recovery = false) {
-  const parsed = parseReaderBackupJson(json);
-  return enqueue(async () => {
-    // Explicit backup recovery may replace unreadable legacy data, never a corrupt
-    // committed database. Opening/schema errors still preserve recovery protection.
-    const db = recovery && !databasePromise ? await connect() : await database();
-    try {
-      const state = await transaction(db, true, async () => {
-        const meta = await readReaderMeta(db);
-        const current = meta ? await readReaderSnapshot(db) : createEmptyReaderData();
-        const merged = mergeReaderData(current, parsed);
-        const writer = meta
-          ? await ReaderTransaction.open(db)
-          : await ReaderTransaction.initialize(db, merged.settings);
-        await writer.replaceBackupSnapshot(merged);
-        await writer.finish();
-        return readReaderBootstrap(db);
-      });
-      if (recovery && !databasePromise) {
-        await verifyCommitted();
-        await cleanupLegacy(db);
-        databasePromise = Promise.resolve(db);
-      }
-      return state;
-    } catch (error) {
-      if (!databasePromise) await db.closeAsync();
-      throw error;
-    }
+function mergeBackup(db: SQLiteDatabase, parsed: ReturnType<typeof parseReaderBackupJson>) {
+  return transaction(db, true, async () => {
+    const meta = await readReaderMeta(db);
+    const current = meta ? await readReaderSnapshot(db) : createEmptyReaderData();
+    const merged = mergeReaderData(current, parsed);
+    const writer = meta ? await ReaderTransaction.open(db) : await ReaderTransaction.initialize(db, merged.settings);
+    await writer.replaceBackupSnapshot(merged);
+    await writer.finish();
+    return readReaderBootstrap(db);
   });
 }
 
-export function loadReaderSettings() {
+async function recoverBackup(parsed: ReturnType<typeof parseReaderBackupJson>) {
+  // This branch owns the connection until committed readback and cleanup permit retention.
+  const db = await connect();
+  try {
+    const state = await mergeBackup(db, parsed);
+    await verifyCommitted();
+    await cleanupLegacy(db);
+    retainDatabase(db);
+    return state;
+  } catch (error) {
+    return closeAfterFailure(db, error);
+  }
+}
+
+export function importReaderDataBackup(json: string, recovery = false) {
+  const parsed = parseReaderBackupJson(json);
   return enqueue(async () => {
-    // Headless notification startup reads the authority without migrating payloads.
-    const owned = databasePromise !== undefined;
-    const db = owned ? await databasePromise! : await connect();
-    try {
-      assertUsable();
-      const meta = await readReaderMeta(db);
-      if (meta) {
-        if (!['ready', 'cleanup_pending'].includes(meta.status)) throw new Error('本机资料状态不完整。');
-        return sanitizeReaderSettings(JSON.parse(meta.settings));
-      }
-      return (await readLegacySettings()) ?? createEmptyReaderData().settings;
-    } finally {
-      if (!owned) await db.closeAsync();
-    }
+    // Explicit recovery may replace unreadable legacy data, never a corrupt committed database.
+    if (recovery && connection.kind === 'cold') return recoverBackup(parsed);
+    return mergeBackup(await database(), parsed);
   });
+}
+
+async function readSettings(db: SQLiteDatabase) {
+  assertUsable();
+  const meta = await readReaderMeta(db);
+  if (meta) {
+    if (!['ready', 'cleanup_pending'].includes(meta.status)) throw new Error('本机资料状态不完整。');
+    return sanitizeReaderSettings(JSON.parse(meta.settings));
+  }
+  return (await readLegacySettings()) ?? createEmptyReaderData().settings;
+}
+
+export function loadReaderSettings() {
+  // Headless startup borrows retained authority or owns a temporary connection, without migrating payloads.
+  return enqueue(() =>
+    connection.kind === 'retained' ? readSettings(connection.db) : withTemporaryDatabase(readSettings)
+  );
 }

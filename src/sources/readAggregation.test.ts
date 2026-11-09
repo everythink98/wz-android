@@ -118,6 +118,73 @@ describe('readWithinAggregateSourceBudget', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it('does not start a child read when preparation settles in the same tick as cancellation', async () => {
+    const controller = new AbortController();
+    const preparation = Promise.withResolvers<void>();
+    const prepare = vi.fn(() => preparation.promise);
+    const read = vi.fn(async () => 'unexpected');
+    const pending = readWithinAggregateSourceBudget('linuxdo', controller.signal, read, { prepare });
+    const canceled = expect(pending).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+
+    preparation.resolve();
+    controller.abort();
+
+    await canceled;
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('does not prepare a provider when canceled readiness settles late', async () => {
+    const controller = new AbortController();
+    const readiness = Promise.withResolvers<void>();
+    const beforeRequest = vi.fn(() => readiness.promise);
+    const prepare = vi.fn(async () => undefined);
+    const read = vi.fn(async () => 'unexpected');
+    const pending = readWithinAggregateSourceBudget('linuxdo', controller.signal, read, {
+      preparation: { deadline: Date.now() + 10_000, beforeRequest },
+      prepare
+    });
+    const canceled = expect(pending).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    await vi.waitFor(() => expect(beforeRequest).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await canceled;
+
+    readiness.resolve();
+    await Promise.resolve();
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each(['readiness', 'provider'] as const)('releases the preparation budget after %s fails', async (stage) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, 'addEventListener');
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+    const failure = new Error(`${stage} failed`);
+    const read = vi.fn(async () => 'unexpected');
+    const prepare = vi.fn(async () => {
+      throw failure;
+    });
+    const pending = readWithinAggregateSourceBudget('linuxdo', controller.signal, read, {
+      preparation: {
+        deadline: Date.now() + 10_000,
+        beforeRequest: async () => {
+          if (stage === 'readiness') throw failure;
+        }
+      },
+      prepare
+    });
+
+    await expect(pending).rejects.toBe(failure);
+
+    expect(read).not.toHaveBeenCalled();
+    expect(prepare).toHaveBeenCalledTimes(stage === 'provider' ? 1 : 0);
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledExactlyOnceWith('abort', added.mock.calls[0]?.[1]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('does not start a child read when the parent is already aborted', async () => {
     const controller = new AbortController();
     const read = vi.fn(async () => 'unexpected');

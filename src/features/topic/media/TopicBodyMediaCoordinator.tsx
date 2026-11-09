@@ -15,6 +15,7 @@ import { recordImageBudgetTimeout } from '@/platform/media/imageLoadDiagnostics'
 import { recordMediaBudgetTimeout } from '@/platform/media/mediaPlaybackDiagnostics';
 import { TopicAudioSessionProvider } from './TopicAudioSession';
 import { MediaPlaybackSession, MediaPlaybackSessionContext } from '@/platform/media/mediaPlaybackSession';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const MAX_WARM_BLOCK_MEDIA = 8;
 const MAX_IN_FLIGHT_BODY_MEDIA = 4;
@@ -333,6 +334,10 @@ class TopicBodyMediaCoordinator {
     this.explicitlyRetriedIdentities.clear();
     this.failedIdentities.clear();
     this.warmKeys.clear();
+  }
+
+  isDisposed() {
+    return this.disposed;
   }
 
   private captureHighWater(runningCount?: number) {
@@ -665,29 +670,51 @@ function TopicBodyMediaCoordinatorSessionProvider({
   onDisplayedRowsChange?: (rows: ReadonlySet<string>) => void;
   runtimeGeneration: number;
 }) {
-  const [playback] = useState(() => new MediaPlaybackSession());
-  useLayoutEffect(() => playback.updateGate(active && !paused, !paused), [active, paused, playback]);
-  useEffect(() => () => playback.dispose(), [playback]);
-  const [coordinator] = useState(
-    () =>
-      new TopicBodyMediaCoordinator(
+  const createResources = useCallback(
+    () => ({
+      playback: new MediaPlaybackSession(),
+      coordinator: new TopicBodyMediaCoordinator(
         { active, paused, visibleRowKeys, viewportRowKeys },
         diagnosticSession,
-        onDiagnosticFinish,
+        undefined,
         runtimeGeneration
       )
+    }),
+    [active, diagnosticSession, paused, runtimeGeneration, visibleRowKeys, viewportRowKeys]
   );
+  const createResourcesRef = useCommittedRef(createResources);
+  const [{ playback, coordinator }, setResources] = useState(createResources);
+  const currentCoordinatorRef = useCommittedRef(coordinator);
+  const onDiagnosticFinishRef = useCommittedRef(onDiagnosticFinish);
+  const reportCurrentDiagnostic = useCallback(
+    (aggregate: TopicBodyMediaAggregate) => {
+      const reporter = onDiagnosticFinishRef.current;
+      // A replayed setup replaces the retired resource before its queued summary is observed.
+      return Promise.resolve().then(() => {
+        if (currentCoordinatorRef.current === coordinator) return reporter?.(aggregate);
+      });
+    },
+    [coordinator, currentCoordinatorRef, onDiagnosticFinishRef]
+  );
+  useLayoutEffect(() => {
+    if (coordinator.isDisposed()) {
+      setResources(createResourcesRef.current());
+      return;
+    }
+    return () => coordinator.dispose();
+  }, [coordinator, createResourcesRef]);
+  useLayoutEffect(() => playback.updateGate(active && !paused, !paused), [active, paused, playback]);
+  useLayoutEffect(() => () => playback.dispose(), [playback]);
   useLayoutEffect(() => {
     coordinator.updateGate({ active, paused, visibleRowKeys, viewportRowKeys });
   }, [active, coordinator, paused, visibleRowKeys, viewportRowKeys]);
   useLayoutEffect(() => {
-    coordinator.updateDiagnosticReporter(diagnosticSession, onDiagnosticFinish);
-  }, [coordinator, diagnosticSession, onDiagnosticFinish]);
+    coordinator.updateDiagnosticReporter(diagnosticSession, onDiagnosticFinish ? reportCurrentDiagnostic : undefined);
+  }, [coordinator, diagnosticSession, onDiagnosticFinish, reportCurrentDiagnostic]);
   useLayoutEffect(() => coordinator.observeDisplayedRows(onDisplayedRowsChange), [coordinator, onDisplayedRowsChange]);
   useLayoutEffect(() => {
     coordinator.restartRunningForRuntimeGeneration(runtimeGeneration);
   }, [coordinator, runtimeGeneration]);
-  useEffect(() => () => coordinator.dispose(), [coordinator]);
   return (
     <TopicBodyMediaCoordinatorContext.Provider value={coordinator}>
       <MediaPlaybackSessionContext.Provider value={playback}>

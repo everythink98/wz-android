@@ -1,11 +1,9 @@
 import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 
-export type NotificationSourceLifecyclePhase = 'clean' | 'cleaning' | 'cleanup-failed';
+type NotificationSourceLifecycle =
+  { phase: 'clean' | 'cleanup-required' | 'cleanup-failed' } | { phase: 'cleaning'; operation: Promise<void> };
 
-type NotificationSourceLifecycle = {
-  phase: NotificationSourceLifecyclePhase;
-  operation?: Promise<void>;
-};
+export type NotificationSourceLifecyclePhase = NotificationSourceLifecycle['phase'];
 
 export type NotificationSourceLifecycleRegistry = Record<NotificationSource, NotificationSourceLifecycle>;
 
@@ -21,8 +19,9 @@ export function markNotificationSourcesCleaning(
 ) {
   let changed = false;
   for (const source of sources) {
-    if (registry[source].phase === 'cleaning') continue;
-    registry[source] = { phase: 'cleaning' };
+    const current = registry[source];
+    if (current.phase === 'cleaning' || current.phase === 'cleanup-required') continue;
+    registry[source] = { phase: 'cleanup-required' };
     changed = true;
   }
   return changed;
@@ -35,7 +34,7 @@ export function runNotificationSourceCleanup(
   onTransition: () => void
 ) {
   const current = registry[source];
-  if (current.phase === 'cleaning' && current.operation) {
+  if (current.phase === 'cleaning') {
     return { operation: current.operation, started: false };
   }
 
@@ -44,12 +43,14 @@ export function runNotificationSourceCleanup(
     .then(cleanup)
     .then(
       () => {
-        if (registry[source].operation !== operation) return;
+        const current = registry[source];
+        if (current.phase !== 'cleaning' || current.operation !== operation) return;
         registry[source] = { phase: 'clean' };
         onTransition();
       },
       (error) => {
-        if (registry[source].operation === operation) {
+        const current = registry[source];
+        if (current.phase === 'cleaning' && current.operation === operation) {
           registry[source] = { phase: 'cleanup-failed' };
           onTransition();
         }

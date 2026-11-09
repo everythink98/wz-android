@@ -1,10 +1,12 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+type SqliteHealth = { phase: 'usable' } | { phase: 'frozen'; cause: AggregateError };
+
 export function createSqliteExecutor(uncertainMessage: string, rollbackMessage: string) {
   let queue: Promise<unknown> = Promise.resolve();
-  let transactionUncertain = false;
+  let health: SqliteHealth = { phase: 'usable' };
   const assertUsable = () => {
-    if (transactionUncertain) throw new Error(uncertainMessage);
+    if (health.phase === 'frozen') throw new Error(uncertainMessage, { cause: health.cause });
   };
   return {
     assertUsable,
@@ -29,8 +31,9 @@ export function createSqliteExecutor(uncertainMessage: string, rollbackMessage: 
         try {
           await db.execAsync('ROLLBACK');
         } catch (rollback) {
-          transactionUncertain = true;
-          throw new AggregateError([error, rollback], rollbackMessage);
+          const cause = new AggregateError([error, rollback], rollbackMessage);
+          health = { phase: 'frozen', cause };
+          throw cause;
         }
         throw error;
       }

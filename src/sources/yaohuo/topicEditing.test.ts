@@ -61,4 +61,42 @@ describe('Yaohuo own opening edits', () => {
     );
     expect(transport.writes()).toHaveLength(2);
   });
+
+  it.each(['matching', 'changed', 'unavailable'] as const)(
+    'uses one readback to resolve an ambiguous plain-edit receipt when the original is %s',
+    async (readback) => {
+      const transport = createTopicEditTransport('yaohuo');
+      let posted = false;
+      let reads = 0;
+      const fetcher: typeof transport.fetcher = async (input, init) => {
+        if (init?.method !== 'POST') {
+          reads += 1;
+          if (posted && readback === 'unavailable') throw new Error('readback unavailable');
+        }
+        return transport.fetcher(input, init);
+      };
+      const options = { fetcher, userAgent: 'test', topicId: '123', identityKey: 'yaohuo:42' };
+      const draft = {
+        ...draftFromTopicEdit(await loadYaohuoTopicEditContext(options)),
+        body: '本机修改的完整原文\n[custom]保留[/custom]'
+      };
+      transport.respond((_path, body) => {
+        posted = true;
+        if (readback === 'matching') {
+          const fields = new URLSearchParams(body);
+          transport.state.title = fields.get('book_title')!;
+          transport.state.body = fields.get('book_content')!;
+        }
+        return new Response('<html>正在跳转</html>');
+      });
+
+      const result = await editYaohuoTopic({ ...options, draft });
+
+      expect(result.status).toBe(readback === 'matching' ? 'saved' : 'unknown');
+      if (readback === 'matching') expect(result.message).toBe('已回读确认修改');
+      expect(transport.writes()).toHaveLength(1);
+      // Each edit context reads the topic and its current form; failed readback stops at its first read.
+      expect(reads).toBe(readback === 'unavailable' ? 5 : 6);
+    }
+  );
 });

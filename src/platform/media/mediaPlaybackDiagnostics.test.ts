@@ -45,4 +45,23 @@ describe('native media diagnostic lifecycle', () => {
       expect.objectContaining({ operation: 'player-load', outcome: 'canceled' })
     ]);
   });
+
+  it.each([
+    ['ready', 'success'],
+    ['failed', 'failure']
+  ] as const)('ignores late player errors after %s and release', (event, outcome) => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const attempt = playerLoadDiagnosticAttempt('https://example.invalid/released', 'video', 2);
+    attempt[event]();
+    attempt[event]();
+    attempt.canceled();
+    attempt.ready();
+    attempt.failed(new Error('late failure'));
+    expect(lines.map((line) => JSON.parse(line)).filter((entry) => entry.phase === 'finish')).toEqual([
+      expect.objectContaining({ operation: 'player-load', outcome })
+    ]);
+  });
 });

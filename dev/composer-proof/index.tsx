@@ -173,8 +173,9 @@ function App() {
   const [scenario, setScenario] = useState<Scenario>();
   const seen = useRef('');
   useEffect(() => {
+    let active = true;
     function accept(url: string) {
-      if (seen.current === url) return;
+      if (!active || seen.current === url) return;
       const parsed = new URL(url);
       if (parsed.protocol !== 'wzcomposerproof:') return;
       const token = parsed.hostname;
@@ -206,7 +207,10 @@ function App() {
       if (url) accept(url);
     });
     const subscription = Linking.addEventListener('url', ({ url }) => accept(url));
-    return () => subscription.remove();
+    return () => {
+      active = false;
+      subscription.remove();
+    };
   }, []);
   return (
     <QueryClientProvider client={appQueryClient}>

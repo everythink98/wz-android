@@ -56,6 +56,8 @@ const fixture = mkdtempSync(path.join(scratchRoot, 'network-image-test-'));
 const proofBuildId = randomUUID().replaceAll('-', '');
 const initScript = path.join(fixture, 'init.gradle');
 let restoreImagePermission = false;
+/** @type {{ kind: 'none' } | { kind: 'failed', error: unknown }} */
+let businessFailure = { kind: 'none' };
 
 function gradle(args) {
   const wrapper = path.join(android, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
@@ -339,20 +341,42 @@ try {
     process.stdout.write(pressure);
     if (!/OK \(1 test\)/u.test(pressure)) throw new Error('Large-image pressure instrumentation failed.');
   }
+} catch (error) {
+  businessFailure = { kind: 'failed', error };
+  throw error;
 } finally {
-  if (restoreImagePermission)
-    execFileSync('adb', [
-      '-s',
-      serial,
-      'shell',
-      'pm',
-      'revoke',
-      'com.wz.reader',
-      'android.permission.READ_MEDIA_IMAGES'
-    ]);
-  if (path.dirname(path.resolve(fixture)) !== path.resolve(scratchRoot))
-    throw new Error('Invalid fixture cleanup path.');
-  rmSync(fixture, { recursive: true, force: true });
-  // Never leave a loopback-enabled test APK in the normal release output location.
-  gradle([':app:assembleRelease']);
+  /** @type {unknown[]} */
+  const errors = [];
+  for (const cleanup of [
+    () => {
+      if (restoreImagePermission)
+        execFileSync('adb', [
+          '-s',
+          serial,
+          'shell',
+          'pm',
+          'revoke',
+          'com.wz.reader',
+          'android.permission.READ_MEDIA_IMAGES'
+        ]);
+    },
+    () => {
+      if (path.dirname(path.resolve(fixture)) !== path.resolve(scratchRoot))
+        throw new Error('Invalid fixture cleanup path.');
+      rmSync(fixture, { recursive: true, force: true });
+    },
+    // Never leave a loopback-enabled test APK in the normal release output location.
+    () => gradle([':app:assembleRelease'])
+  ]) {
+    try {
+      cleanup();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length) {
+    if (businessFailure.kind === 'failed') errors.unshift(businessFailure.error);
+    if (errors.length === 1) throw errors[0];
+    throw new AggregateError(errors, 'Image proof and cleanup failed');
+  }
 }

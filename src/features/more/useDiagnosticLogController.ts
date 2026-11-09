@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { runBackupOperation } from '@/platform/storage/backupOperation';
 import { exportDiagnosticLog, type DiagnosticExportMetadata } from '@/platform/diagnostics/diagnosticFileStore';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
@@ -14,22 +14,39 @@ export function useDiagnosticLogController({
   metadata: DiagnosticExportMetadata;
   notify: (message: string) => void;
 }) {
-  const diagnosticBusyRef = useRef(false);
+  const lifetimeRef = useRef(new AbortController());
+  const gate = useRef({ current: false, owner: lifetimeRef.current.signal }).current;
+  const notifyRef = useCommittedRef(notify);
   const metadataRef = useCommittedRef(metadata);
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
 
+  useLayoutEffect(() => {
+    if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
+    const lifetime = lifetimeRef.current;
+    if (gate.current) gate.owner = lifetime.signal;
+    return () => lifetime.abort();
+  }, [gate]);
+
   const exportDiagnosticLogFile = useCallback(async () => {
+    if (lifetimeRef.current.signal.aborted) return;
     const trace = beginDiagnosticTrace('diagnostic', 'export');
-    if (diagnosticBusyRef.current) {
+    if (gate.current) {
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
     let failureReason: DiagnosticReason = 'unknown';
+    gate.owner = lifetimeRef.current.signal;
+    const isCurrent = () => !gate.owner.aborted && lifetimeRef.current.signal === gate.owner;
+    const report = (message: string) => {
+      if (isCurrent()) notifyRef.current(message);
+    };
     const completed = await runBackupOperation({
-      busyRef: diagnosticBusyRef,
-      notify,
-      setBusy: setDiagnosticBusy,
+      busyRef: gate,
+      notify: report,
+      setBusy: (value) => {
+        if (isCurrent()) setDiagnosticBusy(value);
+      },
       task: async () => {
         try {
           markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
@@ -38,7 +55,7 @@ export function useDiagnosticLogController({
             currentScreen: getCurrentScreen()
           });
           markDiagnosticStage(trace, 'apply', { state: 'share-completed' });
-          notify('诊断日志已生成');
+          report('诊断日志已生成');
         } catch (error) {
           failureReason = normalizeDiagnosticReason(error);
           throw error;
@@ -46,7 +63,7 @@ export function useDiagnosticLogController({
       }
     });
     finishDiagnosticTrace(trace, completed ? 'success' : 'failure', completed ? {} : { reason: failureReason });
-  }, [getCurrentScreen, notify]);
+  }, [gate, getCurrentScreen, notifyRef]);
 
   return {
     diagnosticBusy,

@@ -1,9 +1,9 @@
-import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { copyFileSync, readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   deviceSelectionArgs,
@@ -40,6 +40,39 @@ const bootedAndroidDeviceOutput = JSON.stringify({
 
 function readProjectFile(...parts: string[]) {
   return readFileSync(path.join(rootDir, ...parts), 'utf8');
+}
+
+function smokeTransportFixture() {
+  const marker = 'smoke-controlled-launch';
+  const agentCalls: string[][] = [];
+  const adbCalls: string[][] = [];
+  return {
+    agentCalls,
+    adbCalls,
+    options: {
+      apkPath: 'candidate.apk',
+      device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+      marker,
+      runAdbCommand: (args: string[]) => {
+        adbCalls.push(args);
+        if (args.includes('dumpsys')) return 'firstInstallTime=2026-07-26 16:51:37\n';
+        if (args.includes('date')) return '1784102400.000\n';
+        if (args.includes('pidof')) return '4321';
+        if (args.includes('logcat')) {
+          return [
+            `07-15 16:00:00.000  2000  2000 I WZ_APK_SANITY: ${marker}`,
+            '07-15 16:00:00.010  1000  1000 I ActivityManager: Start proc 4321:com.wz.reader/u0a123 for top-activity'
+          ].join('\n');
+        }
+        return '';
+      },
+      runAgentDeviceCommand: (args: string[]) => {
+        agentCalls.push(args);
+        return args[0] === 'appstate' ? JSON.stringify({ data: { package: 'com.wz.reader' } }) : '';
+      },
+      verifySessionLog: () => undefined
+    }
+  };
 }
 
 describe('Android release evidence guards', () => {
@@ -203,6 +236,55 @@ describe('Android release evidence guards', () => {
       'sanity',
       'agent:close --session wz-apk-sanity --platform android'
     ]);
+  });
+
+  it.each([undefined, null, false, 0, ''])('retains business %s when Smoke session cleanup fails', (business) => {
+    const closeError = new Error('session close failed');
+    let failure: unknown;
+    try {
+      withSmokeSession(
+        {
+          selectedDevice: 'WZ Pixel API 35',
+          runAgentDeviceCommand: (args: string[]) => {
+            if (args[0] === 'close') throw closeError;
+            return bootedAndroidDeviceOutput;
+          }
+        },
+        () => {
+          throw business;
+        }
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (failure instanceof AggregateError) expect(failure.errors).toEqual([business, closeError]);
+  });
+
+  it.each([undefined, null, false, 0, ''])('preserves business %s when Smoke session cleanup succeeds', (business) => {
+    const commands: string[] = [];
+    let caught = false;
+    try {
+      withSmokeSession(
+        {
+          selectedDevice: 'WZ Pixel API 35',
+          runAgentDeviceCommand: (args: string[]) => {
+            commands.push(args[0]);
+            return bootedAndroidDeviceOutput;
+          }
+        },
+        () => {
+          throw business;
+        }
+      );
+    } catch (error) {
+      caught = true;
+      expect(error).toBe(business);
+    }
+
+    expect(caught).toBe(true);
+    expect(commands).toEqual(['boot', 'close']);
   });
 
   it.each([
@@ -615,6 +697,91 @@ describe('Android release evidence guards', () => {
     expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
 
+  it.each([undefined, null, false, 0, ''])(
+    'blocks first launch after replacement install throws %s',
+    (installError) => {
+      const fixture = smokeTransportFixture();
+      let failure: unknown;
+      try {
+        runApkSanity({
+          ...fixture.options,
+          runAgentDeviceCommand: (args: string[]) => {
+            const output = fixture.options.runAgentDeviceCommand(args);
+            if (args[0] === 'install') throw installError;
+            return output;
+          }
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(fixture.adbCalls.filter((args) => args.includes('dumpsys'))).toHaveLength(2);
+      expect(fixture.agentCalls.map((args) => args[0])).toEqual(['install']);
+      expect(failure).toBeInstanceOf(Error);
+      if (failure instanceof Error) {
+        expect(failure.message).toContain('BLOCKED_BY_ENV：覆盖安装失败');
+        expect(failure.cause).toBe(installError);
+      }
+    }
+  );
+
+  it('stops and verifies the log stream even when the terminal marker fails', () => {
+    const fixture = smokeTransportFixture();
+    const markerError = new Error('end marker failed');
+    const cleanup: string[] = [];
+    let failure: unknown;
+    try {
+      runApkSanity({
+        ...fixture.options,
+        runAgentDeviceCommand: (args: string[]) => {
+          const output = fixture.options.runAgentDeviceCommand(args);
+          if (args[0] === 'logs' && args[1] === 'mark' && args[2] === 'wz-apk-sanity-end') {
+            cleanup.push('mark');
+            throw markerError;
+          }
+          if (args[0] === 'logs' && args[1] === 'stop') cleanup.push('stop');
+          return output;
+        },
+        verifySessionLog: () => {
+          cleanup.push('verify');
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(cleanup).toEqual(['mark', 'stop', 'verify']);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (failure instanceof AggregateError) expect(failure.errors).toEqual([markerError]);
+  });
+
+  it('retains each terminal log cleanup failure while attempting every step', () => {
+    const fixture = smokeTransportFixture();
+    const markerError = new Error('end marker failed');
+    const stopError = new Error('log stop failed');
+    const verificationError = new Error('log read failed');
+    let failure: unknown;
+    try {
+      runApkSanity({
+        ...fixture.options,
+        runAgentDeviceCommand: (args: string[]) => {
+          const output = fixture.options.runAgentDeviceCommand(args);
+          if (args[0] === 'logs' && args[1] === 'mark' && args[2] === 'wz-apk-sanity-end') throw markerError;
+          if (args[0] === 'logs' && args[1] === 'stop') throw stopError;
+          return output;
+        },
+        verifySessionLog: () => {
+          throw verificationError;
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (failure instanceof AggregateError) expect(failure.errors).toEqual([markerError, stopError, verificationError]);
+  });
+
   it('keeps normal and logged-out Replay journeys deterministic and isolated', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const loggedOutDeviceDir = path.join(rootDir, 'tests', 'device-logged-out');
@@ -921,6 +1088,135 @@ describe('Android release evidence guards', () => {
     expect(failure).toBeInstanceOf(ReplayCleanupError);
     expect((failure as Error).message).toContain('cleanup-broken.ad');
   });
+
+  it.each([undefined, null, false, 0, '', new Error('controlled Replay failure')])(
+    'retains Replay failure %s and stops on every recording cleanup failure',
+    async (thrown) => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'wz-replay-outcome-'));
+      const apkPath = path.join(directory, 'candidate.apk');
+      const replayDirectory = path.join(directory, 'replays');
+      const prefix = path.basename(directory);
+      const names = [`${prefix}-first`, `${prefix}-last`];
+      mkdirSync(replayDirectory);
+      writeFileSync(apkPath, 'controlled APK identity');
+      for (const name of names) writeFileSync(path.join(replayDirectory, `${name}.ad`), 'context timeout=1000\n');
+      const config = JSON.parse(readProjectFile('app.json')).expo;
+      let activeSession: string | undefined;
+      const attempted: string[] = [];
+      const stops: string[] = [];
+      let scenario: 'body' | 'cleanup' | 'both' | 'success' = 'success';
+      const cleanupError = new Error('controlled recording stop failure');
+      vi.resetModules();
+      vi.doMock('node:child_process', () => ({
+        spawnSync: (command: string, args: string[]) => {
+          if (command === 'git') return { status: 0, stdout: args[0] === 'rev-parse' ? 'revision' : '' };
+          if (command !== 'adb') throw new Error(`Unexpected command: ${command}`);
+          if (args.includes('dumpsys')) {
+            return { status: 0, stdout: `versionCode=${config.android.versionCode}\nversionName=${config.version}\n` };
+          }
+          if (args.includes('path')) return { status: 0, stdout: 'package:/data/app/controlled/base.apk\n' };
+          if (args.includes('pull')) {
+            copyFileSync(apkPath, args[args.indexOf('pull') + 2]);
+            return { status: 0, stdout: '' };
+          }
+          if (args.includes('cat')) {
+            return activeSession && args[args.length - 1].startsWith('/sdcard/')
+              ? {
+                  status: 0,
+                  stdout: JSON.stringify({
+                    version: 1,
+                    deviceId: 'controlled-device',
+                    sessionName: `${activeSession}:test:1`,
+                    recordingId: 'controlled-recording',
+                    current: { remotePath: '/sdcard/agent-device-recording-123.mp4' }
+                  })
+                }
+              : { status: 1, stdout: '' };
+          }
+          if (args.includes('ps') || args.includes('ls')) return { status: 0, stdout: '' };
+          throw new Error(`Unexpected adb command: ${args.join(' ')}`);
+        }
+      }));
+      vi.doMock('../../scripts/agent-device-runtime.mjs', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('../../scripts/agent-device-runtime.mjs')>()),
+        assertAgentDeviceVersion: () => '0.20.6',
+        runAgentDevice: (args: string[]) => {
+          if (args[0] === 'test') {
+            attempted.push(path.basename(args[1], '.ad'));
+            activeSession = args[args.indexOf('--session') + 1];
+            if (scenario === 'body' || scenario === 'both') throw thrown;
+            return '';
+          }
+          if (args[0] === 'record' && args[1] === 'stop') {
+            stops.push(args[args.indexOf('--session') + 1]);
+            if (scenario === 'cleanup') throw thrown;
+            if (scenario === 'both') throw cleanupError;
+            activeSession = undefined;
+            return '';
+          }
+          throw new Error(`Unexpected agent-device command: ${args.join(' ')}`);
+        }
+      }));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      try {
+        const { runDeviceReplay: runControlledReplay, ReplayCleanupError: CleanupError } =
+          await import('../../scripts/run-device-replay.mjs');
+        for (const current of ['body', 'cleanup', 'both', 'success'] as const) {
+          scenario = current;
+          activeSession = undefined;
+          attempted.length = 0;
+          stops.length = 0;
+          let result: { kind: 'passed' } | { kind: 'failed'; error: unknown } = { kind: 'passed' };
+          try {
+            await runControlledReplay({
+              apkPath,
+              selectedDevice: 'Controlled device',
+              device: { id: 'controlled-device', name: 'Controlled device' },
+              replayDirectory
+            });
+          } catch (error) {
+            result = { kind: 'failed', error };
+          }
+          expect(attempted, current).toEqual(current === 'cleanup' || current === 'both' ? [names[0]] : names);
+          expect(stops, current).toHaveLength(attempted.length);
+          if (current === 'success') {
+            expect(result).toEqual({ kind: 'passed' });
+          } else {
+            expect(result.kind, current).toBe('failed');
+            if (result.kind !== 'failed') throw new Error(`${current} incorrectly passed`);
+            if (current === 'body') {
+              if (!(result.error instanceof AggregateError)) throw new Error('Missing Replay failures');
+              expect(result.error.errors.map((error: Error) => error.message)).toEqual([
+                thrown instanceof Error ? thrown.message : String(thrown),
+                thrown instanceof Error ? thrown.message : String(thrown)
+              ]);
+              if (thrown instanceof Error) {
+                expect(result.error.errors[0]).toBe(thrown);
+                expect(result.error.errors[1]).toBe(thrown);
+              }
+            } else {
+              if (!(result.error instanceof CleanupError)) throw new Error('Missing cleanup failure');
+              if (current === 'cleanup') expect(result.error.cause).toBe(thrown);
+              else {
+                if (!(result.error.cause instanceof AggregateError)) throw new Error('Missing combined causes');
+                expect(result.error.cause.errors).toHaveLength(2);
+                expect(result.error.cause.errors[0]).toBe(thrown);
+                expect(result.error.cause.errors[1]).toBe(cleanupError);
+              }
+            }
+          }
+        }
+      } finally {
+        log.mockRestore();
+        vi.doUnmock('node:child_process');
+        vi.doUnmock('../../scripts/agent-device-runtime.mjs');
+        vi.resetModules();
+        rmSync(directory, { recursive: true, force: true });
+        for (const name of names)
+          rmSync(path.join(rootDir, 'tmp', 'agent-device', name), { recursive: true, force: true });
+      }
+    }
+  );
 
   it('requires explicit APK identity and writes Replay evidence only below ignored tmp', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));

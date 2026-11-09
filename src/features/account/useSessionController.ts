@@ -1,8 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { sanitizeWebViewUserAgent } from '@/platform/android/userAgent';
-import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
-import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
+import { useCommittedRef, useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import {
+  prepareRequestToSend,
+  RequestCanceledError,
+  withRequestBeforeSend,
+  type Fetcher
+} from '@/platform/network/request';
 import {
   createNodeSeekWebViewFallbackFetcher,
   isNodeSeekRequestUrl,
@@ -41,6 +46,7 @@ import {
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
+  retireBrowserFetchRequests,
   requestHeaderValue,
   settleBrowserFetchRequestOnce,
   startNextBrowserFetchRequest
@@ -197,6 +203,53 @@ export function useSessionController({
   const linuxDoCredentialGateRef = useRef(createCredentialWriteGate());
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [forumSessionEpochs, setForumSessionEpochs] = useState(forumSessionEpochsRef.current);
+  const browserLifetimeRef = useRef(new AbortController());
+  const browserWebViewRefs = useCommittedRef({
+    linuxDo: linuxDoBrowserWebViewRef,
+    nodeSeek: nodeSeekBrowserWebViewRef
+  });
+  useEffect(() => {
+    if (browserLifetimeRef.current.signal.aborted) {
+      browserLifetimeRef.current = new AbortController();
+      setNodeSeekBrowserFetchRequest(null);
+      setLinuxDoBrowserFetchRequest(null);
+    }
+    const lifetime = browserLifetimeRef.current;
+    return () => {
+      lifetime.abort();
+      const failures: unknown[] = [];
+      try {
+        retireBrowserFetchRequests({
+          currentRef: nodeSeekBrowserFetchCurrentRef,
+          queueRef: nodeSeekBrowserFetchQueueRef,
+          webViewRef: browserWebViewRefs.current.nodeSeek
+        });
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        retireBrowserFetchRequests({
+          currentRef: linuxDoBrowserFetchCurrentRef,
+          queueRef: linuxDoBrowserFetchQueueRef,
+          webViewRef: browserWebViewRefs.current.linuxDo
+        });
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, '隐藏浏览器请求清理失败');
+    };
+  }, [browserWebViewRefs]);
+  const ownBrowserFetch = useCallback(
+    (fetcher: Fetcher): Fetcher =>
+      (input, init) => {
+        const lifetime = browserLifetimeRef.current.signal;
+        return withRequestBeforeSend(fetcher, () => {
+          if (lifetime.aborted) throw new RequestCanceledError();
+        })(input, init);
+      },
+    []
+  );
 
   const commitAccountStatusChange = useCallback((site: SessionSite) => {
     resetForumSourceQueries(site, appQueryClient);
@@ -244,6 +297,7 @@ export function useSessionController({
   );
 
   const startNextNodeSeekBrowserFetch = useCallback(() => {
+    if (browserLifetimeRef.current.signal.aborted) return;
     startNextBrowserFetchRequest({
       canStart: (request) =>
         request.credentialGeneration === undefined ||
@@ -457,6 +511,7 @@ export function useSessionController({
   }, []);
 
   const startNextLinuxDoBrowserFetch = useCallback(() => {
+    if (browserLifetimeRef.current.signal.aborted) return;
     startNextBrowserFetchRequest({
       canStart: (request) =>
         request.credentialGeneration === undefined ||
@@ -590,25 +645,29 @@ export function useSessionController({
 
   const nodeSeekFetchWithWebViewFallback = useMemo(
     () =>
-      createNodeSeekWebViewFallbackFetcher({
-        defaultFetcher,
-        recoveryThreshold: nodeSeekRecoveryThreshold,
-        recoverReadChannel: (expectedGeneration, trace) =>
-          recoverReadNetworkRuntime('nodeseek', expectedGeneration, { trace }),
-        webViewFetcher: nodeSeekFetchWithWebView
-      }),
-    [defaultFetcher, nodeSeekFetchWithWebView, nodeSeekRecoveryThreshold]
+      ownBrowserFetch(
+        createNodeSeekWebViewFallbackFetcher({
+          defaultFetcher,
+          recoveryThreshold: nodeSeekRecoveryThreshold,
+          recoverReadChannel: (expectedGeneration, trace) =>
+            recoverReadNetworkRuntime('nodeseek', expectedGeneration, { trace }),
+          webViewFetcher: ownBrowserFetch(nodeSeekFetchWithWebView)
+        })
+      ),
+    [defaultFetcher, nodeSeekFetchWithWebView, nodeSeekRecoveryThreshold, ownBrowserFetch]
   );
 
   const forumFetchWithWebViewFallback = useMemo(
     () =>
-      createLinuxDoWebViewFallbackFetcher({
-        defaultFetcher: nodeSeekFetchWithWebViewFallback,
-        recoverReadChannel: (expectedGeneration, trace) =>
-          recoverReadNetworkRuntime('linuxdo', expectedGeneration, { trace }),
-        webViewFetcher: linuxDoFetchWithWebView
-      }),
-    [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]
+      ownBrowserFetch(
+        createLinuxDoWebViewFallbackFetcher({
+          defaultFetcher: nodeSeekFetchWithWebViewFallback,
+          recoverReadChannel: (expectedGeneration, trace) =>
+            recoverReadNetworkRuntime('linuxdo', expectedGeneration, { trace }),
+          webViewFetcher: ownBrowserFetch(linuxDoFetchWithWebView)
+        })
+      ),
+    [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback, ownBrowserFetch]
   );
 
   const completeLinuxDoBrowserFetch = useCallback(

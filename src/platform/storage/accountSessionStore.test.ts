@@ -52,6 +52,42 @@ describe('account session store', () => {
     await expect(loadAccountSessionSnapshot('linuxdo')).resolves.toEqual(snapshot);
   });
 
+  it('preserves a pending handoff when completion is superseded during its storage read', async () => {
+    const snapshot: AccountSessionSnapshot = {
+      site: 'linuxdo',
+      status: 'logged-in',
+      cookieSummary: [],
+      isVerifying: false,
+      identityTrust: 'confirmed',
+      currentUser: { source: 'linuxdo', id: '7', username: 'alice', url: 'https://linux.do/u/alice' }
+    };
+    await saveAccountSessionSnapshot(snapshot);
+    await markAccountSessionHandoffPending('linuxdo');
+    const stored = await AsyncStorage.getItem('account-session.v1.linuxdo');
+    const entered = Promise.withResolvers<void>();
+    const read = Promise.withResolvers<string | null>();
+    vi.mocked(AsyncStorage.getItem).mockImplementationOnce(async () => {
+      entered.resolve();
+      return read.promise;
+    });
+    vi.mocked(AsyncStorage.setItem).mockClear();
+    let current = true;
+    const completion = saveAccountSessionSnapshot(snapshot, () => current);
+
+    await entered.promise;
+    current = false;
+    read.resolve(stored);
+
+    await expect(completion).resolves.toBe(false);
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    expect(asyncStorage.__store.get('account-session.v1.linuxdo')).toBe(stored);
+    await expect(loadAccountSessionSnapshot('linuxdo')).resolves.toMatchObject({
+      handoffPending: true,
+      identityTrust: 'unknown',
+      currentUser: { id: '7' }
+    });
+  });
+
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     'retains interrupted anonymous %s handoffs without inventing an identity',
     async (site) => {

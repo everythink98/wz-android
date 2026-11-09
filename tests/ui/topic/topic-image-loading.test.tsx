@@ -1,9 +1,12 @@
+import { createRoot } from 'test-renderer';
+import { TopicAudioSessionProvider, useTopicAudioControl } from '@/features/topic/media/TopicAudioSession';
+import { MediaPlaybackSession, MediaPlaybackSessionContext } from '@/platform/media/mediaPlaybackSession';
 import { mockFetchSvgDocument } from '../svgDocumentFixture';
 import { createImageTouch } from '../imageTouchFixture';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
-import React from 'react';
-import { Image, NativeModules, StyleSheet, Text } from 'react-native';
+import React, { useLayoutEffect } from 'react';
+import { Image, NativeModules, StyleSheet, Text, View } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentAudio } from '@/ui/content/ForumContentAudio';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
@@ -169,7 +172,7 @@ const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string
   uri: 'file:///cache/complex-svg-poster.png',
   width: 920
 }));
-const mockWebView = jest.fn((_props: unknown) => null);
+const mockWebView = jest.fn((_props: unknown): React.ReactElement | null => null);
 const mockVideoView = jest.fn((_props: unknown) => null);
 const mockInlineImageGetSize = jest.spyOn(Image, 'getSizeWithHeaders').mockImplementation(() => undefined);
 
@@ -4822,5 +4825,167 @@ describe('topic block image loading', () => {
     expect(secondUri).not.toBe(firstUri);
     expect(firstUri.split('#')[0]).toBe(url);
     expect(secondUri.split('#')[0]).toBe(url);
+  });
+
+  it('keeps a retired sticker document from marking its replacement ready', async () => {
+    mockWebView.mockImplementation((props) => {
+      if (!props || typeof props !== 'object') throw new Error('Expected WebView props');
+      return <View {...props} />;
+    });
+    try {
+      const view = await render(
+        <TopicBodyMediaCoordinatorProvider
+          active
+          paused={false}
+          viewportRowKeys={['sticker-owner-row']}
+          diagnosticSession={{
+            source: 'nodeseek',
+            topicRef: 'topic-sticker-owner',
+            networkMediaCount: 2,
+            plannedRowCount: 1
+          }}
+        >
+          <TopicBodyMediaRowBoundary rowKey="sticker-owner-row">
+            <NodeSeekVideoStickerHarness />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
+      await waitFor(() => expect(latestImageProps(fallbackUrl)).toBeTruthy());
+      await act(() => latestImageProps(fallbackUrl).onDisplay?.());
+      const sticker = () => view.getByTestId(/^topic-video-sticker-/);
+      await waitFor(() => expect(sticker()).toBeTruthy());
+      const retired = sticker().props.onMessage;
+      const retiredId = sticker().props.testID;
+      const generation = getReadNetworkRuntimeSnapshot().generation;
+      await act(() => publishReadNetworkRuntimeRotation(generation + 1, 'nodeseek'));
+      await waitFor(() => expect(sticker().props.testID).not.toBe(retiredId));
+      expect(StyleSheet.flatten(sticker().props.style).opacity).toBe(0);
+      await act(() => retired({ nativeEvent: { data: 'wz-video-sticker-ready' } }));
+      expect(StyleSheet.flatten(sticker().props.style).opacity).toBe(0);
+      await fireEvent(sticker(), 'message', { nativeEvent: { data: 'wz-video-sticker-ready' } });
+      expect(StyleSheet.flatten(sticker().props.style).opacity).toBe(1);
+      await view.unmount();
+    } finally {
+      mockWebView.mockImplementation(() => null);
+    }
+  });
+
+  it('takes playback permission from the replacement route session without rebuilding the native video', async () => {
+    mockVideoStatus = 'readyToPlay';
+    mockVideoLayout = true;
+    const player = createMockManualVideoPlayer(null);
+    mockCreateVideoPlayer.mockReturnValueOnce(player);
+    const first = new MediaPlaybackSession();
+    const replacement = new MediaPlaybackSession();
+    replacement.updateGate(false);
+    const mediaContext = { contentSource: null, sessionIdentity: 'public:0' };
+    const tree = (session: MediaPlaybackSession) => (
+      <MediaPlaybackSessionContext.Provider value={session}>
+        <ForumContentVideo src="https://cdn.example.com/current-owner.mp4" mediaContext={mediaContext} theme={theme} />
+      </MediaPlaybackSessionContext.Provider>
+    );
+    const view = await render(tree(first));
+    await waitFor(() => expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(1));
+    await view.rerender(tree(replacement));
+    player.pause.mockClear();
+    await act(() => player.emit('playWhenReadyChange', { playWhenReady: true }));
+    expect(player.pause).toHaveBeenCalledTimes(1);
+    expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it.each([false, true])('prepares the current standalone audio after effect setup strict=%s', async (strict) => {
+    mockVideoStatus = 'readyToPlay';
+    mockVideoDuration = 20;
+    let setups = 0;
+    const admission: Parameters<typeof useTopicAudioControl>[0]['admission'] = {
+      admitted: true,
+      attachmentKey: 'current-audio-attachment',
+      attemptId: 'current-audio-attempt',
+      failure: null,
+      progress: jest.fn(),
+      retry: jest.fn(),
+      settle: jest.fn()
+    };
+    const mediaContext = { contentSource: 'nodeseek' as const, sessionIdentity: 'current-audio:0' };
+    function Probe() {
+      const audio = useTopicAudioControl({
+        admission,
+        id: 'current-audio',
+        mediaContext,
+        src: 'https://cdn.example.com/current-audio.mp3'
+      });
+      useLayoutEffect(() => {
+        setups += 1;
+      }, []);
+      return <Text testID="current-audio-status">{audio.status}</Text>;
+    }
+    const root = createRoot({ isStrictMode: strict });
+    try {
+      await act(async () =>
+        root.render(
+          <TopicAudioSessionProvider active paused={false} runtimeGeneration={0}>
+            <Probe />
+          </TopicAudioSessionProvider>
+        )
+      );
+      expect(setups).toBe(strict ? 2 : 1);
+      expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1);
+      const [element] = root.container.queryAll((node) => node.props.testID === 'current-audio-status');
+      expect(element?.props.children).toBe('ready');
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+  it('starts the current unmanaged inline SVG consumer after effects rebuild', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
+      async () =>
+        new Response('<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><path d="M0 0" /></svg>', {
+          headers: { 'content-type': 'image/svg+xml' }
+        })
+    );
+    try {
+      for (const strict of [false, true]) {
+        let setups = 0;
+        let retiredError: ((event: { error: string }) => void) | undefined;
+        let currentError: typeof retiredError;
+        const url = 'https://img.example.com/inline-replay-' + strict + '.png';
+        function Harness() {
+          useLayoutEffect(() => {
+            setups += 1;
+            if (!retiredError) retiredError = latestImageProps(url).onError;
+          }, []);
+          return (
+            <TopicImageHarness attributes={{ alt: 'current inline', src: url }} originalImageUpgradeEnabled={false} />
+          );
+        }
+        const root = createRoot({ isStrictMode: strict });
+        try {
+          await act(async () => root.render(<Harness />));
+          expect(setups).toBe(strict ? 2 : 1);
+          const count = fetchSpy.mock.calls.length;
+          if (strict) {
+            expect(retiredError).toEqual(expect.any(Function));
+            await act(async () => retiredError?.({ error: 'Retired native callback' }));
+            expect(fetchSpy).toHaveBeenCalledTimes(count);
+          }
+          currentError = latestImageProps(url).onError;
+          await act(async () => {
+            currentError?.({ error: 'SVG rejected by native image' });
+            await Promise.resolve();
+          });
+          expect(fetchSpy).toHaveBeenCalledTimes(count + 1);
+        } finally {
+          await act(async () => root.unmount());
+        }
+        const completedFetches = fetchSpy.mock.calls.length;
+        await act(async () => currentError?.({ error: 'Callback after unmount' }));
+        expect(fetchSpy).toHaveBeenCalledTimes(completedFetches);
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

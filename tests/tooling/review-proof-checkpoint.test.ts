@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { Server } from 'node:net';
 import { execFileSync, spawn } from 'node:child_process';
 import {
   proofDeviceForSerial,
@@ -80,7 +81,171 @@ function fixture() {
   };
 }
 
+function failNextLeaseRelease(error: Error) {
+  const close = Server.prototype.close;
+  return vi.spyOn(Server.prototype, 'close').mockImplementationOnce(function (this: Server, callback) {
+    return close.call(this, () => callback?.(error));
+  });
+}
+
 describe('isolated device proof checkpoint', () => {
+  it('rejects a thrown undefined after restoring the baseline', async () => {
+    const context = fixture();
+    const original = context.device.read('files/SQLite/reader-data.db');
+    const outcome = withProofCheckpoint({
+      ...context,
+      run: async () => {
+        writeFileSync(path.join(context.remote, 'files/SQLite/reader-data.db'), 'changed reader');
+        throw undefined;
+      }
+    });
+
+    await expect(outcome).rejects.toMatchObject({ checkpoint: { phase: 'restored' } });
+    await expect(outcome).rejects.toHaveProperty('cause', undefined);
+    expect(context.device.read('files/SQLite/reader-data.db')).toEqual(original);
+    expect(context.device.mode('files/SQLite/reader-data.db')).toBe('600');
+    expect(context.device.mode('databases/AsyncStorage')).toBe('660');
+  });
+
+  it('keeps a falsy business failure together with restoration failure', async () => {
+    const context = fixture();
+    const restoration = new Error('restore failed');
+    context.device.write = () => {
+      throw restoration;
+    };
+    await expect(
+      withProofCheckpoint({
+        ...context,
+        run: async () => {
+          writeFileSync(path.join(context.remote, 'files/SQLite/reader-data.db'), 'changed reader');
+          throw 0;
+        }
+      })
+    ).rejects.toMatchObject({ errors: [0, restoration], checkpoint: { phase: 'restoring' } });
+  });
+
+  it('rejects a falsy restoration failure and retains the pending checkpoint for explicit resume', async () => {
+    const context = fixture();
+    const original = context.device.read('files/SQLite/reader-data.db');
+    const write = context.device.write;
+    context.device.write = () => {
+      throw false;
+    };
+    await expect(
+      withProofCheckpoint({
+        ...context,
+        run: async () => {
+          writeFileSync(path.join(context.remote, 'files/SQLite/reader-data.db'), 'changed reader');
+          return 'business passed';
+        }
+      })
+    ).rejects.toMatchObject({ cause: false, checkpoint: { phase: 'restoring' } });
+    expect(JSON.parse(readFileSync(path.join(context.directory, 'checkpoint.json'), 'utf8')).phase).toBe('restoring');
+    expect(context.device.read('files/SQLite/reader-data.db')).toEqual(Buffer.from('changed reader'));
+    await expect(withProofCheckpoint({ ...context, run: async () => undefined })).rejects.toThrow('Pending checkpoint');
+    context.device.write = write;
+    await expect(resumeProofCheckpoint(context)).resolves.toMatchObject({ phase: 'restored' });
+    expect(context.device.read('files/SQLite/reader-data.db')).toEqual(original);
+  });
+
+  it('keeps business and restoration failures when OS lease release also fails', async () => {
+    const context = fixture();
+    const restoration = new Error('restore failed');
+    const release = new Error('lease release failed');
+    context.device.write = () => {
+      throw restoration;
+    };
+    const close = failNextLeaseRelease(release);
+    try {
+      await expect(
+        withProofCheckpoint({
+          ...context,
+          run: async () => {
+            throw 0;
+          }
+        })
+      ).rejects.toMatchObject({
+        errors: [expect.objectContaining({ errors: [0, restoration] }), release],
+        checkpoint: { phase: 'restoring' }
+      });
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      close.mockRestore();
+    }
+  });
+
+  it('keeps a resume failure when OS lease release also fails', async () => {
+    const context = fixture();
+    const restoration = new Error('restore failed');
+    context.device.write = () => {
+      throw restoration;
+    };
+    await expect(withProofCheckpoint({ ...context, run: async () => undefined })).rejects.toBe(restoration);
+    const release = new Error('lease release failed');
+    const close = failNextLeaseRelease(release);
+    try {
+      await expect(resumeProofCheckpoint(context)).rejects.toMatchObject({
+        errors: [restoration, release],
+        checkpoint: { phase: 'restoring' }
+      });
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      close.mockRestore();
+    }
+  });
+
+  it('reports restored data but rejects a successful proof when OS lease release fails', async () => {
+    const context = fixture();
+    const release = new Error('lease release failed');
+    const close = failNextLeaseRelease(release);
+    try {
+      const outcome = withProofCheckpoint({ ...context, run: async () => 'business passed' });
+      await expect(outcome).rejects.toBe(release);
+      await expect(outcome).rejects.toMatchObject({ checkpoint: { phase: 'restored' } });
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      close.mockRestore();
+    }
+  });
+
+  it.each([
+    null,
+    false,
+    0,
+    '',
+    'plain-string failure',
+    { reason: 'plain-object failure' },
+    Object.freeze(new Error('frozen failure'))
+  ])('preserves an unknown business failure as cause with a restoration receipt: %j', async (failure) => {
+    const context = fixture();
+    const outcome = withProofCheckpoint({
+      ...context,
+      run: async () => {
+        throw failure;
+      }
+    });
+    await expect(outcome).rejects.toMatchObject({ checkpoint: { phase: 'restored' } });
+    await expect(outcome).rejects.toHaveProperty('cause', failure);
+  });
+
+  it('accepts a successful undefined result and preserves an ordinary Error identity on failure', async () => {
+    const context = fixture();
+    await expect(withProofCheckpoint({ ...context, run: async () => undefined })).resolves.toMatchObject({
+      result: undefined,
+      checkpoint: { phase: 'restored' }
+    });
+    const failure = new Error('business failed');
+    await expect(
+      withProofCheckpoint({
+        ...context,
+        run: async () => {
+          throw failure;
+        }
+      })
+    ).rejects.toBe(failure);
+    expect(failure).toHaveProperty('checkpoint.phase', 'restored');
+  });
+
   it.each([false, true])(
     'restores the poll journal and its sidecars, including an absent baseline: exists=%s',
     async (exists) => {

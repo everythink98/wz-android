@@ -34,6 +34,34 @@ describe('keyed serial runner', () => {
     await expect(runner.run('key', async () => 'next')).resolves.toBe('next');
   });
 
+  it('keeps later work behind the current owner after an older job settles', async () => {
+    const runner = createKeyedSerialRunner<string>();
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const secondEntered = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const firstJob = runner.run('key', () => first.promise);
+    const secondJob = runner.run('key', async () => {
+      events.push('second:start');
+      secondEntered.resolve();
+      await second.promise;
+      events.push('second:end');
+    });
+    first.resolve();
+    await secondEntered.promise;
+    const thirdJob = runner.run('key', async () => {
+      events.push('third');
+    });
+    try {
+      await Promise.resolve();
+      expect(events).toEqual(['second:start']);
+    } finally {
+      second.resolve();
+      await Promise.all([firstJob, secondJob, thirdJob]);
+    }
+    expect(events).toEqual(['second:start', 'second:end', 'third']);
+  });
+
   it('releases a settled tail', async () => {
     const runner = createKeyedSerialRunner<object>();
     const key = {};

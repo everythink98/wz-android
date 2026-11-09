@@ -2,13 +2,23 @@ import { isCanceledRequest } from '@/platform/network/errors';
 import { RequestCanceledError } from '@/platform/network/request';
 import type { DiscourseEmojiUrlMap } from './reactions';
 
+type EmojiCatalogRetry =
+  | { phase: 'reading'; nextDelayMs: number }
+  | { phase: 'waiting'; timer: ReturnType<typeof setTimeout>; nextDelayMs: number }
+  | { phase: 'settled' };
+
 export function retryEmojiCatalog(read: () => Promise<DiscourseEmojiUrlMap>, signal: AbortSignal) {
   return new Promise<DiscourseEmojiUrlMap>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let delay = 1_000;
-    const cancel = () => {
-      clearTimeout(timer);
+    let retry: EmojiCatalogRetry = { phase: 'reading', nextDelayMs: 1_000 };
+    const settle = () => {
+      const current = retry;
+      retry = { phase: 'settled' };
+      if (current.phase === 'waiting') clearTimeout(current.timer);
       signal.removeEventListener('abort', cancel);
+    };
+    const cancel = () => {
+      if (retry.phase === 'settled') return;
+      settle();
       reject(new RequestCanceledError());
     };
     if (signal.aborted) {
@@ -17,20 +27,30 @@ export function retryEmojiCatalog(read: () => Promise<DiscourseEmojiUrlMap>, sig
     }
     signal.addEventListener('abort', cancel, { once: true });
     const attempt = async () => {
+      if (retry.phase !== 'reading') return;
+      const reading = retry;
       try {
         const urls = await read();
-        if (signal.aborted) return;
-        signal.removeEventListener('abort', cancel);
+        if (retry !== reading) return;
+        settle();
         resolve(urls);
       } catch (error) {
-        if (signal.aborted) return;
+        if (retry !== reading) return;
         if (isCanceledRequest(error)) {
-          signal.removeEventListener('abort', cancel);
+          settle();
           reject(error);
           return;
         }
-        timer = setTimeout(() => void attempt(), delay);
-        delay = Math.min(delay * 2, 30_000);
+        const waiting: Extract<EmojiCatalogRetry, { phase: 'waiting' }> = {
+          phase: 'waiting',
+          nextDelayMs: Math.min(reading.nextDelayMs * 2, 30_000),
+          timer: setTimeout(() => {
+            if (retry !== waiting) return;
+            retry = { phase: 'reading', nextDelayMs: waiting.nextDelayMs };
+            void attempt();
+          }, reading.nextDelayMs)
+        };
+        retry = waiting;
       }
     };
     void attempt();

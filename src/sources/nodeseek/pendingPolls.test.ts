@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { sqliteParameters } from '../../../tests/helpers/sqliteParameters';
 import {
   MAX_COMPOSER_MARKDOWN_LENGTH,
   MAX_COMPOSER_POLL_COUNT,
@@ -11,7 +16,7 @@ import { buildNodeSeekPollCreateRequest } from './actionRequest';
 import { materializePendingNodeSeekPolls, type PendingNodeSeekPollCreation } from './pendingPolls';
 
 const journal = vi.hoisted(() => new Map<string, { localId: string; fingerprint: string; remoteId: string | null }>());
-vi.mock('@/platform/persistence/nodeSeekPollJournal', () => {
+const journalMock = vi.hoisted(() => {
   type Entry = { localId: string; fingerprint: string; remoteId: string | null };
   const key = (account: string, entry: { localId: string; fingerprint: string }) =>
     `${account}/${entry.localId}/${entry.fingerprint}`;
@@ -37,6 +42,7 @@ vi.mock('@/platform/persistence/nodeSeekPollJournal', () => {
     }
   };
 });
+vi.mock('@/platform/persistence/nodeSeekPollJournal', () => journalMock);
 
 const poll = normalizePendingNodeSeekPoll({
   localId: 'poll_one_123',
@@ -56,6 +62,90 @@ const context = () => ({
 beforeEach(() => journal.clear());
 
 describe('shared pending NodeSeek poll preparation', () => {
+  it('retains a confirmed poll claim after completion persistence fails and a fresh module reopens it', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wz-pending-poll-'));
+    const connections: DatabaseSync[] = [];
+    let failCompletion = true;
+    const outsideNetwork = vi.fn(() => {
+      throw new Error('External transport is disabled');
+    });
+    vi.stubGlobal('fetch', outsideNetwork);
+    vi.doMock('expo-sqlite', () => ({
+      openDatabaseAsync: async (name: string) => {
+        const db = new DatabaseSync(join(directory, name));
+        connections.push(db);
+        return {
+          execAsync: async (sql: string) => db.exec(sql),
+          runAsync: async (sql: string, ...args: unknown[]) => {
+            if (failCompletion && sql.includes('ON CONFLICT')) {
+              failCompletion = false;
+              throw new Error('injected completion failure');
+            }
+            return db.prepare(sql).run(...sqliteParameters(args));
+          },
+          getFirstAsync: async (sql: string, ...args: unknown[]) =>
+            db.prepare(sql).get(...sqliteParameters(args)) ?? null,
+          getAllAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).all(...sqliteParameters(args)),
+          closeAsync: async () => {
+            db.close();
+            connections.splice(connections.indexOf(db), 1);
+          }
+        };
+      }
+    }));
+    vi.doMock('@react-native-async-storage/async-storage', () => ({
+      default: { getItem: async () => null, removeItem: async () => {} }
+    }));
+    vi.doUnmock('@/platform/persistence/nodeSeekPollJournal');
+    vi.resetModules();
+    try {
+      const durable = await import('./pendingPolls');
+      const { runNodeSeekAction } = await import('./actionClient');
+      const transport = vi.fn(async (_input: string, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        return new Response('{"id":901}', { headers: { 'content-type': 'application/json' } });
+      });
+      const options: Parameters<typeof durable.materializePendingNodeSeekPolls>[0] = {
+        ...context(),
+        createPoll: vi.fn<Parameters<typeof durable.materializePendingNodeSeekPolls>[0]['createPoll']>(
+          async (value, lifecycle) => {
+            const result = await runNodeSeekAction({
+              request: buildNodeSeekPollCreateRequest({ poll: value }),
+              fetcher: withRequestBeforeSend(transport, () => {}, lifecycle.dispatchState),
+              userAgent: 'NodeSeek UA'
+            });
+            await lifecycle.persistResult(result);
+            return result;
+          }
+        )
+      };
+
+      await expect(durable.materializePendingNodeSeekPolls(options)).rejects.toThrow('injected completion failure');
+      const inspection = new DatabaseSync(join(directory, 'composer-journal.db'));
+      try {
+        expect(inspection.prepare('SELECT remote_id FROM nodeseek_poll_journal').get()).toEqual({ remote_id: null });
+      } finally {
+        inspection.close();
+      }
+      connections.splice(0).forEach((db) => db.close());
+      vi.resetModules();
+      const reopened = await import('./pendingPolls');
+      await expect(reopened.materializePendingNodeSeekPolls(options)).rejects.toThrow('上次创建结果未知');
+
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect(options.createPoll).toHaveBeenCalledTimes(1);
+      expect(outsideNetwork).not.toHaveBeenCalled();
+    } finally {
+      connections.splice(0).forEach((db) => db.close());
+      vi.doMock('@/platform/persistence/nodeSeekPollJournal', () => journalMock);
+      vi.doUnmock('expo-sqlite');
+      vi.doUnmock('@react-native-async-storage/async-storage');
+      vi.resetModules();
+      vi.unstubAllGlobals();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('materializes the maximum draft once without rescanning the body for every known poll', async () => {
     const polls = Array.from({ length: MAX_COMPOSER_POLL_COUNT }, (_, index) =>
       normalizePendingNodeSeekPoll({
@@ -272,4 +362,88 @@ describe('shared pending NodeSeek poll preparation', () => {
     ).rejects.toThrow('not sent');
     expect(journal.size).toBe(0);
   });
+});
+
+it('preserves an unknown dispatched poll across nested transport observers and a SQLite reopen', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'wz-nested-poll-proof-'));
+  const connections: DatabaseSync[] = [];
+  const outsideNetwork = vi.fn(() => {
+    throw new Error('External transport disabled');
+  });
+  vi.stubGlobal('fetch', outsideNetwork);
+  vi.doMock('expo-sqlite', () => ({
+    openDatabaseAsync: async (name: string) => {
+      const db = new DatabaseSync(join(directory, name));
+      connections.push(db);
+      return {
+        execAsync: async (sql: string) => db.exec(sql),
+        runAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).run(...sqliteParameters(args)),
+        getFirstAsync: async (sql: string, ...args: unknown[]) =>
+          db.prepare(sql).get(...sqliteParameters(args)) ?? null,
+        getAllAsync: async (sql: string, ...args: unknown[]) => db.prepare(sql).all(...sqliteParameters(args)),
+        closeAsync: async () => {
+          db.close();
+          connections.splice(connections.indexOf(db), 1);
+        }
+      };
+    }
+  }));
+  vi.doMock('@react-native-async-storage/async-storage', () => ({
+    default: { getItem: async () => null, removeItem: async () => {} }
+  }));
+  vi.doUnmock('@/platform/persistence/nodeSeekPollJournal');
+  vi.resetModules();
+  const outer = { mayHaveSent: false };
+  const childStates: { mayHaveSent: boolean }[] = [];
+  const failure = new Error('connection lost after synthetic dispatch');
+  const transport = vi.fn(async (_input: string, init?: RequestInit) => {
+    prepareRequestToSend(init);
+    throw failure;
+  });
+  const rows = () => {
+    const inspection = new DatabaseSync(join(directory, 'composer-journal.db'));
+    try {
+      return inspection.prepare('SELECT local_id, remote_id FROM nodeseek_poll_journal').all();
+    } finally {
+      inspection.close();
+    }
+  };
+  try {
+    const durable = await import('./pendingPolls');
+    const { runNodeSeekAction } = await import('./actionClient');
+    const options: Parameters<typeof durable.materializePendingNodeSeekPolls>[0] = {
+      ...context(),
+      createPoll: async (value, lifecycle) => {
+        childStates.push(lifecycle.dispatchState);
+        const account = withRequestBeforeSend(transport, () => {}, outer);
+        return runNodeSeekAction({
+          request: buildNodeSeekPollCreateRequest({ poll: value }),
+          fetcher: withRequestBeforeSend(account, () => {}, lifecycle.dispatchState),
+          userAgent: 'Synthetic provider'
+        });
+      }
+    };
+    const first = await durable.materializePendingNodeSeekPolls(options).catch((error: unknown) => error);
+    const afterFirst = rows();
+    connections.splice(0).forEach((db) => db.close());
+    vi.resetModules();
+    const reopened = await import('./pendingPolls');
+    const second = await reopened.materializePendingNodeSeekPolls(options).catch((error: unknown) => error);
+    expect(first).toBe(failure);
+    expect(afterFirst).toEqual([{ local_id: poll.localId, remote_id: null }]);
+    expect(rows()).toEqual([{ local_id: poll.localId, remote_id: null }]);
+    expect(second).toBeInstanceOf(Error);
+    expect((second as Error).message).toContain('上次创建结果未知');
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(childStates[0]?.mayHaveSent).toBe(true);
+    expect(outsideNetwork).not.toHaveBeenCalled();
+  } finally {
+    connections.splice(0).forEach((db) => db.close());
+    vi.doMock('@/platform/persistence/nodeSeekPollJournal', () => journalMock);
+    vi.doUnmock('expo-sqlite');
+    vi.doUnmock('@react-native-async-storage/async-storage');
+    vi.resetModules();
+    vi.unstubAllGlobals();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

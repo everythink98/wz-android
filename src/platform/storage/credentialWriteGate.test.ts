@@ -35,17 +35,31 @@ describe('credential write gate', () => {
   it('invalidates queued and in-flight writes after a replacement', async () => {
     const gate = createCredentialWriteGate();
     const first = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const currentness: boolean[] = [];
     const oldWrite = enqueueCredentialWriteForGeneration(gate, gate.generation, async ({ isCurrent }) => {
+      entered.resolve();
       await first.promise;
-      return isCurrent() ? 'old' : 'stale';
+      currentness.push(isCurrent());
+      return 'old';
     });
-    const queuedOld = enqueueCredentialWriteForGeneration(gate, gate.generation, () => 'queued-old');
-    const replacement = replaceCredentialWrite(gate, () => 'new');
-    first.resolve();
+    await entered.promise;
+    const queuedTask = vi.fn(() => 'queued-old');
+    const replacementTask = vi.fn(() => 'new');
+    const queuedOld = enqueueCredentialWriteForGeneration(gate, gate.generation, queuedTask);
+    const replacement = replaceCredentialWrite(gate, replacementTask);
+    try {
+      await Promise.resolve();
+      expect(replacementTask).not.toHaveBeenCalled();
+    } finally {
+      first.resolve();
+    }
 
     await expect(oldWrite).resolves.toBeUndefined();
     await expect(queuedOld).resolves.toBeUndefined();
     await expect(replacement).resolves.toBe('new');
+    expect(currentness).toEqual([false]);
+    expect(queuedTask).not.toHaveBeenCalled();
   });
 
   it('does not run work submitted for a stale explicit generation', async () => {

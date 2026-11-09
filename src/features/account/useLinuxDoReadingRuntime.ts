@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import type { LinuxDoReadingRecovery, RequestAccountRecheck } from '@/domain/session/sessionContracts';
@@ -37,7 +37,8 @@ export function useLinuxDoReadingRuntime({
     requestAccountRecheck,
     requestVerification
   });
-  const runtime = useMemo(() => {
+  const createResources = useCallback(() => {
+    const lifetime = new AbortController();
     const scope = () => {
       const value = dependencies.current.snapshot();
       return value.sourceEnabled !== false &&
@@ -52,7 +53,7 @@ export function useLinuxDoReadingRuntime({
       scope: () => (dependencies.current.snapshot().authSurfaceOpen ? null : scope()),
       userAgent: () => dependencies.current.userAgent()
     });
-    return createDiscourseReadingRuntime({
+    const runtime = createDiscourseReadingRuntime({
       queryClient,
       scope,
       onVerificationRequired: (recovery) => dependencies.current.requestVerification(recovery),
@@ -82,7 +83,7 @@ export function useLinuxDoReadingRuntime({
             hasCfChallengeBody: cf.hasCfChallengeBody,
             cfRay: cf.cfRay
           });
-          if (scope() === identity) {
+          if (!lifetime.signal.aborted && scope() === identity) {
             const failure = error as { status?: number; reason?: string };
             const current = dependencies.current;
             if (failure?.status === 401) current.onSessionExpired(current.snapshot().sessionEpoch);
@@ -93,7 +94,21 @@ export function useLinuxDoReadingRuntime({
         }
       }
     });
+    return { lifetime, queryClient, runtime };
   }, [dependencies, queryClient]);
+  const [resources, setResources] = useState(createResources);
+  if (resources.queryClient !== queryClient) setResources(createResources());
+  const { runtime } = resources;
+  useLayoutEffect(() => {
+    if (resources.lifetime.signal.aborted) {
+      setResources(createResources());
+      return;
+    }
+    return () => {
+      resources.lifetime.abort();
+      resources.runtime.dispose();
+    };
+  }, [createResources, resources]);
   useLayoutEffect(() => {
     // Account/source refs are committed before this hook; render-time snapshots may still be stale.
     runtime.sessionChanged();
@@ -103,6 +118,5 @@ export function useLinuxDoReadingRuntime({
   useEffect(() => {
     runtime.foreground(canRead);
   }, [canRead, runtime]);
-  useEffect(() => () => runtime.dispose(), [runtime]);
   return runtime;
 }

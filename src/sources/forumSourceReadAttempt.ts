@@ -14,23 +14,27 @@ type ForumReadResponseEvidence = {
   diagnosticFields: DiagnosticFields;
 };
 
-type ForumSourceReadAttempt = {
+type AcceptedForumReadEvidence = ForumReadResponseEvidence & { state: 'accepted' };
+
+type CollectingSourceEvidence = {
+  phase: 'collecting';
+  source: Source;
   aggregate?: ForumSourceReadAggregateAttempt;
   eligibility: Set<() => boolean>;
   evidence: ForumReadResponseEvidence[];
-  open: boolean;
-  source: Source;
+};
+
+type ForumSourceReadAttempt = {
+  state: CollectingSourceEvidence | { phase: 'settled' };
 };
 
 type ForumSourceReadAttemptSettlement = {
-  attempt: ForumSourceReadAttempt;
-  evidence: ForumReadResponseEvidence[];
+  eligibility: readonly (() => boolean)[];
+  evidence: readonly AcceptedForumReadEvidence[];
 };
 
 type ForumSourceReadAggregateAttempt = {
-  isEligible: () => boolean;
-  open: boolean;
-  settlements: ForumSourceReadAttemptSettlement[];
+  state: { phase: 'collecting'; settlements: ForumSourceReadAttemptSettlement[] } | { phase: 'settled' };
 };
 
 const FORUM_SOURCE_READ_ATTEMPT = Symbol('wz.forumSourceReadAttempt');
@@ -81,8 +85,8 @@ export function registerForumReadResponseEvidence(
   response: Response,
   evidence: Omit<ForumReadResponseEvidence, 'state' | 'diagnosticFields'>
 ) {
-  const attempt = (init as ForumSourceReadRequestInit | undefined)?.[FORUM_SOURCE_READ_ATTEMPT];
-  if (!attempt?.open || attempt.source !== evidence.source) {
+  const collection = (init as ForumSourceReadRequestInit | undefined)?.[FORUM_SOURCE_READ_ATTEMPT]?.state;
+  if (collection?.phase !== 'collecting' || collection.source !== evidence.source) {
     if (evidence.kind === 'fallback')
       recordForumRecoveryDecision(evidence.source, 'ineligible', {
         ...forumRecoveryDiagnosticFields(init),
@@ -93,21 +97,21 @@ export function registerForumReadResponseEvidence(
   }
   const aggregate = (init as ForumSourceReadRequestInit | undefined)?.[FORUM_SOURCE_READ_AGGREGATE_ATTEMPT];
   if (aggregate) {
-    if (attempt.aggregate && attempt.aggregate !== aggregate) {
+    if (collection.aggregate && collection.aggregate !== aggregate) {
       return false;
     }
-    attempt.aggregate = aggregate;
+    collection.aggregate = aggregate;
   }
   const inheritedEligibility = (init as ForumSourceReadRequestInit | undefined)?.[FORUM_SOURCE_READ_ELIGIBILITY];
   if (inheritedEligibility) {
-    attempt.eligibility.add(inheritedEligibility);
+    collection.eligibility.add(inheritedEligibility);
   }
   const registered: ForumReadResponseEvidence = {
     ...evidence,
     state: 'pending',
     diagnosticFields: forumRecoveryDiagnosticFields(init)
   };
-  attempt.evidence.push(registered);
+  collection.evidence.push(registered);
   responseEvidence.set(response, [...(responseEvidence.get(response) || []), registered]);
   return true;
 }
@@ -148,17 +152,15 @@ function safelyCheckEligibility(isEligible: () => boolean) {
   }
 }
 
-function isAttemptEligible(attempt: ForumSourceReadAttempt) {
-  return [...attempt.eligibility].every(safelyCheckEligibility);
-}
-
 async function commitForumReadEvidence(
-  attempt: ForumSourceReadAttempt,
-  evidenceToCommit: ForumReadResponseEvidence[],
-  aggregateIsEligible: (() => boolean) | undefined
+  settlement: ForumSourceReadAttemptSettlement,
+  aggregateIsEligible?: () => boolean
 ) {
-  for (const evidence of evidenceToCommit) {
-    if ((aggregateIsEligible && !safelyCheckEligibility(aggregateIsEligible)) || !isAttemptEligible(attempt)) {
+  for (const evidence of settlement.evidence) {
+    if (
+      (aggregateIsEligible && !safelyCheckEligibility(aggregateIsEligible)) ||
+      !settlement.eligibility.every(safelyCheckEligibility)
+    ) {
       if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, 'ineligible');
       break;
     }
@@ -188,11 +190,8 @@ export async function runForumSourceReadAggregateAttempt<T>(
   read: (scopedFetcher: Fetcher, scopeFetcher: (sourceFetcher: Fetcher) => Fetcher) => Promise<T>,
   isEligible: () => boolean
 ): Promise<T> {
-  const aggregate: ForumSourceReadAggregateAttempt = {
-    isEligible,
-    open: true,
-    settlements: []
-  };
+  const settlements: ForumSourceReadAttemptSettlement[] = [];
+  const aggregate: ForumSourceReadAggregateAttempt = { state: { phase: 'collecting', settlements } };
   const scopeFetcher =
     (sourceFetcher: Fetcher): Fetcher =>
     (input, init) =>
@@ -205,22 +204,22 @@ export async function runForumSourceReadAggregateAttempt<T>(
   try {
     result = await read(scopedFetcher, scopeFetcher);
   } catch (error) {
-    aggregate.open = false;
-    for (const settlement of aggregate.settlements) {
+    aggregate.state = { phase: 'settled' };
+    for (const settlement of settlements) {
       for (const evidence of settlement.evidence)
         if (evidence.kind === 'fallback')
           recordEvidenceDecision(evidence, 'aggregate-failed', { reason: normalizeDiagnosticReason(error) });
     }
     throw error;
   }
-  aggregate.open = false;
-  for (const settlement of aggregate.settlements) {
-    if (!safelyCheckEligibility(aggregate.isEligible)) {
+  aggregate.state = { phase: 'settled' };
+  for (const settlement of settlements) {
+    if (!safelyCheckEligibility(isEligible)) {
       for (const evidence of settlement.evidence)
         if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, 'ineligible');
       break;
     }
-    await commitForumReadEvidence(settlement.attempt, settlement.evidence, aggregate.isEligible);
+    await commitForumReadEvidence(settlement, isEligible);
   }
   return result;
 }
@@ -231,12 +230,13 @@ export async function runForumSourceReadAttempt<T>(
   read: (scopedFetcher: Fetcher) => Promise<T>,
   isEligible: () => boolean
 ): Promise<T> {
-  const attempt: ForumSourceReadAttempt = {
+  const collection: CollectingSourceEvidence = {
+    phase: 'collecting',
     eligibility: new Set([isEligible]),
     evidence: [],
-    open: true,
     source
   };
+  const attempt: ForumSourceReadAttempt = { state: collection };
   const scopedFetcher: Fetcher = (input, init) =>
     fetcher(input, {
       ...init,
@@ -246,30 +246,34 @@ export async function runForumSourceReadAttempt<T>(
   try {
     result = await read(scopedFetcher);
   } catch (error) {
-    attempt.open = false;
-    for (const evidence of attempt.evidence)
+    attempt.state = { phase: 'settled' };
+    for (const evidence of collection.evidence)
       if (evidence.kind === 'fallback')
         recordEvidenceDecision(evidence, 'source-failed', { reason: normalizeDiagnosticReason(error) });
     throw error;
   }
-  attempt.open = false;
-  for (const evidence of attempt.evidence) {
+  attempt.state = { phase: 'settled' };
+  for (const evidence of collection.evidence) {
     if (evidence.kind === 'fallback' && evidence.state === 'pending') recordEvidenceDecision(evidence, 'pending');
   }
-  const accepted = attempt.evidence.filter((evidence) => evidence.state === 'accepted');
+  const accepted = collection.evidence.filter(
+    (evidence): evidence is AcceptedForumReadEvidence => evidence.state === 'accepted'
+  );
   const acceptedFallbacks = accepted.filter((evidence) => evidence.kind === 'fallback');
   const evidenceToCommit = acceptedFallbacks.length
     ? acceptedFallbacks
     : accepted.filter((evidence) => evidence.kind === 'direct');
   const sortedEvidence = evidenceToCommit.sort((left, right) => left.ordinal - right.ordinal);
-  if (attempt.aggregate) {
-    if (attempt.aggregate.open) {
-      attempt.aggregate.settlements.push({ attempt, evidence: sortedEvidence });
+  const settlement = { eligibility: [...collection.eligibility], evidence: sortedEvidence };
+  if (collection.aggregate) {
+    const parent = collection.aggregate.state;
+    if (parent.phase === 'collecting') {
+      parent.settlements.push(settlement);
       for (const evidence of sortedEvidence)
         if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, 'aggregate-pending');
     }
     return result;
   }
-  await commitForumReadEvidence(attempt, sortedEvidence, undefined);
+  await commitForumReadEvidence(settlement);
   return result;
 }

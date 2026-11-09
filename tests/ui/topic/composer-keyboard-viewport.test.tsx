@@ -386,6 +386,27 @@ describe('Composer native keyboard viewport', () => {
     expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('pointerEvents', 'auto');
     expect(fixedGeometry().display ?? 'flex').toBe('flex');
   });
+  it('keeps the current closing subscription when an earlier close callback arrives after reopening', async () => {
+    const host = (visible: boolean) => (
+      <ComposerBottomSheet dark={false} fixedContent visible={visible} onOpenChange={() => {}}>
+        {() => <Text>编辑器</Text>}
+      </ComposerBottomSheet>
+    );
+    const view = await render(host(true));
+    mockHoldAnimations = true;
+    await view.rerender(host(false));
+    const oldClose = mockAnimations.splice(0);
+    await view.rerender(host(true));
+    mockAnimations.splice(0);
+    await view.rerender(host(false));
+    const currentClose = mockAnimations.splice(0);
+
+    await act(() => oldClose.forEach((animation) => animation.deliverQueuedCallback()));
+    expect(mockKeyboardSubscriptions).toBe(1);
+
+    await act(() => currentClose.forEach((animation) => animation.finish()));
+    expect(mockKeyboardSubscriptions).toBe(0);
+  });
   it('keeps fullscreen and return geometry on the same editor without repeating initial focus', async () => {
     const host = (presentation: 'sheet' | 'fullscreen', active = true) => (
       <ComposerBottomSheet

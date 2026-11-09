@@ -395,13 +395,13 @@ Natural observation reads receipts, PID and logs; JobScheduler is dumped only at
     );
     return receipt(token, checkpoint);
   }
-  let businessError;
   try {
     const outcome = await withProofCheckpoint({
       directory: path.resolve('.codex-tmp', 'review-remediation-checkpoints', device.avd),
       device,
       run: async () => {
         let registered = false;
+        const failures = [];
         try {
           const observationDeadline = Date.now() + limits.timeoutMs;
           adb('shell', 'pm', 'grant', pkg, permission);
@@ -551,13 +551,19 @@ Natural observation reads receipts, PID and logs; JobScheduler is dumped only at
           }
           return results;
         } catch (error) {
-          businessError = error;
-          const processId = pid();
-          if (processId) writeFileSync(`${output}.native-failure.log`, nativeLog(processId));
-          jobSnapshot('observation-failed');
-          throw error;
+          failures.push(error);
+          try {
+            const processId = pid();
+            if (processId) writeFileSync(`${output}.native-failure.log`, nativeLog(processId));
+          } catch (error) {
+            failures.push(error);
+          }
+          try {
+            jobSnapshot('observation-failed');
+          } catch (error) {
+            failures.push(error);
+          }
         } finally {
-          const failures = [];
           try {
             if (registered) await open('cleanup', randomUUID().replaceAll('-', ''), 'cleaned');
           } catch (error) {
@@ -565,27 +571,35 @@ Natural observation reads receipts, PID and logs; JobScheduler is dumped only at
           }
           try {
             device.stop();
+          } catch (error) {
+            failures.push(error);
+          }
+          try {
             adb('shell', 'pm', grantedBefore === 'true' ? 'grant' : 'revoke', pkg, permission);
           } catch (error) {
             failures.push(error);
           }
-          if (failures.length)
-            throw new AggregateError(
-              [...(businessError ? [businessError] : []), ...failures],
-              'Background proof cleanup failed'
-            );
+          if (failures.length === 1) throw failures[0];
+          if (failures.length > 1) throw new AggregateError(failures, 'Background proof and cleanup failed');
         }
       }
     });
     save({ identity: device.identity(), results, restoration: outcome.checkpoint, passed: true });
   } catch (error) {
-    save({
-      results,
-      passed: false,
-      restoration: error.checkpoint,
-      error: String(error),
-      causes: error.errors?.map(String)
-    });
+    const checkpoint = error !== null && typeof error === 'object' ? error.checkpoint : undefined;
+    try {
+      save({
+        results,
+        passed: false,
+        restoration: checkpoint,
+        error: String(error),
+        causes: error instanceof AggregateError ? error.errors.map(String) : undefined
+      });
+    } catch (reportError) {
+      throw Object.assign(new AggregateError([error, reportError], 'Background proof and report writing failed'), {
+        checkpoint
+      });
+    }
     throw error;
   }
 }

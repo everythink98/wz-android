@@ -1,4 +1,5 @@
 import { Activity, useEffect } from 'react';
+import { createRoot } from 'test-renderer';
 import { Pressable, Text, View } from 'react-native';
 import { act, fireEvent, render } from '../render';
 import {
@@ -1258,5 +1259,64 @@ describe('TopicBodyMediaCoordinator', () => {
 
     await view.unmount();
     expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('current route resource lifetime', () => {
+  it('keeps retired lease callbacks out of the rebuilt route and reports its final resource once', async () => {
+    jest.useFakeTimers();
+    const timers = jest.spyOn(globalThis, 'setTimeout');
+    const cleared = jest.spyOn(globalThis, 'clearTimeout');
+    const leases: MediaLease[] = [];
+    const collect = (lease: MediaLease) => {
+      leases.push(lease);
+    };
+    const onDiagnosticFinish = jest.fn((_aggregate: TopicBodyMediaAggregate) => undefined);
+    const root = createRoot({ isStrictMode: true });
+    const text = (id: string) =>
+      root.container.queryAll((node) => node.props.testID === `media-${id}`)[0]?.props.children;
+    try {
+      await act(async () =>
+        root.render(
+          <CoordinatorHarness
+            diagnosticSession={{
+              source: 'nodeseek',
+              topicRef: 'topic-current-lifetime',
+              networkMediaCount: 5,
+              plannedRowCount: 1
+            }}
+            onDiagnosticFinish={onDiagnosticFinish}
+          >
+            <MediaProbe id="owned-0" onLease={collect} />
+            {[1, 2, 3, 4].map((index) => (
+              <MediaProbe key={index} id={`owned-${index}`} />
+            ))}
+          </CoordinatorHarness>
+        )
+      );
+      expect(onDiagnosticFinish).not.toHaveBeenCalled();
+      expect(text('owned-0')).toBe('admitted');
+      expect(text('owned-4')).toBe('idle');
+      const retired = leases[0];
+      const current = leases.at(-1);
+      if (!retired || !current || retired === current) throw new Error('Expected separate lease owners');
+      await act(async () => retired.settle('displayed'));
+      expect(text('owned-4')).toBe('idle');
+      await act(async () => current.settle('displayed'));
+      expect(text('owned-4')).toBe('admitted');
+      await act(async () => root.unmount());
+      expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(expect.objectContaining({ displayCount: 1, cancelCount: 4 }));
+      const ownedTimers = timers.mock.calls.flatMap((call, index) =>
+        call[1] === 30_000 ? [timers.mock.results[index]?.value] : []
+      );
+      expect(ownedTimers.length).toBeGreaterThan(0);
+      for (const timer of ownedTimers) expect(cleared).toHaveBeenCalledWith(timer);
+    } finally {
+      await act(async () => root.unmount());
+      timers.mockRestore();
+      cleared.mockRestore();
+      jest.useRealTimers();
+    }
   });
 });

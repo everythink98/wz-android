@@ -34,11 +34,28 @@ import {
   type ReadPreparation
 } from './readAggregation';
 
-type AllFeedCursorState = {
+type AllFeedCursorWire = {
   buffers?: Partial<Record<Source, Topic[]>>;
   nextPages?: Partial<Record<Source, number | null>>;
   sourceCursors?: Partial<Record<Source, string | null>>;
 };
+
+type FeedContinuation =
+  { kind: 'exhausted' } | { kind: 'paged'; page: number; cursor?: string } | { kind: 'opaque-only'; cursor: string };
+
+type AllFeedSourceState = {
+  source: Source;
+  buffer: Topic[];
+  continuation: FeedContinuation;
+};
+
+type AggregateFeedSourcePlan = Readonly<AllFeedSourceState> &
+  ({ kind: 'buffer-only' } | { kind: 'fetch'; request: Readonly<{ page: number; cursor?: string }> });
+
+function feedContinuation(page: number | null | undefined, cursor: string | null | undefined): FeedContinuation {
+  if (typeof page === 'number' && page > 0) return { kind: 'paged', page, ...(cursor ? { cursor } : {}) };
+  return cursor ? { kind: 'opaque-only', cursor } : { kind: 'exhausted' };
+}
 
 function cursorTopic(value: unknown): Topic | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -48,52 +65,41 @@ function cursorTopic(value: unknown): Topic | null {
   return topic.source && topic.id && topic.title && topic.url && topic.createdAt ? (topic as Topic) : null;
 }
 
-function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[]): AllFeedCursorState {
-  if (!cursor) {
-    return {};
-  }
+function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[]): AllFeedSourceState[] {
+  const empty = (): AllFeedSourceState[] =>
+    sources.map((source) => ({ source, buffer: [], continuation: { kind: 'exhausted' } }));
+  if (!cursor) return empty();
   try {
-    const parsed = JSON.parse(decodeURIComponent(cursor)) as AllFeedCursorState;
-    const buffers: Partial<Record<Source, Topic[]>> = {};
-    const nextPages: Partial<Record<Source, number | null>> = {};
-    const sourceCursors: Partial<Record<Source, string | null>> = {};
-    for (const source of sources) {
+    const parsed = JSON.parse(decodeURIComponent(cursor)) as AllFeedCursorWire;
+    return sources.map((source) => {
       const items = Array.isArray(parsed.buffers?.[source])
         ? (parsed.buffers[source]?.map(cursorTopic).filter(Boolean) as Topic[])
         : [];
-      if (items.length) {
-        buffers[source] = items;
-      }
-      const nextPage = parsed.nextPages?.[source];
-      if (typeof nextPage === 'number' && nextPage > 0) {
-        nextPages[source] = nextPage;
-      }
-      if (typeof parsed.sourceCursors?.[source] === 'string' && parsed.sourceCursors[source]) {
-        sourceCursors[source] = parsed.sourceCursors[source];
-      }
-    }
-    return { buffers, nextPages, sourceCursors };
+      const cursor = parsed.sourceCursors?.[source];
+      return {
+        source,
+        buffer: items,
+        continuation: feedContinuation(parsed.nextPages?.[source], typeof cursor === 'string' ? cursor : undefined)
+      };
+    });
   } catch {
-    return {};
+    return empty();
   }
 }
 
-function encodeAllFeedCursor(state: AllFeedCursorState, sources: readonly Source[]) {
+function encodeAllFeedCursor(states: readonly AllFeedSourceState[]) {
   const buffers: Partial<Record<Source, Topic[]>> = {};
   const nextPages: Partial<Record<Source, number | null>> = {};
   const sourceCursors: Partial<Record<Source, string | null>> = {};
-  for (const source of sources) {
-    const items = state.buffers?.[source] || [];
-    if (items.length) {
-      buffers[source] = items;
+  for (const { source, buffer, continuation } of states) {
+    if (buffer.length) {
+      buffers[source] = buffer;
     }
-    const nextPage = state.nextPages?.[source];
-    if (typeof nextPage === 'number' && nextPage > 0) {
-      nextPages[source] = nextPage;
+    if (continuation.kind === 'paged') {
+      nextPages[source] = continuation.page;
     }
-    const sourceCursor = state.sourceCursors?.[source];
-    if (sourceCursor) {
-      sourceCursors[source] = sourceCursor;
+    if (continuation.kind !== 'exhausted' && continuation.cursor) {
+      sourceCursors[source] = continuation.cursor;
     }
   }
   if (!Object.keys(buffers).length && !Object.keys(nextPages).length && !Object.keys(sourceCursors).length) {
@@ -162,30 +168,36 @@ export async function getFeed({
         const sources = includedAggregateSources(includedSources, sourceValues).filter(
           (item) => !unavailableSourceSet.has(item)
         );
-        const cursorState = decodeAllFeedCursor(cursor, sources);
-        const bufferedItems = sources.flatMap((item) => cursorState.buffers?.[item] || []);
+        const sourceStates = decodeAllFeedCursor(cursor, sources);
+        const bufferedItems = sourceStates.flatMap((state) => state.buffer);
         const hasRetryableCursor = Boolean(
-          cursor &&
-          (bufferedItems.length ||
-            Object.keys(cursorState.nextPages || {}).length ||
-            Object.keys(cursorState.sourceCursors || {}).length)
+          cursor && sourceStates.some((state) => state.buffer.length || state.continuation.kind !== 'exhausted')
         );
-        const shouldFetchSource = (item: Source) =>
-          !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
-        const fetchedSources = sources.map(shouldFetchSource);
-        const requestedPages = Object.fromEntries(
-          sources.map((item) => [item, cursor ? cursorState.nextPages?.[item] || page : page])
-        ) as Record<Source, number>;
+        const plans = sourceStates.map<AggregateFeedSourcePlan>((state) => {
+          const { continuation } = state;
+          if (cursor && !(continuation.kind === 'paged' && state.buffer.length < limit)) {
+            return { ...state, kind: 'buffer-only' };
+          }
+          return {
+            ...state,
+            kind: 'fetch',
+            request: {
+              page: cursor && continuation.kind === 'paged' ? continuation.page : page,
+              ...(continuation.kind !== 'exhausted' && continuation.cursor ? { cursor: continuation.cursor } : {})
+            }
+          };
+        });
         const adapterLimit = limit < 30 ? limit * sources.length : limit;
         const results = await Promise.allSettled(
-          sources.map((item, index) => {
-            if (!fetchedSources[index]) {
+          plans.map((plan): Promise<FeedResponse> => {
+            const item = plan.source;
+            if (plan.kind === 'buffer-only') {
               return Promise.resolve({
                 items: [],
                 errors: {},
                 hasMore: false,
-                nextPage: cursorState.nextPages?.[item] ?? null,
-                nextCursor: cursorState.sourceCursors?.[item] ?? null
+                nextPage: plan.continuation.kind === 'paged' ? plan.continuation.page : null,
+                nextCursor: plan.continuation.kind !== 'exhausted' ? (plan.continuation.cursor ?? null) : null
               });
             }
             const startedAt = Date.now();
@@ -204,10 +216,10 @@ export async function getFeed({
                     source: item,
                     nodeSeekAuthenticated,
                     discourseAuth,
-                    cursor: item === 'v2ex' ? cursorState.sourceCursors?.[item] || undefined : cursor,
+                    cursor: item === 'v2ex' ? plan.request.cursor : cursor,
                     fetcher: sourceFetcher,
                     limit: item === 'v2ex' ? limit : adapterLimit,
-                    page: requestedPages[item],
+                    page: plan.request.page,
                     signal: sourceSignal
                   });
                 const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
@@ -263,31 +275,32 @@ export async function getFeed({
           }
           (nextBuffers[item.source] ??= []).push(item);
         }
-        const nextPages: Partial<Record<Source, number | null>> = {};
-        const sourceCursors: Partial<Record<Source, string | null>> = {};
         const hasFulfilledSource = results.some((result) => result.status === 'fulfilled');
-        sources.forEach((item, index) => {
+        const nextStates = plans.map<AllFeedSourceState>((plan, index) => {
           const result = results[index];
+          const buffer = nextBuffers[plan.source] ?? [];
           if (result?.status === 'fulfilled') {
-            if (result.value.nextPage) {
-              nextPages[item] = result.value.nextPage;
-            }
-            if (result.value.nextCursor) {
-              sourceCursors[item] = result.value.nextCursor;
-            }
-            return;
+            return {
+              source: plan.source,
+              buffer,
+              continuation: feedContinuation(result.value.nextPage, result.value.nextCursor)
+            };
           }
           const aggregateTimedOut =
             result?.status === 'rejected' &&
             typeof result.reason === 'object' &&
             result.reason !== null &&
             (result.reason as { reason?: unknown }).reason === 'aggregate_timeout';
-          if (fetchedSources[index] && (hasRetryableCursor || hasFulfilledSource || aggregateTimedOut)) {
-            nextPages[item] = requestedPages[item];
-            if (cursorState.sourceCursors?.[item]) sourceCursors[item] = cursorState.sourceCursors[item];
-          }
+          return {
+            source: plan.source,
+            buffer,
+            continuation:
+              plan.kind === 'fetch' && (hasRetryableCursor || hasFulfilledSource || aggregateTimedOut)
+                ? feedContinuation(plan.request.page, plan.request.cursor)
+                : { kind: 'exhausted' }
+          };
         });
-        const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors }, sources);
+        const nextCursor = encodeAllFeedCursor(nextStates);
         const response = {
           items: selected,
           errors: mergeSettledSourceErrors(results, sources),

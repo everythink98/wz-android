@@ -2,13 +2,21 @@ import { seedLinuxDoAccount } from '../seedLinuxDoAccount';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { QueryObserver } from '@tanstack/react-query';
 import { createRoot } from 'test-renderer';
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useRef } from 'react';
+import { WebView } from 'react-native-webview';
+import { PortalProvider } from '@gorhom/portal';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { createTheme } from '@/ui/theme/tokens';
 import { NativeModules } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as legacyCookieMigration from '@/platform/storage/legacyCookieSnapshotMigration';
 import { markAccountSessionHandoffPending, saveAccountSessionSnapshot } from '@/platform/storage/accountSessionStore';
+import * as accountSessionStore from '@/platform/storage/accountSessionStore';
+import { credentialVault, emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
+import { useAccountCredentialController } from '@/features/account/useAccountCredentialController';
 import { useLinuxDoCredit } from '@/features/more/useLinuxDoCredit';
 import { nativeSecureRandomHex } from '@/platform/android/secureRandom';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
@@ -39,7 +47,7 @@ jest.mock('react-native-webview', () => {
     WebView: React.forwardRef(function MockWebView(props: Record<string, unknown>, ref: unknown) {
       React.useImperativeHandle(
         ref,
-        () => ({ stopLoading: jest.fn(), injectJavaScript: mockWebViewInjectJavaScript }),
+        () => ({ stopLoading: mockWebViewStopLoading, injectJavaScript: mockWebViewInjectJavaScript }),
         []
       );
       React.useEffect(() => {
@@ -51,6 +59,7 @@ jest.mock('react-native-webview', () => {
 });
 let mockWebViewLoads: string[] = [];
 const mockWebViewInjectJavaScript = jest.fn<void, [string]>();
+const mockWebViewStopLoading = jest.fn<void, []>();
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
@@ -97,6 +106,7 @@ beforeEach(async () => {
   jest.spyOn(SecureStore, 'deleteItemAsync').mockResolvedValue(undefined);
   mockWebViewLoads = [];
   mockWebViewInjectJavaScript.mockReset();
+  mockWebViewStopLoading.mockReset();
   jest.mocked(nativeSecureRandomHex).mockResolvedValue('a'.repeat(32));
   events = [];
   setDiagnosticWriter((line) => {
@@ -272,6 +282,45 @@ describe('LDC website authorization', () => {
     expect(runtime().center.linuxDoCredit.busy).toBe(false);
     expect(appQueryClient.getQueryState(balance)?.isInvalidated).toBe(true);
   });
+
+  it.each(['manual', 'silent'] as const)(
+    'finishes Credit %s close when the physical stop command throws',
+    async (mode) => {
+      const { view, runtime } = await renderCreditHosts();
+      let settled = mode === 'manual';
+      try {
+        await act(async () => {
+          if (mode === 'manual') await runtime().center.linuxDoCredit.open();
+          else
+            void runtime()
+              .center.linuxDoCredit.connectSilently()
+              .then(() => (settled = true));
+        });
+        const browser = view.getByTestId('login-webview', { includeHiddenElements: true });
+        const failure = new Error('controlled physical stop failure');
+        mockWebViewStopLoading.mockImplementationOnce(() => {
+          throw failure;
+        });
+        await act(async () => {
+          let thrown: unknown;
+          try {
+            if (mode === 'manual') runtime().hosts.closeTopmostSurface();
+            else browser.props.onMessage(authMessage('complete'));
+          } catch (error) {
+            thrown = error;
+          }
+          expect(thrown).toBe(failure);
+        });
+        expect(view.queryByTestId('login-webview', { includeHiddenElements: true })).toBeNull();
+        await waitFor(() => expect(runtime().hosts.surfaces.linuxdoCredit).toBe(false));
+        await waitFor(() => expect(settled).toBe(true));
+        expect(runtime().center.linuxDoCredit.busy).toBe(false);
+        expect(runtime().read.accountSessionViewModels.linuxdo.currentUser?.username).toBe('alice');
+      } finally {
+        await view.unmount();
+      }
+    }
+  );
 
   it('ends an interaction-required silent attempt without a popup or retry storm and retains manual authorization', async () => {
     const fetcher = jest.fn(async () => Response.json({ current_user: { id: 7, username: 'alice' } }));
@@ -702,6 +751,43 @@ describe('LDC website authorization', () => {
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
     expect(view.queryByTestId('login-webview')).toBeNull();
     expect(mockWebViewLoads).not.toContain('https://credit.linux.do/home');
+  });
+
+  it('does not dispatch a retired cookie preparation after a replacement runtime starts', async () => {
+    const marker = Promise.withResolvers<void>();
+    const mark = jest
+      .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+      .mockImplementationOnce(() => marker.promise);
+    const fetcher = jest.fn(async () => Response.json({ current_user: { id: 7, username: 'alice' } }));
+    const first = await renderCreditHosts(fetcher);
+    let opening!: Promise<void>;
+    await act(async () => {
+      opening = first.runtime().center.linuxDoCredit.open();
+    });
+    expect(first.view.queryByTestId('login-webview')).toBeNull();
+    await first.view.unmount();
+    const second = await renderCreditHosts(fetcher);
+    const barrierCount = jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.length;
+    try {
+      await act(async () => {
+        marker.resolve();
+        await opening;
+      });
+
+      expect(
+        jest
+          .mocked(setLinuxDoCookieResponseBarrier)
+          .mock.calls.slice(barrierCount)
+          .map(([blocked, reason]) => [blocked, reason])
+      ).not.toContainEqual([true, 'surface-open']);
+      expect(second.view.queryByTestId('login-webview')).toBeNull();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.at(-1)?.slice(0, 2)).toEqual([false, 'startup']);
+    } finally {
+      marker.resolve();
+      mark.mockRestore();
+      await second.view.unmount();
+    }
   });
 
   it.each(['close', 'back', 'leave', 'disable', 'switch', 'identity'] as const)(
@@ -1446,13 +1532,21 @@ async function renderSiteRuntime(
 ) {
   let runtime!: ReturnType<typeof useAccountRuntime>;
   const notify = jest.fn();
-  function Harness({ active = true, enabled = true }: { active?: boolean; enabled?: boolean }) {
+  function Harness({
+    active = true,
+    enabled = true,
+    notifyCallback = notify
+  }: {
+    active?: boolean;
+    enabled?: boolean;
+    notifyCallback?: (message: string) => void;
+  }) {
     runtime = useAccountRuntime({
       appActive: active,
       enabledSources: enabled ? [source] : [],
       fetcher,
       loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
-      notify,
+      notify: notifyCallback,
       nodeSeekRecoveryThreshold: 1,
       openUser: async () => undefined,
       ready: true,
@@ -1466,10 +1560,486 @@ async function renderSiteRuntime(
   return {
     view,
     runtime: () => runtime,
+    notify,
+    changeNotify: (notifyCallback: (message: string) => void) =>
+      view.rerender(<Harness notifyCallback={notifyCallback} />),
     active: (active: boolean) => view.rerender(<Harness active={active} />),
     enabled: (enabled: boolean) => view.rerender(<Harness enabled={enabled} />)
   };
 }
+
+async function renderStrictSiteRuntime(source: 'nodeseek' | 'linuxdo') {
+  const notify = jest.fn();
+  let runtime!: ReturnType<typeof useAccountRuntime>;
+  let effectRuns = 0;
+  function Harness({ notifyCallback }: { notifyCallback: (message: string) => void }) {
+    runtime = useAccountRuntime({
+      appActive: true,
+      enabledSources: [source],
+      fetcher: async () => Response.json({}),
+      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+      notify: notifyCallback,
+      nodeSeekRecoveryThreshold: 1,
+      openUser: async () => undefined,
+      ready: true,
+      screen: 'search',
+      webViewBlockMessage: ''
+    });
+    useLayoutEffect(() => {
+      effectRuns += 1;
+      if (effectRuns !== 1) return;
+      if (source === 'nodeseek') runtime.hosts.requestNodeSeekVerification();
+      else void runtime.hosts.showLinuxDoVerification('登录');
+    }, []);
+    return runtime.hosts.element;
+  }
+  const settings = createEmptyReaderData().settings;
+  const styleValue = { settings, theme: createTheme(settings) };
+  const element = (notifyCallback: (message: string) => void) => (
+    <ReaderStyleProvider value={styleValue}>
+      <PortalProvider>
+        <QueryTestWrapper>
+          <Harness notifyCallback={notifyCallback} />
+        </QueryTestWrapper>
+      </PortalProvider>
+    </ReaderStyleProvider>
+  );
+  const root = createRoot({ isStrictMode: true });
+  await act(async () => root.render(element(notify)));
+  expect(effectRuns).toBe(2);
+  await waitFor(() => expect(runtime.read.sessionsReady).toBe(true));
+  return {
+    runtime: () => runtime,
+    notify,
+    changeNotify: (callback: (message: string) => void) => act(async () => root.render(element(callback))),
+    unmount: () => act(async () => root.unmount())
+  };
+}
+
+describe('credential observer lifetime', () => {
+  async function renderStrictCredentials(
+    start: (
+      value: ReturnType<typeof useAccountCredentialController>,
+      probe: (attempt: number, type?: 'probe' | 'fill') => void
+    ) => void
+  ) {
+    let controller!: ReturnType<typeof useAccountCredentialController>;
+    let effectRuns = 0;
+    const notify = jest.fn();
+    const root = createRoot({ isStrictMode: true });
+    const probe = (attempt: number, type: 'probe' | 'fill' = 'probe') => {
+      const page = root.container.queryAll((node) => node.props.testID === 'login-webview')[0];
+      if (!page || typeof page.props.onMessage !== 'function') throw new Error('Expected credential WebView');
+      page.props.onMessage({
+        nativeEvent: {
+          url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl,
+          data: JSON.stringify({
+            type: `login-form-${type}`,
+            site: 'linuxdo',
+            attempt,
+            ok: true,
+            url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl
+          })
+        }
+      });
+    };
+    function Harness({ notifyCallback }: { notifyCallback: (message: string) => void }) {
+      const webViewRef = useRef<WebView>(null);
+      controller = useAccountCredentialController({
+        changeLinuxDoPanel: () => true,
+        changeNodeSeekLoginPanel: () => undefined,
+        changeYaohuoLoginPanel: () => undefined,
+        linuxDoWebViewRef: webViewRef,
+        notify: notifyCallback,
+        refreshAccountStatus: async () => undefined,
+        setYaohuoLoginPrompt: () => undefined,
+        webViewRef,
+        webViewBlockMessage: '',
+        yaohuoWebViewRef: webViewRef
+      });
+      useLayoutEffect(() => {
+        effectRuns += 1;
+        if (effectRuns === 1) start(controller, probe);
+      }, []);
+      return (
+        <WebView
+          ref={webViewRef}
+          source={{ uri: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl }}
+          onMessage={controller.handleCredentialLoginFormMessage}
+        />
+      );
+    }
+    await act(async () => root.render(<Harness notifyCallback={notify} />));
+    expect(effectRuns).toBe(2);
+    return {
+      controller: () => controller,
+      notify,
+      probe,
+      changeNotify: (callback: (message: string) => void) =>
+        act(async () => root.render(<Harness notifyCallback={callback} />)),
+      unmount: () => act(async () => root.unmount())
+    };
+  }
+
+  it.each(['success', 'failure', 'replaced'] as const)(
+    'continues only the same credential read after StrictMode adopts its %s observation',
+    async (outcome) => {
+      const pending = Promise.withResolvers<Awaited<ReturnType<typeof credentialVault.readForFill>>>();
+      const read = jest.spyOn(credentialVault, 'readForFill').mockReturnValueOnce(pending.promise);
+      const summary = jest
+        .spyOn(credentialVault, 'getSummary')
+        .mockImplementation(async (site) => emptyCredentialSummaries()[site]);
+      const harness = await renderStrictCredentials((controller, probe) => {
+        controller.openAccountLogin('linuxdo', true);
+        probe(1);
+      });
+      const latestNotify = jest.fn();
+      try {
+        expect(read).toHaveBeenCalledTimes(1);
+        await harness.changeNotify(latestNotify);
+        if (outcome === 'replaced') await act(async () => harness.controller().openAccountLogin('linuxdo', true));
+        mockWebViewInjectJavaScript.mockClear();
+        await act(async () => {
+          if (outcome === 'failure') pending.reject(new Error('current credential unavailable'));
+          else pending.resolve({ site: 'linuxdo', account: 'local-fixture', password: 'local-fixture', updatedAt: 1 });
+        });
+        if (outcome === 'success') {
+          expect(mockWebViewInjectJavaScript).toHaveBeenCalledTimes(1);
+          await act(async () => harness.probe(1, 'fill'));
+          expect(latestNotify).toHaveBeenCalledWith('已填入保存的登录信息，请完成验证后手动提交。');
+        } else if (outcome === 'failure') {
+          expect(mockWebViewInjectJavaScript).not.toHaveBeenCalled();
+          expect(latestNotify).toHaveBeenCalledWith('未填入登录信息：current credential unavailable');
+        } else {
+          expect(mockWebViewInjectJavaScript).not.toHaveBeenCalled();
+          expect(latestNotify).not.toHaveBeenCalled();
+          expect(harness.controller().pendingCredentialFillSite).toBe('linuxdo');
+        }
+        expect(harness.notify).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve(null);
+        await harness.unmount();
+        read.mockRestore();
+        summary.mockRestore();
+      }
+    }
+  );
+
+  it.each(['save', 'delete'] as const)(
+    'keeps a dispatched credential %s observable after StrictMode adopts it',
+    async (mode) => {
+      const pending = Promise.withResolvers<void>();
+      const summary = jest
+        .spyOn(credentialVault, 'getSummary')
+        .mockImplementation(async (site) => emptyCredentialSummaries()[site]);
+      const save = jest.spyOn(credentialVault, 'save').mockImplementation(async () => {
+        await pending.promise;
+        return { site: 'linuxdo', state: 'saved', hasCredential: true, protection: 'device' };
+      });
+      const remove = jest.spyOn(credentialVault, 'delete').mockReturnValue(pending.promise);
+      let command!: Promise<void>;
+      const harness = await renderStrictCredentials((controller) => {
+        command = controller.handleAccountCenterCommand(
+          mode === 'save'
+            ? {
+                type: 'save-credential',
+                site: 'linuxdo',
+                account: 'local-fixture',
+                password: 'local-fixture',
+                allowUnprotected: true
+              }
+            : { type: 'delete-credential', site: 'linuxdo' }
+        );
+      });
+      const latestNotify = jest.fn();
+      try {
+        const summaryReads = summary.mock.calls.length;
+        await harness.changeNotify(latestNotify);
+        expect(summary).toHaveBeenCalledTimes(summaryReads);
+        await act(async () => {
+          pending.resolve();
+          await command;
+        });
+        expect(latestNotify).toHaveBeenCalledTimes(1);
+        expect(harness.notify).not.toHaveBeenCalled();
+        expect(harness.controller().credentialSummaries.linuxdo.hasCredential).toBe(mode === 'save');
+        expect(mode === 'save' ? save : remove).toHaveBeenCalledTimes(1);
+      } finally {
+        pending.resolve();
+        await harness.unmount();
+        summary.mockRestore();
+        save.mockRestore();
+        remove.mockRestore();
+      }
+    }
+  );
+
+  it.each(['save', 'delete'] as const)(
+    'settles a credential %s without notifying after its actual runtime unmounts',
+    async (mode) => {
+      const pending = Promise.withResolvers<void>();
+      const summary = jest
+        .spyOn(credentialVault, 'getSummary')
+        .mockImplementation(async (site) => emptyCredentialSummaries()[site]);
+      const save = jest.spyOn(credentialVault, 'save').mockImplementation(async () => {
+        await pending.promise;
+        return { site: 'linuxdo', state: 'saved', hasCredential: true, protection: 'device' };
+      });
+      const remove = jest.spyOn(credentialVault, 'delete').mockReturnValue(pending.promise);
+      const { view, runtime, notify } = await renderSiteRuntime('linuxdo', async () => Response.json({}));
+      let command!: Promise<void>;
+      try {
+        await act(async () => {
+          command = runtime().center.handleAccountCenterCommand(
+            mode === 'save'
+              ? {
+                  type: 'save-credential',
+                  site: 'linuxdo',
+                  account: 'local-fixture',
+                  password: 'local-fixture',
+                  allowUnprotected: true
+                }
+              : { type: 'delete-credential', site: 'linuxdo' }
+          );
+        });
+        await view.unmount();
+        notify.mockClear();
+        await act(async () => {
+          pending.resolve();
+          await command;
+        });
+        expect(notify).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve();
+        summary.mockRestore();
+        save.mockRestore();
+        remove.mockRestore();
+      }
+    }
+  );
+
+  it('ignores a late summary failure after the actual runtime unmounts', async () => {
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof credentialVault.getSummary>>>();
+    const summary = jest
+      .spyOn(credentialVault, 'getSummary')
+      .mockImplementation((site) =>
+        site === 'nodeseek' ? pending.promise : Promise.resolve(emptyCredentialSummaries()[site])
+      );
+    const { view, notify } = await renderSiteRuntime('linuxdo', async () => Response.json({}));
+    try {
+      await view.unmount();
+      notify.mockClear();
+      await act(async () => {
+        pending.reject(new Error('late summary unavailable'));
+      });
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve(emptyCredentialSummaries().nodeseek);
+      summary.mockRestore();
+    }
+  });
+
+  it('publishes current partial summaries through the latest callback without restarting the load', async () => {
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof credentialVault.getSummary>>>();
+    const summary = jest
+      .spyOn(credentialVault, 'getSummary')
+      .mockImplementation((site) =>
+        site === 'nodeseek'
+          ? pending.promise
+          : Promise.resolve(
+              site === 'linuxdo'
+                ? { site, state: 'saved', hasCredential: true, protection: 'device' }
+                : emptyCredentialSummaries()[site]
+            )
+      );
+    const { view, runtime, notify, changeNotify } = await renderSiteRuntime('linuxdo', async () => Response.json({}));
+    const latestNotify = jest.fn();
+    try {
+      const count = summary.mock.calls.length;
+      await changeNotify(latestNotify);
+      expect(summary).toHaveBeenCalledTimes(count);
+      await act(async () => pending.reject(new Error('current summary unavailable')));
+      expect(latestNotify).toHaveBeenCalledTimes(1);
+      expect(latestNotify).toHaveBeenCalledWith('读取保存的登录信息失败：current summary unavailable');
+      expect(notify).not.toHaveBeenCalled();
+      expect(runtime().center.credentials.credentialSummaries.linuxdo.hasCredential).toBe(true);
+    } finally {
+      pending.resolve(emptyCredentialSummaries().nodeseek);
+      await view.unmount();
+      summary.mockRestore();
+    }
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'ignores a late credential read %s after the actual login runtime unmounts',
+    async (outcome) => {
+      seedLinuxDoAccount();
+      const pending = Promise.withResolvers<Awaited<ReturnType<typeof credentialVault.readForFill>>>();
+      const read = jest.spyOn(credentialVault, 'readForFill').mockReturnValue(pending.promise);
+      const summary = jest
+        .spyOn(credentialVault, 'getSummary')
+        .mockImplementation(async (site) => emptyCredentialSummaries()[site]);
+      const { view, runtime, notify } = await renderSiteRuntime('linuxdo', async () => Response.json({}), 'more');
+      try {
+        await act(async () => {
+          await runtime().center.handleAccountCenterCommand({ type: 'open-login-with-fill', site: 'linuxdo' });
+        });
+        await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+        const browser = view.getByTestId('login-webview');
+        await fireEvent(browser, 'message', {
+          nativeEvent: {
+            url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl,
+            data: JSON.stringify({
+              type: 'login-form-probe',
+              site: 'linuxdo',
+              attempt: 1,
+              ok: true,
+              url: LOGIN_FORM_ADAPTERS.linuxdo.loginUrl
+            })
+          }
+        });
+        expect(read).toHaveBeenCalledTimes(1);
+        await view.unmount();
+        notify.mockClear();
+        mockWebViewInjectJavaScript.mockClear();
+        const summaryReads = summary.mock.calls.length;
+        await act(async () => {
+          if (outcome === 'failure') pending.reject(new Error('late credential unavailable'));
+          else pending.resolve({ site: 'linuxdo', account: 'local-fixture', password: 'local-fixture', updatedAt: 1 });
+        });
+        expect(notify).not.toHaveBeenCalled();
+        expect(mockWebViewInjectJavaScript).not.toHaveBeenCalled();
+        expect(summary).toHaveBeenCalledTimes(summaryReads);
+      } finally {
+        pending.resolve(null);
+        summary.mockRestore();
+        read.mockRestore();
+        await view.unmount();
+      }
+    }
+  );
+});
+
+describe('native cookie barrier notification ownership', () => {
+  function holdNextNativeBarrier() {
+    const native = Promise.withResolvers<void>();
+    const dispatch = jest.fn(() => native.promise);
+    let reason: string | undefined;
+    const actual = jest.requireActual<typeof import('@/platform/network/managedCookies')>(
+      '@/platform/network/managedCookies'
+    ).setLinuxDoCookieResponseBarrier;
+    jest
+      .mocked(setLinuxDoCookieResponseBarrier)
+      .mockImplementationOnce((blocked, nextReason, generation, _module, parentTraceId) => {
+        reason = nextReason;
+        return actual(blocked, nextReason, generation, { setLinuxDoCookieResponseBarrier: dispatch }, parentTraceId);
+      });
+    return { native, dispatch, reason: () => reason };
+  }
+
+  it('ignores a startup barrier failure after the runtime unmounts', async () => {
+    const held = holdNextNativeBarrier();
+    const current = await renderSiteRuntime('linuxdo', async () => Response.json({}));
+    expect(held.dispatch).toHaveBeenCalledTimes(1);
+    expect(held.reason()).toBe('startup');
+    await current.view.unmount();
+    current.notify.mockClear();
+    try {
+      await act(async () => {
+        held.native.reject(new Error('retired startup barrier failure'));
+      });
+      expect(current.notify).not.toHaveBeenCalled();
+      expect(events.filter((event) => event.operation === 'cookie-barrier' && event.phase === 'finish')).toEqual([
+        expect.objectContaining({ outcome: 'failure', cookieBarrierReason: 'startup' })
+      ]);
+    } finally {
+      held.native.resolve();
+    }
+  });
+
+  it('ignores the first startup barrier failure after StrictMode rebuilds its effect', async () => {
+    const held = holdNextNativeBarrier();
+    const current = await renderStrictSiteRuntime('linuxdo');
+    try {
+      expect(held.dispatch).toHaveBeenCalledTimes(1);
+      expect(held.reason()).toBe('startup');
+      current.notify.mockClear();
+      await act(async () => {
+        held.native.reject(new Error('retired StrictMode startup barrier failure'));
+      });
+      expect(current.notify).not.toHaveBeenCalled();
+    } finally {
+      held.native.resolve();
+      await current.unmount();
+    }
+  });
+
+  it('ignores a source-change barrier failure after a newer source effect replaces it', async () => {
+    const current = await renderSiteRuntime('linuxdo', async () => Response.json({}));
+    const held = holdNextNativeBarrier();
+    try {
+      await current.enabled(false);
+      expect(held.dispatch).toHaveBeenCalledTimes(1);
+      expect(held.reason()).toBe('source-change');
+      await current.enabled(true);
+      current.notify.mockClear();
+      await act(async () => {
+        held.native.reject(new Error('superseded source barrier failure'));
+      });
+      expect(current.notify).not.toHaveBeenCalled();
+    } finally {
+      held.native.resolve();
+      await current.view.unmount();
+    }
+  });
+
+  it('notifies once and retains Native diagnostics when the current startup barrier fails', async () => {
+    const held = holdNextNativeBarrier();
+    const current = await renderSiteRuntime('linuxdo', async () => Response.json({}));
+    try {
+      current.notify.mockClear();
+      await act(async () => {
+        held.native.reject(new Error('current startup barrier failure'));
+      });
+      expect(current.notify).toHaveBeenCalledTimes(1);
+      expect(current.notify).toHaveBeenCalledWith('登录会话交接未完成，请刷新账号页面重试。');
+      expect(events.filter((event) => event.operation === 'cookie-barrier' && event.phase === 'finish')).toEqual([
+        expect.objectContaining({ outcome: 'failure', cookieBarrierReason: 'startup' })
+      ]);
+    } finally {
+      held.native.resolve();
+      await current.view.unmount();
+    }
+  });
+
+  it('uses the latest notifier once for its current barrier and retires the previous callback effect', async () => {
+    const oldBarrier = holdNextNativeBarrier();
+    const current = await renderSiteRuntime('linuxdo', async () => Response.json({}));
+    const newBarrier = holdNextNativeBarrier();
+    const nextNotify = jest.fn();
+    try {
+      await current.changeNotify(nextNotify);
+      expect(newBarrier.dispatch).toHaveBeenCalledTimes(1);
+      expect(newBarrier.reason()).toBe('source-change');
+      current.notify.mockClear();
+      await act(async () => {
+        oldBarrier.native.reject(new Error('replaced callback barrier failure'));
+      });
+      expect(current.notify).not.toHaveBeenCalled();
+      expect(nextNotify).not.toHaveBeenCalled();
+      await act(async () => {
+        newBarrier.native.reject(new Error('current callback barrier failure'));
+      });
+      expect(nextNotify).toHaveBeenCalledTimes(1);
+      expect(nextNotify).toHaveBeenCalledWith('登录会话交接未完成，请刷新账号页面重试。');
+      expect(current.notify).not.toHaveBeenCalled();
+    } finally {
+      oldBarrier.native.resolve();
+      newBarrier.native.resolve();
+      await current.view.unmount();
+    }
+  });
+});
 
 function seedNodeSeekAccount() {
   appQueryClient.setQueryData(
@@ -1660,7 +2230,7 @@ it.each(['same', 'changed', 'anonymous', 'storage-failed'] as const)(
 
 it('does not mount a login document until its durable marker is saved and preserves the account if saving fails', async () => {
   const { response } = accountClearFixture('nodeseek');
-  const { view, runtime } = await renderSiteRuntime('nodeseek', async () => response());
+  const { view, runtime, notify } = await renderSiteRuntime('nodeseek', async () => response());
   const write = jest.spyOn(AsyncStorage, 'setItem');
   let fail!: (error: Error) => void;
   write.mockImplementationOnce(
@@ -1677,12 +2247,169 @@ it('does not mount a login document until its durable marker is saved and preser
     await act(async () => fail(new Error('disk unavailable')));
     expect(view.queryByTestId('login-webview')).toBeNull();
     expect(view.getByText('登录会话保存失败，请关闭后重试')).toBeTruthy();
+    expect(notify).toHaveBeenCalledWith('登录会话保存失败，请关闭后重试');
     expect(runtime().read.accountSessionViewModels.nodeseek.currentUser?.id).toBe('42');
   } finally {
     write.mockRestore();
     await view.unmount();
   }
 });
+
+it('does not publish a durable marker failure after its runtime unmounts', async () => {
+  const { response } = accountClearFixture('nodeseek');
+  const { view, runtime, notify } = await renderSiteRuntime('nodeseek', async () => response());
+  const marker = Promise.withResolvers<void>();
+  const write = jest.spyOn(AsyncStorage, 'setItem').mockImplementationOnce(() => marker.promise);
+  try {
+    await act(async () => runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'nodeseek' }));
+    await waitFor(() => expect(write).toHaveBeenCalled());
+    await view.unmount();
+    notify.mockClear();
+
+    await act(async () => {
+      marker.reject(new Error('retired marker write failed'));
+    });
+
+    expect(notify).not.toHaveBeenCalled();
+    expect(runtime().read.accountSessionViewModels.nodeseek.currentUser?.id).toBe('42');
+  } finally {
+    marker.resolve();
+    write.mockRestore();
+  }
+});
+
+it('continues the same visible surface when StrictMode adopts its pending durable marker', async () => {
+  const marker = Promise.withResolvers<void>();
+  const mark = jest
+    .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+    .mockImplementationOnce(() => marker.promise);
+  const current = await renderStrictSiteRuntime('nodeseek');
+  try {
+    expect(mark).toHaveBeenCalledTimes(1);
+    expect(current.runtime().hosts.surfaces.nodeseek).toBe(true);
+    expect(current.runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('正在保存登录交接状态…');
+    expect(mockWebViewLoads).toEqual([]);
+
+    await act(async () => {
+      marker.resolve();
+    });
+
+    expect(current.runtime().hosts.surfaces.nodeseek).toBe(true);
+    expect(current.runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('');
+    expect(mockWebViewLoads).toContain('https://www.nodeseek.com');
+    expect(mark).toHaveBeenCalledTimes(1);
+  } finally {
+    marker.resolve();
+    await current.unmount();
+    mark.mockRestore();
+  }
+});
+
+it('reports an adopted durable marker failure once and keeps ordinary callback changes in the same owner', async () => {
+  const marker = Promise.withResolvers<void>();
+  const mark = jest
+    .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+    .mockImplementationOnce(() => marker.promise);
+  const current = await renderStrictSiteRuntime('nodeseek');
+  const nextNotify = jest.fn();
+  try {
+    current.notify.mockClear();
+    await current.changeNotify(nextNotify);
+    await act(async () => {
+      marker.reject(new Error('adopted marker write failed'));
+    });
+
+    expect(current.notify).not.toHaveBeenCalled();
+    expect(nextNotify).toHaveBeenCalledTimes(1);
+    expect(nextNotify).toHaveBeenCalledWith('登录会话保存失败，请关闭后重试');
+    expect(current.runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe(
+      '登录会话保存失败，请关闭后重试'
+    );
+    const laterNotify = jest.fn();
+    await current.changeNotify(laterNotify);
+    expect(laterNotify).not.toHaveBeenCalled();
+    expect(mark).toHaveBeenCalledTimes(1);
+  } finally {
+    marker.resolve();
+    await current.unmount();
+    mark.mockRestore();
+  }
+});
+
+it('ignores an adopted durable marker after a new preparation replaces it', async () => {
+  const oldMarker = Promise.withResolvers<void>();
+  const newMarker = Promise.withResolvers<void>();
+  const mark = jest
+    .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+    .mockImplementationOnce(() => oldMarker.promise)
+    .mockImplementationOnce(() => newMarker.promise);
+  const current = await renderStrictSiteRuntime('nodeseek');
+  try {
+    await act(async () => {
+      current.runtime().hosts.closePanels();
+      current.runtime().hosts.requestNodeSeekVerification();
+    });
+    current.notify.mockClear();
+    await act(async () => {
+      oldMarker.reject(new Error('replaced marker write failed'));
+    });
+    expect(current.notify).not.toHaveBeenCalled();
+    expect(current.runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('正在保存登录交接状态…');
+
+    await act(async () => {
+      newMarker.reject(new Error('current marker write failed'));
+    });
+    expect(current.notify).toHaveBeenCalledTimes(1);
+    expect(current.notify).toHaveBeenCalledWith('登录会话保存失败，请关闭后重试');
+    expect(mark).toHaveBeenCalledTimes(2);
+  } finally {
+    oldMarker.resolve();
+    newMarker.resolve();
+    await current.unmount();
+    mark.mockRestore();
+  }
+});
+
+it.each(['retained', 'replaced'] as const)(
+  'dispatches only the current %s cookie preparation after StrictMode adopts its logical surface',
+  async (mode) => {
+    const marker = Promise.withResolvers<void>();
+    const mark = jest
+      .spyOn(accountSessionStore, 'markAccountSessionHandoffPending')
+      .mockImplementationOnce(() => marker.promise);
+    const barrierCallsBefore = jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.length;
+    const current = await renderStrictSiteRuntime('linuxdo');
+    try {
+      if (mode === 'replaced')
+        await act(async () => {
+          await current.runtime().center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' });
+        });
+      expect(
+        jest
+          .mocked(setLinuxDoCookieResponseBarrier)
+          .mock.calls.slice(barrierCallsBefore)
+          .filter(([, reason]) => reason === 'surface-open')
+      ).toHaveLength(0);
+      await act(async () => {
+        marker.resolve();
+      });
+      await waitFor(() => expect(mockWebViewLoads).toContain('https://linux.do/latest'));
+
+      const openings = jest
+        .mocked(setLinuxDoCookieResponseBarrier)
+        .mock.calls.slice(barrierCallsBefore)
+        .filter(([, reason]) => reason === 'surface-open');
+      expect(openings).toHaveLength(1);
+      expect(openings[0]?.slice(0, 3)).toEqual([true, 'surface-open', 1]);
+      expect(current.runtime().hosts.surfaces.linuxdo).toBe(true);
+      expect(mark).toHaveBeenCalledTimes(1);
+    } finally {
+      marker.resolve();
+      await current.unmount();
+      mark.mockRestore();
+    }
+  }
+);
 
 it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
   'preserves a newer %s account check when legacy clear cleanup finishes',

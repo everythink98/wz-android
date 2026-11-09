@@ -1,7 +1,8 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, render, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import { memo, useLayoutEffect, useMemo } from 'react';
+import { createRef, memo, useEffect, useLayoutEffect, useMemo } from 'react';
+import { createRoot } from 'test-renderer';
 
 jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
 
@@ -13,6 +14,7 @@ jest.mock('@/sources/readGateway', () => ({
 import { checkYaohuoLogin, getCurrentUserIdentity } from '@/sources/readGateway';
 import { useAccountStatusController } from '@/features/account/useAccountStatusController';
 import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import * as accountSessionStore from '@/platform/storage/accountSessionStore';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import {
@@ -130,14 +132,16 @@ async function renderStatusController({
   const hook = await renderNativeHook(
     ({
       renderedEnabledSources,
+      renderedFetcher,
       renderedEnabledSourcesReady = enabledSourcesReady
     }: {
       renderedSessionEpochs: ForumSessionEpochs;
       renderedEnabledSources?: readonly (typeof sessionSources)[number][];
+      renderedFetcher?: Parameters<typeof useAccountStatusController>[0]['fetcher'];
       renderedEnabledSourcesReady?: boolean;
     }) =>
       useAccountStatusController({
-        fetcher,
+        fetcher: renderedFetcher || fetcher,
         enabledSources: renderedEnabledSources || enabledSources,
         linuxDoUserAgentRef,
         nodeSeekUserAgentRef,
@@ -473,6 +477,381 @@ describe('account status queries', () => {
       diagnosticEvents.filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
     ).toEqual([expect.objectContaining({ outcome: 'canceled', reason: 'canceled' })]);
     expect(mockGetCurrentUser).not.toHaveBeenCalled();
+  });
+
+  it('ignores a restore loader rejection after its owner unmounts', async () => {
+    const loading = Promise.withResolvers<boolean>();
+    jest
+      .spyOn(accountSessionStore, 'loadAccountSessionMigrationCompleted')
+      .mockImplementationOnce(() => loading.promise);
+    const { hook, notify } = await renderStatusController({ enabledSources: ['nodeseek'] });
+    await hook.unmount();
+
+    await act(async () => {
+      loading.reject(new Error('RETIRED_UNMOUNT_RESTORE_REJECTION'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
+    ).toEqual([expect.objectContaining({ outcome: 'canceled', reason: 'canceled' })]);
+    expect(notify).not.toHaveBeenCalled();
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    expect(
+      appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'))?.currentUser
+    ).toBeUndefined();
+  });
+
+  it('ignores a retired restore loader rejection after the fresh StrictMode owner hydrates', async () => {
+    await AsyncStorage.setItem('account-session.migration.v1', '1');
+    const loading = Promise.withResolvers<boolean>();
+    jest
+      .spyOn(accountSessionStore, 'loadAccountSessionMigrationCompleted')
+      .mockImplementationOnce(() => loading.promise);
+    const latest = createRef<ReturnType<typeof useAccountStatusController>>();
+    const options: Parameters<typeof useAccountStatusController>[0] = {
+      enabledSources: ['nodeseek'],
+      enabledSourcesReady: true,
+      fetcher: jest.fn(async () => new Response('{}')),
+      linuxDoUserAgentRef: { current: 'safe-agent' },
+      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      notify: jest.fn(),
+      onAccountStatusChanged: jest.fn()
+    };
+    let effectRuns = 0;
+    function Harness() {
+      const status = useAccountStatusController(options);
+      useLayoutEffect(() => {
+        latest.current = status;
+      });
+      useEffect(() => {
+        effectRuns += 1;
+      }, []);
+      return null;
+    }
+    const root = createRoot({ isStrictMode: true });
+    try {
+      await act(async () =>
+        root.render(
+          <QueryTestWrapper>
+            <Harness />
+          </QueryTestWrapper>
+        )
+      );
+      expect(effectRuns).toBe(2);
+      await waitFor(() => expect(latest.current?.hydrated).toBe(true));
+
+      await act(async () => {
+        loading.reject(new Error('RETIRED_STRICT_RESTORE_REJECTION'));
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(latest.current?.hydrated).toBe(true);
+      expect(
+        diagnosticEvents
+          .filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
+          .map((event) => event.outcome)
+      ).toEqual(['canceled', 'success']);
+      expect(options.notify).not.toHaveBeenCalled();
+      expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    } finally {
+      loading.resolve(true);
+      await act(async () => root.unmount());
+    }
+  });
+
+  it('finishes hydration after a dependency changes during migration', async () => {
+    const cookie = Promise.withResolvers<string | undefined>();
+    const readCookie = jest.fn(() => cookie.promise);
+    const { hook } = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      enabledSourcesReady: true,
+      readNodeSeekCookieHeader: readCookie
+    });
+    await waitFor(() => expect(readCookie).toHaveBeenCalledTimes(1));
+    await hook.rerender({
+      renderedSessionEpochs: initialForumSessionEpochs,
+      renderedFetcher: jest.fn(async () => new Response('{}'))
+    });
+    await act(async () => {
+      cookie.resolve(undefined);
+    });
+    await waitFor(async () => expect(await AsyncStorage.getItem('account-session.migration.v1')).toBe('1'));
+
+    expect(hook.result.current.hydrated).toBe(true);
+    expect(readCookie).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start migration probes after the restore owner retires', async () => {
+    const cookie = Promise.withResolvers<string | undefined>();
+    const readCookie = jest.fn(() => cookie.promise);
+    const { hook } = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      enabledSourcesReady: true,
+      readNodeSeekCookieHeader: readCookie
+    });
+    await waitFor(() => expect(readCookie).toHaveBeenCalledTimes(1));
+    await hook.unmount();
+    await act(async () => {
+      cookie.resolve('session=safe');
+    });
+
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    expect(await AsyncStorage.getItem('account-session.migration.v1')).toBeNull();
+  });
+
+  it('does not retire a newer manual probe when migration times out', async () => {
+    jest.useFakeTimers();
+    const migrationIdentity = Promise.withResolvers<UserIdentity>();
+    const manualIdentity = Promise.withResolvers<UserIdentity>();
+    let manualSignal: AbortSignal | undefined;
+    mockGetCurrentUser
+      .mockImplementationOnce(async () => migrationIdentity.promise)
+      .mockImplementationOnce(async (options) => {
+        manualSignal = options.signal;
+        return manualIdentity.promise;
+      });
+    const { hook } = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      enabledSourcesReady: true,
+      readNodeSeekCookieHeader: async () => 'session=safe'
+    });
+    let manual: ReturnType<typeof hook.result.current.reconcileAccountStatus> = Promise.resolve({ status: 'stale' });
+    try {
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        manual = hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 2 });
+      });
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(manualSignal?.aborted).toBe(false);
+      expect(hook.result.current.statusBusy).toBe(true);
+      await act(async () => {
+        migrationIdentity.resolve(nodeSeekUser);
+      });
+      await waitFor(() => expect(hook.result.current.hydrated).toBe(true));
+      expect(manualSignal?.aborted).toBe(false);
+      expect(hook.result.current.statusBusy).toBe(true);
+    } finally {
+      await act(async () => {
+        migrationIdentity.resolve(nodeSeekUser);
+        manualIdentity.resolve(nextNodeSeekUser);
+        await manual;
+        await jest.runAllTimersAsync();
+      });
+      await hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not publish a late identity after the probe owner retires', async () => {
+    const identity = Promise.withResolvers<UserIdentity>();
+    let signal: AbortSignal | undefined;
+    mockGetCurrentUser.mockImplementationOnce(async (options) => {
+      signal = options.signal;
+      return identity.promise;
+    });
+    const { hook, onAccountStatusChanged } = await renderStatusController({ enabledSources: ['nodeseek'] });
+    const reconcile = hook.result.current.reconcileAccountStatus;
+    let probe!: ReturnType<typeof reconcile>;
+    await act(async () => {
+      probe = reconcile('nodeseek');
+    });
+    await waitFor(() => expect(mockGetCurrentUser).toHaveBeenCalledTimes(1));
+    await hook.unmount();
+    const snapshot = appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'));
+    await act(async () => {
+      identity.resolve(nodeSeekUser);
+      await probe;
+    });
+
+    expect(signal?.aborted).toBe(true);
+    await expect(probe).resolves.toEqual({ status: 'stale' });
+    expect(appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'))).toBe(snapshot);
+    expect(onAccountStatusChanged).not.toHaveBeenCalled();
+    await expect(reconcile('nodeseek')).resolves.toEqual({ status: 'stale' });
+    expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['succeeds', 'fails'])(
+    'does not publish an old persist result after a terminal identity when saving %s',
+    async (outcome) => {
+      mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
+      const { hook } = await renderStatusController({ enabledSources: ['nodeseek'] });
+      const write = AsyncStorage.setItem.bind(AsyncStorage);
+      const started = Promise.withResolvers<void>();
+      const saving = Promise.withResolvers<void>();
+      jest.spyOn(AsyncStorage, 'setItem').mockImplementationOnce(async (key, value) => {
+        started.resolve();
+        await saving.promise;
+        return write(key, value);
+      });
+      let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+      await act(async () => {
+        probe = hook.result.current.reconcileAccountStatus('nodeseek');
+      });
+      await started.promise;
+      await act(async () => {
+        hook.result.current.applyAccountSessionEvent({
+          site: 'nodeseek',
+          type: 'session-updated',
+          loggedIn: true,
+          currentUser: nextNodeSeekUser
+        });
+        if (outcome === 'succeeds') saving.resolve();
+        else saving.reject(new Error('older save failed'));
+        await probe;
+      });
+
+      const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'));
+      expect(snapshot?.currentUser).toEqual(nextNodeSeekUser);
+      expect(snapshot?.lastError).toBeUndefined();
+      await expect(probe).resolves.toEqual({ status: 'stale' });
+    }
+  );
+
+  it('does not attach an old terminal save failure to the next identity', async () => {
+    const { hook } = await renderStatusController({ enabledSources: ['nodeseek'] });
+    const started = Promise.withResolvers<void>();
+    const saving = Promise.withResolvers<void>();
+    jest.spyOn(AsyncStorage, 'setItem').mockImplementationOnce(async () => {
+      started.resolve();
+      await saving.promise;
+    });
+    await act(async () => {
+      hook.result.current.applyAccountSessionEvent({
+        site: 'nodeseek',
+        type: 'session-updated',
+        loggedIn: true,
+        currentUser: nodeSeekUser
+      });
+    });
+    await started.promise;
+    await act(async () => {
+      hook.result.current.applyAccountSessionEvent({
+        site: 'nodeseek',
+        type: 'session-updated',
+        loggedIn: true,
+        currentUser: nextNodeSeekUser
+      });
+      saving.reject(new Error('older terminal save failed'));
+    });
+    await waitFor(async () => expect(await AsyncStorage.getItem('account-session.v1.nodeseek')).toContain('"id":"18"'));
+
+    const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'));
+    expect(snapshot?.currentUser).toEqual(nextNodeSeekUser);
+    expect(snapshot?.lastError).toBeUndefined();
+  });
+
+  it('restores once for the live StrictMode owner after the first storage read retires', async () => {
+    await AsyncStorage.setItem('account-session.migration.v1', '1');
+    const firstRead = Promise.withResolvers<string | null>();
+    jest.spyOn(AsyncStorage, 'getItem').mockImplementationOnce(() => firstRead.promise);
+    const latest = createRef<ReturnType<typeof useAccountStatusController>>();
+    const options: Parameters<typeof useAccountStatusController>[0] = {
+      enabledSources: ['nodeseek'],
+      enabledSourcesReady: true,
+      fetcher: jest.fn(async () => new Response('{}')),
+      linuxDoUserAgentRef: { current: 'safe-agent' },
+      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      notify: jest.fn(),
+      onAccountStatusChanged: jest.fn()
+    };
+    let effectRuns = 0;
+    function Harness() {
+      const status = useAccountStatusController(options);
+      useLayoutEffect(() => {
+        latest.current = status;
+      });
+      useEffect(() => {
+        effectRuns += 1;
+      }, []);
+      return null;
+    }
+    const root = createRoot({ isStrictMode: true });
+    try {
+      await act(async () =>
+        root.render(
+          <QueryTestWrapper>
+            <Harness />
+          </QueryTestWrapper>
+        )
+      );
+      expect(effectRuns).toBe(2);
+      expect(latest.current?.hydrated).toBe(false);
+      await act(async () => {
+        firstRead.resolve('1');
+      });
+      await waitFor(() => expect(latest.current?.hydrated).toBe(true));
+
+      expect(mockGetCurrentUser).not.toHaveBeenCalled();
+      const restoreTerminals = diagnosticEvents.filter(
+        (event) => event.operation === 'account-restore' && event.phase === 'finish'
+      );
+      expect(restoreTerminals.map((event) => event.outcome)).toEqual(['canceled', 'success']);
+    } finally {
+      firstRead.resolve('1');
+      await act(async () => root.unmount());
+    }
+  });
+
+  it('keeps the fresh StrictMode probe busy when its retired predecessor settles', async () => {
+    const identity = Promise.withResolvers<UserIdentity>();
+    mockGetCurrentUser.mockImplementationOnce(async () => identity.promise);
+    const latest = createRef<ReturnType<typeof useAccountStatusController>>();
+    const requests: ReturnType<ReturnType<typeof useAccountStatusController>['reconcileAccountStatus']>[] = [];
+    const options: Parameters<typeof useAccountStatusController>[0] = {
+      enabledSources: ['nodeseek'],
+      enabledSourcesReady: false,
+      fetcher: jest.fn(async () => new Response('{}')),
+      linuxDoUserAgentRef: { current: 'safe-agent' },
+      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      readManagedCookieHeader: async () => ({ status: 'ok', header: 'session=safe' }),
+      notify: jest.fn(),
+      onAccountStatusChanged: jest.fn()
+    };
+    let effectRuns = 0;
+    function Harness() {
+      const status = useAccountStatusController(options);
+      useLayoutEffect(() => {
+        latest.current = status;
+      });
+      useEffect(() => {
+        effectRuns += 1;
+        requests.push(status.reconcileAccountStatus('nodeseek'));
+      }, [status.reconcileAccountStatus]);
+      return null;
+    }
+    const root = createRoot({ isStrictMode: true });
+    try {
+      await act(async () =>
+        root.render(
+          <QueryTestWrapper>
+            <Harness />
+          </QueryTestWrapper>
+        )
+      );
+      expect(effectRuns).toBe(2);
+      await expect(requests[0]).resolves.toEqual({ status: 'stale' });
+      expect(latest.current?.statusBusy).toBe(true);
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        identity.resolve(nextNodeSeekUser);
+        await Promise.all(requests);
+      });
+
+      await waitFor(() => {
+        expect(latest.current?.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser);
+        expect(latest.current?.statusBusy).toBe(false);
+      });
+    } finally {
+      identity.resolve(nextNodeSeekUser);
+      await act(async () => root.unmount());
+      await Promise.allSettled(requests);
+    }
   });
 
   it('probes only enabled sources and treats disabled reconciliation as stale', async () => {

@@ -36,19 +36,22 @@ export type DiagnosticJournalSnapshot = {
   health: Record<string, number | boolean>;
 };
 
-export async function readDiagnosticJournal(): Promise<DiagnosticJournalSnapshot> {
+export async function readDiagnosticJournal(deadline = Date.now() + 5_000): Promise<DiagnosticJournalSnapshot> {
   const empty = { jsLines: '', nativeLines: '', crashLines: '', health: {} };
   const module = nativeDiagnosticJournal();
   if (!module?.snapshot) return { ...empty, status: 'unavailable' };
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return { ...empty, status: 'timeout' };
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const result = await Promise.race([
-      module.snapshot(),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), 5_000);
+    const outcome = await Promise.race([
+      module.snapshot().then((value) => ({ kind: 'snapshot', value }) as const),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        timer = setTimeout(() => resolve({ kind: 'timeout' }), remaining);
       })
     ]);
-    if (result === null) return { ...empty, status: 'timeout' };
+    if (outcome.kind === 'timeout') return { ...empty, status: 'timeout' };
+    const result = outcome.value;
     if (!result || typeof result !== 'object') return { ...empty, status: 'failed' };
     const raw = result as Record<string, unknown>;
     const health: Record<string, number | boolean> = {};

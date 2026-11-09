@@ -32,6 +32,200 @@ afterEach(() => {
 });
 
 describe('Account center user authentication', () => {
+  const credentialPanel = (active: boolean, onCommand: (command: AccountCenterCommand) => Promise<void>) => (
+    <AccountCenterPanel
+      credentials={emptyCredentialSummaries()}
+      enabledSessionSources={allSessionSources}
+      active={active}
+      nodeSeekUserId={null}
+      sessions={sessions}
+      siteContent={{}}
+      statusBusy={false}
+      styles={styles}
+      theme={theme}
+      onCommand={onCommand}
+    />
+  );
+
+  it('does not let an old credential receipt release a new editor operation', async () => {
+    const previous = Promise.withResolvers<void>();
+    const current = Promise.withResolvers<void>();
+    const onCommand = jest
+      .fn<(command: AccountCenterCommand) => Promise<void>>()
+      .mockReturnValueOnce(previous.promise)
+      .mockReturnValueOnce(current.promise);
+    const view = await render(credentialPanel(true, onCommand));
+    try {
+      await fireEvent.press(view.getByLabelText('站点设置'));
+      for (const [index, account] of ['first-account', 'new-account'].entries()) {
+        if (index) {
+          await view.rerender(credentialPanel(false, onCommand));
+          await view.rerender(credentialPanel(true, onCommand));
+        }
+        await fireEvent.press(view.getByText('设置'));
+        await fireEvent.changeText(view.getByLabelText('NodeSeek 登录账号'), account);
+        await fireEvent.changeText(view.getByLabelText('NodeSeek 登录密码'), 'local-password');
+        await fireEvent.press(view.getByLabelText('保存'));
+        await waitFor(() => expect(onCommand).toHaveBeenCalledTimes(index + 1));
+      }
+      await act(async () => {
+        previous.resolve();
+      });
+      expect(view.getByLabelText('保存中').props.accessibilityState.disabled).toBe(true);
+      expect(view.getByLabelText('NodeSeek 登录账号').props.value).toBe('new-account');
+      await act(async () => {
+        current.resolve();
+      });
+      expect(view.queryByLabelText('NodeSeek 登录账号')).toBeNull();
+    } finally {
+      previous.resolve();
+      current.resolve();
+      await view.unmount();
+    }
+  });
+
+  it('retires a biometric fallback confirmation when its credential editor closes', async () => {
+    const onCommand = jest
+      .fn<(command: AccountCenterCommand) => Promise<void>>()
+      .mockRejectedValueOnce(new CredentialVaultError('biometric-unavailable', 'confirmation required'))
+      .mockResolvedValue(undefined);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const view = await render(
+      <AccountCenterPanel
+        credentials={emptyCredentialSummaries()}
+        enabledSessionSources={allSessionSources}
+        active
+        nodeSeekUserId={null}
+        sessions={sessions}
+        siteContent={{}}
+        statusBusy={false}
+        styles={styles}
+        theme={theme}
+        onCommand={onCommand}
+      />
+    );
+    try {
+      await fireEvent.press(view.getByLabelText('站点设置'));
+      await fireEvent.press(view.getByText('设置'));
+      await fireEvent.changeText(view.getByLabelText('NodeSeek 登录账号'), 'local-account');
+      await fireEvent.changeText(view.getByLabelText('NodeSeek 登录密码'), 'local-password');
+      await fireEvent.press(view.getByLabelText('保存'));
+      await waitFor(() => expect(alert).toHaveBeenCalled());
+      const proceed = alert.mock.calls.at(-1)?.[2]?.find((button) => button.text === '继续保存')?.onPress;
+      expect(proceed).toBeDefined();
+      await fireEvent.press(view.getByLabelText('取消'));
+      await act(async () => {
+        proceed?.();
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+      expect(onCommand).toHaveBeenCalledTimes(1);
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'preserves a reopened credential draft when an older save finishes with %s',
+    async (outcome) => {
+      const saved = Promise.withResolvers<void>();
+      const onCommand = jest.fn<(command: AccountCenterCommand) => Promise<void>>(() => saved.promise);
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const view = await render(credentialPanel(true, onCommand));
+      try {
+        await fireEvent.press(view.getByLabelText('站点设置'));
+        await fireEvent.press(view.getByText('设置'));
+        await fireEvent.changeText(view.getByLabelText('NodeSeek 登录账号'), 'first-account');
+        await fireEvent.changeText(view.getByLabelText('NodeSeek 登录密码'), 'first-password');
+        await fireEvent.press(view.getByLabelText('保存'));
+        await waitFor(() => expect(onCommand).toHaveBeenCalledTimes(1));
+        await view.rerender(credentialPanel(false, onCommand));
+        await view.rerender(credentialPanel(true, onCommand));
+        await fireEvent.press(view.getByText('设置'));
+        await fireEvent.changeText(view.getByLabelText('NodeSeek 登录账号'), 'new-account');
+        await fireEvent.changeText(view.getByLabelText('NodeSeek 登录密码'), 'new-password');
+        await act(async () => {
+          if (outcome === 'success') saved.resolve();
+          else saved.reject(new Error('old save failure'));
+        });
+        expect(view.getByLabelText('NodeSeek 登录账号').props.value).toBe('new-account');
+        expect(view.getByLabelText('NodeSeek 登录密码').props.value).toBe('new-password');
+        expect(alert).not.toHaveBeenCalled();
+      } finally {
+        saved.resolve();
+        await view.unmount();
+      }
+    }
+  );
+
+  it('does not dispatch a credential save after its editor retires before the frame', async () => {
+    const onCommand = jest.fn<(command: AccountCenterCommand) => Promise<void>>(async () => undefined);
+    const view = await render(
+      <AccountCenterPanel
+        credentials={emptyCredentialSummaries()}
+        enabledSessionSources={allSessionSources}
+        active
+        nodeSeekUserId={null}
+        sessions={sessions}
+        siteContent={{}}
+        statusBusy={false}
+        styles={styles}
+        theme={theme}
+        onCommand={onCommand}
+      />
+    );
+    await fireEvent.press(view.getByLabelText('站点设置'));
+    await fireEvent.press(view.getByText('设置'));
+    await fireEvent.changeText(view.getByLabelText('NodeSeek 登录账号'), 'local-account');
+    await fireEvent.changeText(view.getByLabelText('NodeSeek 登录密码'), 'local-password');
+    const frames: FrameRequestCallback[] = [];
+    const frame = jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    try {
+      await fireEvent.press(view.getByLabelText('保存'));
+      expect(onCommand).not.toHaveBeenCalled();
+      await view.unmount();
+      await act(async () => {
+        for (const callback of frames.splice(0)) callback(0);
+      });
+      expect(onCommand).not.toHaveBeenCalled();
+    } finally {
+      frame.mockRestore();
+    }
+  });
+
+  it('does not dispatch a destructive credential confirmation after its editor unmounts', async () => {
+    const credentials = emptyCredentialSummaries();
+    credentials.nodeseek = { site: 'nodeseek', state: 'saved', hasCredential: true, protection: 'device' };
+    const onCommand = jest.fn<(command: AccountCenterCommand) => Promise<void>>(async () => undefined);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const view = await render(
+      <AccountCenterPanel
+        credentials={credentials}
+        enabledSessionSources={allSessionSources}
+        active
+        nodeSeekUserId={null}
+        sessions={sessions}
+        siteContent={{}}
+        statusBusy={false}
+        styles={styles}
+        theme={theme}
+        onCommand={onCommand}
+      />
+    );
+    await fireEvent.press(view.getByLabelText('站点设置'));
+    await fireEvent.press(view.getByText('管理'));
+    await fireEvent.press(view.getByLabelText('删除'));
+    const confirm = alert.mock.calls.at(-1)?.[2]?.find((button) => button.text === '删除')?.onPress;
+    expect(confirm).toBeDefined();
+    await view.unmount();
+    await act(async () => {
+      confirm?.();
+    });
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
   it('reuses the account card when switching cached content without fading it', async () => {
     const view = await render(
       <AccountCenterPanel

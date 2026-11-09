@@ -245,7 +245,7 @@ function runtimeError(code: string, message: string, revision: number) {
   postMessage('ERROR', { code, message: message.slice(0, 300), revision });
 }
 
-function requestHostAction(
+async function requestHostAction(
   action:
     | 'upload-image'
     | 'preview-topic'
@@ -2152,6 +2152,7 @@ export function ComposerEditorRuntime() {
   const sourceProgrammaticRef = useRef(false);
   const sourceHostRef = useRef<HTMLDivElement | null>(null);
   const sourceViewRef = useRef<EditorView | null>(null);
+  const sourceStateHandoffRef = useRef<EditorState | null>(null);
   const imageBusyRef = useRef(false);
   const imageKeyboardPolicyRef = useRef<{ id: string; element: HTMLElement; policy: string | null } | null>(null);
   const uploadSequenceRef = useRef(0);
@@ -2219,6 +2220,7 @@ export function ComposerEditorRuntime() {
   const [stardustOneTime, setStardustOneTime] = useState(false);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [templateBusy, setTemplateBusy] = useState(false);
+  const templateRequestRef = useRef<Promise<unknown> | null>(null);
   const [stickerCategory, setStickerCategory] = useState(NODESEEK_STICKER_CATEGORIES[0]!.label);
   const [emojiQuery, setEmojiQuery] = useState('');
   const [emojiLimit, setEmojiLimit] = useState(120);
@@ -2236,7 +2238,12 @@ export function ComposerEditorRuntime() {
       Extension.create({
         name: 'submissionLock',
         addProseMirrorPlugins: () => [
-          new Plugin({ filterTransaction: (transaction) => !submissionLockedRef.current || !transaction.docChanged })
+          new Plugin({
+            filterTransaction: (transaction) =>
+              !transaction.docChanged ||
+              suppressChangesRef.current ||
+              (initializedRef.current && !submissionLockedRef.current)
+          })
         ]
       })
     ],
@@ -2324,6 +2331,7 @@ export function ComposerEditorRuntime() {
 
   const postSnapshot = useCallback(
     (requestId?: string, forcedMode?: ComposerMode) => {
+      if (!initializedRef.current || !sourceViewRef.current) return;
       const snapshot = makeSnapshot(forcedMode);
       const context = { documentEpoch: configRef.current?.documentEpoch ?? 0, ...(requestId ? { requestId } : {}) };
       if (
@@ -2347,6 +2355,7 @@ export function ComposerEditorRuntime() {
   );
 
   const postState = useCallback(() => {
+    if (!initializedRef.current || !sourceViewRef.current) return;
     const currentEditor = editorRef.current;
     const currentMode = modeRef.current;
     postMessage('STATE_CHANGED', {
@@ -2361,10 +2370,16 @@ export function ComposerEditorRuntime() {
   }, [editorRef]);
 
   const scheduleSignals = useCallback(() => {
+    if (!initializedRef.current || !sourceViewRef.current) return;
+    const generation = documentGenerationRef.current;
     if (stateTimerRef.current !== null) window.clearTimeout(stateTimerRef.current);
-    stateTimerRef.current = window.setTimeout(postState, 100);
+    stateTimerRef.current = window.setTimeout(() => {
+      if (documentGenerationRef.current === generation) postState();
+    }, 100);
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = window.setTimeout(() => postSnapshot(), 600);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      if (documentGenerationRef.current === generation) postSnapshot();
+    }, 600);
   }, [postSnapshot, postState]);
   useCommitRefValue(scheduleSignalsRef, scheduleSignals);
 
@@ -2372,8 +2387,11 @@ export function ComposerEditorRuntime() {
     const view = sourceViewRef.current;
     if (!view || view.state.doc.toString() === value) return;
     sourceProgrammaticRef.current = true;
-    replaceCodeMirrorDocument(view, value);
-    sourceProgrammaticRef.current = false;
+    try {
+      replaceCodeMirrorDocument(view, value);
+    } finally {
+      sourceProgrammaticRef.current = false;
+    }
   }, []);
 
   const restoreImageKeyboardPolicy = useCallback((id?: string) => {
@@ -2542,6 +2560,10 @@ export function ComposerEditorRuntime() {
   );
 
   const cancelHostActions = useCallback(() => {
+    if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
+    if (stateTimerRef.current !== null) window.clearTimeout(stateTimerRef.current);
+    autosaveTimerRef.current = null;
+    stateTimerRef.current = null;
     documentGenerationRef.current += 1;
     panelRequestRef.current = null;
     setPanelPending(false);
@@ -2550,23 +2572,27 @@ export function ComposerEditorRuntime() {
     if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(imageUploadKey, null));
     sourceViewRef.current?.dispatch({ effects: sourceUploadEffect.of(null) });
     imageBusyRef.current = false;
+    setImageBusy(false);
     linuxPollCapabilitiesRequestRef.current = null;
+    templateRequestRef.current = null;
     hostActionResolvers.forEach((resolver) => resolver.reject(new Error('编辑文档已关闭')));
     hostActionResolvers.clear();
   }, [editorRef, restoreImageKeyboardPolicy]);
 
   const applyInit = useCallback(
     (next: RuntimeConfig) => {
+      const previous = configRef.current;
+      initializedRef.current = false;
+      setConfig(null);
+      sourceStateHandoffRef.current = null;
       submissionLockedRef.current = false;
       cancelHostActions();
       maskedMarkdownRef.current = null;
       richMarkdownRef.current = null;
       configRef.current = next;
-      setConfig(next);
       closeBuilder();
       setExpressionsOpened(false);
       setBuilderError('');
-      setImageBusy(false);
       setTemplates([]);
       setTemplateBusy(false);
       setEmojiLimit(120);
@@ -2577,19 +2603,23 @@ export function ComposerEditorRuntime() {
       pendingPolls.clear();
       next.pendingNodeSeekPolls.forEach((poll) => pendingPolls.set(poll.localId, poll));
       suppressChangesRef.current = true;
-      setExpressionConfig(editorRef.current, next);
-      // Identical content can reuse NodeViews with requests from the previous document.
-      if (initializedRef.current) replaceRichMarkdownDocument(editorRef.current, '');
-      replaceRichMarkdownDocument(editorRef.current, next.markdown);
-      editorRef.current?.setEditable(!next.readOnly);
-      setSource(next.markdown);
-      // Identical Markdown still needs the new document intent's accessible name.
-      sourceViewRef.current?.dispatch({});
-      suppressChangesRef.current = false;
+      try {
+        setExpressionConfig(editorRef.current, next);
+        // Identical content can reuse NodeViews with requests from the previous document.
+        if (previous) replaceRichMarkdownDocument(editorRef.current, '');
+        replaceRichMarkdownDocument(editorRef.current, next.markdown);
+        editorRef.current?.setEditable(!next.readOnly);
+        setSource(next.markdown);
+        // Identical Markdown still needs the new document intent's accessible name.
+        sourceViewRef.current?.dispatch({});
+      } finally {
+        suppressChangesRef.current = false;
+      }
       revisionRef.current = 0;
       modeRef.current = next.mode;
       setMode(next.mode);
       initializedRef.current = true;
+      setConfig(next);
       postMessage('READY', { documentEpoch: next.documentEpoch ?? 0, revision: 0 });
       postState();
     },
@@ -2652,8 +2682,10 @@ export function ComposerEditorRuntime() {
         return;
       }
       if (message.type === 'DESTROY') {
-        cancelHostActions();
         initializedRef.current = false;
+        setConfig(null);
+        sourceStateHandoffRef.current = null;
+        cancelHostActions();
         maskedMarkdownRef.current = null;
         richMarkdownRef.current = null;
         editorRef.current?.destroy();
@@ -2765,51 +2797,59 @@ export function ComposerEditorRuntime() {
     if (!host || sourceViewRef.current) return;
     const view = new EditorView({
       parent: host,
-      state: EditorState.create({
-        doc: '',
-        extensions: [
-          markdownLanguage(),
-          history(),
-          sourcePollProtectionField,
-          sourceUploadField,
-          sourceKeyboardPolicyField,
-          keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-          EditorView.lineWrapping,
-          EditorView.cspNonce.of('wz-composer-runtime'),
-          EditorView.contentAttributes.of(() => ({
-            'aria-label':
-              configRef.current?.intentKind === 'create-topic' || configRef.current?.intentKind === 'edit-topic'
-                ? '主题正文源码编辑器'
-                : '回复正文源码编辑器'
-          })),
-          EditorState.changeFilter.of((transaction) => {
-            if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
-            if (configRef.current?.readOnly || submissionLockedRef.current) return false;
-            const { ranges } = transaction.startState.field(sourcePollProtectionField);
-            let allowed = true;
-            transaction.changes.iterChangedRanges((fromA, toA) => {
-              ranges.forEach((range) => {
-                const intersects = fromA < range.to && toA > range.from;
-                const removesWholeToken = fromA <= range.from && toA >= range.to;
-                if (intersects && !removesWholeToken) allowed = false;
+      state:
+        sourceStateHandoffRef.current ??
+        EditorState.create({
+          doc: '',
+          extensions: [
+            markdownLanguage(),
+            history(),
+            sourcePollProtectionField,
+            sourceUploadField,
+            sourceKeyboardPolicyField,
+            keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+            EditorView.lineWrapping,
+            EditorView.cspNonce.of('wz-composer-runtime'),
+            EditorView.contentAttributes.of(() => ({
+              'aria-label':
+                configRef.current?.intentKind === 'create-topic' || configRef.current?.intentKind === 'edit-topic'
+                  ? '主题正文源码编辑器'
+                  : '回复正文源码编辑器'
+            })),
+            EditorState.changeFilter.of((transaction) => {
+              if (sourceProgrammaticRef.current || !transaction.docChanged) return true;
+              if (!initializedRef.current || configRef.current?.readOnly || submissionLockedRef.current) return false;
+              const { ranges } = transaction.startState.field(sourcePollProtectionField);
+              let allowed = true;
+              transaction.changes.iterChangedRanges((fromA, toA) => {
+                ranges.forEach((range) => {
+                  const intersects = fromA < range.to && toA > range.from;
+                  const removesWholeToken = fromA <= range.from && toA >= range.to;
+                  if (intersects && !removesWholeToken) allowed = false;
+                });
               });
-            });
-            return allowed;
-          }),
-          EditorView.updateListener.of((update) => {
-            if (!update.docChanged || sourceProgrammaticRef.current) return;
-            revisionRef.current += 1;
-            scheduleSignalsRef.current();
-          })
-        ]
-      })
+              return allowed;
+            }),
+            EditorView.updateListener.of((update) => {
+              if (!update.docChanged || sourceProgrammaticRef.current) return;
+              revisionRef.current += 1;
+              scheduleSignalsRef.current();
+            })
+          ]
+        })
     });
+    sourceStateHandoffRef.current = null;
     sourceViewRef.current = view;
     return () => {
-      view.destroy();
-      if (sourceViewRef.current === view) sourceViewRef.current = null;
+      cancelHostActions();
+      if (sourceViewRef.current === view) {
+        const state = view.state;
+        sourceViewRef.current = null;
+        view.destroy();
+        if (initializedRef.current) sourceStateHandoffRef.current = state;
+      } else view.destroy();
     };
-  }, []);
+  }, [cancelHostActions]);
 
   useEffect(() => {
     const initialDocument = document.getElementById('composer-initial-document');
@@ -2824,15 +2864,6 @@ export function ComposerEditorRuntime() {
       runtimeError('bridge-invalid-initial-document', '编辑器收到无效初始草稿', revisionRef.current);
     }
   }, [applyInit, editor]);
-
-  useEffect(
-    () => () => {
-      cancelHostActions();
-      if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
-      if (stateTimerRef.current !== null) window.clearTimeout(stateTimerRef.current);
-    },
-    [cancelHostActions]
-  );
 
   const showBuilder = (next: Exclude<ComposerBuilder, null>) => {
     const current = configRef.current;
@@ -3217,20 +3248,24 @@ export function ComposerEditorRuntime() {
   };
 
   const loadTemplates = async () => {
-    const documentGeneration = documentGenerationRef.current;
+    const request = requestHostAction('load-linuxdo-templates');
+    templateRequestRef.current = request;
     setTemplateBusy(true);
     setBuilderError('');
     try {
-      const result = (await requestHostAction('load-linuxdo-templates')) as { templates?: TemplateSummary[] };
-      if (documentGenerationRef.current === documentGeneration) {
+      const result = (await request) as { templates?: TemplateSummary[] };
+      if (templateRequestRef.current === request) {
         setTemplates(Array.isArray(result?.templates) ? result.templates : []);
       }
     } catch (error) {
-      if (documentGenerationRef.current === documentGeneration) {
+      if (templateRequestRef.current === request) {
         setBuilderError(error instanceof Error ? error.message : '模板读取失败');
       }
     } finally {
-      if (documentGenerationRef.current === documentGeneration) setTemplateBusy(false);
+      if (templateRequestRef.current === request) {
+        templateRequestRef.current = null;
+        setTemplateBusy(false);
+      }
     }
   };
 

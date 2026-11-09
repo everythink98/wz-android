@@ -369,7 +369,8 @@ function ForumContentVideoPlayer({
     };
   }, [laidOutPlayer, player]);
   const routePlayback = useMediaPlaybackSession();
-  const [playback] = useState(() => routePlayback || new MediaPlaybackSession());
+  const [fallbackPlayback] = useState(() => new MediaPlaybackSession());
+  const playback = routePlayback || fallbackPlayback;
   const mediaIdentity = JSON.stringify([mediaContext.sessionIdentity, src, source.headers?.Referer || 'none']);
   useLayoutEffect(() => {
     const handle = playback.attach(player, mediaIdentity, 'video', {

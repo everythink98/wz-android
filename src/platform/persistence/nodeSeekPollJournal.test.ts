@@ -94,6 +94,29 @@ afterEach(() => {
 });
 
 describe('NodeSeek poll journal', () => {
+  it('keeps the newer committed id when another connection finishes migration before a stale legacy read', async () => {
+    const original = entry('poll_migration_race', null);
+    const snapshot = JSON.stringify([original]);
+    harness.legacy.set(legacyKey(), snapshot);
+    harness.legacy.set(legacyKey('nodeseek:other'), '{broken');
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    const delayed = Promise.withResolvers<string>();
+    vi.mocked(storage.getItem).mockImplementationOnce(() => delayed.promise);
+    const first = await load();
+    const pending = first.readNodeSeekPollJournalEntry(identity, original.localId);
+    await vi.waitFor(() => expect(storage.getItem).toHaveBeenCalledTimes(1));
+
+    vi.resetModules();
+    const second = await load();
+    await second.saveNodeSeekPollJournalEntry(identity, { ...original, remoteId: '999' });
+    delayed.resolve(snapshot);
+
+    await expect(pending).resolves.toEqual({ ...original, remoteId: '999' });
+    expect(inspect().prepare('SELECT remote_id FROM nodeseek_poll_journal').all()).toEqual([{ remote_id: '999' }]);
+    expect(storage.removeItem).toHaveBeenCalledExactlyOnceWith(legacyKey());
+    expect(harness.legacy.get(legacyKey('nodeseek:other'))).toBe('{broken');
+  });
+
   it('runs the Android proof through real action and dispatch seams and reopens the in-flight claim without transport', async () => {
     const network = vi.fn(() => {
       throw new Error('Device proof must not access an external network');

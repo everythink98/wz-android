@@ -80,6 +80,138 @@ describe('NodeImage credential persistence', () => {
     expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe('previous-key');
   });
 
+  it('waits for cancellation compensation before returning a stored credential', async () => {
+    const values = new Map<string, string>([[NODEIMAGE_API_KEY_STORAGE_KEY, 'previous-key']]);
+    const candidateWritten = Promise.withResolvers<void>();
+    const finishCandidateWrite = Promise.withResolvers<void>();
+    let writeCount = 0;
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      values.set(key, value);
+      if (++writeCount === 1) {
+        candidateWritten.resolve();
+        await finishCandidateWrite.promise;
+      }
+    });
+    const generation = beginNodeImageApiKeyAuthorization();
+    const saving = saveNodeImageApiKeyForGeneration(generation, 'canceled-key', 'nodeseek:alice', 'nodeseek:alice');
+    await candidateWritten.promise;
+    invalidateNodeImageApiKeyAuthorization();
+
+    const loading = loadNodeImageApiKeyCredential();
+    finishCandidateWrite.resolve();
+    await expect(saving).resolves.toBeUndefined();
+
+    await expect(loading).resolves.toMatchObject({ apiKey: 'previous-key' });
+    expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe('previous-key');
+  });
+
+  it('repairs a failed cancellation compensation before returning a stored credential', async () => {
+    const values = new Map<string, string>([[NODEIMAGE_API_KEY_STORAGE_KEY, 'previous-key']]);
+    const candidateWritten = Promise.withResolvers<void>();
+    const finishCandidateWrite = Promise.withResolvers<void>();
+    const recoveryError = new Error('restore failed');
+    let writeCount = 0;
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      writeCount += 1;
+      if (writeCount === 2) throw recoveryError;
+      values.set(key, value);
+      if (writeCount === 1) {
+        candidateWritten.resolve();
+        await finishCandidateWrite.promise;
+      }
+    });
+    const generation = beginNodeImageApiKeyAuthorization();
+    const saving = saveNodeImageApiKeyForGeneration(generation, 'canceled-key', 'nodeseek:alice', 'nodeseek:alice');
+    await candidateWritten.promise;
+    invalidateNodeImageApiKeyAuthorization();
+    finishCandidateWrite.resolve();
+    await expect(saving).rejects.toBe(recoveryError);
+
+    await expect(loadNodeImageApiKeyCredential()).resolves.toMatchObject({ apiKey: 'previous-key' });
+    expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe('previous-key');
+  });
+
+  it('rejects a failed repair and lets an explicit clear settle the credential', async () => {
+    const values = new Map<string, string>();
+    const candidateWritten = Promise.withResolvers<void>();
+    const finishCandidateWrite = Promise.withResolvers<void>();
+    const recoveryError = new Error('delete failed');
+    let deleteCount = 0;
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      values.set(key, value);
+      candidateWritten.resolve();
+      await finishCandidateWrite.promise;
+    });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (++deleteCount <= 2) throw recoveryError;
+      values.delete(key);
+    });
+    const generation = beginNodeImageApiKeyAuthorization();
+    const saving = saveNodeImageApiKeyForGeneration(generation, 'canceled-key', 'nodeseek:alice', 'nodeseek:alice');
+    await candidateWritten.promise;
+    invalidateNodeImageApiKeyAuthorization();
+    finishCandidateWrite.resolve();
+    await expect(saving).rejects.toBe(recoveryError);
+
+    await expect(loadNodeImageApiKeyCredential()).rejects.toBe(recoveryError);
+    await expect(clearNodeImageApiKey()).resolves.toBe(true);
+
+    await expect(loadNodeImageApiKeyCredential()).resolves.toBeNull();
+    expect(values.has(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe(false);
+  });
+
+  it('repairs the stable baseline before a later authorization can save and roll back', async () => {
+    const values = new Map<string, string>([[NODEIMAGE_API_KEY_STORAGE_KEY, 'previous-key']]);
+    const firstCandidateWritten = Promise.withResolvers<void>();
+    const finishFirstCandidate = Promise.withResolvers<void>();
+    const nextCandidateWritten = Promise.withResolvers<void>();
+    const finishNextCandidate = Promise.withResolvers<void>();
+    const recoveryError = new Error('restore failed');
+    let writeCount = 0;
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      writeCount += 1;
+      if (writeCount === 2) throw recoveryError;
+      values.set(key, value);
+      if (writeCount === 1) {
+        firstCandidateWritten.resolve();
+        await finishFirstCandidate.promise;
+      } else if (value.includes('next-canceled-key')) {
+        nextCandidateWritten.resolve();
+        await finishNextCandidate.promise;
+      }
+    });
+    const firstGeneration = beginNodeImageApiKeyAuthorization();
+    const firstSaving = saveNodeImageApiKeyForGeneration(
+      firstGeneration,
+      'first-canceled-key',
+      'nodeseek:alice',
+      'nodeseek:alice'
+    );
+    await firstCandidateWritten.promise;
+    invalidateNodeImageApiKeyAuthorization();
+    finishFirstCandidate.resolve();
+    await expect(firstSaving).rejects.toBe(recoveryError);
+
+    const nextGeneration = beginNodeImageApiKeyAuthorization();
+    const nextSaving = saveNodeImageApiKeyForGeneration(
+      nextGeneration,
+      'next-canceled-key',
+      'nodeseek:alice',
+      'nodeseek:alice'
+    );
+    await nextCandidateWritten.promise;
+    invalidateNodeImageApiKeyAuthorization();
+    finishNextCandidate.resolve();
+    await expect(nextSaving).resolves.toBeUndefined();
+
+    await expect(loadNodeImageApiKey()).resolves.toBe('previous-key');
+    expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe('previous-key');
+  });
+
   it('restores the prior key when the NodeSeek epoch changes during persistence', async () => {
     const previousCredential = JSON.stringify({
       apiKey: 'previous-key',
@@ -120,34 +252,39 @@ describe('NodeImage credential persistence', () => {
     expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe(previousCredential);
   });
 
-  it('retries an old read after a newer key is saved', async () => {
-    const values = new Map<string, string>([[NODEIMAGE_API_KEY_STORAGE_KEY, 'old-key']]);
-    const firstReadStarted = Promise.withResolvers<void>();
-    const allowFirstRead = Promise.withResolvers<void>();
-    let readCount = 0;
-    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
-      readCount += 1;
-      const value = values.get(key) || null;
-      if (readCount === 1) {
-        firstReadStarted.resolve();
-        await allowFirstRead.promise;
-      }
-      return value;
-    });
-    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
-      values.set(key, value);
-    });
+  it.each(['same authorization', 'new authorization'])(
+    'retries an old read after a newer key is saved in the %s',
+    async (authorization) => {
+      const values = new Map<string, string>([[NODEIMAGE_API_KEY_STORAGE_KEY, 'old-key']]);
+      const firstReadStarted = Promise.withResolvers<void>();
+      const allowFirstRead = Promise.withResolvers<void>();
+      let readCount = 0;
+      vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+        readCount += 1;
+        const value = values.get(key) || null;
+        if (readCount === 1) {
+          firstReadStarted.resolve();
+          await allowFirstRead.promise;
+        }
+        return value;
+      });
+      vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+        values.set(key, value);
+      });
 
-    const loading = loadNodeImageApiKey();
-    await firstReadStarted.promise;
-    const generation = beginNodeImageApiKeyAuthorization();
-    const saving = saveNodeImageApiKeyForGeneration(generation, 'new-key', 'nodeseek:alice', 'nodeseek:alice');
-    await saving;
-    allowFirstRead.resolve();
+      const initialGeneration = beginNodeImageApiKeyAuthorization();
+      const loading = loadNodeImageApiKey();
+      await firstReadStarted.promise;
+      const generation =
+        authorization === 'new authorization' ? beginNodeImageApiKeyAuthorization() : initialGeneration;
+      const saving = saveNodeImageApiKeyForGeneration(generation, 'new-key', 'nodeseek:alice', 'nodeseek:alice');
+      await saving;
+      allowFirstRead.resolve();
 
-    await expect(loading).resolves.toBe('new-key');
-    expect(readCount).toBe(3);
-  });
+      await expect(loading).resolves.toBe('new-key');
+      expect(readCount).toBe(3);
+    }
+  );
 
   it('keeps a legacy plain-text key unverified until the user saves it again', async () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue('legacy-key');

@@ -30,6 +30,7 @@ import {
   releaseReadNetworkRuntimeGeneration,
   retainReadNetworkRuntimeGeneration
 } from '@/platform/network/networkProxy';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const AUDIO_TIME_UPDATE_INTERVAL_SECONDS = 1;
 
@@ -247,6 +248,10 @@ class TopicAudioSession {
     this.retryRequested.clear();
     this.snapshots.clear();
     this.sources.clear();
+  }
+
+  isDisposed() {
+    return this.disposed;
   }
 
   private load(id: string, playWhenReady: boolean) {
@@ -491,13 +496,22 @@ export function TopicAudioSessionProvider({
   runtimeGeneration: number;
 }) {
   const playback = useMediaPlaybackSession();
-  const [session] = useState(
-    () => new TopicAudioSession({ active, paused, runtimeGeneration }, playback || new MediaPlaybackSession())
+  const createSession = useCallback(
+    () => new TopicAudioSession({ active, paused, runtimeGeneration }, playback || new MediaPlaybackSession()),
+    [active, paused, playback, runtimeGeneration]
   );
+  const createSessionRef = useCommittedRef(createSession);
+  const [session, setSession] = useState(createSession);
+  useLayoutEffect(() => {
+    if (session.isDisposed()) {
+      setSession(createSessionRef.current());
+      return;
+    }
+    return () => session.dispose();
+  }, [createSessionRef, playback, session]);
   useLayoutEffect(() => {
     session.updateGate({ active, paused, runtimeGeneration });
   }, [active, paused, runtimeGeneration, session]);
-  useEffect(() => () => session.dispose(), [session]);
   return <TopicAudioSessionContext.Provider value={session}>{children}</TopicAudioSessionContext.Provider>;
 }
 

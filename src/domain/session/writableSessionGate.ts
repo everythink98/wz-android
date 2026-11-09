@@ -97,6 +97,9 @@ export async function ensureWritableSessionTicket(
   ) {
     throw new WritableSessionBlockedError('登录状态已变化，请重试', 'identity_changed');
   }
+  if (after.sourceEnabled === false) {
+    throw new WritableSessionBlockedError('当前来源已停用', 'source-disabled');
+  }
   return ticketFromSnapshot(after);
 }
 

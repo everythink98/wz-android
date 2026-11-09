@@ -407,6 +407,23 @@ describe('diagnostic traces', () => {
     expect(JSON.stringify(events())).not.toMatch(/nonce-secret|api-key-secret|payload-secret|nonce|apiKey|payload/);
   });
 
+  it('closes a trace before a writer can reenter its terminal transition', () => {
+    const trace = beginDiagnosticTrace('topic', 'open');
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+      if (lines.length !== 1) return;
+      hintDiagnosticOutcome(trace, 'failure', { reason: 'parse_empty' });
+      markDiagnosticStage(trace, 'apply');
+      finishDiagnosticTrace(trace, 'failure');
+    });
+
+    finishDiagnosticTrace(trace, 'success');
+
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toEqual(expect.objectContaining({ phase: 'finish', outcome: 'success' }));
+  });
+
   it('records only the classified NodeImage timeout result', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('credential', 'auth', {
@@ -592,12 +609,16 @@ describe('diagnostic traces', () => {
     const trace = beginDiagnosticTrace('network', 'request');
     const failure = new TypeError('Network request failed');
     const init: RequestInit = { method: 'GET' };
-    const fetcher = withDiagnosticFetcher(trace, async () => {
+    let receivedInit: RequestInit | undefined;
+    const fetcher = withDiagnosticFetcher(trace, async (_input, requestInit) => {
+      receivedInit = requestInit;
+      expect(diagnosticTraceForRequest(receivedInit)).toBe(trace);
       throw failure;
     });
 
     await expect(fetcher('https://example.com/private?token=ULTRA_FAKE_SECRET_9', init)).rejects.toBe(failure);
-    expect(diagnosticTraceForRequest(init)).toBeUndefined();
+    expect(receivedInit).toBeDefined();
+    expect(diagnosticTraceForRequest(receivedInit)).toBeUndefined();
 
     expect(
       events()

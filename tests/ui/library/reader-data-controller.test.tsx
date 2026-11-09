@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { useLayoutEffect } from 'react';
+import { createRoot } from 'test-renderer';
 import { QueryClient } from '@tanstack/react-query';
 import { createQueryTestWrapper } from '../QueryTestWrapper';
 import {
@@ -50,6 +52,106 @@ beforeEach(() => {
   mockExport.mockResolvedValue('{}');
 });
 describe('reader command optimistic persistence', () => {
+  it('keeps durable command invalidation after the observing runtime unmounts', async () => {
+    const pending = Promise.withResolvers<ReaderChange>();
+    mockCommit.mockReturnValueOnce(pending.promise);
+    const { hook, notify, client } = await setup();
+    const invalidate = jest.spyOn(client, 'invalidateQueries');
+    await act(async () => {
+      hook.result.current.commitReaderData(favorite);
+    });
+    await hook.unmount();
+    await act(async () => {
+      pending.resolve(added);
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['reader-library', 'favorites'] });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'keeps current reader hydration and commands after StrictMode retires a late %s load',
+    async (outcome) => {
+      const pending = Promise.withResolvers<ReaderState>();
+      mockLoad.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(createEmptyReaderState());
+      const notify = jest.fn();
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const Wrapper = createQueryTestWrapper(client);
+      let controller!: ReturnType<typeof useReaderRuntime>;
+      let setups = 0;
+      function Harness() {
+        controller = useReaderRuntime({ notify });
+        useLayoutEffect(() => {
+          setups += 1;
+        }, []);
+        return null;
+      }
+      const root = createRoot({ isStrictMode: true });
+      try {
+        await act(async () =>
+          root.render(
+            <Wrapper>
+              <Harness />
+            </Wrapper>
+          )
+        );
+        expect(setups).toBe(2);
+        expect(controller.readerStatus).toBe('ready');
+        await act(async () => {
+          if (outcome === 'success') pending.resolve(createEmptyReaderState());
+          else pending.reject(new Error('old reader load failure'));
+          controller.commitReaderData(favorite);
+        });
+        expect(mockLoad).toHaveBeenCalledTimes(2);
+        expect(mockCommit).toHaveBeenCalledTimes(1);
+        expect(controller.readerData.counts.favorites).toBe(1);
+        expect(notify).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve(createEmptyReaderState());
+        await act(async () => root.unmount());
+      }
+    }
+  );
+  it('finishes a dispatched reader command without notifying its retired runtime', async () => {
+    const pending = Promise.withResolvers<ReaderChange>();
+    mockCommit.mockReturnValueOnce(pending.promise);
+    const { hook, notify } = await setup();
+    await act(async () => {
+      hook.result.current.commitReaderData(favorite);
+    });
+    expect(mockCommit).toHaveBeenCalledTimes(1);
+    await hook.unmount();
+    await act(async () => {
+      pending.reject(new Error('retired reader failure'));
+    });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('keeps a held reader command and uses the latest notice without reloading for callback changes', async () => {
+    const pending = Promise.withResolvers<ReaderChange>();
+    mockCommit.mockReturnValueOnce(pending.promise);
+    const firstNotify = jest.fn();
+    const latestNotify = jest.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const hook = await renderHook(
+      ({ notify }: Parameters<typeof useReaderRuntime>[0]) => useReaderRuntime({ notify }),
+      {
+        initialProps: { notify: firstNotify },
+        wrapper: createQueryTestWrapper(client)
+      }
+    );
+    await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
+    await act(async () => {
+      hook.result.current.commitReaderData(favorite);
+    });
+    await hook.rerender({ notify: latestNotify });
+    expect(mockLoad).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.reject(new Error('current reader failure'));
+    });
+    expect(firstNotify).not.toHaveBeenCalled();
+    expect(latestNotify).toHaveBeenCalledWith('current reader failure');
+  });
+
   it('shows favorite intent immediately and restores committed state on failure', async () => {
     const save = Promise.withResolvers<ReaderChange>();
     mockCommit.mockReturnValueOnce(save.promise);

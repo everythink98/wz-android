@@ -1,7 +1,11 @@
 import { mockFetchSvgDocument } from '../svgDocumentFixture';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { createRoot as createObservedRoot } from 'test-renderer';
+import { createEmptyReaderData as createObservedReaderData } from '@/domain/reader/readerData';
+import { ReaderStyleProvider as ObservedReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { createTheme as createObservedTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor, within } from '../render';
-import React from 'react';
+import React, { useLayoutEffect as useObservedLayoutEffect } from 'react';
 import { NativeModules, PixelRatio, Pressable, StyleSheet, Text } from 'react-native';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
@@ -1139,7 +1143,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('ignores a late display event from the failed request after retry', async () => {
+  it('settles the retried preview while ignoring callbacks from the failed request', async () => {
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
     try {
       const view = await render(
@@ -1150,6 +1154,7 @@ describe('Image preview', () => {
       );
       const failedImage = view.getByTestId('preview-image-0');
       const lateDisplay = failedImage.props.onDisplay as () => void;
+      const lateError: (() => void) | undefined = failedImage.props.onError;
       await fireEvent(failedImage, 'error');
       await waitFor(() => expect(view.getByText('图片加载失败')).toBeTruthy());
       await fireEvent.press(view.getByLabelText('重试加载图片'));
@@ -1157,6 +1162,12 @@ describe('Image preview', () => {
       await act(async () => lateDisplay());
 
       expect(view.getByText('图片加载中...')).toBeTruthy();
+      await fireEvent(view.getByTestId('preview-image-0'), 'display');
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      await act(async () => lateError?.());
+      expect(view.queryByText('图片加载失败')).toBeNull();
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally {
       fetchSpy.mockRestore();
     }
@@ -2284,5 +2295,106 @@ describe('Image preview', () => {
     expect(onSelect).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(view.getByText('2/3')).toBeTruthy();
+  });
+  it('settles the current preview source after effects rebuild', async () => {
+    for (const strict of [false, true]) {
+      let setups = 0;
+      let retiredDisplay: (() => void) | undefined;
+      const settings = createObservedReaderData().settings;
+      function Harness() {
+        useObservedLayoutEffect(() => {
+          setups += 1;
+          const [image] = root.container.queryAll((node) => node.props.testID === 'preview-image-0');
+          if (!retiredDisplay) retiredDisplay = image?.props.onDisplay;
+        }, []);
+        return (
+          <ImagePreviewModal
+            preview={previewProps([previewItem('https://img.example.com/preview-replay-' + strict + '.png')])}
+            {...callbacks()}
+          />
+        );
+      }
+      const root = createObservedRoot({ isStrictMode: strict });
+      try {
+        await act(async () =>
+          root.render(
+            <ObservedReaderStyles value={{ settings, theme: createObservedTheme(settings) }}>
+              <Harness />
+            </ObservedReaderStyles>
+          )
+        );
+        expect(setups).toBe(strict ? 2 : 1);
+        const loading = () => root.container.queryAll((node) => node.props.children === '图片加载中...');
+        expect(loading()).toHaveLength(1);
+        if (strict) {
+          expect(retiredDisplay).toEqual(expect.any(Function));
+          await act(async () => retiredDisplay?.());
+          expect(loading()).toHaveLength(1);
+        }
+        const [image] = root.container.queryAll((node) => node.props.testID === 'preview-image-0');
+        if (!image) throw new Error('Expected current preview image');
+        await act(async () => image.props.onDisplay());
+        expect(loading()).toHaveLength(0);
+      } finally {
+        await act(async () => root.unmount());
+      }
+    }
+  });
+  it('keeps the current animated poster ready when a retired replay owner reports an error', async () => {
+    const url = 'https://example.com/replay-cached-animation.svg';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
+      async () =>
+        new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="460"><animate attributeName="opacity" /></svg>',
+          {
+            headers: { 'content-type': 'image/svg+xml' }
+          }
+        )
+    );
+    try {
+      const seed = await render(<ImagePreviewModal preview={previewProps([previewItem(url)])} {...callbacks()} />);
+      await fireEvent(seed.getByTestId('preview-image-0'), 'error');
+      await waitFor(() => expect(seed.getByTestId('compatible-svg-document-view')).toBeTruthy());
+      await seed.unmount();
+      let retiredError: (() => void) | undefined;
+      let setups = 0;
+      const settings = createObservedReaderData().settings;
+      function Harness() {
+        useObservedLayoutEffect(() => {
+          setups += 1;
+          const [poster] = root.container.queryAll((node) => node.props.testID === 'preview-continuity-0');
+          if (!retiredError) retiredError = poster?.props.onError;
+        }, []);
+        return <ImagePreviewModal preview={previewProps([previewItem(url)])} {...callbacks()} />;
+      }
+      const root = createObservedRoot({ isStrictMode: true });
+      try {
+        await act(async () =>
+          root.render(
+            <ObservedReaderStyles value={{ settings, theme: createObservedTheme(settings) }}>
+              <Harness />
+            </ObservedReaderStyles>
+          )
+        );
+        expect(setups).toBe(2);
+        expect(retiredError).toEqual(expect.any(Function));
+        const [poster] = root.container.queryAll((node) => node.props.testID === 'preview-continuity-0');
+        const document = () =>
+          root.container.queryAll((node) => node.props.testID === 'compatible-svg-document-view')[0];
+        const [zoom] = root.container.queryAll((node) => node.props.testID === 'preview-zoom-0');
+        if (!poster || !zoom || !document()) throw new Error('Expected current animated preview');
+        await act(async () => poster.props.onDisplay());
+        await act(async () => document().props.onMessage({ nativeEvent: { data: 'wz-svg-ready' } }));
+        await act(async () => zoom.props.onPinchStart({}));
+        expect(StyleSheet.flatten(document().props.style).opacity).toBe(0);
+        await act(async () => retiredError?.());
+        expect(StyleSheet.flatten(document().props.style).opacity).toBe(0);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        await act(async () => root.unmount());
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

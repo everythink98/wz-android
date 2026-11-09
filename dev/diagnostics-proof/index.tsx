@@ -39,6 +39,7 @@ function DiagnosticProofApp() {
         const native = nativeDiagnosticJournal();
         if (!native?.snapshot) throw new Error('Diagnostic snapshot unavailable');
         const snapshot = await native.snapshot();
+        if (canceled) return;
         if (!snapshot || typeof snapshot !== 'object') throw new Error('Invalid diagnostic snapshot');
         const file = new File(Paths.cache, 'diagnostic-proof.json');
         file.create({ overwrite: true });
@@ -71,7 +72,9 @@ function DiagnosticProofApp() {
         }
       }, 750);
     };
-    void start().catch(() => setStatus('Diagnostic proof setup failed'));
+    void start().catch(() => {
+      if (!canceled) setStatus('Diagnostic proof setup failed');
+    });
     return () => {
       canceled = true;
       if (timer) clearTimeout(timer);

@@ -1,9 +1,98 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTopicEditTransport } from '../../../tests/helpers/topicEditingTransport';
 import { draftFromTopicEdit } from '@/domain/forum/topicComposer';
 import { editLinuxDoTopic, loadLinuxDoTopicEditContext } from './topicEditing';
 
 describe('linux.do own opening edits', () => {
+  it('holds the body PUT until the confirmed metadata checkpoint finishes', async () => {
+    const transport = createTopicEditTransport('linuxdo');
+    const context = await loadLinuxDoTopicEditContext({
+      ...transport,
+      userAgent: 'test',
+      topicId: '123',
+      identityKey: 'linuxdo:42'
+    });
+    vi.useFakeTimers();
+    const pending = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const draft = { ...draftFromTopicEdit(context), title: '新标题', body: '新正文' };
+    let checkpoints = 0;
+    const result = editLinuxDoTopic({
+      ...transport,
+      userAgent: 'test',
+      context,
+      draft,
+      checkpoint: async () => {
+        if (++checkpoints === 1) {
+          entered.resolve();
+          await pending.promise;
+        }
+      }
+    });
+    try {
+      await entered.promise;
+      expect(transport.writes().map((row) => row.path)).toEqual(['/t/-/123.json']);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(transport.writes().map((row) => row.path)).toEqual(['/t/-/123.json']);
+      pending.resolve();
+      expect(await result).toMatchObject({ status: 'saved', confirmed: { title: draft.title, body: draft.body } });
+      expect(transport.writes().map((row) => row.path)).toEqual(['/t/-/123.json', '/posts/789.json']);
+    } finally {
+      pending.resolve();
+      await Promise.allSettled([result]);
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains confirmed metadata as partial when the body is rejected before dispatch', async () => {
+    const transport = createTopicEditTransport('linuxdo');
+    const context = await loadLinuxDoTopicEditContext({
+      ...transport,
+      userAgent: 'test',
+      topicId: '123',
+      identityKey: 'linuxdo:42'
+    });
+    const draft = { ...draftFromTopicEdit(context), title: '新标题', body: '新正文' };
+    const fetcher = vi.fn(transport.fetcher).mockImplementation(async (url, init) => {
+      if (new URL(url).pathname === '/session/csrf' && transport.writes().length > 0)
+        throw new Error('body preparation failed');
+      return transport.fetcher(url, init);
+    });
+    const result = await editLinuxDoTopic({
+      ...transport,
+      fetcher,
+      userAgent: 'test',
+      context,
+      draft,
+      checkpoint: async () => {}
+    });
+    expect(result).toMatchObject({ status: 'partial', confirmed: { title: draft.title } });
+    expect(transport.writes().map((row) => row.path)).toEqual(['/t/-/123.json']);
+  });
+
+  it('retains both confirmed receipts as unknown when the body checkpoint cannot be persisted', async () => {
+    const transport = createTopicEditTransport('linuxdo');
+    const context = await loadLinuxDoTopicEditContext({
+      ...transport,
+      userAgent: 'test',
+      topicId: '123',
+      identityKey: 'linuxdo:42'
+    });
+    const draft = { ...draftFromTopicEdit(context), title: '新标题', body: '新正文' };
+    let checkpoints = 0;
+    const result = await editLinuxDoTopic({
+      ...transport,
+      userAgent: 'test',
+      context,
+      draft,
+      checkpoint: async () => {
+        if (++checkpoints === 2) throw new Error('body checkpoint failed');
+      }
+    });
+    expect(result).toMatchObject({ status: 'unknown', confirmed: { title: draft.title, body: draft.body } });
+    expect(transport.writes().map((row) => row.path)).toEqual(['/t/-/123.json', '/posts/789.json']);
+  });
+
   it('does not expose private messages through the main-topic editing entry', async () => {
     const transport = createTopicEditTransport('linuxdo');
     await expect(

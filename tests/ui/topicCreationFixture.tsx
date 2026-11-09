@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
 import { Button, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -77,6 +77,16 @@ export function TopicCreationFixture({
   const [ready, setReady] = useState(false);
   const [failure, setFailure] = useState('');
   const navigation = useNavigationContainerRef<RootStackParamList>();
+  const seedJob = useRef<{ token: string; promise: Promise<void> } | null>(null);
+  const navigationWaiters = useRef<Set<() => void> | null>(null);
+  useEffect(() => {
+    const owned = new Set<() => void>();
+    navigationWaiters.current = owned;
+    return () => {
+      if (navigationWaiters.current === owned) navigationWaiters.current = null;
+      for (const finish of owned) finish();
+    };
+  }, []);
   const sessions = useMemo(() => {
     const states = createSiteSessionStates();
     for (const site of TOPIC_PROOF_SOURCES)
@@ -110,14 +120,32 @@ export function TopicCreationFixture({
       fetcher: async (input, init) => {
         if (editTransport) return editTransport.fetcher(input, init);
         if (kind === 'inactive-receipt' && init?.method === 'POST') {
+          const owned = navigationWaiters.current;
           const response = await transport.fetcher(input, init);
+          if (!owned || navigationWaiters.current !== owned || init.signal?.aborted) return response;
           // An incoming topic link retains the submitting route below a new native screen.
           await new Promise<void>((resolve) => {
-            const unsubscribe = navigation.addListener('state', () => {
-              if (navigation.getCurrentRoute()?.name !== 'Topic') return;
-              unsubscribe();
-              setTimeout(resolve, 0);
+            let unsubscribe: (() => void) | undefined;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const finish = () => {
+              if (!owned.delete(finish)) return;
+              unsubscribe?.();
+              if (timer !== undefined) clearTimeout(timer);
+              init.signal?.removeEventListener('abort', finish);
+              resolve();
+            };
+            owned.add(finish);
+            unsubscribe = navigation.addListener('state', () => {
+              if (!owned.has(finish) || timer !== undefined || navigation.getCurrentRoute()?.name !== 'Topic') return;
+              unsubscribe?.();
+              unsubscribe = undefined;
+              timer = setTimeout(finish, 0);
             });
+            init.signal?.addEventListener('abort', finish, { once: true });
+            if (init.signal?.aborted || navigationWaiters.current !== owned) {
+              finish();
+              return;
+            }
             navigation.navigate('Topic', {
               topic: {
                 id: '456',
@@ -170,71 +198,85 @@ export function TopicCreationFixture({
   }, [kind, navigation, onNotice, sessions, source, transport, editTransport]);
   useEffect(() => {
     let active = true;
-    void (async () => {
-      const seeded = new File(Paths.cache, `topic-proof-${token}.seeded`);
-      if (seeded.exists) {
-        if (active) setReady(true);
-        return;
-      }
-      for (const site of TOPIC_PROOF_SOURCES) {
-        const identity = siteSessionIdentityKey(sessions[site]);
-        if (await loadTopicDraft(site, identity)) continue;
-        // Per-run synthetic identities keep all existing local accounts/drafts untouched.
-        // A completed run is never reused as a new scenario token.
-        if (await readTopicSubmissionAttempt(site, identity)) continue;
-        const draft = {
-          ...emptyTopicDraft(site, identity),
-          title: topicProofTitle(site),
-          body: topicProofBody(site),
-          categoryId: site === 'nodeseek' ? 'tech' : site === 'linuxdo' ? '4' : '213'
-        };
-        if (draft.source === 'yaohuo' && ['gift', 'poll', 'resources', 'files'].includes(kind)) {
-          draft.kind = kind as YaohuoTopicKind;
-          draft.gift = { total: '2000', perPerson: '200' };
-          draft.poll = { options: ['选项一', '选项二', '选项三'], giftEnabled: false, total: '', perPerson: '' };
-          draft.resources = [
-            {
-              title: '本地协议样本',
-              url: 'https://example.invalid/resource',
-              size: '1KB',
-              extension: 'txt',
-              description: 'Mock only'
-            }
-          ];
-          if (kind === 'files') {
-            const file = new File(Paths.cache, `topic-proof-${token}.txt`);
-            file.write('Local file; never uploaded.');
-            draft.attachments = [
-              await persistTopicDraftAttachment({
-                draft,
-                kind: 'yaohuo-file',
-                asset: {
-                  name: 'topic-proof.txt',
-                  uri: file.uri,
-                  mimeType: 'text/plain',
-                  size: file.size
-                }
-              })
+    let job = seedJob.current;
+    if (!job || job.token !== token) {
+      const promise = (async () => {
+        const seeded = new File(Paths.cache, `topic-proof-${token}.seeded`);
+        if (seeded.exists) {
+          return;
+        }
+        for (const site of TOPIC_PROOF_SOURCES) {
+          const identity = siteSessionIdentityKey(sessions[site]);
+          if (await loadTopicDraft(site, identity)) continue;
+          // Per-run synthetic identities keep all existing local accounts/drafts untouched.
+          // A completed run is never reused as a new scenario token.
+          if (await readTopicSubmissionAttempt(site, identity)) continue;
+          const draft = {
+            ...emptyTopicDraft(site, identity),
+            title: topicProofTitle(site),
+            body: topicProofBody(site),
+            categoryId: site === 'nodeseek' ? 'tech' : site === 'linuxdo' ? '4' : '213'
+          };
+          if (draft.source === 'yaohuo' && ['gift', 'poll', 'resources', 'files'].includes(kind)) {
+            draft.kind = kind as YaohuoTopicKind;
+            draft.gift = { total: '2000', perPerson: '200' };
+            draft.poll = { options: ['选项一', '选项二', '选项三'], giftEnabled: false, total: '', perPerson: '' };
+            draft.resources = [
+              {
+                title: '本地协议样本',
+                url: 'https://example.invalid/resource',
+                size: '1KB',
+                extension: 'txt',
+                description: 'Mock only'
+              }
             ];
+            if (kind === 'files') {
+              const file = new File(Paths.cache, `topic-proof-${token}.txt`);
+              file.write('Local file; never uploaded.');
+              draft.attachments = [
+                await persistTopicDraftAttachment({
+                  draft,
+                  kind: 'yaohuo-file',
+                  asset: {
+                    name: 'topic-proof.txt',
+                    uri: file.uri,
+                    mimeType: 'text/plain',
+                    size: file.size
+                  }
+                })
+              ];
+            }
+          }
+          if (!(await saveTopicDraft(draft))) throw new Error('Proof draft could not be seeded');
+          if (editTransport && site === source) {
+            if (
+              !(await saveTopicDraft({
+                ...draft,
+                id: `${draft.id}-other`,
+                edit: { topicId: '456', original: editableTopicFields(draft) }
+              }))
+            )
+              throw new Error('Other edit draft could not be seeded');
           }
         }
-        if (!(await saveTopicDraft(draft))) throw new Error('Proof draft could not be seeded');
-        if (editTransport && site === source) {
-          if (
-            !(await saveTopicDraft({
-              ...draft,
-              id: `${draft.id}-other`,
-              edit: { topicId: '456', original: editableTopicFields(draft) }
-            }))
-          )
-            throw new Error('Other edit draft could not be seeded');
+        seeded.write('seeded');
+      })();
+      job = { token, promise };
+      seedJob.current = job;
+    }
+    const current = job;
+    void current.promise
+      .then(
+        () => {
+          if (active) setReady(true);
+        },
+        (cause: unknown) => {
+          if (active) setFailure(String(cause));
         }
-      }
-      seeded.write('seeded');
-      if (active) setReady(true);
-    })().catch((cause) => {
-      if (active) setFailure(String(cause));
-    });
+      )
+      .finally(() => {
+        if (seedJob.current === current) seedJob.current = null;
+      });
     return () => {
       active = false;
     };

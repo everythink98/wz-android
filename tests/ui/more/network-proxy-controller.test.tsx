@@ -1,16 +1,20 @@
+import { useEffect } from 'react';
+import { createRoot } from 'test-renderer';
+import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, renderHook, waitFor, type RenderHookResult } from '@testing-library/react-native';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { fetchWithTimeout, withRequestBeforeSend } from '@/platform/network/request';
+import { fetchWithTimeout, RequestCanceledError, withRequestBeforeSend } from '@/platform/network/request';
+import { createAppQueryClient } from '@/platform/query/serverState';
 import * as SecureStore from 'expo-secure-store';
 import { getLinuxDoCurrentUserIdentity } from '@/sources/linuxdo/account';
 import { createLinuxDoReadingSender } from '@/sources/linuxdo/reading';
 import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { AppState } from 'react-native';
+import { AppState, NativeModules } from 'react-native';
 import { linuxDoNotificationAdapter } from '@/sources/discourseNotifications';
 import { createNotificationGateway } from '@/sources/notificationGateway';
 import {
@@ -802,4 +806,498 @@ describe('network proxy controller', () => {
       }
     }
   );
+});
+
+describe('network proxy lifetime ownership', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockLoadNetworkProxyState.mockResolvedValue({ enabled: false, activeId: null, profiles: [] });
+    mockSaveNetworkProxyState.mockImplementation(async (state) => state);
+    mockApplyNetworkProxy.mockResolvedValue({ ok: true });
+  });
+
+  it('keeps one bootstrap read deadline when the current StrictMode observer adopts it', async () => {
+    jest.useFakeTimers();
+    const loading = deferred<NetworkProxyState>();
+    mockLoadNetworkProxyState.mockReturnValue(loading.promise);
+    const notify = jest.fn();
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+    const requests: Promise<unknown>[] = [];
+    const failures: unknown[] = [];
+    function Harness() {
+      const runtime = useNetworkProxyRuntime({ notify, baseFetcher });
+      useEffect(() => {
+        requests.push(
+          runtime.networkProxyFetcher('https://example.invalid/owned').catch((error) => {
+            failures.push(error);
+          })
+        );
+      }, [runtime.networkProxyFetcher]);
+      return null;
+    }
+    const root = createRoot({ isStrictMode: true });
+    try {
+      await act(() => root.render(<Harness />));
+      expect(requests).toHaveLength(2);
+      expect(mockLoadNetworkProxyState).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(3_000);
+        await Promise.allSettled(requests);
+      });
+      expect(failures).toHaveLength(2);
+      expect(failures[0]).toMatchObject({ message: '代理运行时已结束' });
+      expect(failures[1]).toMatchObject({ message: expect.stringContaining('代理配置读取超时') });
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(mockApplyNetworkProxy).not.toHaveBeenCalled();
+      expect(baseFetcher).not.toHaveBeenCalled();
+    } finally {
+      try {
+        await act(async () => {
+          loading.resolve({ enabled: false, activeId: null, profiles: [] });
+          await Promise.allSettled(requests);
+        });
+        await act(() => root.unmount());
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  });
+
+  it.each([false, true])(
+    'publishes a completed native probe only to its current observer (retired: %s)',
+    async (retired) => {
+      const probing = deferred<{ ok: boolean; latencyMs: number }>();
+      const previousModule = NativeModules.NetworkProxyModule;
+      const firstNotify = jest.fn();
+      const currentNotify = jest.fn();
+      const hook = await renderHook(
+        ({ notify }: { notify: (message: string) => void }) => useNetworkProxyRuntime({ notify }),
+        {
+          initialProps: { notify: firstNotify }
+        }
+      );
+      let task: Promise<unknown> | undefined;
+      try {
+        NativeModules.NetworkProxyModule = { ...previousModule, testProxy: () => probing.promise };
+        await waitFor(() => expect(hook.result.current.applyStatus).toBe('disabled'));
+        await act(async () => {
+          task = hook.result.current.testProxyProfile(profileA);
+        });
+        await hook.rerender({ notify: currentNotify });
+        if (retired) await hook.unmount();
+        await act(async () => {
+          probing.resolve({ ok: true, latencyMs: 42 });
+          await Promise.allSettled([task]);
+        });
+        expect(firstNotify).not.toHaveBeenCalled();
+        expect(currentNotify).toHaveBeenCalledTimes(retired ? 0 : 1);
+        if (retired) await expect(task).rejects.toThrow('代理运行时已结束');
+        else await expect(task).resolves.toMatchObject({ ok: true, latencyMs: 42 });
+      } finally {
+        try {
+          await act(async () => {
+            probing.resolve({ ok: true, latencyMs: 42 });
+            await Promise.allSettled([task]);
+          });
+          await hook.unmount();
+        } finally {
+          NativeModules.NetworkProxyModule = previousModule;
+        }
+      }
+    }
+  );
+
+  it('retires an owned waiter while the physical native startup apply is still pending', async () => {
+    const applying = deferred<unknown>();
+    mockLoadNetworkProxyState.mockResolvedValue({ enabled: true, activeId: profileA.id, profiles: [profileA] });
+    mockApplyNetworkProxy.mockReturnValueOnce(applying.promise);
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+    let outcome = 'pending';
+    let request: Promise<unknown> | undefined;
+    try {
+      await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1));
+      request = hook.result.current.networkProxyFetcher('https://example.invalid/owned').then(
+        () => {
+          outcome = 'resolved';
+        },
+        () => {
+          outcome = 'rejected';
+        }
+      );
+      await hook.unmount();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(outcome).toBe('rejected');
+      expect(baseFetcher).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        applying.resolve({ ok: true });
+        await Promise.allSettled([request]);
+      });
+      await hook.unmount();
+    }
+  });
+
+  it('binds the replayed effect waiter to its new storage and apply lifetime', async () => {
+    const loading = deferred<NetworkProxyState>();
+    const applying = deferred<unknown>();
+    mockLoadNetworkProxyState.mockReturnValue(loading.promise);
+    mockApplyNetworkProxy.mockReturnValue(applying.promise);
+    const notify = jest.fn();
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+    const outcomes: string[] = [];
+    const requests: Promise<unknown>[] = [];
+    function Harness() {
+      const runtime = useNetworkProxyRuntime({ notify, baseFetcher });
+      useEffect(() => {
+        const index = outcomes.length;
+        outcomes.push('pending');
+        requests.push(
+          runtime.networkProxyFetcher('https://example.invalid/owned').then(
+            () => {
+              outcomes[index] = 'resolved';
+            },
+            () => {
+              outcomes[index] = 'rejected';
+            }
+          )
+        );
+      }, [runtime.networkProxyFetcher]);
+      return null;
+    }
+    const root = createRoot({ isStrictMode: true });
+    try {
+      await act(() => root.render(<Harness />));
+      expect(outcomes).toHaveLength(2);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(outcomes).toEqual(['rejected', 'pending']);
+      expect(baseFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        loading.resolve({ enabled: false, activeId: null, profiles: [] });
+      });
+      await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1));
+      expect(outcomes).toEqual(['rejected', 'pending']);
+      expect(baseFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        applying.resolve({ ok: true });
+        await requests[1];
+      });
+      expect(outcomes).toEqual(['rejected', 'resolved']);
+      expect(baseFetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        loading.resolve({ enabled: false, activeId: null, profiles: [] });
+        applying.resolve({ ok: true });
+        await Promise.allSettled(requests);
+      });
+      await act(() => root.unmount());
+    }
+  });
+
+  it('does not enqueue native work from a durable save after its runtime is retired', async () => {
+    const saving = deferred<NetworkProxyState>();
+    const notify = jest.fn();
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
+    let task: Promise<void> | undefined;
+    let savedState: NetworkProxyState | undefined;
+    try {
+      await waitFor(() => expect(hook.result.current.applyStatus).toBe('disabled'));
+      mockSaveNetworkProxyState.mockReturnValueOnce(saving.promise);
+      await act(async () => {
+        task = hook.result.current.upsertProxyProfile(profileA);
+      });
+      await waitFor(() => expect(mockSaveNetworkProxyState).toHaveBeenCalledTimes(1));
+      const persisted = mockSaveNetworkProxyState.mock.calls[0][0];
+      savedState = persisted;
+      const appliedBeforeRetirement = mockApplyNetworkProxy.mock.calls.length;
+      await hook.unmount();
+      await act(async () => {
+        saving.resolve(persisted);
+        await Promise.allSettled([task]);
+      });
+      expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(appliedBeforeRetirement);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        saving.resolve(savedState ?? { enabled: false, activeId: null, profiles: [] });
+        await Promise.allSettled([task]);
+      });
+      await hook.unmount();
+    }
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'waits for an older runtime durable %s before authorizing its replacement',
+    async (commitOutcome) => {
+      let disk: NetworkProxyState = { enabled: true, activeId: profileA.id, profiles: [profileA, profileB] };
+      const saving = deferred<NetworkProxyState>();
+      mockLoadNetworkProxyState.mockImplementation(async () => disk);
+      mockSaveNetworkProxyState.mockImplementationOnce(() =>
+        saving.promise.then((state) => {
+          disk = state;
+          return state;
+        })
+      );
+      const first = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+      const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+      let replacement: RenderHookResult<ReturnType<typeof useNetworkProxyRuntime>, void> | undefined;
+      let task: Promise<void> | undefined;
+      let request: Promise<unknown> | undefined;
+      let persisted: NetworkProxyState | undefined;
+      let outcome = 'pending';
+      try {
+        await waitFor(() => expect(first.result.current.applyStatus).toBe('applied'));
+        await act(async () => {
+          task = first.result.current.selectProxyProfile(profileB.id);
+        });
+        await waitFor(() => expect(mockSaveNetworkProxyState).toHaveBeenCalledTimes(1));
+        persisted = mockSaveNetworkProxyState.mock.calls[0][0];
+        await first.unmount();
+        replacement = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+        request = replacement.result.current.networkProxyFetcher('https://example.invalid/current').then(
+          () => {
+            outcome = 'resolved';
+          },
+          () => {
+            outcome = 'rejected';
+          }
+        );
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(outcome).toBe('pending');
+        expect(baseFetcher).not.toHaveBeenCalled();
+        const committed = persisted;
+        await act(async () => {
+          if (commitOutcome === 'success') saving.resolve(committed);
+          else saving.reject(new Error('controlled durable write failure'));
+          await Promise.allSettled([task, request]);
+        });
+        expect(replacement.result.current.proxyState.activeId).toBe(
+          commitOutcome === 'success' ? profileB.id : profileA.id
+        );
+        expect(outcome).toBe('resolved');
+        expect(baseFetcher).toHaveBeenCalledTimes(1);
+      } finally {
+        await act(async () => {
+          saving.resolve(persisted ?? disk);
+          await Promise.allSettled([task, request]);
+        });
+        await first.unmount();
+        await replacement?.unmount();
+      }
+    }
+  );
+
+  it('does not dispatch a queued edit after its runtime retires during the preceding durable save', async () => {
+    const saving = deferred<NetworkProxyState>();
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    const tasks: Promise<void>[] = [];
+    let persisted: NetworkProxyState | undefined;
+    try {
+      await waitFor(() => expect(hook.result.current.applyStatus).toBe('disabled'));
+      mockSaveNetworkProxyState.mockReturnValueOnce(saving.promise);
+      await act(async () => {
+        tasks.push(hook.result.current.upsertProxyProfile(profileA));
+      });
+      await waitFor(() => expect(mockSaveNetworkProxyState).toHaveBeenCalledTimes(1));
+      persisted = mockSaveNetworkProxyState.mock.calls[0][0];
+      await act(async () => {
+        tasks.push(hook.result.current.upsertProxyProfile(profileB));
+      });
+      await hook.unmount();
+      const committed = persisted;
+      await act(async () => {
+        saving.resolve(committed);
+        await Promise.allSettled(tasks);
+      });
+      expect(mockSaveNetworkProxyState).toHaveBeenCalledTimes(1);
+      expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        saving.resolve(persisted ?? { enabled: false, activeId: null, profiles: [] });
+        await Promise.allSettled(tasks);
+      });
+      await hook.unmount();
+    }
+  });
+
+  it('keeps a replacement gated behind an already dispatched native apply authority', async () => {
+    const oldApply = deferred<unknown>();
+    let nativeQueue: Promise<void> = Promise.resolve();
+    const started: (string | null)[] = [];
+    mockApplyNetworkProxy.mockImplementation((profile) => {
+      const task = nativeQueue.then(async () => {
+        started.push(profile?.id ?? null);
+        if (started.length === 1) await oldApply.promise;
+        return { ok: true };
+      });
+      nativeQueue = task.then(() => undefined);
+      return task;
+    });
+    mockLoadNetworkProxyState
+      .mockResolvedValueOnce({ enabled: true, activeId: profileA.id, profiles: [profileA] })
+      .mockResolvedValueOnce({ enabled: true, activeId: profileB.id, profiles: [profileB] });
+    const first = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+    let replacement: RenderHookResult<ReturnType<typeof useNetworkProxyRuntime>, void> | undefined;
+    let request: Promise<unknown> | undefined;
+    let settled = false;
+    try {
+      await waitFor(() => expect(started).toEqual([profileA.id]));
+      await first.unmount();
+      replacement = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+      request = replacement.result.current.networkProxyFetcher('https://example.invalid/current').then(() => {
+        settled = true;
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(settled).toBe(false);
+      expect(started).toEqual([profileA.id]);
+      expect(baseFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        oldApply.resolve({ ok: true });
+        await request;
+      });
+      expect(started).toEqual([profileA.id, profileB.id]);
+      expect(settled).toBe(true);
+    } finally {
+      await act(async () => {
+        oldApply.resolve({ ok: true });
+        await Promise.allSettled([request, nativeQueue]);
+      });
+      await first.unmount();
+      await replacement?.unmount();
+    }
+  });
+});
+
+describe('network proxy child observer ownership', () => {
+  it('rebinds a child Query observer without retrying a retired proxy request', async () => {
+    jest.clearAllMocks();
+    const loading = deferred<NetworkProxyState>();
+    const applying = deferred<unknown>();
+    mockLoadNetworkProxyState.mockReturnValue(loading.promise);
+    mockApplyNetworkProxy.mockReturnValue(applying.promise);
+    const client = createAppQueryClient();
+    const notify = jest.fn();
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('ready'));
+    let latest: { status: string; data: unknown; error: unknown } = { status: 'pending', data: undefined, error: null };
+    function Consumer({ fetcher }: { fetcher: import('@/platform/network/request').Fetcher }) {
+      const query = useQuery({
+        queryKey: ['network-lifetime-read'],
+        queryFn: async ({ signal }) => {
+          const currentRead = withRequestBeforeSend(fetcher, () => {
+            if (signal.aborted) throw new RequestCanceledError();
+          });
+          const response = await fetchWithTimeout(
+            'https://example.invalid/query',
+            {},
+            { fetcher: currentRead, signal }
+          );
+          return response.text();
+        }
+      });
+      latest = { status: query.status, data: query.data, error: query.error };
+      return null;
+    }
+    function Parent() {
+      const runtime = useNetworkProxyRuntime({ notify, baseFetcher });
+      return (
+        <QueryClientProvider client={client}>
+          <Consumer fetcher={runtime.networkProxyFetcher} />
+        </QueryClientProvider>
+      );
+    }
+    const root = createRoot({ isStrictMode: true });
+    try {
+      await act(() => root.render(<Parent />));
+      expect(latest).toMatchObject({ status: 'pending', error: null });
+      expect(baseFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        loading.resolve({ enabled: false, activeId: null, profiles: [] });
+      });
+      await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1));
+      expect(latest).toMatchObject({ status: 'pending', error: null });
+      expect(baseFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        applying.resolve({ ok: true });
+      });
+      await waitFor(() => expect(latest).toMatchObject({ status: 'success', data: 'ready', error: null }));
+      expect(baseFetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      try {
+        await act(async () => {
+          loading.resolve({ enabled: false, activeId: null, profiles: [] });
+          applying.resolve({ ok: true });
+          root.unmount();
+        });
+      } finally {
+        client.clear();
+      }
+    }
+  });
+
+  it('lets a replayed child await the parent runtime bootstrap', async () => {
+    jest.clearAllMocks();
+    const loading = deferred<NetworkProxyState>();
+    const applying = deferred<unknown>();
+    mockLoadNetworkProxyState.mockReturnValue(loading.promise);
+    mockSaveNetworkProxyState.mockImplementation(async (state) => state);
+    mockApplyNetworkProxy.mockReturnValue(applying.promise);
+    const notify = jest.fn();
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+    const outcomes: string[] = [];
+    const requests: Promise<unknown>[] = [];
+    function Consumer({ fetcher }: { fetcher: import('@/platform/network/request').Fetcher }) {
+      useEffect(() => {
+        const index = outcomes.length;
+        outcomes.push('pending');
+        requests.push(
+          fetcher('https://example.invalid/owned').then(
+            () => {
+              outcomes[index] = 'resolved';
+            },
+            () => {
+              outcomes[index] = 'rejected';
+            }
+          )
+        );
+      }, [fetcher]);
+      return null;
+    }
+    function Parent() {
+      const runtime = useNetworkProxyRuntime({ notify, baseFetcher });
+      return <Consumer fetcher={runtime.networkProxyFetcher} />;
+    }
+    const root = createRoot({ isStrictMode: true });
+    try {
+      await act(() => root.render(<Parent />));
+      expect(outcomes).toEqual(['rejected', 'pending']);
+      await act(async () => {
+        loading.resolve({ enabled: false, activeId: null, profiles: [] });
+      });
+      expect(baseFetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        applying.resolve({ ok: true });
+        await requests[1];
+      });
+      expect(outcomes).toEqual(['rejected', 'resolved']);
+      expect(baseFetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        loading.resolve({ enabled: false, activeId: null, profiles: [] });
+        applying.resolve({ ok: true });
+        await Promise.allSettled(requests);
+      });
+      await act(() => root.unmount());
+    }
+  });
 });

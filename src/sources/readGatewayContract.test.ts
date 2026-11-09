@@ -24,6 +24,7 @@ import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { acceptForumReadResponse, registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { forumReadEvidenceFetcher } from '../../tests/helpers/forumReadEvidence';
+import type { LinuxDoOptions } from '@/sources/linuxdo/reader';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -821,6 +822,32 @@ describe('source gateway read contract', () => {
     expect(lines.map((line) => JSON.parse(line).operation)).toEqual(expect.arrayContaining(['getEmojiUrls']));
   });
 
+  it.each(['http-first', 'recheck-first'] as const)(
+    'reports one raw HTTP 401 instead of an account recheck in the same read: %s',
+    async (order) => {
+      const onSessionExpired = vi.fn();
+      const requestAccountRecheck = vi.fn();
+      const fetcher = vi.fn<Fetcher>(async () => new Response('expired', { status: 401 }));
+      linuxDoMocks.getLinuxDoEmojiUrls.mockImplementationOnce(async (options: LinuxDoOptions) => {
+        if (order === 'recheck-first') options.linuxDoAccess?.onAccountFailure?.('account-recheck-required');
+        await options.fetcher?.('https://linux.do/emojis.json').catch(() => undefined);
+        if (order === 'http-first') options.linuxDoAccess?.onAccountFailure?.('account-recheck-required');
+        return {};
+      });
+      const gateway = createReadGateway({
+        fetcher,
+        isSourceAuthenticated: () => true,
+        nodeSeekUserAgent: () => '',
+        onSessionExpired,
+        requestAccountRecheck
+      });
+
+      await expect(gateway.getEmojiUrls({ source: 'linuxdo' })).resolves.toEqual({});
+      expect(onSessionExpired).toHaveBeenCalledExactlyOnceWith('linuxdo', 0);
+      expect(requestAccountRecheck).not.toHaveBeenCalled();
+    }
+  );
+
   it('records one safe partial diagnostic trace for an owned feed read', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
@@ -1177,13 +1204,50 @@ describe('source gateway read contract', () => {
     expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores a timeout that was not produced by an owned content request', async () => {
-    forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
-    const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
+  it.each([
+    ['none', [], false, true],
+    ['foreground-read', ['foreground-read'], true, true],
+    ['unsafe-only', ['unsafe'], false, false],
+    ['read-then-unsafe', ['foreground-read', 'unsafe'], true, false],
+    ['unsafe-then-read', ['unsafe', 'foreground-read'], true, false]
+  ] as const)(
+    'preserves dispatch evidence and recovery eligibility for %s',
+    async (_name, requests, content, replayable) => {
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      const timeout = new RequestTimeoutError();
+      const fetcher = vi.fn<Fetcher>(async () => new Response('{}'));
+      forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+        for (const request of requests) {
+          await scopedFetcher(
+            'https://www.v2ex.com/?tab=all',
+            request === 'unsafe' ? withBrowserFetchIntent({}, { owner: 'account', priority: 'background' }) : undefined
+          );
+        }
+        throw timeout;
+      });
+      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+      const result = gateway.getFeed({ source: 'v2ex' });
 
-    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toBeInstanceOf(RequestTimeoutError);
-    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
-  });
+      if (content && replayable) await expect(result).resolves.toMatchObject({ items: [] });
+      else await expect(result).rejects.toBe(timeout);
+
+      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledTimes(content && replayable ? 1 : 0);
+      expect(forumMocks.getFeed).toHaveBeenCalledTimes(content && replayable ? 2 : 1);
+      expect(lines.map((line) => JSON.parse(line))).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            phase: 'guard',
+            hasContentRequest: content,
+            isReplayable: replayable,
+            state: content && replayable ? 'recovery-qualified' : 'recovery-skipped'
+          })
+        ])
+      );
+    }
+  );
 
   it('preserves the original timeout when runtime recovery fails before publication', async () => {
     const timeout = new RequestTimeoutError();

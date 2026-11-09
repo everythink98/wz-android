@@ -1,7 +1,11 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
-import React, { type ComponentProps, Profiler, useState } from 'react';
+import { renderHook as renderNativeHook } from '@testing-library/react-native';
+import { useDiagnosticLogController } from '@/features/more/useDiagnosticLogController';
+import * as diagnosticFileStore from '@/platform/diagnostics/diagnosticFileStore';
+import React, { type ComponentProps, Profiler, useLayoutEffect, useState } from 'react';
+import { createRoot } from 'test-renderer';
 import { StyleSheet, View } from 'react-native';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
@@ -28,6 +32,95 @@ import {
   CURRENT_ANDROID_VERSION_CODE,
   formatAppUpdateDownloadProgress
 } from '@/platform/update/appUpdate';
+
+describe('diagnostic export observation lifetime', () => {
+  it.each(['success', 'failure'] as const)(
+    'keeps one real diagnostic job through StrictMode and settles its current %s observation',
+    async (outcome) => {
+      const pending = Promise.withResolvers<void>();
+      const exported = jest.spyOn(diagnosticFileStore, 'exportDiagnosticLog').mockReturnValue(pending.promise);
+      const notify = jest.fn();
+      const latestNotify = jest.fn();
+      let controller!: ReturnType<typeof useDiagnosticLogController>;
+      let result!: Promise<void>;
+      let setups = 0;
+      function Harness({ notice }: { notice: (message: string) => void }) {
+        const value = useDiagnosticLogController({
+          getCurrentScreen: () => 'more',
+          metadata: { appVersion: 'fixture', versionCode: 1 },
+          notify: notice
+        });
+        useLayoutEffect(() => {
+          controller = value;
+        });
+        useLayoutEffect(() => {
+          setups += 1;
+          if (setups === 1) result = controller.exportDiagnosticLogFile();
+        }, []);
+        return null;
+      }
+      const root = createRoot({ isStrictMode: true });
+      try {
+        await act(async () => root.render(<Harness notice={notify} />));
+        expect(setups).toBe(2);
+        expect(controller.diagnosticBusy).toBe(true);
+        await act(async () => {
+          await controller.exportDiagnosticLogFile();
+        });
+        expect(exported).toHaveBeenCalledTimes(1);
+        await act(async () => root.render(<Harness notice={latestNotify} />));
+        await act(async () => {
+          if (outcome === 'success') pending.resolve();
+          else pending.reject(new Error('current diagnostic failure'));
+          await result;
+        });
+        expect(exported).toHaveBeenCalledWith({ appVersion: 'fixture', versionCode: 1, currentScreen: 'more' });
+        expect(latestNotify).toHaveBeenCalledTimes(1);
+        expect(latestNotify).toHaveBeenCalledWith(
+          outcome === 'success' ? '诊断日志已生成' : 'current diagnostic failure'
+        );
+        expect(notify).not.toHaveBeenCalled();
+        expect(controller.diagnosticBusy).toBe(false);
+      } finally {
+        pending.resolve();
+        await act(async () => root.unmount());
+        exported.mockRestore();
+      }
+    }
+  );
+  it.each(['success', 'failure'] as const)(
+    'settles a dispatched diagnostic export without a retired %s notice',
+    async (outcome) => {
+      const pending = Promise.withResolvers<void>();
+      const exported = jest.spyOn(diagnosticFileStore, 'exportDiagnosticLog').mockReturnValue(pending.promise);
+      const notify = jest.fn();
+      const hook = await renderNativeHook(() =>
+        useDiagnosticLogController({
+          getCurrentScreen: () => 'more',
+          metadata: { appVersion: 'fixture', versionCode: 1 },
+          notify
+        })
+      );
+      let result!: Promise<void>;
+      try {
+        await act(async () => {
+          result = hook.result.current.exportDiagnosticLogFile();
+        });
+        expect(exported).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+        await act(async () => {
+          if (outcome === 'success') pending.resolve();
+          else pending.reject(new Error('retired diagnostic failure'));
+          await result;
+        });
+        expect(notify).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve();
+        exported.mockRestore();
+      }
+    }
+  );
+});
 
 let mockDragRunsOnJS = false;
 let mockDeferScheduleOnRN = false;

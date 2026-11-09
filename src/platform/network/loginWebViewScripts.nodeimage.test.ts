@@ -70,6 +70,42 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     });
   });
 
+  it('consumes both grant listeners before cAuth settles and never retries a failed request', async () => {
+    vi.useFakeTimers();
+    const response = Promise.withResolvers<Response>();
+    const fetchMock = vi.fn(() => response.promise);
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'ReactNativeWebView', {
+      configurable: true,
+      value: { postMessage }
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.eval(nodeSeekNodeImageAuthScript(RETRY_NONCE));
+    const start = new MessageEvent('message', {
+      data: { type: 'nodeimage-connect-start', nonce: RETRY_NONCE }
+    });
+
+    document.dispatchEvent(start);
+    window.dispatchEvent(start);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+
+    response.reject(new Error('cAuth unavailable'));
+    await vi.advanceTimersByTimeAsync(0);
+    window.dispatchEvent(start);
+    document.dispatchEvent(start);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(postMessage.mock.calls[1]?.[0] || '{}')).toMatchObject({
+      type: 'nodeimage-auth-error',
+      nonce: RETRY_NONCE,
+      error: 'cAuth unavailable'
+    });
+  });
+
   it('rechecks the live document before ready or cAuth', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn();

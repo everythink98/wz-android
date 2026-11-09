@@ -79,6 +79,86 @@ const nodeSeekPayload = Buffer.from(
 ).toString('base64');
 
 describe('feed read', () => {
+  it('drains a producer cursor to completion without reading its buffered page again', async () => {
+    const fetcher = vi.fn(async (input: string) =>
+      input.includes('linux.do')
+        ? new Response(
+            JSON.stringify({
+              topic_list: {
+                topics: [1, 2, 3].map((id) => ({
+                  id,
+                  title: `Producer ${id}`,
+                  slug: 'producer',
+                  created_at: `2026-05-20T00:00:0${4 - id}Z`,
+                  posts_count: 1
+                }))
+              },
+              categories: [],
+              users: []
+            }),
+            { headers: { 'content-type': 'application/json' } }
+          )
+        : new Response('<div id="Main"></div>')
+    );
+    const options = { source: 'all' as const, includedSources: ['linuxdo', 'v2ex'] as const, limit: 2, fetcher };
+    const first = await getFeed(options);
+    const wire = JSON.parse(decodeURIComponent(first.nextCursor || ''));
+    expect(first.items.map((topic) => topic.id)).toEqual(['1', '2']);
+    expect(Object.keys(wire)).toEqual(['buffers', 'nextPages', 'sourceCursors']);
+    expect(wire.buffers.linuxdo.map((topic: { id: string }) => topic.id)).toEqual(['3']);
+    expect(wire.nextPages).toEqual({});
+    expect(wire.sourceCursors).toEqual({});
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    const second = await getFeed({ ...options, page: first.nextPage ?? 2, cursor: first.nextCursor ?? undefined });
+
+    expect(second.items.map((topic) => topic.id)).toEqual(['3']);
+    expect(second).toMatchObject({ hasMore: false, nextCursor: undefined, nextPage: null });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['buffer-only', 'next-page', 'retry'] as const)(
+    'keeps the continuation wire and transport policy for %s pages',
+    async (mode) => {
+      const buffered = Array.from({ length: mode === 'retry' ? 1 : 2 }, (_, index) => ({
+        source: 'linuxdo',
+        id: String(index + 1),
+        title: `Buffered ${index}`,
+        url: `https://linux.do/t/topic/${index + 1}`,
+        createdAt: '2026-05-20T00:00:00Z'
+      }));
+      const cursor = encodeURIComponent(
+        JSON.stringify({
+          buffers: { linuxdo: buffered },
+          nextPages: { linuxdo: 5 },
+          sourceCursors: { linuxdo: 'provider-cursor' }
+        })
+      );
+      const fetcher = vi.fn(async () => {
+        if (mode === 'retry') throw new Error('temporary failure');
+        return new Response('{"topic_list":{"topics":[]}}', { headers: { 'content-type': 'application/json' } });
+      });
+      const response = await getFeed({
+        source: 'all',
+        includedSources: ['linuxdo'],
+        page: 2,
+        cursor,
+        limit: mode === 'next-page' ? 3 : 2,
+        fetcher
+      });
+
+      expect(response.items.map((topic) => topic.id)).toEqual(buffered.map((topic) => topic.id));
+      expect(fetcher).toHaveBeenCalledTimes(mode === 'buffer-only' ? 0 : 1);
+      if (mode === 'next-page') expect(response.hasMore).toBe(false);
+      else
+        expect(JSON.parse(decodeURIComponent(response.nextCursor || ''))).toEqual({
+          buffers: {},
+          nextPages: { linuxdo: 5 },
+          sourceCursors: { linuxdo: 'provider-cursor' }
+        });
+    }
+  );
+
   it('keeps a ready source when another provider identity fails before transport', async () => {
     vi.mocked(getDefaultAndroidWebViewUserAgent).mockRejectedValueOnce(new Error('provider unavailable'));
     const fetcher = vi.fn(

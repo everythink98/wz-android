@@ -206,6 +206,18 @@ describe('Yaohuo reply composer', () => {
     expect(view.getByLabelText('无表情')).toBeTruthy();
     expect(view.queryByLabelText('粗体')).toBeNull();
     expect(mockInputHandle.blur).toHaveBeenCalledTimes(1);
+    await fireEvent.press(view.getByLabelText('文字格式'));
+    expect(awaitKeyboardSettled).toHaveBeenCalledTimes(2);
+    expect(view.queryByLabelText('无表情')).toBeNull();
+    expect(view.getByLabelText('粗体')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('表情'));
+    expect(awaitKeyboardSettled).toHaveBeenCalledTimes(3);
+    expect(view.queryByLabelText('粗体')).toBeNull();
+    expect(view.getByLabelText('无表情')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('表情'));
+    expect(awaitKeyboardSettled).toHaveBeenCalledTimes(3);
+    expect(view.queryByLabelText('无表情')).toBeNull();
+    expect(view.queryByLabelText('粗体')).toBeNull();
   });
   it.each(['sheet', 'embedded'] as const)(
     'keeps the %s input attached until keyboard handoff succeeds',

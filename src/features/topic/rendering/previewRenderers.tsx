@@ -1,5 +1,5 @@
 import { ActivityIndicator } from 'react-native-paper';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Image as NativeImage,
   PixelRatio,
@@ -120,10 +120,13 @@ function useCompatibleBodyImageArtifact({
   source: ImageURISource;
 }) {
   const requestIdentity = compatibleImageRequestIdentity(source);
-  const consumption = useMemo(
-    () => ({ controller: new AbortController(), requestIdentity: attemptIdentity }),
-    [attemptIdentity]
-  );
+  const [consumption, setConsumption] = useState(() => ({
+    controller: new AbortController(),
+    requestIdentity: attemptIdentity
+  }));
+  if (consumption.requestIdentity !== attemptIdentity) {
+    setConsumption({ controller: new AbortController(), requestIdentity: attemptIdentity });
+  }
   const mountedRef = useRef(true);
   const attemptIdentityRef = useRef(attemptIdentity);
   const settledAttemptIdentityRef = useRef('');
@@ -143,19 +146,24 @@ function useCompatibleBodyImageArtifact({
     source.uri
   );
   useLayoutEffect(() => {
+    if (consumption.controller.signal.aborted) {
+      setConsumption({ controller: new AbortController(), requestIdentity: attemptIdentity });
+      return;
+    }
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       consumption.controller.abort();
     };
-  }, [consumption]);
+  }, [attemptIdentity, consumption, setConsumption]);
   useLayoutEffect(() => {
     attemptIdentityRef.current = attemptIdentity;
     onTerminalFailureRef.current = onTerminalFailure;
   }, [attemptIdentity, onTerminalFailure]);
   const isCurrent = useCallback(
-    () => mountedRef.current && attemptIdentityRef.current === attemptIdentity,
-    [attemptIdentity]
+    () =>
+      mountedRef.current && !consumption.controller.signal.aborted && attemptIdentityRef.current === attemptIdentity,
+    [attemptIdentity, consumption]
   );
   const isSettled = useCallback(() => settledAttemptIdentityRef.current === attemptIdentity, [attemptIdentity]);
   const settle = useCallback(() => {

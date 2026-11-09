@@ -41,6 +41,87 @@ function setupReadingRuntime(fetcher: Fetcher) {
 }
 
 describe('LinuxDo reading transport', () => {
+  it('obtains a new CSRF token when the User-Agent changes within the same identity', async () => {
+    let agent = 'first-agent';
+    let token = 0;
+    const fetcher = vi.fn<Fetcher>(async (url) =>
+      url.endsWith('/session/csrf') ? json({ csrf: `token-${++token}` }) : new Response('')
+    );
+    const send = createLinuxDoReadingSender({ fetcher, scope: () => 'alice', userAgent: () => agent });
+    await send(batch, 'alice', new AbortController().signal);
+    agent = 'second-agent';
+    await send(batch, 'alice', new AbortController().signal);
+    await send(batch, 'alice', new AbortController().signal);
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      '/session/csrf',
+      '/topics/timings',
+      '/session/csrf',
+      '/topics/timings',
+      '/topics/timings'
+    ]);
+    expect(fetcher.mock.calls.slice(2).map(([, init]) => new Headers(init?.headers).get('User-Agent'))).toEqual([
+      'second-agent',
+      'second-agent',
+      'second-agent'
+    ]);
+    expect(
+      fetcher.mock.calls
+        .filter(([url]) => url.endsWith('/topics/timings'))
+        .map(([, init]) => new Headers(init?.headers).get('X-CSRF-Token'))
+    ).toEqual(['token-1', 'token-2', 'token-2']);
+  });
+
+  it('keeps a newer identity token when an older identity token request rejects', async () => {
+    let identity = 'alice';
+    const pending = Promise.withResolvers<Response>();
+    const failure = new Error('old token failed');
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockImplementation(async (url) =>
+        url.endsWith('/session/csrf') ? json({ csrf: 'bob-token' }) : new Response('')
+      );
+    const send = createLinuxDoReadingSender({ fetcher, scope: () => identity, userAgent: () => 'fixture-agent' });
+    const old = send(batch, 'alice', new AbortController().signal);
+    const rejected = expect(old).rejects.toBe(failure);
+    try {
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      identity = 'bob';
+      await send(batch, 'bob', new AbortController().signal);
+      pending.reject(failure);
+      await rejected;
+      await send(batch, 'bob', new AbortController().signal);
+      expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+        '/session/csrf',
+        '/session/csrf',
+        '/topics/timings',
+        '/topics/timings'
+      ]);
+      expect(
+        fetcher.mock.calls
+          .filter(([url]) => url.endsWith('/topics/timings'))
+          .map(([, init]) => new Headers(init?.headers).get('X-CSRF-Token'))
+      ).toEqual(['bob-token', 'bob-token']);
+    } finally {
+      pending.reject(failure);
+      await Promise.allSettled([old]);
+    }
+  });
+
+  it('stops after two explicit invalid-CSRF replies instead of retrying a third timings POST', async () => {
+    const fetcher = vi.fn<Fetcher>(async (url) =>
+      url.endsWith('/session/csrf') ? json({ csrf: 'fixture' }) : json({ errors: ['CSRF token invalid'] }, 403)
+    );
+    const send = createLinuxDoReadingSender({ fetcher, scope: () => 'alice', userAgent: () => 'fixture-agent' });
+    await expect(send(batch, 'alice', new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      '/session/csrf',
+      '/topics/timings',
+      '/session/csrf',
+      '/topics/timings'
+    ]);
+  });
+
   it.each(['/session/csrf', '/topics/timings'])(
     'does not send %s after proxy preparation outlives its scope',
     async (path) => {

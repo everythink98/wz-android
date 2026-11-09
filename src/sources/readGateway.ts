@@ -36,6 +36,7 @@ import {
   REQUEST_CANCELED_MESSAGE,
   RequestTimeoutError,
   rejectUnauthorizedResponse,
+  withAbortableTimeout,
   withRequestBeforeSend,
   type Fetcher
 } from '@/platform/network/request';
@@ -250,10 +251,27 @@ const browserFetchOwnerByReadOperation: Record<ForumReadOperation, BrowserFetchI
   'user-resolution': 'user'
 };
 
-type ReadAttempt = {
-  contentRequestStarted: boolean;
-  replayable: boolean;
+type ReadAttemptRequests = 'none' | 'foreground-read' | 'unsafe-only' | 'mixed';
+type ReadAttempt = { requests: ReadAttemptRequests };
+type ReadAttemptOutcome<T> =
+  { kind: 'succeeded'; result: T } | { kind: 'failed'; error: unknown; requests: ReadAttemptRequests };
+type AccountFailureReason = 'http-401' | 'account-recheck-required';
+type AccountFailure = { phase: 'pending' | 'reported'; reason: AccountFailureReason };
+type ReadResultHandoff<T> = {
+  state: { phase: 'available'; result: T; publish: (result: T) => void } | { phase: 'consumed' };
 };
+type ReadingBatchJob = {
+  keys: readonly string[];
+  result: Promise<DiscourseTopicReading[]>;
+  state: { phase: 'running'; controller: AbortController; consumers: Set<symbol> } | { phase: 'settled' };
+};
+type ReadingBatchWaiter = { phase: 'waiting'; jobs: ReadonlySet<ReadingBatchJob> } | { phase: 'released' };
+
+function observeReadRequest(requests: ReadAttemptRequests, request: 'foreground-read' | 'unsafe'): ReadAttemptRequests {
+  if (request === 'foreground-read')
+    return requests === 'unsafe-only' || requests === 'mixed' ? 'mixed' : 'foreground-read';
+  return requests === 'foreground-read' || requests === 'mixed' ? 'mixed' : 'unsafe-only';
+}
 
 function withManagedReadIntent(fetcher: Fetcher, operation: ForumReadOperation, attempt: ReadAttempt): Fetcher {
   const defaultIntent: BrowserFetchIntent = {
@@ -264,11 +282,11 @@ function withManagedReadIntent(fetcher: Fetcher, operation: ForumReadOperation, 
     const method = String(init?.method || 'GET').toUpperCase();
     const existingIntent = browserFetchIntentFromInit(init);
     const intent = existingIntent || defaultIntent;
-    if ((method !== 'GET' && method !== 'HEAD') || intent.owner === 'write' || intent.priority !== 'foreground') {
-      attempt.replayable = false;
-    } else {
-      attempt.contentRequestStarted = true;
-    }
+    const request =
+      (method !== 'GET' && method !== 'HEAD') || intent.owner === 'write' || intent.priority !== 'foreground'
+        ? 'unsafe'
+        : 'foreground-read';
+    attempt.requests = observeReadRequest(attempt.requests, request);
     return fetcher(input, existingIntent ? init : withBrowserFetchIntent(init || {}, defaultIntent));
   };
 }
@@ -447,12 +465,16 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             readSessionSnapshot(planSource).identityKey === sessionSnapshots.get(planSource)?.identityKey
         ));
     const recoveryCommitIsEligible = () => readIsCurrent() && activeSignal?.aborted !== true;
-    const accountFailures = new Map<Source, 'http-401' | 'account-recheck-required'>();
-    const reportedAccountFailures = new Set<SessionSource>();
-    const reportAccountFailure = (planSource: Source, reason: unknown, preserveResult?: () => void) => {
+    const accountFailures = new Map<Source, AccountFailure>();
+    const recordAccountFailure = (planSource: Source, reason: AccountFailureReason) => {
+      const previous = accountFailures.get(planSource);
+      if (previous?.reason === 'http-401') return;
+      accountFailures.set(planSource, { phase: previous?.phase ?? 'pending', reason });
+    };
+    const reportAccountFailure = (planSource: Source, reason: unknown, handoff?: ReadResultHandoff<T>) => {
       if (
         !isSessionSource(planSource) ||
-        reportedAccountFailures.has(planSource) ||
+        accountFailures.get(planSource)?.phase === 'reported' ||
         activeSignal?.aborted ||
         !enabledSourcesAreCurrent() ||
         getReadPlan(planSource, readOperation).cacheScope !== planSnapshot.get(planSource)?.cacheScope ||
@@ -468,8 +490,12 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         plan.lane !== 'authenticated'
       )
         return;
-      preserveResult?.();
-      reportedAccountFailures.add(planSource);
+      if (handoff?.state.phase === 'available') {
+        const available = handoff.state;
+        handoff.state = { phase: 'consumed' };
+        available.publish(available.result);
+      }
+      accountFailures.set(planSource, { phase: 'reported', reason });
       if (reason === 'account-recheck-required') {
         dependencies.requestAccountRecheck?.(planSource, session.sessionEpoch, trace.traceId);
       } else {
@@ -489,9 +515,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           ? {
               authenticated: linuxDoAuthenticated,
               categoryCacheScope: linuxDoPlan.cacheScope,
-              onAccountFailure: (reason) => {
-                if (accountFailures.get('linuxdo') !== 'http-401') accountFailures.set('linuxdo', reason);
-              },
+              onAccountFailure: (reason) => recordAccountFailure('linuxdo', reason),
               userAgent: dependencies.linuxDoUserAgent?.()
             }
           : undefined;
@@ -519,7 +543,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         const managedFetcher: Fetcher = async (input, init) => {
           const response = await dependencies.fetcher(input, init);
           const failure = await forumResponseAccountFailure(planSource, input, response, activeSignal);
-          if (failure && accountFailures.get(planSource) !== 'http-401') accountFailures.set(planSource, failure);
+          if (failure) recordAccountFailure(planSource, failure);
           return response;
         };
         const forumFetcher = rejectUnauthorizedResponse(managedFetcher);
@@ -583,89 +607,93 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           ...(source === 'all' ? { includedSources } : {}),
           ...(unavailableSources.length ? { unavailableSources } : {})
         });
-      const runReadAttempt = (attempt: ReadAttempt) =>
-        source === 'linuxdo' || source === 'nodeseek'
-          ? runForumSourceReadAttempt(
-              source,
-              operationFetcher,
-              (fetcher) => runOperation(fetcher, attempt),
-              recoveryCommitIsEligible
-            )
-          : runOperation(operationFetcher, attempt);
-      const runReadAttempts = async () => {
-        const firstAttempt: ReadAttempt = { contentRequestStarted: false, replayable: true };
-        let result: T;
+      const runReadAttempt = async (): Promise<ReadAttemptOutcome<T>> => {
+        const attempt: ReadAttempt = { requests: 'none' };
         try {
-          result = await runReadAttempt(firstAttempt);
+          const result =
+            source === 'linuxdo' || source === 'nodeseek'
+              ? await runForumSourceReadAttempt(
+                  source,
+                  operationFetcher,
+                  (fetcher) => runOperation(fetcher, attempt),
+                  recoveryCommitIsEligible
+                )
+              : await runOperation(operationFetcher, attempt);
+          return { kind: 'succeeded', result };
         } catch (error) {
-          const runtimeAfterFailure = getReadNetworkRuntimeSnapshot();
-          const recoveryEligible = recoveryCommitIsEligible();
-          const retryAfterRotation =
-            source !== 'all' &&
-            runtimeAfterFailure.generation > expectedGeneration &&
-            runtimeAfterFailure.triggerSource === source &&
-            firstAttempt.contentRequestStarted &&
-            firstAttempt.replayable &&
-            recoveryEligible;
-          const recoverAfterTimeout =
-            !retryAfterRotation &&
-            error instanceof RequestTimeoutError &&
-            sourceUsesDirectTimeoutRecovery(source) &&
-            firstAttempt.contentRequestStarted &&
-            firstAttempt.replayable &&
-            recoveryEligible;
-          markDiagnosticStage(trace, 'guard', {
+          return { kind: 'failed', error, requests: attempt.requests };
+        }
+      };
+      const runReadAttempts = async () => {
+        const firstAttempt = await runReadAttempt();
+        if (firstAttempt.kind === 'succeeded') return firstAttempt.result;
+        const { error, requests } = firstAttempt;
+        const runtimeAfterFailure = getReadNetworkRuntimeSnapshot();
+        const recoveryEligible = recoveryCommitIsEligible();
+        const retryAfterRotation =
+          source !== 'all' &&
+          runtimeAfterFailure.generation > expectedGeneration &&
+          runtimeAfterFailure.triggerSource === source &&
+          requests === 'foreground-read' &&
+          recoveryEligible;
+        const recoverAfterTimeout =
+          !retryAfterRotation &&
+          error instanceof RequestTimeoutError &&
+          sourceUsesDirectTimeoutRecovery(source) &&
+          requests === 'foreground-read' &&
+          recoveryEligible;
+        markDiagnosticStage(trace, 'guard', {
+          source,
+          state: retryAfterRotation || recoverAfterTimeout ? 'recovery-qualified' : 'recovery-skipped',
+          recoveryDecision:
+            retryAfterRotation || recoverAfterTimeout ? 'commit' : recoveryEligible ? 'rejected' : 'ineligible',
+          reason: normalizeDiagnosticReason(error),
+          previousGeneration: expectedGeneration,
+          generation: runtimeAfterFailure.generation,
+          hasContentRequest: requests === 'foreground-read' || requests === 'mixed',
+          isReplayable: requests === 'none' || requests === 'foreground-read',
+          isEligible: recoveryEligible
+        });
+        if (!retryAfterRotation && !recoverAfterTimeout) {
+          throw error;
+        }
+        if (recoverAfterTimeout) {
+          const recoveryTrace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
             source,
-            state: retryAfterRotation || recoverAfterTimeout ? 'recovery-qualified' : 'recovery-skipped',
-            recoveryDecision:
-              retryAfterRotation || recoverAfterTimeout ? 'commit' : recoveryEligible ? 'rejected' : 'ineligible',
-            reason: normalizeDiagnosticReason(error),
-            previousGeneration: expectedGeneration,
-            generation: runtimeAfterFailure.generation,
-            hasContentRequest: firstAttempt.contentRequestStarted,
-            isReplayable: firstAttempt.replayable,
-            isEligible: recoveryEligible
+            parentTraceId: trace.traceId,
+            generation: expectedGeneration,
+            reason: 'timeout'
           });
-          if (!retryAfterRotation && !recoverAfterTimeout) {
-            throw error;
-          }
-          if (recoverAfterTimeout) {
-            const recoveryTrace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
+          try {
+            await recoverReadNetworkRuntime(source, expectedGeneration, { trace: recoveryTrace });
+          } catch (recoveryError) {
+            markDiagnosticStage(trace, 'guard', {
               source,
-              parentTraceId: trace.traceId,
-              generation: expectedGeneration,
-              reason: 'timeout'
+              state: 'recovery-failed',
+              recoveryDecision: 'failed',
+              reason: normalizeDiagnosticReason(recoveryError),
+              generation: getReadNetworkRuntimeSnapshot().generation
             });
-            try {
-              await recoverReadNetworkRuntime(source, expectedGeneration, { trace: recoveryTrace });
-            } catch (recoveryError) {
-              markDiagnosticStage(trace, 'guard', {
-                source,
-                state: 'recovery-failed',
-                recoveryDecision: 'failed',
-                reason: normalizeDiagnosticReason(recoveryError),
-                generation: getReadNetworkRuntimeSnapshot().generation
-              });
-              if (getReadNetworkRuntimeSnapshot().generation <= expectedGeneration) {
-                throw error;
-              }
+            if (getReadNetworkRuntimeSnapshot().generation <= expectedGeneration) {
+              throw error;
             }
           }
-          if (!recoveryCommitIsEligible()) {
-            throw new RequestCanceledError();
-          }
-          const generation = getReadNetworkRuntimeSnapshot().generation;
-          markDiagnosticStage(trace, 'transport', {
-            source,
-            channel: 'direct',
-            state: 'retry',
-            reason: recoverAfterTimeout ? 'timeout' : 'runtime_rotation',
-            retryCount: 1,
-            generation
-          });
-          result = await runReadAttempt({ contentRequestStarted: false, replayable: true });
         }
-        return result;
+        if (!recoveryCommitIsEligible()) {
+          throw new RequestCanceledError();
+        }
+        const generation = getReadNetworkRuntimeSnapshot().generation;
+        markDiagnosticStage(trace, 'transport', {
+          source,
+          channel: 'direct',
+          state: 'retry',
+          reason: recoverAfterTimeout ? 'timeout' : 'runtime_rotation',
+          retryCount: 1,
+          generation
+        });
+        const replay = await runReadAttempt();
+        if (replay.kind === 'failed') throw replay.error;
+        return replay.result;
       };
       const remoteCatalog =
         readOperation === 'categories' &&
@@ -728,18 +756,19 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         resultRecord.errors && typeof resultRecord.errors === 'object'
           ? (resultRecord.errors as Record<string, unknown>)
           : {};
+      const handoff: ReadResultHandoff<T> = {
+        state: onBeforeSessionChange
+          ? { phase: 'available', result, publish: onBeforeSessionChange }
+          : { phase: 'consumed' }
+      };
       for (const planSource of planSources) {
         const error = resultErrors[planSource];
         const reason =
-          accountFailures.get(planSource) ||
+          accountFailures.get(planSource)?.reason ||
           (error && typeof error === 'object' && 'reason' in error ? error.reason : undefined);
         if (signal?.aborted && (reason === 'http-401' || reason === 'account-recheck-required'))
           throw new RequestCanceledError();
-        reportAccountFailure(planSource, reason, () => {
-          // Preserve readable siblings before the account event cancels the aggregate Query.
-          onBeforeSessionChange?.(result);
-          onBeforeSessionChange = undefined;
-        });
+        reportAccountFailure(planSource, reason, handoff);
       }
       if (!readIsCurrent()) throw new Error(REQUEST_CANCELED_MESSAGE);
       if (readingRequest && dependencies.reading && linuxDoAuthenticated) {
@@ -826,7 +855,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       for (const planSource of planSources) {
         reportAccountFailure(
           planSource,
-          accountFailures.get(planSource) ||
+          accountFailures.get(planSource)?.reason ||
             (planSource === source ? (recheckAccount ? 'account-recheck-required' : sourceError.reason) : undefined)
         );
       }
@@ -875,36 +904,90 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       options.signal
     );
 
-  const readingFetches = new Map<string, Promise<DiscourseTopicReading | undefined>>();
+  const readingFetches = new Map<string, ReadingBatchJob>();
+  const settleReadingBatch = (job: ReadingBatchJob) => {
+    if (job.state.phase === 'settled') return;
+    job.state = { phase: 'settled' };
+    for (const key of job.keys) {
+      if (readingFetches.get(key) === job) readingFetches.delete(key);
+    }
+  };
   const getReadingBatch = async (ids: readonly string[], signal?: AbortSignal) => {
     const scope = dependencies.reading?.scope();
     const plan = getReadPlan('linuxdo', 'feed');
     if (!scope || plan.state !== 'ready' || plan.lane !== 'authenticated') return [];
     const unique = [...new Set(ids)].filter((id) => /^\d+$/.test(id));
-    const fresh = unique.filter((id) => !readingFetches.has(`${scope}:${id}`));
-    if (fresh.length) {
-      const request = read(
-        'linuxdo',
-        'reading-state',
-        'feed',
-        ({ fetcher, discourseAuth }) =>
-          getLinuxDoReadingBatch(fresh, { signal, fetcher, linuxDoAccess: discourseAuth }),
-        undefined,
-        signal
-      );
-      fresh.forEach((id) => {
-        const key = `${scope}:${id}`;
-        const item = request.then((snapshots) => snapshots.find((snapshot) => snapshot.topicId === id));
-        readingFetches.set(key, item);
-        void item
-          .finally(() => {
-            if (readingFetches.get(key) === item) readingFetches.delete(key);
-          })
-          .catch(() => undefined);
+    if (!unique.length) return [];
+    if (signal?.aborted) throw new RequestCanceledError();
+    const consumer = Symbol('reading-batch-waiter');
+    const jobs = new Set<ReadingBatchJob>();
+    let waiter: ReadingBatchWaiter = { phase: 'waiting', jobs };
+    const release = () => {
+      if (waiter.phase === 'released') return;
+      const waiting = waiter;
+      waiter = { phase: 'released' };
+      for (const job of waiting.jobs) {
+        const running = job.state;
+        if (running.phase !== 'running') continue;
+        running.consumers.delete(consumer);
+        if (!running.consumers.size) {
+          settleReadingBatch(job);
+          running.controller.abort();
+        }
+      }
+    };
+    try {
+      const fresh = unique.filter((id) => !readingFetches.has(`${scope}:${id}`));
+      if (fresh.length) {
+        const controller = new AbortController();
+        const result = read(
+          'linuxdo',
+          'reading-state',
+          'feed',
+          ({ fetcher, discourseAuth, signal: ownedSignal }) => {
+            if (dependencies.reading?.scope() !== scope) throw new RequestCanceledError();
+            return getLinuxDoReadingBatch(fresh, { signal: ownedSignal, fetcher, linuxDoAccess: discourseAuth });
+          },
+          { readPlanScope: plan.cacheScope },
+          controller.signal
+        );
+        const job: ReadingBatchJob = {
+          keys: fresh.map((id) => `${scope}:${id}`),
+          result,
+          state: { phase: 'running', controller, consumers: new Set() }
+        };
+        for (const key of job.keys) readingFetches.set(key, job);
+        jobs.add(job);
+        void result.then(
+          () => settleReadingBatch(job),
+          () => settleReadingBatch(job)
+        );
+      }
+      const entries = unique.map((id) => {
+        const job = readingFetches.get(`${scope}:${id}`);
+        if (!job || job.state.phase !== 'running') throw new RequestCanceledError();
+        jobs.add(job);
+        job.state.consumers.add(consumer);
+        return { id, job };
       });
+      signal?.addEventListener('abort', release, { once: true });
+      if (signal?.aborted) {
+        release();
+        throw new RequestCanceledError();
+      }
+      const snapshots = await withAbortableTimeout(
+        () =>
+          Promise.all(
+            entries.map(({ id, job }) => job.result.then((items) => items.find((item) => item.topicId === id)))
+          ),
+        { signal, timeoutMs: 0 }
+      );
+      if (dependencies.reading?.scope() !== scope) throw new RequestCanceledError();
+      return snapshots.filter((snapshot): snapshot is DiscourseTopicReading => Boolean(snapshot));
+    } finally {
+      signal?.removeEventListener('abort', release);
+      release();
     }
-    const snapshots = await Promise.all(unique.map((id) => readingFetches.get(`${scope}:${id}`)));
-    return snapshots.filter((snapshot): snapshot is DiscourseTopicReading => Boolean(snapshot));
   };
 
   return {

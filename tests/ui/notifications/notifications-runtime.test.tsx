@@ -2,6 +2,7 @@ import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react-native';
+import { createRoot } from 'test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import * as Notifications from 'expo-notifications';
@@ -534,6 +535,36 @@ describe('notification runtime', () => {
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
     expect(syncNotificationBackgroundRegistration).not.toHaveBeenCalled();
     await settleStartedRuntimeTasks(false);
+  });
+
+  it('shares held initialization across Strict effect replay', async () => {
+    const pending = Promise.withResolvers<string | null>();
+    jest.mocked(AsyncStorage.getItem).mockReturnValueOnce(pending.promise);
+    const options = runtimeOptions();
+    let latest: ReturnType<typeof useNotificationsRuntime> | undefined;
+    function Harness() {
+      latest = useNotificationsRuntime(options);
+      return null;
+    }
+    const renderer = createRoot({ isStrictMode: true });
+    try {
+      await act(() =>
+        renderer.render(
+          <QueryTestWrapper>
+            <Harness />
+          </QueryTestWrapper>
+        )
+      );
+      expect(loadNotificationState).toHaveBeenCalledTimes(1);
+      expect(notificationPermissionGranted).toHaveBeenCalledTimes(1);
+      await act(async () => pending.resolve(JSON.stringify(defaultNotificationState())));
+      expect(latest?.ready).toBe(true);
+      expect(loadNotificationState).toHaveBeenCalledTimes(1);
+    } finally {
+      pending.resolve(JSON.stringify(defaultNotificationState()));
+      await act(() => renderer.unmount());
+      await settleStartedRuntimeTasks(false);
+    }
   });
 
   it('records restoration failure without starting notification reads', async () => {
@@ -1659,6 +1690,72 @@ describe('notification runtime', () => {
     expect(openSource).toHaveBeenCalledTimes(1);
     await settleStartedRuntimeTasks();
   });
+
+  it.each(['new-response', 'navigation-error', 'unmount'] as const)(
+    'retires a queued response after %s',
+    async (completion) => {
+      const openSource = jest.fn(() => true).mockReturnValueOnce(false);
+      const hook = await renderHook(
+        () => useNotificationsRuntime(runtimeOptions(openSource, undefined, ['nodeseek'])),
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await waitFor(() => expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalledTimes(1));
+        const listener = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.calls[0]![0];
+        await act(async () => listener(notificationResponse('nodeseek', 'queued', 1)));
+        const onReady = hook.result.current.onNavigationReady;
+        if (completion === 'new-response') {
+          await act(async () => listener(notificationResponse('nodeseek', 'new-opened', 2)));
+        } else if (completion === 'navigation-error') {
+          openSource.mockImplementationOnce(() => {
+            throw new Error('navigation failed');
+          });
+          expect(() => onReady()).toThrow('navigation failed');
+        } else {
+          await hook.unmount();
+        }
+        await act(async () => {
+          onReady();
+          onReady();
+        });
+        expect(openSource).toHaveBeenCalledTimes(completion === 'unmount' ? 1 : 2);
+      } finally {
+        await settleStartedRuntimeTasks();
+      }
+    }
+  );
+
+  it.each(['success', 'error'] as const)(
+    'keeps a newer queued response when the previous navigation returns %s reentrantly',
+    async (completion) => {
+      const openSource = jest.fn(() => true).mockReturnValueOnce(false);
+      const hook = await renderHook(
+        () => useNotificationsRuntime(runtimeOptions(openSource, undefined, ['nodeseek', 'linuxdo'])),
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await waitFor(() => expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalledTimes(1));
+        const listener = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.calls[0]![0];
+        await act(async () => listener(notificationResponse('nodeseek', 'previous-queued', 1)));
+        openSource.mockImplementationOnce(() => {
+          openSource.mockReturnValueOnce(false);
+          listener(notificationResponse('linuxdo', 'new-queued', 2));
+          if (completion === 'error') throw new Error('previous navigation failed');
+          return true;
+        });
+        if (completion === 'error') {
+          expect(() => hook.result.current.onNavigationReady()).toThrow('previous navigation failed');
+        } else {
+          await act(async () => hook.result.current.onNavigationReady());
+        }
+        await act(async () => hook.result.current.onNavigationReady());
+        await act(async () => hook.result.current.onNavigationReady());
+        expect(openSource.mock.calls).toEqual([['nodeseek'], ['nodeseek'], ['linuxdo'], ['linuxdo']]);
+      } finally {
+        await settleStartedRuntimeTasks();
+      }
+    }
+  );
 
   it.each(['opened', 'disabled', 'superseded', 'unmount', 'error'] as const)(
     'settles a queued notification response once when navigation is %s',

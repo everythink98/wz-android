@@ -1,6 +1,7 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { MoreScreenStyles } from '../styles';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { ChevronRight, RefreshCw, Settings2 } from 'lucide-react-native';
 import { Button, List } from 'react-native-paper';
@@ -168,6 +169,9 @@ function messageFromError(error: unknown) {
   return error instanceof Error ? error.message : '操作失败，请重试。';
 }
 
+type CredentialEditorOpening = { owner: AbortSignal };
+type CredentialEditorOperation = { opening: CredentialEditorOpening };
+
 function CredentialEditor({
   active,
   site,
@@ -192,9 +196,31 @@ function CredentialEditor({
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [keyboardAvoidingEnabled, setKeyboardAvoidingEnabled] = useState(false);
-  const savingRef = useRef(false);
+  const lifetimeRef = useRef(new AbortController());
+  const openingRef = useRef<CredentialEditorOpening | null>(null);
+  const operationRef = useRef<CredentialEditorOperation | null>(null);
+  const callbacks = useCommittedRef({ active, onCommand });
+  const isCurrentOpening = (opening: CredentialEditorOpening) =>
+    openingRef.current === opening &&
+    callbacks.current.active &&
+    !opening.owner.aborted &&
+    lifetimeRef.current.signal === opening.owner;
+  const isCurrentOperation = (operation: CredentialEditorOperation) =>
+    operationRef.current === operation && isCurrentOpening(operation.opening);
+
+  useLayoutEffect(() => {
+    if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
+    const lifetime = lifetimeRef.current;
+    if (openingRef.current) openingRef.current.owner = lifetime.signal;
+    return () => lifetime.abort();
+  }, []);
+
   const openEditor = () => {
+    if (!callbacks.current.active || lifetimeRef.current.signal.aborted) return;
     recordUserInteraction();
+    openingRef.current = { owner: lifetimeRef.current.signal };
+    operationRef.current = null;
+    setBusy(false);
     setEditing(true);
   };
 
@@ -205,6 +231,9 @@ function CredentialEditor({
 
   useEffect(() => {
     if (!active) {
+      openingRef.current = null;
+      operationRef.current = null;
+      setBusy(false);
       setKeyboardAvoidingEnabled(false);
       clearDraft();
       setEditing(false);
@@ -224,42 +253,62 @@ function CredentialEditor({
   }, [editing]);
 
   const closeEditor = () => {
-    if (busy || savingRef.current) {
+    if (operationRef.current) {
       return;
     }
     setKeyboardAvoidingEnabled(false);
     Keyboard.dismiss();
     clearDraft();
+    openingRef.current = null;
     setEditing(false);
   };
 
-  const persist = async (allowUnprotected = false) => {
-    if (savingRef.current) {
+  const beginOperation = (opening: CredentialEditorOpening) => {
+    if (!isCurrentOpening(opening) || operationRef.current) return null;
+    const operation = { opening };
+    operationRef.current = operation;
+    setBusy(true);
+    return operation;
+  };
+  const finishOperation = (operation: CredentialEditorOperation) => {
+    if (operationRef.current !== operation) return;
+    operationRef.current = null;
+    if (!lifetimeRef.current.signal.aborted) setBusy(false);
+  };
+  const finishEditor = () => {
+    clearDraft();
+    openingRef.current = null;
+    setEditing(false);
+  };
+
+  const persist = async (allowUnprotected = false, opening = openingRef.current) => {
+    if (!opening) return;
+    const operation = beginOperation(opening);
+    if (!operation) {
       return;
     }
-    savingRef.current = true;
     setKeyboardAvoidingEnabled(false);
     Keyboard.dismiss();
-    setBusy(true);
     try {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await onCommand({
+      if (!isCurrentOperation(operation)) return;
+      await callbacks.current.onCommand({
         type: 'save-credential',
         site,
         account,
         password,
         ...(allowUnprotected ? { allowUnprotected: true } : {})
       });
-      clearDraft();
-      setEditing(false);
+      if (isCurrentOperation(operation)) finishEditor();
     } catch (error) {
+      if (!isCurrentOperation(operation)) return;
       if (error instanceof CredentialVaultError && error.code === 'biometric-unavailable' && !allowUnprotected) {
         Alert.alert('无法使用用户身份认证', '继续后将使用 Android 本机加密保存，但填入时不会再次进行用户身份认证。', [
           { text: '取消', style: 'cancel' },
           {
             text: '继续保存',
             onPress: () => {
-              void persist(true);
+              void persist(true, opening);
             }
           }
         ]);
@@ -267,26 +316,31 @@ function CredentialEditor({
         Alert.alert('无法保存登录信息', messageFromError(error));
       }
     } finally {
-      savingRef.current = false;
-      setBusy(false);
+      finishOperation(operation);
     }
   };
 
   const confirmDelete = () => {
+    const opening = openingRef.current;
+    if (!opening || !isCurrentOpening(opening)) return;
     Alert.alert('删除已保存登录信息？', '只删除保存的账号密码，不会退出当前网站登录。', [
       { text: '取消', style: 'cancel' },
       {
         text: '删除',
         style: 'destructive',
         onPress: () => {
-          setBusy(true);
-          void Promise.resolve(onCommand({ type: 'delete-credential', site }))
-            .then(() => {
-              clearDraft();
-              setEditing(false);
-            })
-            .catch((error) => Alert.alert('无法删除登录信息', messageFromError(error)))
-            .finally(() => setBusy(false));
+          const operation = beginOperation(opening);
+          if (!operation) return;
+          void (async () => {
+            try {
+              await callbacks.current.onCommand({ type: 'delete-credential', site });
+              if (isCurrentOperation(operation)) finishEditor();
+            } catch (error) {
+              if (isCurrentOperation(operation)) Alert.alert('无法删除登录信息', messageFromError(error));
+            } finally {
+              finishOperation(operation);
+            }
+          })();
         }
       }
     ]);

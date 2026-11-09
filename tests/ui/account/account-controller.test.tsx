@@ -256,6 +256,55 @@ describe('account workflows with canonical identity reconciliation', () => {
     });
   });
 
+  it('settles a pending Level command when its controller unmounts', async () => {
+    const pending = Promise.withResolvers<LinuxDoLevelProfile>();
+    let signal: AbortSignal | undefined;
+    const getLevelProfile = jest.fn<ReadGateway['getLinuxDoLevelProfile']>(async (options) => {
+      signal = options.signal;
+      return pending.promise;
+    });
+    const { hook } = await renderAccountController({ readGateway: { getLinuxDoLevelProfile: getLevelProfile } });
+    const settled = jest.fn();
+    await act(async () => {
+      void hook.result.current.refreshLinuxDoLevel().then(settled);
+    });
+    await waitFor(() => expect(getLevelProfile).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await hook.unmount();
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(settled).toHaveBeenCalledWith(false);
+    pending.resolve({ username: 'alice' } as LinuxDoLevelProfile);
+  });
+
+  it('retires an exact Level recovery capability when its controller unmounts', async () => {
+    const getLevelProfile = jest
+      .fn<ReadGateway['getLinuxDoLevelProfile']>()
+      .mockRejectedValueOnce(linuxDoCloudflareError())
+      .mockResolvedValueOnce({ username: 'alice' } as LinuxDoLevelProfile);
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const notify = jest.fn();
+    const { hook } = await renderAccountController({
+      notify,
+      showLinuxDoVerification,
+      readGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    });
+    await act(async () => {
+      void hook.result.current.refreshLinuxDoLevel();
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    if (!recovery) throw new Error('Expected exact Level recovery');
+    await act(async () => {
+      await hook.unmount();
+    });
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('stale');
+    });
+    expect(getLevelProfile).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('retains Level recovery across explicit repeated checks', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest

@@ -82,6 +82,38 @@ describe('writable session gate', () => {
     ).toBe(false);
   });
 
+  it('rejects a source disabled while its identity reconciliation is pending', async () => {
+    let snapshot: WritableSessionSnapshot = { ...confirmed, identityTrust: 'unknown', sourceEnabled: true };
+    const reconciliation = Promise.withResolvers<{ status: 'same' }>();
+    const ticket = ensureWritableSessionTicket(
+      () => snapshot,
+      () => reconciliation.promise
+    );
+
+    snapshot = { ...confirmed, sourceEnabled: false };
+    reconciliation.resolve({ status: 'same' });
+
+    await expect(ticket).rejects.toMatchObject({ reason: 'source-disabled' });
+  });
+
+  it.each([
+    { after: { authenticated: false, identityTrust: 'none' as const }, reason: 'login_required' },
+    { after: { identityTrust: 'unknown' as const }, reason: 'identity_unavailable' },
+    { after: { authSurfaceOpen: true }, reason: 'identity_pending' },
+    { after: { identityKey: 'nodeseek:84' }, reason: 'identity_changed' }
+  ])('preserves $reason precedence when reconciliation also disables the source', async ({ after, reason }) => {
+    let snapshot: WritableSessionSnapshot = { ...confirmed, identityTrust: 'unknown', sourceEnabled: true };
+    await expect(
+      ensureWritableSessionTicket(
+        () => snapshot,
+        async () => {
+          snapshot = { ...confirmed, ...after, sourceEnabled: false };
+          return { status: 'same' };
+        }
+      )
+    ).rejects.toMatchObject({ reason });
+  });
+
   it('reports an unchanged anonymous reconciliation as login-required', async () => {
     let anonymous: WritableSessionSnapshot = {
       ...confirmed,

@@ -833,6 +833,112 @@ describe('Android local sources', () => {
     }
   });
 
+  it.each(['succeeds', 'fails'])(
+    'keeps newer NodeSeek fallback evidence when an older recovery %s',
+    async (outcome) => {
+      const olderRecovery = Promise.withResolvers<unknown>();
+      let directMode: 'fallback' | 'success' = 'fallback';
+      const feedHtml = `
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743018-1">current evidence</a></div>
+          <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+        </li>
+      </ul>
+    `;
+      const recoverReadChannel = vi.fn(() => olderRecovery.promise);
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: vi.fn(async () => {
+          if (directMode === 'success') return html(feedHtml);
+          throw new TypeError('Network request failed');
+        }),
+        webViewFetcher: vi.fn(async () => html(feedHtml)),
+        recoveryThreshold: 2,
+        recoverReadChannel
+      });
+      const gateway = createReadGateway({ anonymousFetcher: fetcher, fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+
+      await expect(gateway.getFeed({ source: 'nodeseek' })).resolves.toMatchObject({
+        items: [expect.objectContaining({ title: 'current evidence' })]
+      });
+      const olderRead = gateway.getFeed({ source: 'nodeseek' });
+      await vi.waitFor(() => expect(recoverReadChannel).toHaveBeenCalledTimes(1));
+
+      directMode = 'success';
+      await gateway.getFeed({ source: 'nodeseek' });
+      directMode = 'fallback';
+      await gateway.getFeed({ source: 'nodeseek' });
+      expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+
+      if (outcome === 'succeeds') olderRecovery.resolve({ ok: true, generation: 2 });
+      else olderRecovery.reject(new Error('older recovery failed'));
+      await expect(olderRead).resolves.toMatchObject({
+        items: [expect.objectContaining({ title: 'current evidence' })]
+      });
+      await gateway.getFeed({ source: 'nodeseek' });
+
+      expect(recoverReadChannel).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('keeps the NodeSeek threshold count after a failed recovery', async () => {
+    const recoverReadChannel = vi.fn(async () => {
+      throw new Error('native recovery unavailable');
+    });
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`)),
+      recoveryThreshold: 2,
+      recoverReadChannel
+    });
+    const gateway = createReadGateway({ anonymousFetcher: fetcher, fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+
+    await gateway.getFeed({ source: 'nodeseek' });
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+    await gateway.getFeed({ source: 'nodeseek' });
+    expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+    await expect(gateway.getFeed({ source: 'nodeseek' })).resolves.toMatchObject({
+      items: [expect.objectContaining({ title: 'NodeSeek topic' })]
+    });
+
+    expect(recoverReadChannel).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a newer NodeSeek recovery owner when an older recovery succeeds', async () => {
+    const olderRecovery = Promise.withResolvers<unknown>();
+    const newerRecovery = Promise.withResolvers<unknown>();
+    const recoverReadChannel = vi
+      .fn<() => Promise<unknown>>()
+      .mockImplementationOnce(() => olderRecovery.promise)
+      .mockImplementationOnce(() => newerRecovery.promise)
+      .mockResolvedValue({ ok: true, generation: 2 });
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`)),
+      recoveryThreshold: 2,
+      recoverReadChannel
+    });
+    const gateway = createReadGateway({ anonymousFetcher: fetcher, fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+
+    await gateway.getFeed({ source: 'nodeseek' });
+    const olderRead = gateway.getFeed({ source: 'nodeseek' });
+    await vi.waitFor(() => expect(recoverReadChannel).toHaveBeenCalledTimes(1));
+    const newerRead = gateway.getFeed({ source: 'nodeseek' });
+    await vi.waitFor(() => expect(recoverReadChannel).toHaveBeenCalledTimes(2));
+
+    olderRecovery.resolve({ ok: true, generation: 2 });
+    await olderRead;
+    await gateway.getFeed({ source: 'nodeseek' });
+    newerRecovery.resolve({ ok: true, generation: 2 });
+    await newerRead;
+
+    expect(recoverReadChannel).toHaveBeenCalledTimes(3);
+  });
+
   it('preserves a successful WebView result when native recovery fails', async () => {
     const recoverReadChannel = vi.fn(async () => {
       throw new Error('native recovery unavailable');
@@ -1424,6 +1530,10 @@ describe('Android local sources', () => {
   it('rotates only after the eight-second timeout is recovered by WebView', async () => {
     vi.useFakeTimers();
     try {
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
       const defaultFetcher = vi.fn(
         (_input: string, init?: RequestInit) =>
           new Promise<Response>((_resolve, reject) => {
@@ -1463,6 +1573,48 @@ describe('Android local sources', () => {
 
       await expect(request).resolves.toMatchObject({ items: [] });
       expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+      const recoveryEvents = lines.map((line) => JSON.parse(line)).filter((event) => event.source === 'linuxdo');
+      expect(recoveryEvents.filter((event) => event.recoveryDecision === 'commit')).toHaveLength(1);
+      expect(recoveryEvents.filter((event) => event.recoveryDecision === 'direct-reset')).toHaveLength(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not revive an older linux.do fallback after a newer direct proof', async () => {
+    vi.useFakeTimers();
+    try {
+      const fallbackBody = Promise.withResolvers<string>();
+      const fallbackResponse = jsonResponse({ topic_list: { topics: [] } });
+      const readFallbackBody = vi.spyOn(fallbackResponse, 'text').mockImplementation(() => fallbackBody.promise);
+      let directMode: 'hang' | 'success' = 'hang';
+      const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+      const fetcher = createLinuxDoWebViewFallbackFetcher({
+        defaultFetcher: vi.fn(() =>
+          directMode === 'success'
+            ? Promise.resolve(jsonResponse({ topic_list: { topics: [] } }))
+            : new Promise<Response>(() => undefined)
+        ),
+        webViewFetcher: vi.fn(async () => fallbackResponse),
+        recoverReadChannel
+      });
+      const gateway = createReadGateway({
+        anonymousFetcher: fetcher,
+        fetcher,
+        linuxDoUserAgent: () => 'LinuxDo UA',
+        nodeSeekUserAgent: () => 'NodeSeek UA'
+      });
+      const olderRead = gateway.getFeed({ source: 'linuxdo' });
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(readFallbackBody).toHaveBeenCalledTimes(1);
+
+      directMode = 'success';
+      await expect(gateway.getFeed({ source: 'linuxdo' })).resolves.toMatchObject({ items: [] });
+      fallbackBody.resolve(JSON.stringify({ topic_list: { topics: [] } }));
+      await expect(olderRead).resolves.toMatchObject({ items: [] });
+
+      expect(recoverReadChannel).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

@@ -68,6 +68,51 @@ async function acquireLease(directory) {
   return () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 }
 
+/** @template T @typedef {{ kind: 'passed', value: T } | { kind: 'failed', error: unknown }} ProofOutcome */
+
+/** @template T @param {() => T | Promise<T>} operation @returns {Promise<ProofOutcome<T>>} */
+async function captureProofOutcome(operation) {
+  try {
+    return { kind: 'passed', value: await operation() };
+  } catch (error) {
+    return { kind: 'failed', error };
+  }
+}
+
+function checkpointFailure(error, checkpoint) {
+  const failure = error instanceof Error ? error : new Error('Device proof failed', { cause: error });
+  if (checkpoint === undefined) return failure;
+  try {
+    failure.checkpoint = checkpoint;
+    return failure;
+  } catch {
+    const wrapped = new Error(failure.message, { cause: error });
+    wrapped.checkpoint = checkpoint;
+    return wrapped;
+  }
+}
+
+async function withCheckpointLease(directory, operation) {
+  const release = await acquireLease(directory);
+  const outcome = await captureProofOutcome(operation);
+  const released = await captureProofOutcome(release);
+  if (released.kind === 'failed') {
+    const checkpoint =
+      outcome.kind === 'passed'
+        ? outcome.value.checkpoint
+        : outcome.error instanceof Error
+          ? outcome.error.checkpoint
+          : undefined;
+    const error =
+      outcome.kind === 'failed'
+        ? new AggregateError([outcome.error, released.error], 'Device proof and OS lease release both failed')
+        : released.error;
+    throw checkpointFailure(error, checkpoint);
+  }
+  if (outcome.kind === 'failed') throw checkpointFailure(outcome.error);
+  return outcome.value;
+}
+
 function logicalSnapshot(directory, files) {
   const scratch = mkdtempSync(path.join(directory, 'readback-'));
   try {
@@ -163,19 +208,18 @@ function restore(directory, device, manifest) {
 }
 
 export async function resumeProofCheckpoint({ directory, device }) {
-  const release = await acquireLease(directory);
-  try {
+  const outcome = await withCheckpointLease(directory, async () => {
     const manifest = readManifest(directory);
     if (manifest.phase !== 'restoring') throw new Error('Only an interrupted restoring checkpoint can resume');
-    return restore(directory, device, manifest);
-  } finally {
-    await release();
-  }
+    const restored = await captureProofOutcome(() => restore(directory, device, manifest));
+    if (restored.kind === 'failed') throw checkpointFailure(restored.error, { phase: manifest.phase });
+    return { checkpoint: restored.value };
+  });
+  return outcome.checkpoint;
 }
 
 export async function withProofCheckpoint({ directory, device, prepare = () => {}, run }) {
-  const release = await acquireLease(directory);
-  try {
+  return withCheckpointLease(directory, async () => {
     if (existsSync(manifestPath(directory)) && readManifest(directory).phase !== 'restored') {
       throw new Error('Pending checkpoint blocks new acceptance; preserve it for inspection');
     }
@@ -208,16 +252,8 @@ export async function withProofCheckpoint({ directory, device, prepare = () => {
         throw new Error('Checkpoint backup verification failed');
     }
     saveManifest(directory, manifest);
-    let result;
-    let businessError;
-    let cleanupError;
-    let checkpoint;
-    try {
-      result = await run();
-    } catch (error) {
-      businessError = error;
-    }
-    try {
+    const business = await captureProofOutcome(run);
+    const restoration = await captureProofOutcome(() => {
       assertIdentity(device.identity(), identity);
       device.stop();
       assertIdentity(device.identity(), identity);
@@ -226,22 +262,22 @@ export async function withProofCheckpoint({ directory, device, prepare = () => {
       manifest.restoreFromModes = readModes(device, restoreFromFiles);
       manifest.phase = 'restoring';
       saveManifest(directory, manifest);
-      checkpoint = restore(directory, device, manifest);
-    } catch (error) {
-      cleanupError = error;
-    }
-    if (businessError || cleanupError) {
+      return restore(directory, device, manifest);
+    });
+    if (business.kind === 'failed' || restoration.kind === 'failed') {
       const error =
-        businessError && cleanupError
-          ? new AggregateError([businessError, cleanupError], 'Device proof and checkpoint restoration both failed')
-          : businessError || cleanupError;
-      error.checkpoint = checkpoint || { phase: manifest.phase };
-      throw error;
+        business.kind === 'failed' && restoration.kind === 'failed'
+          ? new AggregateError(
+              [business.error, restoration.error],
+              'Device proof and checkpoint restoration both failed'
+            )
+          : business.kind === 'failed'
+            ? business.error
+            : restoration.error;
+      throw checkpointFailure(error, restoration.kind === 'passed' ? restoration.value : { phase: manifest.phase });
     }
-    return { result, checkpoint };
-  } finally {
-    await release();
-  }
+    return { result: business.value, checkpoint: restoration.value };
+  });
 }
 
 // ADB transport is shared by storage acceptance and the deterministic Gallery runner.

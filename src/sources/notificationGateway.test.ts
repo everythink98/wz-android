@@ -598,6 +598,44 @@ describe('notification gateway', () => {
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
+  it.each(['success', 'http-401'] as const)(
+    'captures the notification epoch after access settles for %s',
+    async (result) => {
+      const access = Promise.withResolvers<NotificationAdapterAccess>();
+      const readAccess = vi.fn(() => access.promise);
+      const onSessionExpired = vi.fn();
+      let epoch = 9;
+      const sourceAdapter = adapter('ok');
+      sourceAdapter.listPage = vi.fn<NotificationAdapter['listPage']>(async (options) => {
+        await options.fetcher?.('https://www.nodeseek.com/notification');
+        return { quality: 'complete', items: [], cursor: null, hasMore: false };
+      });
+      const gateway = createNotificationGateway({
+        adapters: { nodeseek: sourceAdapter, linuxdo: adapter('ok'), yaohuo: adapter('ok') },
+        onSessionExpired,
+        readAccess,
+        requestSessionEpoch: () => epoch
+      });
+      const request = gateway.listPage('nodeseek');
+      await vi.waitFor(() => expect(readAccess).toHaveBeenCalledTimes(1));
+      epoch = 10;
+      access.resolve({
+        identityKey: 'nodeseek:42',
+        userId: '42',
+        fetcher: async () => new Response('', { status: result === 'http-401' ? 401 : 200 })
+      });
+
+      if (result === 'http-401') {
+        await expect(request).rejects.toMatchObject({ reason: 'http-401' });
+        expect(onSessionExpired).toHaveBeenCalledExactlyOnceWith('nodeseek', 10);
+      } else {
+        await expect(request).resolves.toMatchObject({ items: [] });
+        expect(onSessionExpired).not.toHaveBeenCalled();
+      }
+      expect(sourceAdapter.listPage).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it.each(['epoch', 'identity', 'disabled', 'aborted'] as const)(
     'ignores an authentication failure when its %s changes in flight',
     async (change) => {

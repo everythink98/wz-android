@@ -83,6 +83,8 @@ import { verifyNotificationQuality } from './notificationQuality';
 import { prepareBackgroundProof } from './background';
 import { createContentWorkSample, measureContentWork, verifyContentChain, type ContentWork } from './contentChainProof';
 import { verifyPendingPollMaterialization } from './pendingPollProof';
+import { acquireReviewProofEnvironment, finishReviewProofEnvironment, type ReviewProofFailure } from './environment';
+import { runReviewProofCheck, type ReviewProofCheck, type ReviewProofCheckResult } from './check';
 
 // Isolated developer entry only. Synthetic payloads test boundaries, never upstream protocol claims.
 // HTTP fixtures use the supplied fetcher; the platform-export route uses an instrumentation-owned loopback server.
@@ -162,21 +164,16 @@ function BrowserProbe({
 
 async function execute(token: string, mount: (node: ReactNode) => void, status: (text: string) => void) {
   check((await AsyncStorage.getItem('reader-storage-proof-owner')) === 'isolated', 'Refusing unowned device storage');
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
-    throw new Error('Uncontrolled network denied by isolated proof');
-  };
-  const originalNotificationState = await AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY);
-  const results: {
-    name: string;
-    passed: boolean;
-    error?: string;
-    stack?: string;
-    stage?: string;
-    metrics?: Record<string, unknown>;
-  }[] = [];
-  let stage: string | undefined;
-  const write = (checkpoint: string) => {
+  const environment = await acquireReviewProofEnvironment(
+    () => AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY),
+    async (snapshot) => {
+      if (snapshot === null) await AsyncStorage.removeItem(NOTIFICATION_STORAGE_KEY);
+      else await AsyncStorage.setItem(NOTIFICATION_STORAGE_KEY, snapshot);
+    }
+  );
+  let proofFailure: ReviewProofFailure = { kind: 'none' };
+  const results: ReviewProofCheckResult[] = [];
+  const write = (checkpoint: 'running' | 'grant-notifications' | 'passed' | 'failed') => {
     const file = new File(Paths.cache, 'review-remediation-proof.json');
     file.create({ overwrite: true });
     file.write(
@@ -191,20 +188,9 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
     );
     status(`${checkpoint}: ${results.length} checks`);
   };
-  const run = async (name: string, task: () => Promise<void>, metrics?: Record<string, unknown>) => {
-    stage = undefined;
+  const run = async (name: string, task: ReviewProofCheck, metrics?: Record<string, unknown>) => {
     try {
-      await task();
-      results.push({ name, passed: true, ...(metrics ? { metrics } : {}) });
-    } catch (error) {
-      results.push({
-        name,
-        passed: false,
-        error: error instanceof Error ? error.message : String(error),
-        ...(error instanceof Error ? { stack: error.stack } : {}),
-        ...(stage ? { stage } : {}),
-        ...(metrics ? { metrics } : {})
-      });
+      results.push(await runReviewProofCheck(name, task, metrics));
     } finally {
       mount(null);
       await delay(80);
@@ -301,14 +287,14 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         '</div></blockquote>'
       ]
     ]) {
-      await run(`content-hermes-deep-${kind}`, async () => {
+      await run(`content-hermes-deep-${kind}`, async (markStage) => {
         check('HermesInternal' in globalThis, 'Semantic content proof requires Hermes');
         const body =
           '<p>before <a href="https://example.com/link">link</a></p><img src="https://example.com/first.png" alt="first">' +
           '<pre><code>&lt;safe&gt;\ncode</code></pre><table><tr><td>cell</td></tr></table>' +
           '<forum-discourse-poll name="choice"></forum-discourse-poll>' +
           '<img src="https://example.com/second.png" alt="second"><p>after</p>';
-        stage = 'before-sanitize';
+        markStage('before-sanitize');
         const plan = prepareSanitizedForumContent(`${opening.repeat(256)}${body}${closing.repeat(256)}`, {
           baseUrl: 'https://linux.do/t/1',
           polls: [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }],
@@ -316,13 +302,13 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
           source: 'linuxdo',
           topicId: '1',
           transformRoot: () => {
-            stage = 'sanitizer-root-transform';
+            markStage('sanitizer-root-transform');
           },
           afterSanitizeRoot: () => {
-            stage = 'sanitizer-returned';
+            markStage('sanitizer-returned');
           }
         }).contentPlan;
-        stage = 'content-plan-returned';
+        markStage('content-plan-returned');
         check(
           plan.rows.every((row) => row.ancestorFrames.length <= 64),
           'Semantic depth exceeded 64'
@@ -1779,12 +1765,16 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
     }
     for (const quality of ['partial', 'invalid', 'legacy'] as const)
       await run(`notification-quality-${quality}`, () => verifyNotificationQuality(quality));
+  } catch (error) {
+    proofFailure = { kind: 'failed', error };
+    throw error;
   } finally {
-    globalThis.fetch = originalFetch;
-    if (originalNotificationState === null) await AsyncStorage.removeItem(NOTIFICATION_STORAGE_KEY);
-    else await AsyncStorage.setItem(NOTIFICATION_STORAGE_KEY, originalNotificationState);
-    mount(null);
-    appQueryClient.clear();
+    try {
+      await finishReviewProofEnvironment(environment, proofFailure);
+    } finally {
+      mount(null);
+      appQueryClient.clear();
+    }
   }
   write(results.every((result) => result.passed) ? 'passed' : 'failed');
 }

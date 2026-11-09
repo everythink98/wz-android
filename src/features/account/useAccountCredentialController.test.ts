@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react', () => ({
   useCallback: <T>(callback: T) => callback,
   useEffect: () => undefined,
+  useLayoutEffect: () => undefined,
   useRef: <T>(value: T) => ({ current: value }),
   useState: <T>(initial: T) => [initial, vi.fn()]
 }));
@@ -52,6 +53,46 @@ afterEach(() => {
 });
 
 describe('account credential controller ownership', () => {
+  it.each(['save', 'delete'] as const)(
+    'preserves a synchronous credential %s failure and retires older summary reads',
+    async (mode) => {
+      const failure = new Error('synchronous storage failure');
+      const pending = Promise.withResolvers<void>();
+      mocks.getSummary.mockImplementation(async (site: 'nodeseek' | 'linuxdo' | 'yaohuo') => {
+        await pending.promise;
+        return { site, state: 'missing', hasCredential: false, protection: null };
+      });
+      mocks[mode].mockImplementationOnce(() => {
+        throw failure;
+      });
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      const { controller } = createController();
+      const reload = controller.reloadCredentialSummaries();
+      try {
+        await expect(
+          controller.handleAccountCenterCommand(
+            mode === 'save'
+              ? { type: 'save-credential', site: 'nodeseek', account: 'local-fixture', password: 'local-fixture' }
+              : { type: 'delete-credential', site: 'nodeseek' }
+          )
+        ).rejects.toBe(failure);
+        pending.resolve();
+        await expect(reload).resolves.toBe(false);
+        expect(lines.map((line) => JSON.parse(line))).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ operation: mode, phase: 'finish', outcome: 'failure' }),
+            expect.objectContaining({ operation: 'load-summary', phase: 'finish', outcome: 'stale' })
+          ])
+        );
+      } finally {
+        pending.resolve();
+      }
+    }
+  );
+
   it('does not resume automatic fill after its WebView attempt fails', async () => {
     const { controller } = createController();
     controller.openAccountLogin('nodeseek', true);

@@ -1392,6 +1392,9 @@ describe('notification screens', () => {
       nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { revision: 0 } }) }
     });
 
+    await fireEvent.press(view.getByLabelText('取消'));
+    await fireEvent.press(view.getByLabelText('取消'));
+
     await view.rerender(
       <NotificationDetailScreen
         contentWidth={360}

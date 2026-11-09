@@ -2300,11 +2300,16 @@ describe('Topic real child components', () => {
 
     onReplySnapshot.mockClear();
     await view.rerender(<ReplyComposerSheet {...props} actionBusy visible={false} />);
+    const closedInit = [...webView.props.postMessageMock.mock.calls]
+      .map(([message]: [string]) => JSON.parse(message))
+      .findLast((message) => message.type === 'INIT');
+    expect(closedInit).toBeTruthy();
     await fireEvent(webView, 'message', {
       nativeEvent: {
         data: JSON.stringify({
           type: 'SNAPSHOT',
           payload: {
+            documentEpoch: closedInit.payload.documentEpoch,
             snapshot: {
               revision: 1,
               markdown: '迟到的编辑正文',

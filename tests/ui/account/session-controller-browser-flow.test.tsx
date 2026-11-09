@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React, { createRef } from 'react';
+import { createRoot } from 'test-renderer';
 import { NativeModules } from 'react-native';
 import type { WebView } from 'react-native-webview';
 import * as SecureStore from 'expo-secure-store';
@@ -93,6 +94,261 @@ describe('session controller browser flow', () => {
     if (originalNetworkProxy) Object.defineProperty(NativeModules, 'NetworkProxyModule', originalNetworkProxy);
     else delete NativeModules.NetworkProxyModule;
   });
+
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'retires active and queued %s work when its controller unmounts',
+    async (site) => {
+      jest.useFakeTimers();
+      const hook = await renderSessionController(
+        jest.fn(async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }))
+      );
+      const fetcher =
+        site === 'nodeseek'
+          ? hook.result.current.nodeSeekFetchWithWebViewFallback
+          : hook.result.current.forumFetchWithWebViewFallback;
+      const baseUrl = site === 'nodeseek' ? 'https://www.nodeseek.com' : 'https://linux.do';
+      const settled: string[] = [];
+      const request = (index: number) =>
+        fetcher(`${baseUrl}/request-${index}`).then(
+          () => settled.push('resolved'),
+          (error: Error) => settled.push(error.message)
+        );
+      let requests: Promise<number>[] = [];
+      try {
+        await act(async () => {
+          requests = [request(1), request(2)];
+        });
+        expect(
+          hook.result.current.hiddenBrowserFetchRequests[site === 'nodeseek' ? 'nodeSeek' : 'linuxDo']
+        ).not.toBeNull();
+
+        await hook.unmount();
+
+        expect(settled).toEqual(['请求已取消', '请求已取消']);
+      } finally {
+        await act(async () => {
+          await jest.runAllTimersAsync();
+        });
+        await Promise.allSettled(requests);
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'rejects a captured %s browser fetcher after its controller unmounts',
+    async (site) => {
+      jest.useFakeTimers();
+      const hook = await renderSessionController(
+        jest.fn(async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }))
+      );
+      const fetcher =
+        site === 'nodeseek'
+          ? hook.result.current.nodeSeekFetchWithWebViewFallback
+          : hook.result.current.forumFetchWithWebViewFallback;
+      const url = site === 'nodeseek' ? 'https://www.nodeseek.com/' : 'https://linux.do/latest.json';
+      let settled: string | undefined;
+      let request: Promise<void> = Promise.resolve();
+      try {
+        await hook.unmount();
+        request = fetcher(url).then(
+          () => {
+            settled = 'resolved';
+          },
+          (error: Error) => {
+            settled = error.message;
+          }
+        );
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        expect(settled).toBe('请求已取消');
+      } finally {
+        await act(async () => {
+          await jest.runAllTimersAsync();
+        });
+        await request;
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it.each([1, 2])(
+    'retires both browser slots and preserves %i renderer errors during unmount',
+    async (failureCount) => {
+      jest.useFakeTimers();
+      const timer = jest.spyOn(global, 'setTimeout');
+      const clearTimer = jest.spyOn(global, 'clearTimeout');
+      const nodeSeekError = new Error('NodeSeek stop failed');
+      const linuxDoError = new Error('LinuxDo stop failed');
+      const controllers = Array.from({ length: 4 }, () => new AbortController());
+      const listeners = controllers.map(({ signal }) => ({
+        added: jest.spyOn(signal, 'addEventListener'),
+        removed: jest.spyOn(signal, 'removeEventListener')
+      }));
+      const defaultFetcher = jest.fn(
+        async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } })
+      );
+      const hook = await renderHook(() =>
+        useSessionController({
+          commitLinuxDoWebViewUserAgent: jest.fn(),
+          commitNodeSeekWebViewUserAgent: jest.fn(),
+          defaultFetcher,
+          forumSessionEpochsRef: { current: initialForumSessionEpochs },
+          linuxDoBrowserWebViewRef: {
+            current: {
+              stopLoading: () => {
+                if (failureCount === 2) throw linuxDoError;
+              }
+            }
+          },
+          nodeSeekBrowserWebViewRef: {
+            current: {
+              stopLoading: () => {
+                throw nodeSeekError;
+              }
+            }
+          },
+          nodeSeekRecoveryThreshold: 1,
+          notify: jest.fn()
+        })
+      );
+      const settled: Error[] = [];
+      let requests: Promise<Response | void>[] = [];
+      try {
+        await act(async () => {
+          requests = controllers.map((controller, index) => {
+            const fetcher =
+              index < 2
+                ? hook.result.current.nodeSeekFetchWithWebViewFallback
+                : hook.result.current.forumFetchWithWebViewFallback;
+            const base = index < 2 ? 'https://www.nodeseek.com' : 'https://linux.do';
+            return fetcher(`${base}/request-${index}`, { signal: controller.signal }).catch((error: Error) => {
+              settled.push(error);
+            });
+          });
+        });
+        expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek).not.toBeNull();
+        expect(hook.result.current.hiddenBrowserFetchRequests.linuxDo).not.toBeNull();
+        const activeTimers = timer.mock.calls.flatMap((call, index) => {
+          const result = timer.mock.results[index];
+          return call[1] === 15_000 && result?.type === 'return' ? [result.value] : [];
+        });
+        expect(activeTimers).toHaveLength(2);
+
+        let failure: unknown;
+        try {
+          await hook.unmount();
+        } catch (error) {
+          failure = error;
+        }
+
+        if (failureCount === 1) {
+          expect(failure).toBe(nodeSeekError);
+        } else {
+          expect(failure).toBeInstanceOf(AggregateError);
+          if (!(failure instanceof AggregateError)) throw new Error('Cleanup did not preserve both failures');
+          expect(failure.errors).toHaveLength(2);
+          expect(failure.errors[0]).toBe(nodeSeekError);
+          expect(failure.errors[1]).toBe(linuxDoError);
+        }
+        await Promise.all(requests);
+        expect(settled.map((error) => error.message)).toEqual(Array(4).fill('请求已取消'));
+        for (const handle of activeTimers) expect(clearTimer).toHaveBeenCalledWith(handle);
+        for (const listener of listeners) {
+          for (const [type, handler] of listener.added.mock.calls) {
+            if (type === 'abort') expect(listener.removed).toHaveBeenCalledWith('abort', handler);
+          }
+        }
+      } finally {
+        await act(async () => {
+          await jest.runAllTimersAsync();
+        });
+        await Promise.allSettled(requests);
+        timer.mockRestore();
+        clearTimer.mockRestore();
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'starts fresh %s work after StrictMode retires its first effect lifetime',
+    async (site) => {
+      const firstNative = Promise.withResolvers<Response>();
+      const defaultFetcher = jest.fn<typeof fetch>(async (input) =>
+        String(input).includes('effect=1')
+          ? firstNative.promise
+          : new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } })
+      );
+      const url = site === 'nodeseek' ? 'https://www.nodeseek.com/post-1-1' : 'https://linux.do/latest.json';
+      const requests: Promise<Response | Error>[] = [];
+      const nodeSeekBrowserWebViewRef = { current: null };
+      const linuxDoBrowserWebViewRef = { current: null };
+      let effectRuns = 0;
+      let retiredResult: Response | Error | undefined;
+      const latest = createRef<ReturnType<typeof useSessionController>>();
+      function Session() {
+        const session = useSessionController({
+          commitLinuxDoWebViewUserAgent: jest.fn(),
+          commitNodeSeekWebViewUserAgent: jest.fn(),
+          defaultFetcher,
+          forumSessionEpochsRef: { current: initialForumSessionEpochs },
+          linuxDoBrowserWebViewRef,
+          nodeSeekBrowserWebViewRef,
+          nodeSeekRecoveryThreshold: 1,
+          notify: jest.fn()
+        });
+        const fetcher =
+          site === 'nodeseek' ? session.nodeSeekFetchWithWebViewFallback : session.forumFetchWithWebViewFallback;
+        React.useLayoutEffect(() => {
+          latest.current = session;
+        });
+        React.useEffect(() => {
+          effectRuns += 1;
+          const request = fetcher(`${url}?effect=${effectRuns}`).catch((error: Error) => error);
+          requests.push(request);
+          if (effectRuns === 1)
+            void request.then((result) => {
+              retiredResult = result;
+            });
+        }, [fetcher]);
+        return null;
+      }
+      const root = createRoot({ isStrictMode: true });
+      await act(async () => root.render(<Session />));
+      try {
+        expect(effectRuns).toBe(2);
+        const session = latest.current;
+        if (!session) throw new Error('Session did not mount');
+        const current = session.hiddenBrowserFetchRequests[site === 'nodeseek' ? 'nodeSeek' : 'linuxDo'];
+        expect(current).not.toBeNull();
+        await act(async () =>
+          firstNative.resolve(new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }))
+        );
+        expect(retiredResult).toEqual(expect.objectContaining({ message: '请求已取消' }));
+        await act(async () => {
+          if (site === 'nodeseek') {
+            await session.completeNodeSeekBrowserFetch({
+              id: current?.id,
+              url,
+              html: '<main>fresh document</main>'
+            });
+          } else {
+            await session.completeLinuxDoBrowserFetch({ id: current?.id, url, body: '{}' });
+          }
+        });
+        const [retired, fresh] = await Promise.all(requests);
+
+        expect(retired).toEqual(expect.objectContaining({ message: '请求已取消' }));
+        expect(fresh).toEqual(expect.objectContaining({ status: 200 }));
+      } finally {
+        await act(async () => root.unmount());
+        await Promise.allSettled(requests);
+      }
+    }
+  );
 
   it.each<['nodeseek' | 'linuxdo', 'private-access-stale' | 'source-disabled']>([
     ['nodeseek', 'private-access-stale'],

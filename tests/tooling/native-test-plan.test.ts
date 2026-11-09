@@ -265,3 +265,105 @@ describe('image instrumentation runner mode isolation', () => {
     }
   );
 });
+
+describe('image instrumentation permission lease cleanup', () => {
+  async function runFixture(
+    failures: {
+      instrument?: { error: unknown };
+      revoke?: { error: unknown };
+      fixture?: { error: unknown };
+      restoreBuild?: { error: unknown };
+      permissionGranted?: boolean;
+    } = {}
+  ) {
+    const originalArgv = process.argv;
+    const exec = vi.fn((_command: string, args: readonly string[]) => {
+      if (args[0] === 'devices') return 'List of devices attached\nemulator-5556\tdevice\n';
+      if (args.includes('emu')) return 'WZ_ImageRuntime_Test_API35\nOK\n';
+      if (args.includes('dumpsys'))
+        return `android.permission.READ_MEDIA_IMAGES: granted=${failures.permissionGranted ?? false}`;
+      if (args.includes('instrument')) {
+        if (failures.instrument) throw failures.instrument.error;
+        return 'OK (1 test)\n';
+      }
+      if (args.includes('revoke') && failures.revoke) throw failures.revoke.error;
+      return '';
+    });
+    const spawn = vi.fn((): { status: number | null; error?: unknown } =>
+      spawn.mock.calls.length === 2 && failures.restoreBuild
+        ? { error: failures.restoreBuild.error, status: null }
+        : { status: 0 }
+    );
+    const remove = vi.fn(() => {
+      if (failures.fixture) throw failures.fixture.error;
+    });
+    vi.resetModules();
+    vi.doMock('node:child_process', () => ({ execFileSync: exec, spawnSync: spawn }));
+    vi.doMock('node:crypto', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('node:crypto')>()),
+      randomUUID: () => 'fixture-build-id'
+    }));
+    vi.doMock('node:fs', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('node:fs')>()),
+      existsSync: () => true,
+      mkdirSync: vi.fn(),
+      mkdtempSync: (prefix: string) => `${prefix}fixture`,
+      readdirSync: () => ['35.0.0'],
+      readFileSync: (file: string) =>
+        file.endsWith('BuildConfig.java') ? 'fixturebuildid' : Buffer.from('fixture-apk'),
+      rmSync: remove,
+      writeFileSync: vi.fn()
+    }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    let outcome: { kind: 'passed' } | { kind: 'failed'; error: unknown } = { kind: 'passed' };
+    try {
+      process.argv = [process.execPath, 'scripts/run-network-image-instrumented-tests.mjs', '--platform-exports'];
+      await import('../../scripts/run-network-image-instrumented-tests.mjs');
+    } catch (error) {
+      outcome = { kind: 'failed', error };
+    } finally {
+      process.argv = originalArgv;
+      log.mockRestore();
+      output.mockRestore();
+      vi.doUnmock('node:child_process');
+      vi.doUnmock('node:crypto');
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+    }
+    return { outcome, exec, spawn, remove };
+  }
+
+  it('restores the normal build and releases the fixture even when permission restoration fails', async () => {
+    const failure = new Error('permission restore');
+    const result = await runFixture({ revoke: { error: failure } });
+    expect(result.remove).toHaveBeenCalledOnce();
+    expect(result.spawn).toHaveBeenCalledTimes(2);
+    expect(result.outcome).toEqual({ kind: 'failed', error: failure });
+  });
+
+  it('preserves the body and every cleanup failure, including falsy thrown values', async () => {
+    const business = new Error('instrumentation');
+    const permission = new Error('permission restore');
+    const restoreBuild = new Error('normal build restore');
+    const result = await runFixture({
+      instrument: { error: business },
+      revoke: { error: permission },
+      fixture: { error: false },
+      restoreBuild: { error: restoreBuild }
+    });
+    expect(result.remove).toHaveBeenCalledOnce();
+    expect(result.spawn).toHaveBeenCalledTimes(2);
+    if (result.outcome.kind !== 'failed') throw new Error('Expected all causes');
+    if (!(result.outcome.error instanceof AggregateError)) throw new Error('Expected compound failure');
+    expect(result.outcome.error.errors).toEqual([business, permission, false, restoreBuild]);
+  });
+
+  it('preserves an existing image permission and still releases every local resource', async () => {
+    const result = await runFixture({ permissionGranted: true });
+    expect(result.outcome).toEqual({ kind: 'passed' });
+    expect(result.exec.mock.calls.some(([, args]) => args.includes('grant') || args.includes('revoke'))).toBe(false);
+    expect(result.remove).toHaveBeenCalledOnce();
+    expect(result.spawn).toHaveBeenCalledTimes(2);
+  });
+});

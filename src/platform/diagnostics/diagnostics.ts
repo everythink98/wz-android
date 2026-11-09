@@ -23,15 +23,10 @@ import {
 
 const appSessionId = `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
-const finishedTraces = new WeakSet<DiagnosticTrace>();
+type DiagnosticTraceHint = { outcome: 'partial' | 'failure'; fields: DiagnosticFields };
+type DiagnosticTraceState = { kind: 'open'; hint: DiagnosticTraceHint | null } | { kind: 'finished' };
 
-const outcomeHints = new WeakMap<
-  DiagnosticTrace,
-  {
-    outcome: 'partial' | 'failure';
-    fields: DiagnosticFields;
-  }
->();
+const traceStates = new WeakMap<DiagnosticTrace, DiagnosticTraceState>();
 
 const DIAGNOSTIC_REQUEST = Symbol('wz.diagnosticRequest');
 
@@ -59,7 +54,7 @@ export function beginDiagnosticTrace(
 }
 
 export function markDiagnosticStage(trace: DiagnosticTrace, phase: DiagnosticPhase, fields: DiagnosticFields = {}) {
-  if (!finishedTraces.has(trace)) {
+  if (traceStates.get(trace)?.kind !== 'finished') {
     emit(trace, phase, 'success', fields, Date.now());
   }
 }
@@ -70,12 +65,12 @@ export function finishDiagnosticTrace(
   fields: DiagnosticFields = {},
   now = Date.now()
 ) {
-  if (finishedTraces.has(trace)) {
+  const state = traceStates.get(trace);
+  if (state?.kind === 'finished') {
     return;
   }
-  finishedTraces.add(trace);
-  const hint = outcomeHints.get(trace);
-  outcomeHints.delete(trace);
+  traceStates.set(trace, { kind: 'finished' });
+  const hint = state?.hint;
   if (hint && (outcome === 'success' || outcome === 'noop' || outcome === 'partial')) {
     emit(
       trace,
@@ -94,21 +89,22 @@ export function hintDiagnosticOutcome(
   outcome: 'partial' | 'failure',
   fields: DiagnosticFields = {}
 ) {
-  if (finishedTraces.has(trace)) {
+  const state = traceStates.get(trace);
+  if (state?.kind === 'finished') {
     return;
   }
-  const previous = outcomeHints.get(trace);
+  const previous = state?.hint;
   if (!previous) {
-    outcomeHints.set(trace, { outcome, fields: { ...fields } });
+    traceStates.set(trace, { kind: 'open', hint: { outcome, fields: { ...fields } } });
     return;
   }
   const nextIsAtLeastAsSevere = outcome === 'failure' || previous.outcome === 'partial';
-  outcomeHints.set(
-    trace,
-    nextIsAtLeastAsSevere
+  traceStates.set(trace, {
+    kind: 'open',
+    hint: nextIsAtLeastAsSevere
       ? { outcome, fields: { ...previous.fields, ...fields } }
       : { outcome: previous.outcome, fields: { ...fields, ...previous.fields } }
-  );
+  });
 }
 
 export function withDiagnosticFetcher(trace: DiagnosticTrace, fetcher: DiagnosticFetcher): DiagnosticFetcher {
@@ -228,7 +224,7 @@ export function recordDiagnosticError(
       fields.stackFormat = context.stackFormat || (/\(address at /.test(error.stack) ? 'hermes' : 'source');
     }
   }
-  finishedTraces.add(trace);
+  traceStates.set(trace, { kind: 'finished' });
   emit(trace, 'finish', 'failure', fields, now);
 }
 
@@ -266,11 +262,13 @@ export function createTrace(
   operation: DiagnosticOperation,
   startedAt = Date.now()
 ): DiagnosticTrace {
-  return {
+  const trace: DiagnosticTrace = {
     appSessionId,
     traceId: `trace-${++traceSequence}`,
     area,
     operation: safeDiagnosticOperation(operation),
     startedAt
   };
+  traceStates.set(trace, { kind: 'open', hint: null });
+  return trace;
 }

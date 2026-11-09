@@ -31,6 +31,7 @@ export type ContentWork = {
 
 // Observe native work on real nodes; restore descriptors even if the operation throws.
 export function measureContentWork<T>(sample: ContentWork, task: () => T, root?: HTMLElement): T {
+  sample.descriptorsRestored = false;
   const restores: (() => void)[] = [];
   const known = new WeakSet<object>();
   const proxies = new WeakMap<object, object>();
@@ -102,6 +103,7 @@ export function measureContentWork<T>(sample: ContentWork, task: () => T, root?:
   };
   let started: number | undefined;
   let testing = false;
+  let taskFailure: { error: unknown } | null = null;
   const regexBudget =
     (sample.inputChars + sample.fixtureNodes) * 256 * (1 + Math.ceil(Math.log2(sample.inputChars + 1))) + 10_000;
   try {
@@ -221,11 +223,26 @@ export function measureContentWork<T>(sample: ContentWork, task: () => T, root?:
     if (root) register(root);
     started = performance.now();
     return task();
+  } catch (error) {
+    taskFailure = { error };
+    throw error;
   } finally {
     setup = true;
-    for (let i = restores.length - 1; i >= 0; i--) restores[i]();
+    const errors: unknown[] = [];
+    for (let i = restores.length - 1; i >= 0; i--) {
+      try {
+        restores[i]();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
     sample.operationMs = started === undefined ? 0 : performance.now() - started;
-    sample.descriptorsRestored = true;
+    sample.descriptorsRestored = errors.length === 0;
+    if (errors.length) {
+      if (taskFailure) errors.unshift(taskFailure.error);
+      if (errors.length === 1) throw errors[0];
+      throw new AggregateError(errors, 'Content work and descriptor restoration failed');
+    }
   }
 }
 

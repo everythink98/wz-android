@@ -4,6 +4,7 @@ import {
   fetchWithTimeout,
   prepareRequestToSend,
   rejectUnauthorizedResponse,
+  withAbortableTimeout,
   withRequestBeforeSend,
   RequestCanceledError,
   REQUEST_CANCELED_MESSAGE,
@@ -247,5 +248,217 @@ describe('Android request helpers', () => {
       clearTimeoutSpy.mockRestore();
       vi.useRealTimers();
     }
+  });
+});
+
+describe('abortable observation ownership', () => {
+  it.each(['caller-first', 'deadline-first'] as const)('preserves the first cancellation cause: %s', async (order) => {
+    vi.useFakeTimers();
+    const parent = new AbortController();
+    const pending = Promise.withResolvers<string>();
+    const canceled = new Error('caller canceled');
+    const timedOut = new Error('observation deadline');
+    let activeSignal: AbortSignal | undefined;
+    const request = withAbortableTimeout(
+      (signal) => {
+        activeSignal = signal;
+        return pending.promise;
+      },
+      { signal: parent.signal, timeoutMs: 100, canceledError: () => canceled, timeoutError: () => timedOut }
+    );
+    const rejected = expect(request).rejects.toBe(order === 'caller-first' ? canceled : timedOut);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      if (order === 'caller-first') parent.abort();
+      await vi.advanceTimersByTimeAsync(100);
+      await rejected;
+      if (order === 'deadline-first') parent.abort();
+      pending.resolve('late underlying result');
+      await pending.promise;
+      expect(activeSignal?.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(request).rejects.toBe(order === 'caller-first' ? canceled : timedOut);
+    } finally {
+      pending.resolve('cleanup');
+      await Promise.allSettled([request, pending.promise]);
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['resolve', 'throw'] as const)(
+    'releases its timer and parent listener after an operation %s',
+    async (outcome) => {
+      vi.useFakeTimers();
+      const parent = new AbortController();
+      const add = vi.spyOn(parent.signal, 'addEventListener');
+      const remove = vi.spyOn(parent.signal, 'removeEventListener');
+      const failure = new Error('synchronous preparation failure');
+      let activeSignal: AbortSignal | undefined;
+      try {
+        const request = withAbortableTimeout(
+          (signal) => {
+            activeSignal = signal;
+            if (outcome === 'throw') throw failure;
+            return Promise.resolve('ready');
+          },
+          { signal: parent.signal, timeoutMs: 100 }
+        );
+        if (outcome === 'throw') await expect(request).rejects.toBe(failure);
+        else await expect(request).resolves.toBe('ready');
+        expect(remove).toHaveBeenCalledWith('abort', add.mock.calls[0]?.[1]);
+        expect(vi.getTimerCount()).toBe(0);
+        parent.abort();
+        expect(activeSignal?.aborted).toBe(false);
+      } finally {
+        add.mockRestore();
+        remove.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it('keeps caller cancellation after fallback consumes its outer timeout', async () => {
+    vi.useFakeTimers();
+    const parent = new AbortController();
+    const pending = Promise.withResolvers<Response>();
+    const fetcher = vi.fn((_input: string, init?: RequestInit) => {
+      cancelRequestTimeoutForFallback(init);
+      cancelRequestTimeoutForFallback(init);
+      return pending.promise;
+    });
+    const request = fetchWithTimeout(
+      'https://example.invalid/fallback',
+      {},
+      { fetcher, signal: parent.signal, timeoutMs: 100 }
+    );
+    const rejected = expect(request).rejects.toBeInstanceOf(RequestCanceledError);
+    try {
+      await vi.advanceTimersByTimeAsync(200);
+      expect(vi.getTimerCount()).toBe(0);
+      parent.abort();
+      await rejected;
+      pending.resolve(new Response('late fallback'));
+      await pending.promise;
+      await expect(request).rejects.toBeInstanceOf(RequestCanceledError);
+    } finally {
+      pending.resolve(new Response('cleanup'));
+      await Promise.allSettled([request, pending.promise]);
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('composed dispatch proof', () => {
+  it.each(['success', 'sync-throw'] as const)(
+    'marks every nested observer after final prepare: %s',
+    async (outcome) => {
+      const outer = { mayHaveSent: false };
+      const inner = { mayHaveSent: false };
+      let sends = 0;
+      const failure = new Error('synchronous transport failure after prepare');
+      const transport = withRequestBeforeSend(
+        (_input, init) => {
+          const prepared = prepareRequestToSend(init);
+          expect(Reflect.ownKeys(prepared!)).not.toContain(Symbol.for('wz.requestDispatchState'));
+          sends++;
+          if (outcome === 'sync-throw') throw failure;
+          return Promise.resolve(new Response('ok'));
+        },
+        () => {},
+        outer
+      );
+      const guarded = withRequestBeforeSend(
+        withRequestBeforeSend(transport, () => {}),
+        () => {},
+        inner
+      );
+      if (outcome === 'sync-throw')
+        await expect(guarded('https://example.invalid/proof', { method: 'POST' })).rejects.toBe(failure);
+      else
+        await expect(guarded('https://example.invalid/proof', { method: 'POST' })).resolves.toMatchObject({ ok: true });
+      expect(sends).toBe(1);
+      expect(outer.mayHaveSent).toBe(true);
+      expect(inner.mayHaveSent).toBe(true);
+    }
+  );
+
+  it('keeps every observer unsent when transport preparation throws synchronously before prepare', async () => {
+    const outer = { mayHaveSent: false };
+    const inner = { mayHaveSent: false };
+    const failure = new Error('synchronous preparation failure');
+    const transport = withRequestBeforeSend(
+      () => {
+        throw failure;
+      },
+      () => {},
+      outer
+    );
+    const guarded = withRequestBeforeSend(transport, () => {}, inner);
+    await expect(guarded('https://example.invalid/proof', { method: 'POST' })).rejects.toBe(failure);
+    expect([outer.mayHaveSent, inner.mayHaveSent]).toEqual([false, false]);
+  });
+
+  it.each(['signal', 'inner-guard', 'outer-guard'] as const)(
+    'does not mark any observer when prepare rejects: %s',
+    async (block) => {
+      const outer = { mayHaveSent: false };
+      const inner = { mayHaveSent: false };
+      const controller = new AbortController();
+      let admission = true;
+      let pending: RequestInit | undefined;
+      const order: string[] = [];
+      const transport = withRequestBeforeSend(
+        async (_input, init) => {
+          pending = init;
+          return new Response('queued');
+        },
+        () => {
+          order.push('outer');
+          if (!admission && block === 'outer-guard') throw new Error('outer stale');
+        },
+        outer
+      );
+      const guarded = withRequestBeforeSend(
+        transport,
+        () => {
+          order.push('inner');
+          if (!admission && block === 'inner-guard') throw new Error('inner stale');
+        },
+        inner
+      );
+      await guarded('https://example.invalid/proof', { method: 'POST', signal: controller.signal });
+      order.length = 0;
+      admission = false;
+      if (block === 'signal') controller.abort();
+      expect(() => prepareRequestToSend(pending)).toThrow(
+        block === 'signal' ? '请求已取消' : block === 'inner-guard' ? 'inner stale' : 'outer stale'
+      );
+      expect(order).toEqual(block === 'signal' ? [] : block === 'inner-guard' ? ['inner'] : ['inner', 'outer']);
+      expect([outer.mayHaveSent, inner.mayHaveSent]).toEqual([false, false]);
+    }
+  );
+
+  it('keeps reused dispatch observers monotonic across a later rejected request', async () => {
+    const outer = { mayHaveSent: false };
+    const inner = { mayHaveSent: false };
+    let current = true;
+    let sends = 0;
+    const transport = withRequestBeforeSend(
+      async (_input, init) => {
+        prepareRequestToSend(init);
+        sends++;
+        return new Response('ok');
+      },
+      () => {
+        if (!current) throw new Error('stale');
+      },
+      outer
+    );
+    const guarded = withRequestBeforeSend(transport, () => {}, inner);
+    await guarded('https://example.invalid/proof', { method: 'POST' });
+    current = false;
+    await expect(guarded('https://example.invalid/proof', { method: 'POST' })).rejects.toThrow('stale');
+    expect(sends).toBe(1);
+    expect([outer.mayHaveSent, inner.mayHaveSent]).toEqual([true, true]);
   });
 });

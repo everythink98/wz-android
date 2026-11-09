@@ -6,7 +6,7 @@ const REQUEST_DISPATCH_STATE = Symbol.for('wz.requestDispatchState');
 export type RequestDispatchState = { mayHaveSent: boolean };
 type GuardedRequestInit = RequestInit & {
   [REQUEST_BEFORE_SEND]?: () => void;
-  [REQUEST_DISPATCH_STATE]?: RequestDispatchState;
+  [REQUEST_DISPATCH_STATE]?: readonly RequestDispatchState[];
 };
 
 export function withRequestBeforeSend(
@@ -24,7 +24,14 @@ export function withRequestBeforeSend(
     return fetcher(input, {
       ...init,
       [REQUEST_BEFORE_SEND]: beforeSend,
-      ...(dispatchState ? { [REQUEST_DISPATCH_STATE]: dispatchState } : {})
+      ...(dispatchState
+        ? {
+            [REQUEST_DISPATCH_STATE]: [
+              ...((init as GuardedRequestInit | undefined)?.[REQUEST_DISPATCH_STATE] || []),
+              dispatchState
+            ]
+          }
+        : {})
     } as GuardedRequestInit);
   };
 }
@@ -38,7 +45,7 @@ export function prepareRequestToSend(init?: RequestInit): RequestInit | undefine
     ...transportInit
   } = init as GuardedRequestInit;
   beforeSend?.();
-  if (dispatchState) dispatchState.mayHaveSent = true;
+  for (const observer of dispatchState || []) observer.mayHaveSent = true;
   return beforeSend || dispatchState ? transportInit : init;
 }
 

@@ -273,11 +273,9 @@ export const StructuredReplyComposer = forwardRef<
     const [panelHandoffPending, setPanelHandoffPending] = useState(false);
     const panelHandoffRef = useRef<object | null>(null);
     const imageHandoffRef = useRef<{
-      requestId: string;
       uploadId: string;
       epoch: number;
       invalidated: boolean;
-      pickerStarted: boolean;
     } | null>(null);
     const [panelLayout, setPanelLayout] = useState<'compact' | 'form' | 'expression'>('compact');
     const expandedPanel = panelLayout === 'form';
@@ -410,7 +408,7 @@ export const StructuredReplyComposer = forwardRef<
     }, []);
     const invalidateImageHandoff = useCallback(() => {
       const handoff = imageHandoffRef.current;
-      if (!handoff || handoff.pickerStarted) return;
+      if (!handoff) return;
       handoff.invalidated = true;
       const pending = uploadCommandRef.current;
       if (
@@ -956,11 +954,9 @@ export const StructuredReplyComposer = forwardRef<
                 )
                   throw new Error('编辑文档已变化，请重新选择');
                 const handoff = {
-                  requestId: message.payload.requestId,
                   uploadId,
                   epoch,
-                  invalidated: false,
-                  pickerStarted: false
+                  invalidated: false
                 };
                 imageRequest = handoff;
                 imageHandoffRef.current = handoff;
@@ -982,7 +978,6 @@ export const StructuredReplyComposer = forwardRef<
                 assertCurrent();
                 await sendUploadCommand({ name: 'begin-image-upload', uploadId, documentEpoch: epoch });
                 assertCurrent();
-                handoff.pickerStarted = true;
                 const markdown = await onUploadImage();
                 reply(typeof markdown === 'string' ? { markdown } : undefined);
               } else if (message.payload.action === 'resolve-linuxdo-upload') {

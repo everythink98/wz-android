@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { HTMLElement, TextNode } from 'node-html-parser';
 import { parseHtml } from '../../src/domain/forum/html';
 import { createContentWorkSample, measureContentWork } from '../../dev/review-remediation-proof/contentChainProof';
 import {
@@ -70,6 +71,64 @@ function deepReceipt() {
 }
 
 describe('body and poll chain device work receipts', () => {
+  it.each([new Error('measured task failed'), undefined])(
+    'restores the other descriptors and retains both causes when one restoration fails: %s',
+    (failure) => {
+      const root = parseHtml('<div>probe</div>');
+      const node = root.querySelector('div')!;
+      const sample = createContentWorkSample('failed-restoration', 1, '<div>probe</div>', root);
+      const originals: { target: object; key: string; descriptor: PropertyDescriptor }[] = [];
+      for (const [target, keys] of [
+        [
+          HTMLElement.prototype,
+          ['querySelector', 'querySelectorAll', 'closest', 'getAttribute', 'rawText', 'innerHTML']
+        ],
+        [TextNode.prototype, ['text']],
+        [RegExp.prototype, ['exec', 'test']],
+        [Array.prototype, ['filter', 'map', 'find', 'findIndex', 'some', 'every', 'flatMap', 'slice', 'flat']],
+        [String.prototype, ['replace', 'slice']]
+      ] satisfies [object, string[]][]) {
+        for (const key of keys)
+          originals.push({ target, key, descriptor: Object.getOwnPropertyDescriptor(target, key)! });
+      }
+      measureContentWork(sample, () => undefined, root);
+      let outcome: { kind: 'passed' } | { kind: 'failed'; error: unknown } = { kind: 'passed' };
+      let restoredDuringTask: boolean | undefined;
+      const unconfirmedGlobals: string[] = [];
+      try {
+        try {
+          measureContentWork(
+            sample,
+            () => {
+              restoredDuringTask = sample.descriptorsRestored;
+              Object.defineProperty(node, 'childNodes', { configurable: false });
+              throw failure;
+            },
+            root
+          );
+        } catch (error) {
+          outcome = { kind: 'failed', error };
+        }
+        for (const { target, key, descriptor } of originals) {
+          const current = Object.getOwnPropertyDescriptor(target, key);
+          if (current?.value !== descriptor.value || current?.get !== descriptor.get || current?.set !== descriptor.set)
+            unconfirmedGlobals.push(key);
+        }
+      } finally {
+        for (const { target, key, descriptor } of originals) Object.defineProperty(target, key, descriptor);
+      }
+      expect.soft(unconfirmedGlobals).toEqual([]);
+      expect.soft(restoredDuringTask).toBe(false);
+      expect.soft(sample.descriptorsRestored).toBe(false);
+      if (outcome.kind !== 'failed') throw new Error('Expected task and restoration failures');
+      expect.soft(outcome.error).toBeInstanceOf(AggregateError);
+      if (outcome.error instanceof AggregateError) {
+        expect(outcome.error.errors).toHaveLength(2);
+        expect(outcome.error.errors[0]).toBe(failure);
+        expect(outcome.error.errors[1]).toBeInstanceOf(TypeError);
+      }
+    }
+  );
   it.each([false, true])(
     'counts cached regex and attribute work and restores native descriptors after throw=%s',
     (throws) => {
@@ -97,6 +156,7 @@ describe('body and poll chain device work receipts', () => {
               /absent/.test(cached);
               /absent/.exec(cached);
             }
+            node.rawTagName = 'section';
             if (throws) throw new Error('probe task failed');
             return { dom: sample.domReads - before.dom, regex: sample.regexInputWork - before.regex };
           },
@@ -104,6 +164,7 @@ describe('body and poll chain device work receipts', () => {
         );
       if (throws) expect(run).toThrow('probe task failed');
       else expect(run()).toEqual({ dom: sample.domReads, regex: sample.regexInputWork });
+      expect(node.rawTagName).toBe('section');
       expect(sample.domReads).toBeGreaterThanOrEqual(4);
       expect(sample.regexInputWork).toBeGreaterThanOrEqual(cached.length * 8);
       expect(sample.descriptorsRestored).toBe(true);

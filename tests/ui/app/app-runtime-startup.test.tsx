@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
+import { createRoot } from 'test-renderer';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { useAppRuntime } from '@/app/useAppRuntime';
+import { useAppStartupRuntime } from '@/app/useAppStartupRuntime';
+import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { useInitialForegroundRuntime } from '@/app/useInitialForegroundRuntime';
 import type { ReaderData } from '@/domain/reader/readerData';
 import { createEmptyReaderState, type ReaderChange, type ReaderCommand } from '@/domain/reader/readerRecordState';
@@ -942,19 +945,86 @@ describe('app runtime startup', () => {
     expect(hook.result.current.routes!.topicRouteRuntime.reader.data.settings.theme).toBe('dark');
   });
 
-  it('settles only after Feed and Categories reach terminal state', async () => {
-    const hook = await renderHook(() => useInitialForegroundRuntime());
+  it('ignores a navigator ready callback after the startup host has unmounted', async () => {
+    const deliver = jest.fn<() => void>();
+    const hook = await renderNativeHook(() => useAppStartupRuntime(deliver));
+    const { onReady } = hook.result.current;
+    await hook.unmount();
 
-    expect(hook.result.current.initialForegroundReady).toBe(false);
-    expect(hook.result.current.feedContentReady).toBe(false);
-    await act(async () => hook.result.current.onFeedInitialContentReady());
-    expect(hook.result.current.initialForegroundReady).toBe(false);
-    expect(hook.result.current.feedContentReady).toBe(true);
-    await act(async () => hook.result.current.onCatalogSettled(true));
-    expect(hook.result.current.initialForegroundReady).toBe(true);
-    await act(async () => hook.result.current.onCatalogSettled(false));
-    expect(hook.result.current.initialForegroundReady).toBe(true);
+    onReady();
+
+    expect(deliver).not.toHaveBeenCalled();
   });
+
+  it('delivers the pending navigation only once when ready is reported during delivery', async () => {
+    let onReady: () => void;
+    const deliver = jest.fn<() => void>();
+    deliver.mockImplementationOnce(() => onReady());
+    const hook = await renderNativeHook(() => useAppStartupRuntime(deliver, () => 'feed'));
+    onReady = hook.result.current.onReady;
+
+    await act(async () => onReady());
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the deep link destination across a Strict Mode effect restart', async () => {
+    let visibleRoute = 'feed';
+    const deliver = jest.fn(() => {
+      visibleRoute = 'topic';
+    });
+    const phases: StartupPhase[] = [];
+    let reportLayout!: (route: string) => void;
+    function Harness() {
+      const { onLayout, onReady } = useAppStartupRuntime(deliver, () => visibleRoute);
+      React.useEffect(() => {
+        reportLayout = onLayout;
+        onLayout('feed');
+        onReady();
+      }, [onLayout, onReady]);
+      return null;
+    }
+    const renderer = createRoot({ isStrictMode: true });
+    setStartupTimingRecorder((phase) => phases.push(phase));
+    try {
+      await act(() => renderer.render(<Harness />));
+      expect(phases.filter((phase) => phase === 'react-mounted')).toHaveLength(2);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(phases).not.toContain('page-ready');
+      await act(async () => reportLayout('topic'));
+      await act(async () => reportLayout('topic'));
+      expect(phases.filter((phase) => phase === 'page-ready')).toHaveLength(1);
+    } finally {
+      await act(() => renderer.unmount());
+      setStartupTimingRecorder(undefined);
+    }
+  });
+
+  it.each(['feed-first', 'catalog-first'])(
+    'settles only after Feed and Categories reach terminal state: %s',
+    async (order) => {
+      const hook = await renderHook(() => useInitialForegroundRuntime());
+
+      expect(hook.result.current.initialForegroundReady).toBe(false);
+      expect(hook.result.current.feedContentReady).toBe(false);
+      const first =
+        order === 'feed-first'
+          ? hook.result.current.onFeedInitialContentReady
+          : () => hook.result.current.onCatalogSettled(true);
+      const second =
+        order === 'feed-first'
+          ? () => hook.result.current.onCatalogSettled(true)
+          : hook.result.current.onFeedInitialContentReady;
+      await act(async () => first());
+      await act(async () => first());
+      expect(hook.result.current.initialForegroundReady).toBe(false);
+      expect(hook.result.current.feedContentReady).toBe(order === 'feed-first');
+      await act(async () => second());
+      expect(hook.result.current.initialForegroundReady).toBe(true);
+      await act(async () => hook.result.current.onCatalogSettled(false));
+      expect(hook.result.current.initialForegroundReady).toBe(true);
+    }
+  );
 
   it('ignores the empty catalog projection before ReaderData is loaded', async () => {
     mockReaderDataLoaded = false;
@@ -998,7 +1068,6 @@ describe('app runtime startup', () => {
     expect(hook.result.current.routes!.feedRouteRuntime.account.sessionEpochs).toBe(mockForumSessionEpochs);
     expect(hook.result.current.routes!.topicRouteRuntime.account.readGateway).toBe(mockReadGateway);
     expect(hook.result.current.routes!.topicRouteRuntime.account.sessionEpochs).toBe(mockForumSessionEpochs);
-    expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
 
     await act(async () =>
       (

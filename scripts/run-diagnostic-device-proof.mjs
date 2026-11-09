@@ -197,6 +197,7 @@ export async function runDiagnosticDeviceProof() {
   let restorePassed = false;
   let symbols;
   const results = [];
+  let primaryFailure;
   try {
     const contents = deviceProofFixture(android, fixture, {
       entryFile: 'dev/diagnostics-proof/index.tsx',
@@ -273,39 +274,63 @@ export async function runDiagnosticDeviceProof() {
       adb('shell', 'am', 'force-stop', packageName);
     }
     proofPassed = true;
+  } catch (error) {
+    primaryFailure = { error };
+    throw error;
   } finally {
-    try {
-      if (installed && !deviceChangesFrozen) adb('shell', 'am', 'force-stop', packageName);
-      // Restore the ordinary entry so no test-only crash surface remains in the release output or AVD.
-      if (built) {
-        const composer = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build:composer'], {
-          cwd: root,
-          shell: process.platform === 'win32',
-          stdio: 'inherit'
-        });
-        if (composer.error) throw composer.error;
-        if (composer.status !== 0) throw new Error('Composer build failed while restoring the production entry.');
-        gradle([':app:assembleRelease']);
-        if (installed && !deviceChangesFrozen) adb('install', '-r', productionApk);
-      }
-      restorePassed = !deviceChangesFrozen;
-    } finally {
-      const status = proofPassed && restorePassed ? 'PASS' : 'FAILED';
-      writeFileSync(
-        reportPath,
-        `${JSON.stringify({ status, serial, symbols, scenarios: results, restorePassed }, null, 2)}\n`
-      );
-      process.stdout.write(
-        `${JSON.stringify({
-          status,
-          serial,
+    const errors = [];
+    const status = () => (proofPassed && restorePassed && errors.length === 0 ? 'PASS' : 'FAILED');
+    for (const cleanup of [
+      () => {
+        if (installed && !deviceChangesFrozen) adb('shell', 'am', 'force-stop', packageName);
+      },
+      () => {
+        // Restore the ordinary entry so no test-only crash surface remains in the release output or AVD.
+        if (built) {
+          const composer = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build:composer'], {
+            cwd: root,
+            shell: process.platform === 'win32',
+            stdio: 'inherit'
+          });
+          if (composer.error) throw composer.error;
+          if (composer.status !== 0) throw new Error('Composer build failed while restoring the production entry.');
+          gradle([':app:assembleRelease']);
+          if (installed && !deviceChangesFrozen) adb('install', '-r', productionApk);
+        }
+        restorePassed = !deviceChangesFrozen;
+      },
+      () => {
+        if (path.dirname(path.resolve(fixture)) !== path.resolve(scratchRoot))
+          throw new Error('Invalid proof cleanup path.');
+        rmSync(fixture, { recursive: true, force: true });
+      },
+      () => {
+        writeFileSync(
           reportPath,
-          scenarios: results.map(({ mode, buildId, previousExit }) => ({ mode, buildId, previousExit }))
-        })}\n`
-      );
-      if (path.dirname(path.resolve(fixture)) !== path.resolve(scratchRoot))
-        throw new Error('Invalid proof cleanup path.');
-      rmSync(fixture, { recursive: true, force: true });
+          `${JSON.stringify({ status: status(), serial, symbols, scenarios: results, restorePassed }, null, 2)}\n`
+        );
+      },
+      () => {
+        process.stdout.write(
+          `${JSON.stringify({
+            status: status(),
+            serial,
+            reportPath,
+            scenarios: results.map(({ mode, buildId, previousExit }) => ({ mode, buildId, previousExit }))
+          })}\n`
+        );
+      }
+    ]) {
+      try {
+        cleanup();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length) {
+      if (primaryFailure) errors.unshift(primaryFailure.error);
+      if (errors.length === 1) throw errors[0];
+      throw new AggregateError(errors, 'Diagnostic proof cleanup failed');
     }
   }
   return { reportPath, scenarios: results };
@@ -317,7 +342,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exitCode = 1;
   } else
     runDiagnosticDeviceProof().catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      console.error(error);
       process.exitCode = 1;
     });
 }

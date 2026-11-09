@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useState } from 'react';
 import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
+import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 
 jest.mock('@/platform/android/secureRandom', () => ({
   nativeSecureRandomHex: jest.fn(async () => 'a'.repeat(32))
@@ -19,6 +20,7 @@ jest.mock('@/sources/nodeimage/credentials', () => ({
 }));
 
 import { useNodeImageAuthController } from '@/features/account/useNodeImageAuthController';
+import * as nodeImageCredentials from '@/sources/nodeimage/credentials';
 
 function nodeSeekSession() {
   return {
@@ -45,14 +47,15 @@ async function createControllerHarness() {
   }));
   const notify = jest.fn();
   const prepareSurfaceOpen = jest.fn();
-  const readRuntime = jest.fn(() => ({
+  let runtime: SessionRuntimeSnapshot = {
     source: 'nodeseek' as const,
     authenticated: true,
     authSurfaceOpen: true,
     identityKey: 'nodeseek:42',
     identityTrust: 'confirmed' as const,
     sessionEpoch: 5
-  }));
+  };
+  const readRuntime = jest.fn(() => runtime);
   const reconcileAccountStatus = jest.fn(async () => ({
     status: 'same' as const,
     session: nodeSeekSession()
@@ -82,7 +85,10 @@ async function createControllerHarness() {
     hook,
     notify,
     prepareSurfaceOpen,
-    reconcileAccountStatus
+    reconcileAccountStatus,
+    setRuntime: (next: Partial<SessionRuntimeSnapshot>) => {
+      runtime = { ...runtime, ...next };
+    }
   };
 }
 
@@ -130,10 +136,165 @@ async function sendBridgeMessage(
 describe('NodeImage auth controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(nodeImageCredentials.loadNodeImageApiKeyCredential).mockReset().mockResolvedValue(null);
+    jest.mocked(nodeImageCredentials.nodeImageApiKeyUseStatus).mockReset().mockReturnValue('missing');
+    jest.mocked(nodeImageCredentials.currentNodeImageApiKeyGeneration).mockReset().mockReturnValue(3);
   });
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it.each(['load-start', 'load-end', 'error'] as const)(
+    'ignores an old document %s callback after entering Connect',
+    async (event) => {
+      const { hook } = await openController();
+      const previous = hook.result.current.panel;
+      await sendBridgeMessage(
+        hook,
+        'https://www.nodeimage.com',
+        'https://www.nodeimage.com/',
+        'nodeimage-session-expired',
+        { status: 401 }
+      );
+      if (event === 'load-start') {
+        await act(async () => hook.result.current.panel.setLoading(false));
+      }
+
+      await act(async () => {
+        if (event === 'error') previous.fail('late session error');
+        else previous.setLoading(event === 'load-start');
+      });
+
+      expect(hook.result.current.panel.document?.key).toBe('7:nodeseek-cauth');
+      expect(hook.result.current.panel.error).toBe('');
+      expect(hook.result.current.panel.loading).toBe(event !== 'load-start');
+    }
+  );
+
+  it.each([
+    { identityKey: 'nodeseek:other' },
+    { sessionEpoch: 6 },
+    { identityTrust: 'unknown' as const },
+    { sourceEnabled: false }
+  ])('does not return a credential after its requesting owner changes to %j', async (next) => {
+    const credential =
+      Promise.withResolvers<Awaited<ReturnType<typeof nodeImageCredentials.loadNodeImageApiKeyCredential>>>();
+    jest.mocked(nodeImageCredentials.loadNodeImageApiKeyCredential).mockReturnValueOnce(credential.promise);
+    jest.mocked(nodeImageCredentials.nodeImageApiKeyUseStatus).mockReturnValueOnce('usable');
+    const harness = await createControllerHarness();
+    const ensured = harness.hook.result.current.key.ensure();
+    harness.setRuntime(next);
+    let result: string | null = null;
+    await act(async () => {
+      credential.resolve({
+        version: 1,
+        apiKey: 'old-owner-key',
+        ownership: { kind: 'verified', identityKey: 'nodeseek:42' }
+      });
+      result = await ensured;
+    });
+    expect(result).toBeNull();
+    expect(harness.hook.result.current.key.saved).toBe(false);
+  });
+
+  it('does not return a credential read before its generation was replaced or its controller unmounted', async () => {
+    let generation = 3;
+    jest.mocked(nodeImageCredentials.currentNodeImageApiKeyGeneration).mockImplementation(() => generation);
+    const first =
+      Promise.withResolvers<Awaited<ReturnType<typeof nodeImageCredentials.loadNodeImageApiKeyCredential>>>();
+    const second =
+      Promise.withResolvers<Awaited<ReturnType<typeof nodeImageCredentials.loadNodeImageApiKeyCredential>>>();
+    jest
+      .mocked(nodeImageCredentials.loadNodeImageApiKeyCredential)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    jest.mocked(nodeImageCredentials.nodeImageApiKeyUseStatus).mockReturnValue('usable');
+    const { hook } = await createControllerHarness();
+    const credential = {
+      version: 1 as const,
+      apiKey: 'replaced-key',
+      ownership: { kind: 'verified' as const, identityKey: 'nodeseek:42' }
+    };
+    const replacedRead = hook.result.current.key.ensure();
+    generation = 4;
+    await act(async () => {
+      first.resolve(credential);
+      expect(await replacedRead).toBeNull();
+    });
+    const closedRead = hook.result.current.key.ensure();
+    await hook.unmount();
+    second.resolve(credential);
+    expect(await closedRead).toBeNull();
+  });
+
+  it('serializes manual save and clear commands and releases the busy state after failure', async () => {
+    const write = Promise.withResolvers<string | undefined>();
+    jest.mocked(nodeImageCredentials.saveNodeImageApiKeyForGeneration).mockReturnValueOnce(write.promise);
+    const { hook, notify } = await createControllerHarness();
+    let saved = Promise.resolve();
+    await act(async () => {
+      saved = hook.result.current.key.save('first-key');
+      void hook.result.current.key.save('duplicate-key');
+      void hook.result.current.key.clear();
+    });
+    expect(hook.result.current.key.busy).toBe(true);
+    expect(nodeImageCredentials.saveNodeImageApiKeyForGeneration).toHaveBeenCalledTimes(1);
+    expect(nodeImageCredentials.clearNodeImageApiKey).not.toHaveBeenCalled();
+    await act(async () => {
+      write.reject(new Error('storage write failed'));
+      await saved;
+    });
+    expect(hook.result.current.key.busy).toBe(false);
+    expect(hook.result.current.key.saved).toBe(false);
+    expect(notify).toHaveBeenCalledWith('storage write failed');
+    await act(async () => {
+      await hook.result.current.key.clear();
+    });
+    expect(nodeImageCredentials.clearNodeImageApiKey).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.key.busy).toBe(false);
+  });
+
+  it('keeps one authorization while the successful surface is reconciling and saving', async () => {
+    const harness = await openController();
+    const { hook, beginSurface, finishSurface } = harness;
+    const reconciliation = Promise.withResolvers<Awaited<ReturnType<typeof finishSurface>>>();
+    finishSurface.mockReturnValueOnce(reconciliation.promise);
+    await sendBridgeMessage(hook, 'https://www.nodeimage.com', 'https://www.nodeimage.com/', 'nodeimage-session-key', {
+      apiKey: 'session-key'
+    });
+    expect(hook.result.current.panel.document).toBeNull();
+    expect(hook.result.current.panel.visible).toBe(false);
+    await act(async () => {
+      hook.result.current.key.authorize();
+      hook.result.current.panel.close();
+      hook.result.current.key.authorize();
+    });
+    expect(beginSurface).toHaveBeenCalledTimes(1);
+    expect(finishSurface).toHaveBeenCalledTimes(1);
+    expect(nodeImageCredentials.saveNodeImageApiKeyForGeneration).not.toHaveBeenCalled();
+    await act(async () => {
+      reconciliation.resolve({ status: 'same', session: nodeSeekSession() });
+    });
+    await waitFor(() => expect(hook.result.current.key.saved).toBe(true));
+    expect(nodeImageCredentials.saveNodeImageApiKeyForGeneration).toHaveBeenCalledTimes(1);
+    await act(async () => hook.result.current.key.authorize());
+    await waitFor(() => expect(beginSurface).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not let a closed document fail a new authorization with the same phase', async () => {
+    const { hook, beginSurface } = await openController();
+    const previous = hook.result.current.panel;
+    await act(async () => {
+      previous.close();
+    });
+    await waitFor(() => expect(hook.result.current.panel.visible).toBe(false));
+    await act(async () => hook.result.current.key.authorize());
+    await waitFor(() => expect(beginSurface).toHaveBeenCalledTimes(2));
+    await act(async () => previous.fail('old window error'));
+    expect(hook.result.current.panel.document?.key).toBe('7:nodeimage-session');
+    expect(hook.result.current.panel.error).toBe('');
+    expect(hook.result.current.panel.loading).toBe(true);
   });
 
   it('opens and closes the authorization panel through the account surface', async () => {

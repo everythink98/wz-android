@@ -10,30 +10,29 @@ import { imageFailureKind } from './imageLoadDiagnostics';
 export function playerLoadDiagnosticAttempt(uri: string, mediaKind: 'audio' | 'video', generation: number) {
   const fields = { mediaRef: diagnosticRef('media', uri), mediaKind, generation } as const;
   const trace = beginDiagnosticTrace('media', 'player-load', fields);
-  let settled = false;
-  let failed = false;
-  let canceled = false;
+  let phase: 'loading' | 'ready' | 'closed' = 'loading';
   return {
     stage: (state: DiagnosticFields['state']) => markDiagnosticStage(trace, 'transport', { ...fields, state }),
     ready: () => {
-      if (canceled || failed) return;
-      settled = true;
+      if (phase !== 'loading') return;
+      phase = 'ready';
       finishDiagnosticTrace(trace, 'success', { ...fields, state: 'player-ready' });
     },
     failed: (error?: unknown) => {
-      if (failed || canceled) return;
-      failed = true;
-      finishDiagnosticTrace(settled ? createTrace('media', 'player-error') : trace, 'failure', {
+      if (phase === 'closed') return;
+      const wasReady = phase === 'ready';
+      phase = 'closed';
+      finishDiagnosticTrace(wasReady ? createTrace('media', 'player-error') : trace, 'failure', {
         ...fields,
-        ...(settled ? { parentTraceId: trace.traceId } : {}),
+        ...(wasReady ? { parentTraceId: trace.traceId } : {}),
         mediaFailure: imageFailureKind(error),
         terminalReason: 'native-error'
       });
-      settled = true;
     },
     canceled: () => {
-      canceled = true;
-      finishDiagnosticTrace(trace, 'canceled', { ...fields, reason: 'canceled' });
+      const wasLoading = phase === 'loading';
+      phase = 'closed';
+      if (wasLoading) finishDiagnosticTrace(trace, 'canceled', { ...fields, reason: 'canceled' });
     }
   };
 }
