@@ -370,7 +370,7 @@ index 0000000..b77e1bf
 +  }
 +}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-index 45d3d7b..be88d01 100644
+index 45d3d7b9..a4cbb9db 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
 @@ -8,12 +8,15 @@ import android.os.Bundle
@@ -391,7 +391,17 @@ index 45d3d7b..be88d01 100644
  import expo.modules.video.listeners.VideoManagerListener
  import expo.modules.video.player.VideoPlayer
  import expo.modules.video.records.FullscreenOptions
-@@ -38,14 +41,49 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -28,7 +31,8 @@ import expo.modules.video.managers.VideoManager
+ @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+   private lateinit var mContentView: View
+-  private var videoViewId: String? = null
++  private val videoViewId: String?
++    get() = if (::videoView.isInitialized) videoView.videoViewId else null
+   private var videoPlayer: VideoPlayer? = null
+   private lateinit var playerView: PlayerView
+   private lateinit var videoView: VideoView
+@@ -38,14 +42,48 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    private lateinit var options: FullscreenOptions
    private var orientationHelper: FullscreenActivityOrientationHelper? = null
    private var captioningChangeListener: CaptioningManager.CaptioningChangeListener? = null
@@ -436,7 +446,6 @@ index 45d3d7b..be88d01 100644
 +        return
 +      }
 +      videoView = handoff.videoView
-+      videoViewId = videoView.videoViewId
 +      videoPlayer = handoff.videoPlayer
 +
        options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

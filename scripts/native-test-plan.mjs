@@ -30,6 +30,7 @@ export const nativeTestTasks = {
     related: (file) =>
       file.startsWith('modules/forum-platform/') ||
       file.startsWith('patches/expo-image+') ||
+      file.startsWith('patches/expo-video+') ||
       file.startsWith('plugins/') ||
       file.startsWith('src/platform/network/') ||
       file.startsWith('src/platform/diagnostics/') ||
@@ -52,6 +53,7 @@ export const nativeTestTasks = {
       'SvgRendererPolicyTest',
       'BackupExportTest',
       'ImageDownloadTest',
+      'FullscreenPlayerActivityEarlyExitTest',
       'TopicShareCaptureTest',
       'ApkInstallerSignerTest',
       'ForumSearchCustomTabUrlTest',
