@@ -8,6 +8,8 @@ import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { QueryTestWrapper } from '../QueryTestWrapper';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 
 const ref = <T,>(current: T) => ({ current });
 const loggedInSession: SiteSessionState = {
@@ -636,5 +638,36 @@ describe('account workflows with canonical identity reconciliation', () => {
 
     expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
     expect(onLoginWebViewFailure).toHaveBeenCalledWith('nodeseek', 3, 'renderer_gone');
+  });
+
+  it('observes a replaced Yaohuo panel while visible and a reopened panel with the same request id', async () => {
+    const events: DiagnosticEvent[] = [];
+    const overrides = { showLoginPanel: false, showYaohuoLoginPanel: false, yaohuoLoginPanelRequestRef: ref(9) };
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    try {
+      const { hook } = await renderAccountController(overrides);
+      overrides.showYaohuoLoginPanel = true;
+      await hook.rerender({});
+      await hook.rerender({});
+      overrides.yaohuoLoginPanelRequestRef.current += 1;
+      await hook.rerender({});
+      overrides.showYaohuoLoginPanel = false;
+      await hook.rerender({});
+      overrides.showYaohuoLoginPanel = true;
+      await hook.rerender({});
+
+      const checks = events.filter((event) => event.area === 'credential' && event.source === 'yaohuo');
+      const opened = checks.filter((event) => event.phase === 'guard' && event.state === 'open');
+      expect(opened).toHaveLength(3);
+      expect(new Set(opened.map((event) => event.traceId)).size).toBe(3);
+      expect(checks.filter((event) => event.phase === 'finish').map((event) => event.outcome)).toEqual([
+        'stale',
+        'canceled'
+      ]);
+    } finally {
+      setDiagnosticWriter(null);
+    }
   });
 });

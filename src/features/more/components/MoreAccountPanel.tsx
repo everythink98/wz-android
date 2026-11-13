@@ -76,6 +76,8 @@ export type MoreAccountCapabilities = {
   };
 };
 
+type LevelDetails = { kind: 'unvisited' | 'expanded' } | { kind: 'collapsed'; owner: string };
+
 export function MoreAccountPanel({
   headerHostName,
   nodeSeekRecoveryThreshold,
@@ -89,8 +91,8 @@ export function MoreAccountPanel({
 }) {
   const { styles: screenStyles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const [selectedSite, setSelectedSite] = useState<SessionSite>('nodeseek');
-  const [linuxDoLevelExpanded, setLinuxDoLevelExpanded] = useState(false);
-  const [linuxDoLevelContentOwner, setLinuxDoLevelContentOwner] = useState<string | null>(null);
+  const [levelDetails, setLevelDetails] = useState<LevelDetails>({ kind: 'unvisited' });
+  const linuxDoLevelExpanded = levelDetails.kind === 'expanded';
   const sessions = runtime.read.sessions;
   const nodeSeekEnabled = runtime.enabledSessionSources.includes('nodeseek');
   const linuxDoEnabled = runtime.enabledSessionSources.includes('linuxdo');
@@ -114,8 +116,9 @@ export function MoreAccountPanel({
   const session = sessions[site];
   const currentUser = session.currentUser;
   const siteOwner = `${site}:${session.currentUser?.id ?? 'anonymous'}`;
-  if (linuxDoLevelContentOwner !== null && linuxDoLevelContentOwner !== siteOwner) setLinuxDoLevelContentOwner(null);
-  const linuxDoLevelContentVisited = linuxDoLevelExpanded || linuxDoLevelContentOwner === siteOwner;
+  if (levelDetails.kind === 'collapsed' && levelDetails.owner !== siteOwner) setLevelDetails({ kind: 'unvisited' });
+  const linuxDoLevelContentVisited =
+    linuxDoLevelExpanded || (levelDetails.kind === 'collapsed' && levelDetails.owner === siteOwner);
   const dataActive = runtime.active && runtime.enabledSessionSources.includes(site) && !runtime.surfaces[site];
   const data = useAccountOverview({
     active: dataActive,
@@ -259,8 +262,9 @@ export function MoreAccountPanel({
               value={linuxDoLevelMeta}
               expanded={linuxDoLevelExpanded}
               onPress={() => {
-                setLinuxDoLevelContentOwner(siteOwner);
-                setLinuxDoLevelExpanded((value) => !value);
+                setLevelDetails((current) =>
+                  current.kind === 'expanded' ? { kind: 'collapsed', owner: siteOwner } : { kind: 'expanded' }
+                );
               }}
             />
             <ExpandableContent expanded={linuxDoLevelExpanded} style={screenStyles.stack}>

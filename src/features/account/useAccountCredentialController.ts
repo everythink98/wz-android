@@ -58,7 +58,6 @@ export function useAccountCredentialController({
   yaohuoWebViewRef: WebViewRef;
 }) {
   const [credentialSummaries, setCredentialSummaries] = useState<CredentialSummaries>(emptyCredentialSummaries);
-  const [credentialLoginSite, setCredentialLoginSite] = useState<CredentialSite | null>(null);
   const [pendingCredentialFillSite, setPendingCredentialFillSite] = useState<CredentialSite | null>(null);
   const [credentialFillAttempt, setCredentialFillAttempt] = useState<AccountCredentialFillAttempt | null>(null);
   const credentialLoginSiteRef = useRef<CredentialSite | null>(null);
@@ -129,7 +128,6 @@ export function useAccountCredentialController({
       finishCredentialFillTrace(site, 'canceled', { reason: 'canceled' });
       if (credentialLoginSiteRef.current === site) {
         credentialLoginSiteRef.current = null;
-        setCredentialLoginSite(null);
         setCredentialFillAttempt(null);
       }
       if (pendingCredentialFillSiteRef.current === site) {
@@ -200,7 +198,6 @@ export function useAccountCredentialController({
       credentialFillTraceRef.current = { site, attempt, trace, owner: lifetimeRef.current.signal };
       credentialLoginSiteRef.current = site;
       pendingCredentialFillSiteRef.current = site;
-      setCredentialLoginSite(site);
       setPendingCredentialFillSite(site);
       setCredentialFillAttempt({ site, attempt });
       if (webViewBlockMessage) {
@@ -447,7 +444,7 @@ export function useAccountCredentialController({
   return {
     clearCredentialLoginIntent,
     credentialFillAttempt,
-    credentialLoginSite,
+    credentialLoginSite: credentialFillAttempt?.site ?? null,
     credentialSummaries,
     finishCredentialFillForLoginFailure,
     handleAccountCenterCommand,

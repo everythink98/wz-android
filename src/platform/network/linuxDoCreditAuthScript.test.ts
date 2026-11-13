@@ -8,7 +8,11 @@ const origin = 'https://credit.linux.do';
 const authorizationUrl =
   'https://connect.linux.do/oauth2/authorize?response_type=code&client_id=credit&state=opaque&redirect_uri=https%3A%2F%2Fcredit.linux.do%2Flogin';
 
-function page(url: string, html = '', responses = [new Response('null', { status: 401 })]) {
+function page(
+  url: string,
+  html = '',
+  responses: (Response | Promise<Response>)[] = [new Response('null', { status: 401 })]
+) {
   vi.useFakeTimers();
   document.body.innerHTML = html;
   const postMessage = vi.fn();
@@ -161,6 +165,33 @@ describe('Credit silent browser login', () => {
     expect(result.postMessage).toHaveBeenCalledWith(
       JSON.stringify({ type: 'linuxdo-credit-auth', nonce, status: 'complete' })
     );
+  });
+
+  it.each(['fetch', 'json'] as const)('keeps one account probe while %s is pending', async (stage) => {
+    const pending = Promise.withResolvers<Response>();
+    const body = await authorizedUser().json();
+    const response = authorizedUser();
+    if (stage === 'json') vi.spyOn(response, 'json').mockReturnValue(pending.promise.then(() => body));
+    const result = page(`${origin}/home`, '', [stage === 'fetch' ? pending.promise : response]);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      result.run();
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(result.fetch).toHaveBeenCalledTimes(1);
+      expect(result.postMessage).not.toHaveBeenCalled();
+      expect(result.location.assign).not.toHaveBeenCalled();
+
+      pending.resolve(response);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(result.fetch).toHaveBeenCalledTimes(1);
+      expect(result.postMessage).toHaveBeenCalledExactlyOnceWith(
+        JSON.stringify({ type: 'linuxdo-credit-auth', nonce, status: 'complete' })
+      );
+    } finally {
+      pending.resolve(response);
+      await vi.advanceTimersByTimeAsync(0);
+    }
   });
 
   it('does not restart OAuth while an official callback keeps returning 401', async () => {

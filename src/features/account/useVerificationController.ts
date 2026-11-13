@@ -398,7 +398,7 @@ export function useVerificationController({
     )
       return;
     automatic.documentKey = page.documentKey;
-    if (automatic.phase === 'armed') automatic.phase = 'waiting';
+    automatic.phase = 'waiting';
     // A diagnostic failure or timeout is still a completion, never a business verdict.
     void ((probe.phase === 'empty' ? undefined : probe.probe.settled) || Promise.resolve()).then(() => {
       if (automatic.phase === 'waiting') automatic.phase = 'armed';

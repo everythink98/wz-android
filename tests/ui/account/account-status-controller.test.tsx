@@ -1969,10 +1969,11 @@ describe('account status queries', () => {
 
   it('drops a superseded surface probe before it can send or commit stale identity', async () => {
     const firstCookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
+    const currentCookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
     const readManagedCookieHeader = jest
       .fn<ReadManagedCookieHeader>()
       .mockImplementationOnce(async () => firstCookieRead.promise)
-      .mockResolvedValue({ status: 'ok', header: 'session=current' });
+      .mockImplementationOnce(async () => currentCookieRead.promise);
     mockGetCurrentUser.mockResolvedValue(nextNodeSeekUser);
     const { hook, onAccountStatusChanged } = await renderStatusController({ readManagedCookieHeader });
     let staleProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
@@ -1983,17 +1984,46 @@ describe('account status queries', () => {
     });
     await waitFor(() => expect(readManagedCookieHeader).toHaveBeenCalledTimes(1));
 
+    let currentProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+    let verifyingAtAdmission: boolean | undefined;
     await act(async () => {
-      await hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 2 });
+      currentProbe = hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 2 });
+      verifyingAtAdmission = appQueryClient.getQueryData<AccountSessionSnapshot>(
+        accountQueryKeys.snapshot('nodeseek')
+      )?.isVerifying;
+    });
+    await waitFor(() => expect(readManagedCookieHeader).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(hook.result.current.statusBusy).toBe(true));
+    const verifyingBeforeOldFinally = appQueryClient.getQueryData<AccountSessionSnapshot>(
+      accountQueryKeys.snapshot('nodeseek')
+    )?.isVerifying;
+    await act(async () => {
       firstCookieRead.resolve({ status: 'ok', header: 'session=stale' });
       await staleProbe;
     });
+    const currentProbePending = appQueryClient.getQueryData<AccountSessionSnapshot>(
+      accountQueryKeys.snapshot('nodeseek')
+    )?.isVerifying;
+    const busyAfterOldFinally = hook.result.current.statusBusy;
+    const requestsBeforeCurrentCookie = mockGetCurrentUser.mock.calls.length;
+    await act(async () => {
+      currentCookieRead.resolve({ status: 'ok', header: 'session=current' });
+      await currentProbe;
+    });
 
+    expect([verifyingAtAdmission, verifyingBeforeOldFinally, currentProbePending, busyAfterOldFinally]).toEqual([
+      true,
+      true,
+      true,
+      true
+    ]);
+    expect(requestsBeforeCurrentCookie).toBe(0);
     expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser)
     );
+    expect(hook.result.current.statusBusy).toBe(false);
     const terminals = diagnosticEvents.filter(
       (event) => event.operation === 'account-reconcile' && event.phase === 'finish'
     );

@@ -45,7 +45,10 @@ function runNodeSeekLoginProbe(html: string, config?: unknown) {
 
 describe('NodeSeek login document hints', () => {
   afterEach(() => {
-    for (const dom of loginProbeDocuments.splice(0)) dom.window.close();
+    for (const dom of loginProbeDocuments.splice(0)) {
+      Reflect.get(dom.window, '__WZ_ACCOUNT_PAGE_OBSERVER__')?.observer.disconnect();
+      dom.window.close();
+    }
     vi.restoreAllMocks();
   });
 

@@ -98,8 +98,7 @@ export function useAccountController({
   const wasNodeSeekLoginPanelVisibleRef = useRef(false);
   const yaohuoLoginTraceRef = useRef<LoginTraceState | null>(null);
   const yaohuoTerminalRequestRef = useRef<number | null>(null);
-  const wasYaohuoLoginPanelVisibleRef = useRef(false);
-  const observedYaohuoLoginPanelRequestRef = useRef(yaohuoLoginPanelRequestRef.current);
+  const observedYaohuoLoginPanelRequestRef = useRef<number | null>(null);
   const [linuxDoLevelRequest, setLinuxDoLevelRequest] = useState<LinuxDoLevelRequest | null>(null);
   const linuxDoLevelRequestRef = useRef<LinuxDoLevelRequest | null>(null);
   const linuxDoLevelScreenRef = useRef(screen);
@@ -301,22 +300,19 @@ export function useAccountController({
 
   useEffect(() => {
     const panelRequestId = yaohuoLoginPanelRequestRef.current;
-    const openedOrReplaced =
-      showYaohuoLoginPanel &&
-      (!wasYaohuoLoginPanelVisibleRef.current || observedYaohuoLoginPanelRequestRef.current !== panelRequestId);
+    const openedOrReplaced = showYaohuoLoginPanel && observedYaohuoLoginPanelRequestRef.current !== panelRequestId;
     if (openedOrReplaced) {
       markDiagnosticStage(currentLoginTrace('yaohuo', 'open'), 'guard', {
         source: 'yaohuo',
         state: 'open'
       });
-    } else if (!showYaohuoLoginPanel && wasYaohuoLoginPanelVisibleRef.current) {
+    } else if (!showYaohuoLoginPanel && observedYaohuoLoginPanelRequestRef.current !== null) {
       const trace = yaohuoLoginTraceRef.current?.trace;
       if (trace) {
         finishLoginTrace('yaohuo', trace, 'canceled', { reason: 'canceled' });
       }
     }
-    observedYaohuoLoginPanelRequestRef.current = panelRequestId;
-    wasYaohuoLoginPanelVisibleRef.current = showYaohuoLoginPanel;
+    observedYaohuoLoginPanelRequestRef.current = showYaohuoLoginPanel ? panelRequestId : null;
   });
 
   const recordLoginWebViewState = useCallback(

@@ -44,7 +44,6 @@ export function linuxDoCreditAuthScript(nonce: string) {
   if (window.__WZ_CREDIT_AUTH_NONCE__ === nonce) return;
   window.__WZ_CREDIT_AUTH_NONCE__ = nonce;
   let finished = false;
-  let checking = false;
   const deadline = Date.now() + 25000;
   const send = (status) => {
     if (finished) return;
@@ -57,7 +56,7 @@ export function linuxDoCreditAuthScript(nonce: string) {
     return url;
   };
   const inspect = async () => {
-    if (finished || checking) return;
+    if (finished) return;
     if (Date.now() >= deadline) {
       send('interaction-required');
       return;
@@ -85,18 +84,15 @@ export function linuxDoCreditAuthScript(nonce: string) {
         }
         const callback = page.pathname === '/login' && page.searchParams.get('code') && page.searchParams.get('state');
         if (page.pathname === '/home' || page.pathname === '/login') {
-          checking = true;
           let response;
           let body;
           try {
             response = await fetch('/api/v1/oauth/user-info', { credentials: 'include', headers: { Accept: 'application/json' } });
             body = response.ok ? await response.json() : null;
           } catch {
-            checking = false;
             setTimeout(inspect, 1000);
             return;
           }
-          checking = false;
           if (body && !body.error_msg && body.data && body.data.id && body.data.username) {
             send('complete');
             return;

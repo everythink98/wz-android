@@ -98,3 +98,25 @@ P02 已审查全部 **22 项：6 项局部简化、16 项保留，新增完整�
 - `DEVICE_REPLAY_PASS`：现有隔离 Insets AVD 的 WebView 156、Release/Hermes 包完成相册/文件浏览 × 有/无实际停靠 IME × 取消/成功八条路径；正文 marker 保留、每场景零发送，成功回执仅来自受控上传。私信入口另以合成凭据验证实际 picker 去返程和草稿保留。自有四份缓存复制件及两份媒体文件已清理，原 proof 文件恢复，隔离 AVD 关闭。
 
 `NOT_VERIFIED`：录像未能用现成本机解码器恢复帧或 PTS，case01 缺 before PNG，不能声明全过程无白帧；成功图片只验证受控回执和加载占位。未执行真实上传/发帖、实际配置代理切换、设备 Cookie 清除、强制原站 Cloudflare 验证循环、非空用户草稿像素或四来源完整分页。完整验收为 `.codex-tmp/state-machine-elimination/p02/validation-final.json`，SHA-256 为 `d9828410c3495b1c8713993d913de8d4c9f55074b4115eba69416944525773ef`。本批只做一个本地提交，不 push、不合并；P03 的 31 项只读预审不计本批修改或验收。
+
+## P03 执行结果
+
+P03 已审查全部 **31 项：1 项完整显式化、7 项局部简化、23 项保留**。`ui.account-details` 将等级面板的展开标记和访问 owner 合为 `unvisited | expanded | collapsed(owner)`，覆盖原来的站点选择、旧 owner 失效和展开切换三条转移；已闭合的 `SessionSite` 选择保持独立。真实 More 组件测试验证展开跨用户保留、折叠缓存按 owner 清除及原子树保留，独立审核确认原 scope 不再有平行状态权威。
+
+7 项局部简化分别删除 YA 面板可见性副本、probe 的 generation 副本、凭据填入站点副本、两站隐藏请求不可能缺失的 generation 分支、自动检测的重复 armed 条件和 Credit 串行轮询的 checking 标记。原模型的异步请求归属、全局世代和取消屏障仍保留，均不计整项消除。23 项保留真实资源或独立时序，包括隐藏文档和 renderer、Cookie 与持久化交接、凭据双 slot、页面观察器、迁移及故障恢复；陈旧闭包和跨进程恢复等不确定边界没有强行改写。
+
+生产源码 7 文件新增 26 行、删除 43 行，**净减 17 行**；测试 5 文件新增 131 行、删除 4 行，净增 127 行。新增 3 个行为用例，另加强既有 owner 并释放测试自有 observer；3 个 runtime 和 2 个 Credit 负向控制均能识别对应错误，源码已逐字恢复。整文件、命名生产函数及依赖删除均为 0，没有新增依赖。
+
+本批验证绑定 41 个冻结输入，实际结果为：
+
+- `STATIC_PASS`：`npm run typecheck` 和完整 `npm run verify` 均退出 0。
+- `UNIT_PASS`：Vitest 270 文件、4610 项，seed `1794573688461`。
+- `UI_PASS`：105 suites、3267 项，seed `1679175706`。既有 account restore 和 composer 的 act 告警仍存在，没有按通过结果宣称控制台无告警。
+- `APK_SANITY`：普通 Release 构建通过，APK SHA-256 为 `dab87bc20ae5537d6ee6dbd91b3605bd3317e0c3c1cb3ec801d83d7f1a5a0022`。7 个修改文件与实际 sourcemap 内容逐字匹配，APK dex 和启动日志匹配本次 buildId；签名和版本未变。没有 Native、SDK 或原生配置改动，因此未重复 P02 的 141 项 Native 测试，也未将旧结果计作本批运行。
+- `LIVE_PASS`：`ACCOUNT-01/04` 范围内，主模拟器完成三站只读切换、linux.do 匿名等级面板的展开/折叠、两种状态的跨来源返回、重开及手动账号刷新。两个已登录来源保留；linux.do 刷新后从「匿名可用」变为「已验证」，仍无已确认身份、不能写入，登录总数保持 2/3，未触发登录或凭据填入。UID 和首次安装时间不变，代理保持关闭，主模拟器回到可见首页。当前安装日志窗口未发现匹配 App 的崩溃或 ANR 信号。
+
+`NOT_VERIFIED`：真实凭据填入/编辑、登录换号、OAuth/续签、NodeImage/LDC 连接、已登录 linux.do 的真实等级响应、Cookie 清除及物理设备。仅人工检查了展开、折叠和最终首页三张静态 PNG，没有完整动画帧证据；本批没有 tracked Replay，不记 `DEVICE_REPLAY_PASS`。普通 Release 不允许 `run-as` 读取私有诊断，启动关联改用公开的 `WzStartup` 日志，不据此宣称私有账号轨迹已核验。
+
+累计盘点为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已审查 82 项，其中 3 项完整转换、19 项局部简化、60 项保留；P04～P10 还有 **202 项未审查**。pending 281 包含已审查但保留/局部处理的 79 项，不是 281 个产品 Bug。CSV 继续保持原 284 项基线，不改分母或历史 hash。
+
+逐项决策见 `.codex-tmp/state-machine-elimination/p03/decision-final-v2.json`，SHA-256 为 `65d41d4da45558c5e14adfdfc0e1e9faad8afc122b06d6eb4b86a7fd59f87ec2`；完整验收为 `.codex-tmp/state-machine-elimination/p03/validation-final.json`，SHA-256 为 `824606e19b73d761a4313db567e4c9943f0539b0591c13305e9f7a484be21147`。早期实施报告中的旧源码行与「未实施」措辞已由最终冻结和 peer 证据覆盖，不作为现状引用。本批作为一个本地提交，不 push、不合并、不发布；P04 只读预审不计实施或验收。

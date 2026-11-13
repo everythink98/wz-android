@@ -73,7 +73,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   httpErrorStatus?: number;
-  credentialGeneration?: number;
+  credentialGeneration: number;
   browserFetchIntent?: BrowserFetchIntent;
   beforeSend?: () => void;
   settled?: boolean;
@@ -96,7 +96,7 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   httpErrorStatus?: number;
-  credentialGeneration?: number;
+  credentialGeneration: number;
   browserFetchIntent?: BrowserFetchIntent;
   beforeSend?: () => void;
   settled?: boolean;
@@ -299,9 +299,7 @@ export function useSessionController({
   const startNextNodeSeekBrowserFetch = useCallback(() => {
     if (browserLifetimeRef.current.signal.aborted) return;
     startNextBrowserFetchRequest({
-      canStart: (request) =>
-        request.credentialGeneration === undefined ||
-        request.credentialGeneration === nodeSeekCredentialGateRef.current.generation,
+      canStart: (request) => request.credentialGeneration === nodeSeekCredentialGateRef.current.generation,
       currentRef: nodeSeekBrowserFetchCurrentRef,
       queueRef: nodeSeekBrowserFetchQueueRef,
       setActiveRequest: setNodeSeekBrowserFetchRequest,
@@ -437,9 +435,7 @@ export function useSessionController({
         rejectNodeSeekBrowserFetch(current, 'NodeSeek 页面跳转到外部地址，已停止读取');
         return;
       }
-      const credentialGeneration = current.credentialGeneration ?? nodeSeekCredentialGateRef.current.generation;
-      const credentialIsCurrent = credentialGeneration === nodeSeekCredentialGateRef.current.generation;
-      if (!credentialIsCurrent) {
+      if (current.credentialGeneration !== nodeSeekCredentialGateRef.current.generation) {
         rejectNodeSeekBrowserFetch(current, '请求已取消');
         return;
       }
@@ -451,7 +447,7 @@ export function useSessionController({
       nodeSeekBrowserFetchCurrentRef.current = null;
       setNodeSeekBrowserFetchRequest(null);
       const userAgent = sanitizeWebViewUserAgent(data.userAgent);
-      if (credentialIsCurrent && userAgent) {
+      if (userAgent) {
         commitNodeSeekWebViewUserAgent(userAgent);
       }
       const settled = settleBrowserFetchRequestOnce(current, () => {
@@ -513,9 +509,7 @@ export function useSessionController({
   const startNextLinuxDoBrowserFetch = useCallback(() => {
     if (browserLifetimeRef.current.signal.aborted) return;
     startNextBrowserFetchRequest({
-      canStart: (request) =>
-        request.credentialGeneration === undefined ||
-        request.credentialGeneration === linuxDoCredentialGateRef.current.generation,
+      canStart: (request) => request.credentialGeneration === linuxDoCredentialGateRef.current.generation,
       currentRef: linuxDoBrowserFetchCurrentRef,
       queueRef: linuxDoBrowserFetchQueueRef,
       setActiveRequest: setLinuxDoBrowserFetchRequest,
@@ -688,9 +682,7 @@ export function useSessionController({
         rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
         return;
       }
-      const credentialGeneration = current.credentialGeneration ?? linuxDoCredentialGateRef.current.generation;
-      const credentialIsCurrent = credentialGeneration === linuxDoCredentialGateRef.current.generation;
-      if (!credentialIsCurrent) {
+      if (current.credentialGeneration !== linuxDoCredentialGateRef.current.generation) {
         rejectLinuxDoBrowserFetch(current, '请求已取消');
         return;
       }
@@ -706,7 +698,7 @@ export function useSessionController({
       linuxDoBrowserFetchCurrentRef.current = null;
       setLinuxDoBrowserFetchRequest(null);
       const userAgent = sanitizeWebViewUserAgent(data.userAgent);
-      if (credentialIsCurrent && isLinuxDoPage && userAgent) {
+      if (isLinuxDoPage && userAgent) {
         commitLinuxDoWebViewUserAgent(userAgent);
       }
       const settled = settleBrowserFetchRequestOnce(current, () => {

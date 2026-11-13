@@ -182,7 +182,6 @@ export function useAccountStatusController({
         StatusSource,
         {
           controller: AbortController;
-          generation: number;
           promise: Promise<AccountReconcileResult>;
           surfaceGeneration: number;
           trace: DiagnosticTrace;
@@ -465,7 +464,7 @@ export function useAccountStatusController({
           });
         } finally {
           options.signal?.removeEventListener('abort', abortProbe);
-          if (activeProbeRef.current[source]?.generation === generation) {
+          if (activeProbeRef.current[source]?.promise === promise) {
             delete activeProbeRef.current[source];
             commitAccountSnapshot(source, (current) => ({ ...current, isVerifying: false }));
           }
@@ -473,7 +472,6 @@ export function useAccountStatusController({
       });
       activeProbeRef.current[source] = {
         controller,
-        generation,
         promise,
         trace,
         surfaceGeneration: requestedSurfaceGeneration

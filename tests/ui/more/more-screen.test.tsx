@@ -796,6 +796,36 @@ describe('More screen state and actions', () => {
     expect(view.queryByLabelText('重试等级', { includeHiddenElements: true })).toBeNull();
     await fireEvent.press(view.getByText('linux.do 等级'));
     expect(view.getByLabelText('重试等级')).toBeTruthy();
+
+    const withLinuxDoUser = (id: string) => (
+      <MoreScreen
+        {...props}
+        account={{
+          ...props.account,
+          read: {
+            ...props.account.read,
+            sessions: {
+              ...props.account.read.sessions,
+              linuxdo: {
+                ...props.account.read.sessions.linuxdo,
+                currentUser: { source: 'linuxdo', id, username: id, url: `https://linux.do/u/${id}` }
+              }
+            }
+          }
+        }}
+      />
+    );
+    const previousOwnerRetry = view.getByLabelText('重试等级');
+    await view.rerender(withLinuxDoUser('next-owner'));
+    const currentOwnerRetry = view.getByLabelText('重试等级');
+    expect(currentOwnerRetry).not.toBe(previousOwnerRetry);
+    await fireEvent.press(view.getByText('linux.do 等级'));
+    expect(view.getByLabelText('重试等级', { includeHiddenElements: true })).toBe(currentOwnerRetry);
+    await view.rerender(withLinuxDoUser('later-owner'));
+    expect(view.queryByLabelText('重试等级', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByText('linux.do 等级'));
+    expect(view.getByLabelText('重试等级')).toBeTruthy();
+    expect(refreshLevel).toHaveBeenCalledTimes(2);
   });
 
   it('reuses cached metric controls and resets low-frequency details across sources and user identities', async () => {
