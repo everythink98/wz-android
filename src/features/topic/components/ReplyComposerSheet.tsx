@@ -70,10 +70,10 @@ export function ReplyComposerSheet({
 }) {
   const structured = source === 'linuxdo' || source === 'nodeseek';
   const structuredRef = useRef<StructuredReplyComposerHandle>(null);
-  const lastVisibleIntentRef = useRef(intent);
+  const lastVisibleWasEditRef = useRef(intent.kind === 'edit');
   const [presentation, setPresentation] = useState<ComposerPresentation>('sheet');
   useEffect(() => {
-    if (visible) lastVisibleIntentRef.current = intent;
+    if (visible) lastVisibleWasEditRef.current = intent.kind === 'edit';
   }, [intent, visible]);
   let closeLabel = '收起回复';
   let placeholder = '输入回复内容';
@@ -110,7 +110,7 @@ export function ReplyComposerSheet({
   }, [intent, source, structured, topicId]);
   const handleSnapshot = useCallback(
     (snapshot: ComposerSnapshot) => {
-      if (!visible && lastVisibleIntentRef.current.kind === 'edit') return;
+      if (!visible && lastVisibleWasEditRef.current) return;
       onReplySnapshot?.(snapshot);
     },
     [onReplySnapshot, visible]
