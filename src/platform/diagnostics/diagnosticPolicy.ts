@@ -992,11 +992,8 @@ export function linkDiagnosticRefs(kind: string, rawValues: readonly unknown[]) 
   if (values.length === 0) {
     return `${safeKind}-0`;
   }
-  let refs = referenceMaps.get(safeKind);
-  if (!refs) {
-    refs = new Map();
-    referenceMaps.set(safeKind, refs);
-  }
+  const cache = referenceCache(safeKind);
+  const refs = cache.raw;
   let linkedRef = '';
   for (const value of values) {
     linkedRef = readReferenceMapping(refs, value) || '';
@@ -1004,9 +1001,9 @@ export function linkDiagnosticRefs(kind: string, rawValues: readonly unknown[]) 
       break;
     }
   }
-  linkedRef ||= nextReference(safeKind);
+  linkedRef ||= `${safeKind}-${++cache.sequence}`;
   values.forEach((value) => rememberReferenceMapping(refs, value, linkedRef));
-  rememberIssuedReference(safeKind, linkedRef);
+  rememberIssuedReference(cache.issued, linkedRef);
   return linkedRef;
 }
 
@@ -1123,16 +1120,21 @@ const RAW_REFERENCE_LIMIT = 4_096;
 
 const ISSUED_REFERENCE_LIMIT = 8_192;
 
-const referenceMaps = new Map<string, Map<string | number | boolean | null, string>>();
+type DiagnosticReferenceCache = {
+  readonly raw: Map<string | number | boolean | null, string>;
+  readonly issued: Set<string>;
+  sequence: number;
+};
 
-const issuedReferences = new Map<string, Set<string>>();
+const referenceCaches = new Map<string, DiagnosticReferenceCache>();
 
-const referenceSequences = new Map<string, number>();
-
-function nextReference(kind: string) {
-  const sequence = (referenceSequences.get(kind) || 0) + 1;
-  referenceSequences.set(kind, sequence);
-  return `${kind}-${sequence}`;
+function referenceCache(kind: string) {
+  let cache = referenceCaches.get(kind);
+  if (!cache) {
+    cache = { raw: new Map(), issued: new Set(), sequence: 0 };
+    referenceCaches.set(kind, cache);
+  }
+  return cache;
 }
 
 function readReferenceMapping(
@@ -1159,14 +1161,12 @@ function rememberReferenceMapping(
   }
 }
 
-function rememberIssuedReference(kind: string, reference: string) {
-  const issued = issuedReferences.get(kind) || new Set<string>();
+function rememberIssuedReference(issued: Set<string>, reference: string) {
   issued.delete(reference);
   issued.add(reference);
   if (issued.size > ISSUED_REFERENCE_LIMIT) {
     issued.delete(issued.values().next().value!);
   }
-  issuedReferences.set(kind, issued);
 }
 
 function referenceFor(kind: string, raw: unknown) {
@@ -1175,19 +1175,16 @@ function referenceFor(kind: string, raw: unknown) {
     return `${safeKind}-0`;
   }
   const value = raw as string | number | boolean | null;
-  let refs = referenceMaps.get(safeKind);
-  if (!refs) {
-    refs = new Map();
-    referenceMaps.set(safeKind, refs);
-  }
+  const cache = referenceCache(safeKind);
+  const refs = cache.raw;
   const current = readReferenceMapping(refs, value);
   if (current) {
-    rememberIssuedReference(safeKind, current);
+    rememberIssuedReference(cache.issued, current);
     return current;
   }
-  const next = nextReference(safeKind);
+  const next = `${safeKind}-${++cache.sequence}`;
   rememberReferenceMapping(refs, value, next);
-  rememberIssuedReference(safeKind, next);
+  rememberIssuedReference(cache.issued, next);
   return next;
 }
 
@@ -1243,7 +1240,7 @@ function safeStack(value: string) {
 }
 
 function safeReference(value: string, kind: 'topic' | 'user' | 'cursor' | 'media') {
-  return issuedReferences.get(kind)?.has(value) ? value : 'redacted';
+  return referenceCaches.get(kind)?.issued.has(value) ? value : 'redacted';
 }
 
 function endpointTypeFromPath(pathname: string, method?: string) {

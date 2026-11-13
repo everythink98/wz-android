@@ -26,6 +26,7 @@ import { createTopicProofTransport } from '../../helpers/topicCreationTransport'
 let mockDatabase: DatabaseSync | undefined;
 let mockDiskFailure = false;
 let mockMissingFiles = false;
+let mockDraftRead: ((identityKey: string) => Promise<void>) | undefined;
 const mockDeletedFiles: string[] = [];
 const mockCopiedFiles = new Set<string>();
 jest.mock('expo-sqlite', () => ({
@@ -45,7 +46,12 @@ jest.mock('expo-sqlite', () => ({
         check(sql);
         return db.prepare(sql).run(...args);
       },
-      getFirstAsync: async (sql: string, ...args: (string | number | null)[]) => db.prepare(sql).get(...args) ?? null,
+      getFirstAsync: async (sql: string, ...args: (string | number | null)[]) => {
+        const row = db.prepare(sql).get(...args) ?? null;
+        if (sql.startsWith('SELECT payload FROM topic_drafts ') && typeof args[1] === 'string')
+          await mockDraftRead?.(args[1]);
+        return row;
+      },
       getAllAsync: async (sql: string, ...args: (string | number | null)[]) => db.prepare(sql).all(...args)
     };
   }
@@ -197,6 +203,7 @@ beforeEach(() => {
   jest.mocked(DocumentPicker.getDocumentAsync).mockReset();
   mockDiskFailure = false;
   mockMissingFiles = false;
+  mockDraftRead = undefined;
   mockDeletedFiles.length = 0;
   mockCopiedFiles.clear();
   mockDatabase?.exec(
@@ -209,6 +216,56 @@ afterEach(() => {
 });
 
 describe('topic draft lifecycle', () => {
+  it.each(['success', 'failure'] as const)(
+    'ignores an old account hydration %s while the new read is pending',
+    async (outcome) => {
+      const previous = deferred<void>();
+      const current = deferred<void>();
+      const reading: string[] = [];
+      await saveTopicDraft(storedDraft());
+      mockDraftRead = (identityKey) => {
+        reading.push(identityKey);
+        return identityKey === 'nodeseek:123'
+          ? previous.promise
+          : identityKey === 'nodeseek:456'
+            ? current.promise
+            : Promise.resolve();
+      };
+      const hook = await renderHook(
+        ({ owner }: { owner: TopicComposerRouteRuntimeValue }) =>
+          useTopicComposerController({
+            runtime: owner,
+            intent: { kind: 'create', initialSource: 'nodeseek' },
+            active: true,
+            onPosted: () => {},
+            onAccepted: () => {}
+          }),
+        { initialProps: { owner: runtimeFor() } }
+      );
+      try {
+        await waitFor(() => expect(reading).toContain('nodeseek:123'));
+        await hook.rerender({ owner: runtimeFor('456') });
+        await act(async () => {
+          if (outcome === 'success') previous.resolve();
+          else previous.reject(new Error('旧账号读取失败'));
+        });
+        await waitFor(() => expect(reading).toContain('nodeseek:456'));
+        expect(hook.result.current.draft).toBeNull();
+        expect(hook.result.current.loading).toBe(true);
+        expect(hook.result.current.error).toBe('');
+        await act(async () => current.resolve());
+        await waitFor(() => expect(hook.result.current.draft?.identityKey).toBe('nodeseek:456'));
+        expect(hook.result.current.error).toBe('');
+        mockDraftRead = undefined;
+        expect((await loadTopicDraft('nodeseek', 'nodeseek:123'))?.id).toBe('draft-one');
+      } finally {
+        previous.resolve();
+        current.resolve();
+        await hook.unmount();
+      }
+    }
+  );
+
   it('opens the local picker without waiting for upload network preparation', async () => {
     const owner = runtimeFor();
     const hook = await setup(storedDraft(), owner);
@@ -1026,10 +1083,14 @@ describe('topic draft lifecycle', () => {
   it.each([true, false])('offers explicit account verification only for an authentication error (%s)', async (auth) => {
     const failure = Object.assign(new Error('规则读取受阻'), auth ? { loginRequired: true } : { status: 403 });
     const openAccount = jest.fn<TopicComposerRouteRuntimeValue['openAccount']>();
+    const transport = createTopicProofTransport('success');
+    const owner = runtimeFor('123', transport.fetcher);
+    let blocked = true;
     const runtime = {
-      ...runtimeFor(),
-      getLinuxDoTopicCreationContext: async () => {
-        throw failure;
+      ...owner,
+      getLinuxDoTopicCreationContext: (input: Parameters<typeof owner.getLinuxDoTopicCreationContext>[0]) => {
+        if (blocked) throw failure;
+        return owner.getLinuxDoTopicCreationContext(input);
       },
       openAccount
     };
@@ -1045,6 +1106,13 @@ describe('topic draft lifecycle', () => {
     await waitFor(() => expect(hook.result.current.contextError).toBe('规则读取受阻'));
     expect(hook.result.current.contextNeedsVerification).toBe(auth);
     expect(openAccount).not.toHaveBeenCalled();
+    blocked = false;
+    await act(() => hook.result.current.reloadContext());
+    expect(hook.result.current.contextError).toBe('');
+    expect(hook.result.current.contextNeedsVerification).toBe(false);
+    await waitFor(() => expect(hook.result.current.context?.source).toBe('linuxdo'));
+    expect(openAccount).not.toHaveBeenCalled();
+    expect(transport.writes).toEqual([]);
   });
 
   it('retains the edited draft and refuses leaving or changing sites when durable save fails', async () => {

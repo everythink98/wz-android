@@ -162,7 +162,6 @@ object DiagnosticJournal {
   )
   private var crashWriteFailureCount = 0L
   private var crashReadFailureCount = 0L
-  private var previous: JSONObject? = null
 
   var buildId: String = ""
     private set
@@ -190,13 +189,13 @@ object DiagnosticJournal {
       val native = DiagnosticLogStore(directory, "native")
       binding = StorageBinding.StoresBound(directory, js, native)
       val sessionFile = File(directory, "process.json")
-      previous = try { JSONObject(sessionFile.readText()) } catch (_: Exception) { null }
+      val previous = try { JSONObject(sessionFile.readText()) } catch (_: Exception) { null }
       recordStartupPhase("diagnostics-read")
       val session = JSONObject(context()).put("pid", Process.myPid()).put("startedAt", System.currentTimeMillis())
       try { atomicWrite(sessionFile, session.toString()) } catch (_: Exception) { crashWriteFailureCount++ }
       recordStartupPhase("diagnostics-written")
       recordApp("startup", "success", mapOf("state" to "started"))
-      executor.execute { collectPreviousExit(application) }
+      executor.execute { collectPreviousExit(application, previous) }
       val original = Thread.getDefaultUncaughtExceptionHandler()
       Thread.setDefaultUncaughtExceptionHandler { thread, error ->
         try { persistNativeCrash(error) } catch (_: Throwable) { /* Always delegate. */ }
@@ -269,12 +268,11 @@ object DiagnosticJournal {
     return true
   }
 
-  private fun collectPreviousExit(application: Application) {
+  private fun collectPreviousExit(application: Application, prior: JSONObject?) {
     if (Build.VERSION.SDK_INT < 30) {
       recordApp("previous-exit", "noop", mapOf("state" to "unsupported")); return
     }
     try {
-      val prior = previous
       val records = application.getSystemService(ActivityManager::class.java)
         .getHistoricalProcessExitReasons(application.packageName, 0, 16)
       val exit = records.firstOrNull {

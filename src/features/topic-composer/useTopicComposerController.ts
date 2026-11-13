@@ -132,8 +132,9 @@ export function useTopicComposerController({
   const [uploading, setUploading] = useState(false);
   const attachmentWork = useRef<AttachmentWork>({ kind: 'idle' });
   const [error, setError] = useState('');
-  const [contextError, setContextError] = useState('');
-  const [contextNeedsVerification, setContextNeedsVerification] = useState(false);
+  const [contextFailure, setContextFailure] = useState<
+    { kind: 'none' } | { kind: 'error' | 'verification'; message: string }
+  >({ kind: 'none' });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saveStatus, setSaveStatus] = useState('');
   const [attempt, setAttempt] = useState<TopicSubmissionAttempt | null>(null);
@@ -320,7 +321,6 @@ export function useTopicComposerController({
   }, [initialSource, runtimeRef]);
   useEffect(() => {
     if (!source) return;
-    let alive = true;
     const abort = new AbortController();
     setLoading(true);
     setError('');
@@ -329,7 +329,7 @@ export function useTopicComposerController({
     setEmojiUrls({});
     setContext(null);
     setEditContext(null);
-    setContextError('');
+    setContextFailure({ kind: 'none' });
     setErrors({});
     void (async () => {
       const previous = draftRef.current;
@@ -338,10 +338,10 @@ export function useTopicComposerController({
       // its authoritative response still belongs to the original draft.
       const pending = getUploadJob(attachmentWork.current);
       if (pending) await pending.promise;
-      if (!alive) return;
+      if (abort.signal.aborted) return;
       // Explicit site switches already flush before changing source; account changes still need it.
       if (previous?.source === source) await flush();
-      if (!alive) return;
+      if (abort.signal.aborted) return;
       if (!identityKey || identityKey.endsWith(':anonymous')) {
         installDraft(null);
         setAttempt(null);
@@ -371,7 +371,7 @@ export function useTopicComposerController({
       }
       if (stored && JSON.stringify(restored.attachments) !== JSON.stringify(stored.attachments))
         restored = { ...restored, revision: stored.revision + 1, updatedAt: Date.now() };
-      if (!alive) return;
+      if (abort.signal.aborted) return;
       savedRevision.current = stored ? { id: stored.id, revision: stored.revision } : null;
       installDraft(restored);
       if (editing) {
@@ -385,16 +385,15 @@ export function useTopicComposerController({
       if (stored && restored.revision !== stored.revision) await persist(restored);
     })()
       .catch((cause) => {
-        if (alive) {
+        if (!abort.signal.aborted) {
           setError(errorMessage(cause));
           setSaveStatus(`保存或恢复失败：${errorMessage(cause)}`);
         }
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (!abort.signal.aborted) setLoading(false);
       });
     return () => {
-      alive = false;
       abort.abort();
     };
   }, [source, identityKey, target, editTopicId, draftReload, flush, installDraft, persist, readEditContext]);
@@ -589,8 +588,7 @@ export function useTopicComposerController({
     const abort = new AbortController();
     setContext(null);
     setContextLoading(true);
-    setContextError('');
-    setContextNeedsVerification(false);
+    setContextFailure({ kind: 'none' });
     void (async () => {
       const read = async () => {
         const access = await requestAccess(value);
@@ -632,9 +630,11 @@ export function useTopicComposerController({
     })()
       .catch((cause) => {
         if (!abort.signal.aborted) {
-          setContextError(errorMessage(cause));
+          const message = errorMessage(cause);
+          setContextFailure({ kind: 'error', message });
           const kind = sourceErrorFromUnknown(value.source, cause).kind;
-          setContextNeedsVerification(['verification-required', 'login-required', 'login-expired'].includes(kind));
+          if (['verification-required', 'login-required', 'login-expired'].includes(kind))
+            setContextFailure({ kind: 'verification', message });
         }
       })
       .finally(() => {
@@ -1476,8 +1476,8 @@ export function useTopicComposerController({
     busy,
     uploading,
     error,
-    contextError,
-    contextNeedsVerification,
+    contextError: contextFailure.kind === 'none' ? '' : contextFailure.message,
+    contextNeedsVerification: contextFailure.kind === 'verification',
     errors,
     saveStatus,
     attempt,

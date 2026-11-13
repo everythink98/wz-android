@@ -226,13 +226,13 @@ describe('recoverable app updates', () => {
         expect(hook.result.current.artifact).toMatchObject({
           downloadedBytes: round + 1,
           totalBytes: 100,
-          ready: false
+          kind: 'partial'
         });
         expect(hook.result.current.appUpdateDownloadProgress).toBeNull();
         expect(active).toBe(0);
         await hook.unmount();
         hook = await readyHook();
-        expect(hook.result.current.artifact?.downloadedBytes).toBe(round + 1);
+        expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: round + 1 });
       } finally {
         await act(async () => {
           pending.resolve(null);
@@ -241,7 +241,7 @@ describe('recoverable app updates', () => {
       }
     }
     await act(() => hook.result.current.resumeAppUpdateDownload());
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     expect(mockReceivedOffsets).toEqual(Array.from({ length: 51 }, (_, index) => index));
     expect(mockPause).toHaveBeenCalledTimes(50);
     expect(mockOpen).toHaveBeenCalledTimes(1);
@@ -269,7 +269,7 @@ describe('recoverable app updates', () => {
     const hook = await readyHook();
     await act(() => hook.result.current.checkAppUpdate());
     await act(() => hook.result.current.startAppUpdateDownload());
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     mockNetwork.mockRejectedValue(new Error('offline'));
     await act(() => hook.result.current.installAppUpdate());
     expect(mockReceivedOffsets).toEqual([0]);
@@ -282,7 +282,7 @@ describe('recoverable app updates', () => {
     const hook = await readyHook();
     await act(() => hook.result.current.checkAppUpdate());
     await act(() => hook.result.current.startAppUpdateDownload());
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     expect(mockFiles.get(target(update(), true))).toBe(100);
     await act(() => hook.result.current.installAppUpdate());
     expect(mockReceivedOffsets).toEqual([0]);
@@ -305,7 +305,7 @@ describe('recoverable app updates', () => {
     save(update(), null);
     mockFiles.set(target(), 100);
     const hook = await readyHook();
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     expect(mockFiles.has(target())).toBe(false);
     expect(mockReceivedOffsets).toEqual([]);
   });
@@ -319,12 +319,12 @@ describe('recoverable app updates', () => {
     const first = await readyHook();
     await act(() => first.result.current.checkAppUpdate());
     await act(() => first.result.current.startAppUpdateDownload());
-    expect(first.result.current.artifact?.downloadedBytes).toBe(40);
+    expect(first.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 40 });
     await first.unmount();
     const restored = await readyHook();
     await act(() => restored.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0, 40]);
-    expect(restored.result.current.artifact?.ready).toBe(true);
+    expect(restored.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
   });
 
   it('pauses and ignores late progress before resuming from the saved file', async () => {
@@ -354,7 +354,7 @@ describe('recoverable app updates', () => {
       await download;
       oldProgress({ bytesWritten: 99, totalBytes: 100 });
     });
-    expect(hook.result.current.artifact?.downloadedBytes).toBe(30);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 30 });
     expect(hook.result.current.appUpdateDownloadProgress).toBeNull();
     await act(() => hook.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0, 30]);
@@ -374,7 +374,7 @@ describe('recoverable app updates', () => {
     const hook = await readyHook();
     mockCheck.mockRejectedValueOnce(new Error('check failed'));
     await act(() => hook.result.current.checkAppUpdate());
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     mockCheck.mockResolvedValue(update(2));
     await act(() => hook.result.current.checkAppUpdate());
     expect(hook.result.current.artifact?.update).toEqual(update());
@@ -402,7 +402,7 @@ describe('recoverable app updates', () => {
     const hook = await readyHook();
     await act(() => hook.result.current.checkAppUpdate());
     await act(() => hook.result.current.startAppUpdateDownload());
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     expect(mockOpen).not.toHaveBeenCalled();
     AppState.currentState = 'active';
     await hook.rerender(undefined);
@@ -424,7 +424,7 @@ describe('recoverable app updates', () => {
     const hook = await readyHook();
     await act(() => hook.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([40, 0]);
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     expect(lines.map((line) => JSON.parse(line))).toContainEqual(
       expect.objectContaining({
         operation: 'download',
@@ -451,8 +451,8 @@ describe('recoverable app updates', () => {
     });
     const hook = await readyHook();
     await act(() => hook.result.current.resumeAppUpdateDownload());
-    expect(hook.result.current.artifact?.totalBytes).toBe(100);
-    expect(hook.result.current.artifact?.downloadedBytes).toBe(20);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', totalBytes: 100 });
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 20 });
   });
 
   it('waits for the old writer to stop before a rebuilt runtime recovers the file', async () => {
@@ -483,7 +483,7 @@ describe('recoverable app updates', () => {
       await download;
     });
     await waitFor(() => expect(next.result.current.phase).toBe('idle'));
-    expect(next.result.current.artifact?.downloadedBytes).toBe(40);
+    expect(next.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 40 });
     await act(() => next.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0, 40]);
   });
@@ -498,7 +498,7 @@ describe('recoverable app updates', () => {
       })
       .mockRejectedValueOnce(new Error('storage unavailable'));
     await act(() => hook.result.current.startAppUpdateDownload());
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
     expect(mockFiles.get(target(update(), true))).toBe(100);
     await act(() => hook.result.current.installAppUpdate());
     expect(mockReceivedOffsets).toEqual([0]);
@@ -541,16 +541,16 @@ describe('recoverable app updates', () => {
     await act(() => hook.result.current.startAppUpdateDownload());
     expect(mockOpen).not.toHaveBeenCalled();
     expect(mockFiles.has(target())).toBe(false);
-    expect(hook.result.current.artifact?.downloadedBytes).toBe(0);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 0 });
     await act(() => hook.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0, 0]);
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
   });
 
   it('recovers a missing file as a fresh download and removes only an installed target', async () => {
     save();
     const missing = await readyHook();
-    expect(missing.result.current.artifact?.downloadedBytes).toBe(0);
+    expect(missing.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 0 });
     await act(() => missing.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0]);
     await missing.unmount();
@@ -589,7 +589,7 @@ describe('recoverable app updates', () => {
     mockFiles.set(target(update(), true), 100);
     const hook = await readyHook(true);
     await waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1));
-    expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
   });
 
   it('rejects untrusted metadata and corrupted complete files without installing', async () => {
@@ -600,7 +600,7 @@ describe('recoverable app updates', () => {
     save();
     mockFiles.set(target(update(), true), 15);
     const corrupt = await readyHook();
-    expect(corrupt.result.current.artifact?.ready).toBe(false);
+    expect(corrupt.result.current.artifact).toMatchObject({ kind: 'partial' });
     expect(mockFiles.has(target(update(), true))).toBe(false);
     expect(mockOpen).not.toHaveBeenCalled();
   });
@@ -768,7 +768,7 @@ describe('recoverable app updates', () => {
     save(update(), 90);
     mockFiles.set(target(), 90);
     const hook = await readyHook();
-    expect(hook.result.current.artifact?.downloadedBytes).toBe(0);
+    expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 0 });
     await act(() => hook.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0]);
   });

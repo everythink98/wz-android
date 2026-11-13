@@ -164,12 +164,10 @@ function UpdateProgressScenario({
       <MoreUpdatePanel
         runtime={{
           phase,
-          artifact: {
-            update: updateInfo,
-            ready: phase === 'installing',
-            totalBytes: unknownTotal ? null : 80_000_000,
-            downloadedBytes
-          },
+          artifact:
+            phase === 'installing'
+              ? { kind: 'verified', update: updateInfo, bytes: downloadedBytes }
+              : { kind: 'partial', update: updateInfo, totalBytes: unknownTotal ? null : 80_000_000, downloadedBytes },
           info: updateInfo,
           message: '正在下载安装包',
           progress: formatAppUpdateDownloadProgress(
@@ -206,12 +204,9 @@ function UpdateRetainedScenario({
             ? { ...updateInfo, version: '1.4.1', versionName: '1.4.1', versionCode: 141, sha256: '2'.repeat(64) }
             : null,
           progress: null,
-          artifact: {
-            update: updateInfo,
-            ready,
-            totalBytes: 80_000_000,
-            downloadedBytes: ready ? 80_000_000 : 34_000_000
-          },
+          artifact: ready
+            ? { kind: 'verified', update: updateInfo, bytes: 80_000_000 }
+            : { kind: 'partial', update: updateInfo, totalBytes: 80_000_000, downloadedBytes: 34_000_000 },
           message:
             message ?? (ready ? '无法打开安装确认，安装包已保留，可再次安装' : '网络已断开，进度已保留，可继续下载'),
           check: noop,

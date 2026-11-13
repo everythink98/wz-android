@@ -893,6 +893,7 @@ describe('diagnostic traces', () => {
   });
 
   it('bounds raw and issued diagnostic references without reusing IDs', () => {
+    const events = captureEvents();
     const rawAnchor = 'diagnostic-raw-cap-anchor';
     const firstRawRef = diagnosticRef('cursor', rawAnchor);
     for (let index = 0; index < 4_097; index += 1) {
@@ -901,8 +902,9 @@ describe('diagnostic traces', () => {
     const secondRawRef = diagnosticRef('cursor', rawAnchor);
     expect(secondRawRef).not.toBe(firstRawRef);
     expect(Number(secondRawRef.split('-').at(-1))).toBeGreaterThan(Number(firstRawRef.split('-').at(-1)));
+    beginDiagnosticTrace('topic', 'load', { cursorRef: firstRawRef });
+    expect(events().at(-1)).toEqual(expect.objectContaining({ cursorRef: firstRawRef }));
 
-    const events = captureEvents();
     const issuedAnchor = diagnosticRef('user', 'diagnostic-issued-cap-anchor');
     for (let index = 0; index < 8_193; index += 1) {
       diagnosticRef('user', `diagnostic-issued-cap-${index}`);

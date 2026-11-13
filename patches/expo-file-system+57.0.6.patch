@@ -1,7 +1,8 @@
 diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
+index 44dd86d..7499051 100644
 --- a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
 +++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
-@@ -6,6 +6,7 @@
+@@ -6,6 +6,7 @@ import com.facebook.react.modules.network.OkHttpClientProvider
  import expo.modules.filesystem.unifiedfile.JavaFile
  import expo.modules.filesystem.unifiedfile.SAFDocumentFile
  import expo.modules.filesystem.unifiedfile.UnifiedFileInterface
@@ -9,7 +10,7 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
  import expo.modules.kotlin.records.Field
  import expo.modules.kotlin.records.Record
  import expo.modules.kotlin.sharedobjects.SharedObject
-@@ -17,10 +18,7 @@
+@@ -17,10 +18,7 @@ import okhttp3.Call
  import okhttp3.Callback
  import okhttp3.Request
  import okhttp3.Response
@@ -20,7 +21,7 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
  import java.net.URI
  import java.net.URLConnection
  import java.util.concurrent.TimeUnit
-@@ -42,7 +40,8 @@
+@@ -42,7 +40,8 @@ class DownloadTaskOptions : Record {
   */
  class FileSystemDownloadTask : SharedObject() {
    companion object {
@@ -30,8 +31,44 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
        .connectTimeout(60, TimeUnit.SECONDS)
        .readTimeout(60, TimeUnit.SECONDS)
        .writeTimeout(60, TimeUnit.SECONDS)
-@@ -98,7 +97,7 @@
-     isCancelling = false
+@@ -51,9 +50,8 @@ class FileSystemDownloadTask : SharedObject() {
+ 
+   private var call: Call? = null
+ 
+-  @Volatile private var isPausing = false
+-
+-  @Volatile private var isCancelling = false
++  private enum class StopRequest { NONE, PAUSE, CANCEL }
++  @Volatile private var stopRequest = StopRequest.NONE
+   private var destinationFile: UnifiedFileInterface? = null
+ 
+   @Volatile private var bytesWritten = 0L
+@@ -61,8 +59,7 @@ class FileSystemDownloadTask : SharedObject() {
+   private val progressThrottleInterval = 100.milliseconds
+ 
+   suspend fun start(url: URI, to: FileSystemPath, options: DownloadTaskOptions?): String? {
+-    isPausing = false
+-    isCancelling = false
++    stopRequest = StopRequest.NONE
+     bytesWritten = 0L
+ 
+     val destination = resolveDownloadDestination(to, url)
+@@ -80,7 +77,7 @@ class FileSystemDownloadTask : SharedObject() {
+   }
+ 
+   fun pause(): Map<String, String> {
+-    isPausing = true
++    stopRequest = StopRequest.PAUSE
+     call?.cancel()
+     // Use the file's on-disk length rather than the in-memory bytesWritten counter,
+     // which may be ahead of what was actually flushed. A too-low offset is safe because
+@@ -94,11 +91,10 @@ class FileSystemDownloadTask : SharedObject() {
+   }
+ 
+   suspend fun resume(url: URI, to: FileSystemPath, resumeData: String, options: DownloadTaskOptions?): String? {
+-    isPausing = false
+-    isCancelling = false
++    stopRequest = StopRequest.NONE
  
      val offset = try {
 -      resumeData.toLong()
@@ -39,19 +76,38 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
      } catch (e: NumberFormatException) {
        throw InvalidResumeDataException()
      }
-@@ -151,6 +150,11 @@
-       }
+@@ -120,8 +116,7 @@ class FileSystemDownloadTask : SharedObject() {
+   }
+ 
+   fun cancel() {
+-    isPausing = false
+-    isCancelling = true
++    stopRequest = StopRequest.CANCEL
+     call?.cancel()
+   }
+ 
+@@ -152,133 +147,50 @@ class FileSystemDownloadTask : SharedObject() {
  
        call = client.newCall(request)
-+
-+      if (isPausing || isCancelling) {
+ 
++      if (stopRequest != StopRequest.NONE) {
 +        safeResume(null)
 +        return@suspendCancellableCoroutine
 +      }
- 
++
        call?.enqueue(object : Callback {
          override fun onFailure(call: Call, e: IOException) {
-@@ -164,19 +168,24 @@
+-          if (isPausing) {
+-            safeResume(null)
+-          } else if (isCancelling) {
+-            safeResumeWithException(DownloadCancelledException())
+-          } else {
+-            safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
++          when (stopRequest) {
++            StopRequest.PAUSE -> safeResume(null)
++            StopRequest.CANCEL -> safeResumeWithException(DownloadCancelledException())
++            StopRequest.NONE -> safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
+           }
          }
  
          override fun onResponse(call: Call, response: Response) {
@@ -70,7 +126,7 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
 -              safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
 +          try {
 +            val written = writeDownloadResponse(response, destination, isResume, offset,
-+              stopped = { isPausing || isCancelling },
++              stopped = { stopRequest != StopRequest.NONE },
 +              progress = { count, total -> bytesWritten = count; emitProgress(count, total) }
 +            )
 +            if (written != null) {
@@ -80,24 +136,24 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
 +            }
 +            safeResume(if (written == null) null else destination.uri.toString())
 +          } catch (e: Exception) {
-+            if (isPausing) {
-+              safeResume(null)
-+            } else if (isCancelling) {
-+              safeResumeWithException(DownloadCancelledException())
-+            } else {
-+              safeResumeWithException(if (e is CodedException) e else UnableToDownloadException(e.message ?: "Download failed"))
++            when (stopRequest) {
++              StopRequest.PAUSE -> safeResume(null)
++              StopRequest.CANCEL -> safeResumeWithException(DownloadCancelledException())
++              StopRequest.NONE -> safeResumeWithException(if (e is CodedException) e else UnableToDownloadException(e.message ?: "Download failed"))
              }
            }
          }
-@@ -185,95 +194,6 @@
+       })
+ 
        continuation.invokeOnCancellation {
-         if (!isPausing) {
+-        if (!isPausing) {
++        if (stopRequest != StopRequest.PAUSE) {
            cancel()
--        }
--      }
--    }
--  }
--
+         }
+       }
+     }
+   }
+ 
 -  private inline fun processDownloadResponse(
 -    resp: Response,
 -    destination: UnifiedFileInterface,
@@ -182,14 +238,18 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
 -        }
 -        if (!append) {
 -          destination.outputStream(false).use { }
-         }
-       }
-     }
-@@ -304,18 +224,6 @@
-     }
+-        }
+-      }
+-    }
+-  }
+-
+   private fun emitProgress(bytesWritten: Long, totalBytes: Long) {
+     val currentTime = System.currentTimeMillis()
+     val shouldEmit = currentTime - lastProgressTime >= progressThrottleInterval.inWholeMilliseconds || bytesWritten == totalBytes
+@@ -305,18 +217,6 @@ val URI.filename: String
      return filename.ifBlank { "download" }
    }
--
+ 
 -fun calculateDownloadTotalBytes(
 -  responseCode: Int,
 -  contentLength: Long,
@@ -201,11 +261,13 @@ diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/fi
 -    else -> contentLength
 -  }
 -}
- 
+-
  fun resolveDownloadDestination(to: FileSystemPath, url: URI): UnifiedFileInterface {
    return when (to) {
+     is FileSystemDirectory -> {
 diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/DownloadResponse.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/DownloadResponse.kt
 new file mode 100644
+index 0000000..85732b9
 --- /dev/null
 +++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/DownloadResponse.kt
 @@ -0,0 +1,74 @@
@@ -285,9 +347,10 @@ new file mode 100644
 +}
 diff --git a/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt b/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt
 new file mode 100644
+index 0000000..2c4cb9c
 --- /dev/null
 +++ b/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,215 @@
 +package expo.modules.filesystem
 +
 +import android.net.Uri
@@ -307,6 +370,9 @@ new file mode 100644
 +import org.robolectric.annotation.Config
 +import java.io.File
 +import java.net.ServerSocket
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicReference
 +import kotlin.concurrent.thread
 +
 +@RunWith(RobolectricTestRunner::class)
@@ -405,6 +471,59 @@ new file mode 100644
 +  @Test fun resumesOnlyTheRemainingBytes() = withPartial { file ->
 +    assertEquals(payload.size.toLong(), transfer(file, file.length()))
 +    assertArrayEquals(payload, file.readBytes())
++  }
++
++  @Test fun latestStopRequestDeterminesPauseOrCancellationWithoutChangingThePartialFile() = withPartial { file ->
++    for (pauseLast in listOf(false, true)) {
++      val entered = CountDownLatch(1)
++      val release = CountDownLatch(1)
++      val failure = AtomicReference<Throwable?>()
++      var result: String? = "unfinished"
++      val client = OkHttpClient.Builder().addInterceptor {
++        entered.countDown()
++        check(release.await(5, TimeUnit.SECONDS))
++        throw java.io.IOException("interrupted transfer")
++      }.build()
++      val task = FileSystemDownloadTask()
++      val destination = FileSystemFile(Uri.fromFile(file))
++      FileSystemPath::class.java.getDeclaredField("fileAdapter").apply { isAccessible = true }
++        .set(destination, JavaFile(Uri.fromFile(file)))
++      OkHttpClientProvider.setOkHttpClientFactory { client }
++      val worker = thread {
++        try {
++          result = runBlocking { task.resume(URI("http://127.0.0.1:9/app.apk"), destination, "4096", null) }
++        } catch (error: Throwable) {
++          failure.set(error)
++        }
++      }
++      try {
++        assertTrue("Native transfer must enter the managed client", entered.await(5, TimeUnit.SECONDS))
++        if (pauseLast) {
++          task.cancel()
++          task.pause()
++        } else {
++          task.pause()
++          task.cancel()
++        }
++        release.countDown()
++        worker.join(5000)
++        assertFalse("Stopped transfer must settle", worker.isAlive)
++        if (pauseLast) {
++          assertNull(failure.get())
++          assertNull(result)
++        } else {
++          assertTrue(failure.get() is DownloadCancelledException)
++        }
++        assertArrayEquals(payload.copyOf(4096), file.readBytes())
++      } finally {
++        release.countDown()
++        worker.join(5000)
++        task.sharedObjectDidRelease()
++        OkHttpClientProvider.setOkHttpClientFactory(null)
++        client.connectionPool.evictAll()
++        client.dispatcher.executorService.shutdown()
++      }
++    }
 +  }
 +
 +  @Test fun replacesThePrefixWhenServerIgnoresRange() = withPartial { file ->

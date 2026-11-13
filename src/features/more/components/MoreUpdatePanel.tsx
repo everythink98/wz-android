@@ -38,7 +38,7 @@ export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }
   const notes = target?.notes.trim();
   const progress =
     runtime.progress ??
-    (runtime.artifact && !runtime.artifact.ready && runtime.artifact.downloadedBytes > 0
+    (runtime.artifact?.kind === 'partial' && runtime.artifact.downloadedBytes > 0
       ? {
           ...formatAppUpdateDownloadProgress(
             runtime.artifact.update.version,
@@ -57,12 +57,13 @@ export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }
           ? '打开安装确认中'
           : runtime.phase === 'downloading'
             ? '下载中'
-            : runtime.artifact?.ready
+            : runtime.artifact?.kind === 'verified'
               ? '安装'
-              : runtime.artifact && runtime.artifact.downloadedBytes > 0
+              : runtime.artifact?.kind === 'partial' && runtime.artifact.downloadedBytes > 0
                 ? '继续下载'
                 : '下载并安装';
-  const mainAction = runtime.artifact?.ready ? runtime.install : runtime.artifact ? runtime.resume : runtime.start;
+  const mainAction =
+    runtime.artifact?.kind === 'verified' ? runtime.install : runtime.artifact ? runtime.resume : runtime.start;
   const status =
     phaseText ||
     (runtime.message === `当前版本 ${CURRENT_APP_VERSION}` ||
@@ -107,7 +108,7 @@ export function MoreUpdatePanel({ runtime }: { runtime: MoreUpdateCapabilities }
           {runtime.artifact ? (
             <Text style={styles.meta}>
               本地安装包 {runtime.artifact.update.version}
-              {runtime.artifact.ready ? ' · 已就绪' : ''}
+              {runtime.artifact.kind === 'verified' ? ' · 已就绪' : ''}
             </Text>
           ) : null}
           {target ? (
