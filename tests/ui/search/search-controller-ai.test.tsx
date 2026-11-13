@@ -1232,11 +1232,14 @@ describe('linux.do AI search controller', () => {
     });
   });
 
-  it('opens Yaohuo login exactly once for a single-source login failure', async () => {
+  it('deduplicates pending Yaohuo retries and rearms login after submission or success', async () => {
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
-    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {
-      throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' as const });
-    });
+    const pending = Promise.withResolvers<SearchResponse>();
+    const loginError = Object.assign(new Error('妖火需要登录'), { kind: 'login-required' as const });
+    const searchTopics = jest
+      .fn<ReadGateway['searchTopics']>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockRejectedValue(loginError);
     const hook = await renderSearchController(
       createGateway({ searchTopics }),
       jest.fn(),
@@ -1247,13 +1250,40 @@ describe('linux.do AI search controller', () => {
       showYaohuoLogin
     );
 
-    await act(async () => {
-      await hook.result.current.runSearch({ query: 'codex', source: 'yaohuo' });
-    });
+    try {
+      await act(async () => {
+        await hook.result.current.runSearch({ query: 'codex', source: 'yaohuo' });
+      });
+      await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+      await act(async () => hook.result.current.retrySearchSource('yaohuo'));
+      expect(searchTopics).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        pending.reject(loginError);
+        await Promise.allSettled([pending.promise]);
+      });
+    }
 
     await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
     expect(showYaohuoLogin).toHaveBeenCalledWith('妖火需要登录');
-    expect(searchTopics).toHaveBeenCalledTimes(1);
+    await act(async () => hook.result.current.runSearch());
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(2));
+    const refetch = () => appQueryClient.refetchQueries({ queryKey: ['forum', 'yaohuo', 'search'] });
+    await act(refetch);
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(2);
+
+    searchTopics.mockResolvedValueOnce({ items: [], errors: {}, hasMore: false, nextPage: null });
+    await act(refetch);
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBeUndefined());
+    await act(refetch);
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(3));
+    await act(async () => hook.result.current.setSearchSource('v2ex'));
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+    await act(async () => hook.result.current.setSearchSource('yaohuo'));
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(3);
+    await act(async () => hook.result.current.retrySearchSource('yaohuo'));
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(4));
   });
 
   it('keeps a dismissed anonymous Yaohuo login closed until explicit retry', async () => {

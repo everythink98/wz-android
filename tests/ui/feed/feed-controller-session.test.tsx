@@ -1348,6 +1348,7 @@ describe('Feed controller sessions', () => {
 
   it('opens Yaohuo login once per explicit Feed intent', async () => {
     let identityBarriers: SessionSource[] = [];
+    const category: Category = { source: 'yaohuo', id: 'life', name: '生活' };
     const getFeed = jest.fn(async ({ source }: { source: string }) => {
       if (source !== 'yaohuo') {
         return { items: [], errors: {}, hasMore: false, nextPage: null };
@@ -1371,7 +1372,10 @@ describe('Feed controller sessions', () => {
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin,
         readGateway: {
-          getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+          getCategories: jest.fn(async ({ source }: { source: Source }) => ({
+            items: source === 'yaohuo' ? [category] : [],
+            errors: {}
+          })),
           getFeed,
           hasYaohuoCredential: jest.fn(async () => false)
         } as unknown as ReadGateway
@@ -1409,6 +1413,18 @@ describe('Feed controller sessions', () => {
 
     await act(async () => hook.result.current.refreshFeed());
     await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(2));
+
+    await waitFor(() => expect(hook.result.current.categories).toContainEqual(category));
+    await act(async () => hook.result.current.setCategoryFilter(category.id));
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(3));
+    const readsBeforeSameCategory = getFeed.mock.calls.length;
+    await act(async () => hook.result.current.setCategoryFilter(category.id));
+    expect(getFeed).toHaveBeenCalledTimes(readsBeforeSameCategory);
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(3);
+
+    await act(async () => hook.result.current.changeFeedSource('linuxdo'));
+    await act(async () => hook.result.current.changeFeedSource('yaohuo'));
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(4));
   });
 
   it('keeps an unrelated source request and categories intact when another credential session changes', async () => {

@@ -167,8 +167,7 @@ export function useUserController({
   const identity = canonicalUser?.id || '';
   const loginReadKey = `${selectedSource}:${identity}`;
   const loginReadKeyRef = useCommittedRef(loginReadKey);
-  const yaohuoLoginIntentRef = useRef(0);
-  const handledYaohuoLoginIntentRef = useRef<{ key: string; intent: number } | null>(null);
+  const handledYaohuoLoginReadKeyRef = useRef<string | null>(null);
   const profileReadPlan = readGateway.getReadPlan(selectedSource, 'user-profile');
   const profileSessionEpoch = isSessionSource(selectedSource) ? sessionEpochs[selectedSource] : 0;
   const profileKey = useMemo(
@@ -297,15 +296,13 @@ export function useUserController({
 
   const showYaohuoLoginForRead = useCallback(
     (message: string) => {
-      const intent = yaohuoLoginIntentRef.current;
-      const handled = handledYaohuoLoginIntentRef.current;
       if (
         !activeRef.current ||
         loginReadKeyRef.current !== loginReadKey ||
-        (handled?.key === loginReadKey && handled.intent === intent)
+        handledYaohuoLoginReadKeyRef.current === loginReadKey
       )
         return;
-      handledYaohuoLoginIntentRef.current = { key: loginReadKey, intent };
+      handledYaohuoLoginReadKeyRef.current = loginReadKey;
       showYaohuoLogin(message);
     },
     [activeRef, loginReadKey, loginReadKeyRef, showYaohuoLogin]
@@ -439,7 +436,7 @@ export function useUserController({
   const refreshUser = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!active || !selectedUser) return 'stale';
     if (selectedUser.source === 'yaohuo') {
-      yaohuoLoginIntentRef.current += 1;
+      handledYaohuoLoginReadKeyRef.current = null;
       handledUserErrorAtRef.current.profile = 0;
       handledUserErrorAtRef.current.topics = 0;
       handledUserErrorAtRef.current.replies = 0;
@@ -595,21 +592,21 @@ export function useUserController({
     userRepliesBusy: repliesQuery.isFetching,
     retryUserTopics: () => {
       if (selectedSource === 'yaohuo' && activeRef.current) {
-        yaohuoLoginIntentRef.current += 1;
+        handledYaohuoLoginReadKeyRef.current = null;
         handledUserErrorAtRef.current.topics = 0;
       }
       return topicsQuery.refetch({ cancelRefetch: false });
     },
     retryUserReplies: () => {
       if (selectedSource === 'yaohuo' && activeRef.current) {
-        yaohuoLoginIntentRef.current += 1;
+        handledYaohuoLoginReadKeyRef.current = null;
         handledUserErrorAtRef.current.replies = 0;
       }
       return repliesQuery.refetch({ cancelRefetch: false });
     },
     retryUserProfile: () => {
       if (selectedSource === 'yaohuo' && activeRef.current) {
-        yaohuoLoginIntentRef.current += 1;
+        handledYaohuoLoginReadKeyRef.current = null;
         handledUserErrorAtRef.current.profile = 0;
       }
       return profileQuery.refetch({ cancelRefetch: false });

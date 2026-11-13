@@ -258,8 +258,7 @@ export function useFeedController({
   const handledSourceCategoriesErrorRef = useRef<unknown>(undefined);
   const handledFeedErrorRef = useRef<unknown>(undefined);
   const handledPartialErrorsRef = useRef<unknown>(undefined);
-  const yaohuoLoginIntentRef = useRef(0);
-  const handledYaohuoLoginIntentRef = useRef<number | null>(null);
+  const yaohuoLoginPromptedRef = useRef(false);
   const feedReadPlanScopes = (feedSource === 'all' ? enabledFeedSources : [feedSource]).map(
     (source) => [source, readGateway.getReadPlan(source, 'feed').cacheScope] as const
   );
@@ -457,7 +456,7 @@ export function useFeedController({
   const loadMoreError = feedSourceRequestEnabled && feedQuery.isFetchNextPageError;
   useEffect(() => {
     if (feedSource === 'yaohuo' && feedQuery.isSuccess) {
-      handledYaohuoLoginIntentRef.current = null;
+      yaohuoLoginPromptedRef.current = false;
     }
   }, [feedQuery.isSuccess, feedSource]);
   const activeFeedState = useMemo<FeedSourceState>(
@@ -593,8 +592,8 @@ export function useFeedController({
       return;
     }
     if (feedSource === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
-      if (handledYaohuoLoginIntentRef.current === yaohuoLoginIntentRef.current) return;
-      handledYaohuoLoginIntentRef.current = yaohuoLoginIntentRef.current;
+      if (yaohuoLoginPromptedRef.current) return;
+      yaohuoLoginPromptedRef.current = true;
       showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : message);
       return;
     }
@@ -667,7 +666,7 @@ export function useFeedController({
 
   const refreshFeed = useCallback(async () => {
     if (!feedActive || !feedSourceRequestEnabled) return;
-    if (feedSource === 'yaohuo') yaohuoLoginIntentRef.current += 1;
+    if (feedSource === 'yaohuo') yaohuoLoginPromptedRef.current = false;
     const refreshGeneration = ++refreshFeedGenerationRef.current;
     setManualRefreshing(true);
     notify('正在更新列表');
@@ -690,7 +689,7 @@ export function useFeedController({
       queryClient.removeQueries({
         predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === source && queryKey[2] === 'feed'
       });
-      if (source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
+      if (source === 'yaohuo') yaohuoLoginPromptedRef.current = false;
       setFeedSource(source);
       setCategoryFilterState('');
     },
@@ -711,7 +710,7 @@ export function useFeedController({
   const setCategoryFilter = useCallback(
     (category: string) => {
       if (category === categoryFilter) return;
-      if (feedSource === 'yaohuo') yaohuoLoginIntentRef.current += 1;
+      if (feedSource === 'yaohuo') yaohuoLoginPromptedRef.current = false;
       setCategoryFilterState(category);
     },
     [categoryFilter, feedSource]

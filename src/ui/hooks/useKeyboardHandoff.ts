@@ -29,9 +29,10 @@ export function useKeyboardHandoff(
       pending.current = null;
       request.set(0);
       clearTimeout(waiting.timer);
-      if (error) waiting.control.abort();
-      if (error) waiting.reject(new Error(error));
-      else waiting.resolve();
+      if (error) {
+        waiting.control.abort();
+        waiting.reject(new Error(error));
+      } else waiting.resolve();
     },
     [request]
   );

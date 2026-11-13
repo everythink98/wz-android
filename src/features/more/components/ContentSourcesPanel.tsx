@@ -24,13 +24,11 @@ const DRAG_ACTIVATION_DELAY_MS = 350;
 
 type RowLayout = { height: number; y: number };
 type DragPreview = {
-  centers: number[];
   originIndex: number;
   source: Source;
   targetIndex: number;
 };
 type DragSession = DragPreview & {
-  generation: number;
   preferences: ContentSourcePreference[];
 };
 
@@ -253,8 +251,6 @@ export function ContentSourcesPanel({
       return;
     }
     const session: DragSession = {
-      centers: [...centers],
-      generation,
       originIndex,
       preferences: [...current],
       source,
@@ -268,14 +264,7 @@ export function ContentSourcesPanel({
     if (!expandedRef.current || screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation)
       return;
     const session = dragSessionRef.current;
-    if (
-      !session ||
-      session.generation !== generation ||
-      session.source !== source ||
-      targetIndex < 0 ||
-      targetIndex >= session.preferences.length
-    )
-      return;
+    if (!session || session.source !== source || targetIndex < 0 || targetIndex >= session.preferences.length) return;
     setDragPreview((current) =>
       current?.source === source && current.targetIndex === targetIndex ? current : { ...session, targetIndex }
     );
@@ -291,7 +280,6 @@ export function ContentSourcesPanel({
     if (
       !success ||
       !session ||
-      session.generation !== generation ||
       session.source !== source ||
       session.preferences.map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`).join('|') !==
         currentPreferenceIdentity ||

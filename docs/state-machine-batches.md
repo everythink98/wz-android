@@ -120,3 +120,26 @@ P03 已审查全部 **31 项：1 项完整显式化、7 项局部简化、23 项
 累计盘点为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已审查 82 项，其中 3 项完整转换、19 项局部简化、60 项保留；P04～P10 还有 **202 项未审查**。pending 281 包含已审查但保留/局部处理的 79 项，不是 281 个产品 Bug。CSV 继续保持原 284 项基线，不改分母或历史 hash。
 
 逐项决策见 `.codex-tmp/state-machine-elimination/p03/decision-final-v2.json`，SHA-256 为 `65d41d4da45558c5e14adfdfc0e1e9faad8afc122b06d6eb4b86a7fd59f87ec2`；完整验收为 `.codex-tmp/state-machine-elimination/p03/validation-final.json`，SHA-256 为 `824606e19b73d761a4313db567e4c9943f0539b0591c13305e9f7a484be21147`。早期实施报告中的旧源码行与「未实施」措辞已由最终冻结和 peer 证据覆盖，不作为现状引用。本批作为一个本地提交，不 push、不合并、不发布；P04 只读预审不计实施或验收。
+
+## P04 执行结果
+
+P04 已完成全部 **28 项的批末审查：6 项局部简化、22 项保留，新增完整转换计数 0**。Feed、Search、User 的妖火登录提示分别去掉重复意图计数，保留当前来源/用户及显式重试的防重语义；Library 分类菜单将 tab 和 placement 合为一个 nullable 结果，仍由测量令牌阻止迟到回调；内容源拖动删除未读的中心点副本和重复 session generation，保留全局代际；键盘交接合并连续的同条件分支，保持 abort 在 reject 之前。
+
+22 项保留独立的真实职责，包括分页失败暂停和位移、Query 快照、输入与已提交查询、滚动迟滞、页面挂载、测量取消、JS/UI/Native 时钟及公开 SDK 行为。SDK 外部或动态消费者没有被穷尽，未因此删除公开能力。6 项局部简化的原 scope 仍有独立 authority，全部继续 pending，不算整项消除。
+
+生产源码 6 文件新增 46 行、删除 61 行，**净减 15 行**；测试 3 文件新增 117 行、删除 10 行，净增 107 行。新增 1 个并发行为用例，扩展 3 个既有用例；4 项负向控制均能识别错误且源码已逐字恢复。整文件、命名生产函数及依赖删除均为 0，没有新增依赖。
+
+实际验证结果：
+
+- `STATIC_PASS`：原 61 输入冻结下，`npm run typecheck` 和完整 `npm run verify` 均退出 0。
+- `UNIT_PASS`：Vitest 270 文件、4610 项，seed `1794576046281`。
+- `UI_PASS`：105 suites、3268 项，seed `334898880`；既有 act 告警未被视为控制台完全干净。初次新增 User fixture 对未缓存失败页的重试预期有误，已按真实 Query 行为修正，相同 3 项行为断言在 HEAD 原实现也通过。
+- 最后仅给 Search 测试的受控 Promise 补 `finally`，12 条行为断言和后续正文不变，其余 60 个输入及 6 份生产源码不变。最终冻结 v2 另跑完整 Search suite 60/60、类型和定向静态检查通过；没有把原完整门禁或 APK 写成在 v2 上重跑。该 60 项属于原 3268 项，不重复累计。
+- `APK_SANITY`：普通 Release 构建用时 5m26s，APK SHA-256 为 `40696bb5fc2381e684ff93d8b89b146c47414d87c07767bb962d9c11f5447d8a`。实际 sourcemap 匹配 6 份当前生产源码，APK dex 与当前启动日志匹配 buildId，版本和签名不变。没有 Native/SDK/原生配置改动，未重复 P02 的 Native 测试。
+- 限定范围的 `LIVE_PASS`：`FEED-01/02` 四来源首屏；`LIBRARY-03` 历史分类菜单打开、筛选、系统返回关闭和恢复全部，616 条经 79 条筛选后恢复 616；`USER-01` 妖火本人主题、回复及刷新；`SEARCH-02` 仅空词禁用、来源切换及恢复；`MORE-05` 手柄同位长按释放、收起/重开、顺序及 4/4 启用保持。现有空收藏按原规则禁用分类按钮，未创建测试收藏。两个已登录来源、UID、首次安装时间和关闭的代理保持，主模拟器最终停在可见首页。恢复任务时原 AVD 未运行；重新打开后仍安装同一 APK，当前启动窗口 22 条记录匹配 buildId，未发现匹配 App 的崩溃或 ANR 信号。
+
+`NOT_VERIFIED`：真实登录拒绝/关闭/重试、凭据编辑、换号、OAuth/续签及 Cookie 清除；非空收藏菜单、向上展开或短窗口菜单、设备上的迟到测量；跨行排序、TalkBack、原生键盘/选图错误路径和物理设备；实际提交的 Search 结果、完整 User 分页及动画性能。Feed 下拉已注入手势，但没有独立的请求起止 oracle，不计刷新成功。本批没有改分页、列表滚动、刷新接线或原生补丁，也未重复完整首页手势矩阵；MCP 观察不记 `DEVICE_REPLAY_PASS`。
+
+累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 **4 批、110 项的批末审查/验收**，其中 3 项完整转换、25 项局部简化、82 项保留；P05～P10 的 **174 项尚未实施及批末验收**。pending 281 包含已审查但保留/局部处理的 107 项，不是 281 个产品 Bug；P05 只读预审不记正式完成。CSV 继续保留原 284 项基线。
+
+逐项决策见 `.codex-tmp/state-machine-elimination/p04/decision-final.json`，SHA-256 为 `b765156f994c19cb54b135828b7fff36ca04a1bfe3065205eab1fc7d53b379ee`；完整验收为 `.codex-tmp/state-machine-elimination/p04/validation-final.json`，SHA-256 为 `0a6a0b6858c9904a71591ab8077270e650582a43ec2caf1aa907454d89d02501`。原 coverage 的测试净增 101 行及待补修状态由最终记录覆盖；`ui.scroll-controls` 的调用证据应为 `FeedScreen.tsx:138`，旧报告的 135 行不作现状引用。本批只保存一个本地提交，不 push、不合并、不发布。

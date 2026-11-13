@@ -209,8 +209,7 @@ export function useSearchController({
     removedKeys: new Set<string>()
   });
   const handledSearchActionsRef = useRef(new WeakSet<RemoteSearchSourceResult>());
-  const yaohuoLoginIntentRef = useRef(0);
-  const handledYaohuoLoginIntentRef = useRef<number | null>(null);
+  const yaohuoLoginHandledRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchSource, setSearchSourceState] = useState<FeedSource>('all');
   const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
@@ -839,7 +838,7 @@ export function useSearchController({
   const retrySearchSource = useCallback(
     (source: Source) => {
       if (!searchActive || !enabledSearchSourcesRef.current.includes(source)) return;
-      if (source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
+      if (source === 'yaohuo') yaohuoLoginHandledRef.current = false;
       const plan = readGateway.getReadPlan(source, 'search');
       if (
         plan.state === 'blocked' &&
@@ -925,7 +924,7 @@ export function useSearchController({
     ];
     results.forEach((result) => {
       if (result?.kind === 'success' && submittedSearch.source === 'yaohuo') {
-        handledYaohuoLoginIntentRef.current = null;
+        yaohuoLoginHandledRef.current = false;
         return;
       }
       if (!result || result.kind !== 'action-required') return;
@@ -982,8 +981,8 @@ export function useSearchController({
           }
         });
       } else if (submittedSearch?.source !== 'all') {
-        if (handledYaohuoLoginIntentRef.current === yaohuoLoginIntentRef.current) return;
-        handledYaohuoLoginIntentRef.current = yaohuoLoginIntentRef.current;
+        if (yaohuoLoginHandledRef.current) return;
+        yaohuoLoginHandledRef.current = true;
         showYaohuoLogin(result.action.message);
       }
     });
@@ -1020,7 +1019,7 @@ export function useSearchController({
       }
       const source = runOptions.source ?? searchSource;
       if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return 'stale';
-      if (source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
+      if (source === 'yaohuo') yaohuoLoginHandledRef.current = false;
       const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
       if (runOptions.query !== undefined) setSearchQuery(query);
       if (runOptions.source !== undefined) setSearchSourceState(source);

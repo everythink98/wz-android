@@ -228,13 +228,10 @@ export const LibraryScreen = memo(function LibraryScreen({
   const favoriteCategoryMenuTriggerRef = useRef<View>(null);
   const historyCategoryMenuTriggerRef = useRef<View>(null);
   const categoryMenuRequestRef = useRef(0);
-  const [categoryMenuTab, setCategoryMenuTab] = useState<'favorites' | 'history' | null>(null);
-  const [categoryMenuPlacement, setCategoryMenuPlacement] = useState<ViewStyle>({
-    position: 'absolute',
-    left: 16,
-    top: 12,
-    minWidth: 180
-  });
+  const [categoryMenu, setCategoryMenu] = useState<{
+    tab: 'favorites' | 'history';
+    placement: ViewStyle;
+  } | null>(null);
   const enabledSourceOrderKey = enabledSources.join('|');
   const enabledMembershipKey = sourceValues.filter((source) => enabledSources.includes(source)).join('|');
   const enabledSourceSet = useMemo(
@@ -275,7 +272,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   });
   const closeCategoryMenu = useCallback(() => {
     categoryMenuRequestRef.current += 1;
-    setCategoryMenuTab(null);
+    setCategoryMenu(null);
   }, []);
   useEffect(() => {
     closeCategoryMenu();
@@ -326,14 +323,19 @@ export const LibraryScreen = memo(function LibraryScreen({
         if (categoryMenuRequestRef.current !== request) return;
         const margin = 8;
         const opensAbove = y + height / 2 > windowHeight / 2;
-        setCategoryMenuPlacement({
-          position: 'absolute',
-          left: Math.max(margin, x),
-          ...(opensAbove ? { bottom: Math.max(margin, windowHeight - y + 4) } : { top: y + height + 4 }),
-          maxHeight: Math.max(160, opensAbove ? y - safeTop - margin : windowHeight - y - height - safeBottom - margin),
-          minWidth: 180
+        setCategoryMenu({
+          tab,
+          placement: {
+            position: 'absolute',
+            left: Math.max(margin, x),
+            ...(opensAbove ? { bottom: Math.max(margin, windowHeight - y + 4) } : { top: y + height + 4 }),
+            maxHeight: Math.max(
+              160,
+              opensAbove ? y - safeTop - margin : windowHeight - y - height - safeBottom - margin
+            ),
+            minWidth: 180
+          }
         });
-        setCategoryMenuTab(tab);
       });
     },
     [active, categoryItems.length, closeCategoryMenu, safeBottom, safeTop, windowHeight]
@@ -507,7 +509,7 @@ export const LibraryScreen = memo(function LibraryScreen({
                   accessibilityLabel={onRetryCategories ? '重新加载分类' : `分类：${categoryLabel}`}
                   accessibilityState={{
                     disabled: !categoryActionAvailable,
-                    expanded: categoryMenuTab === viewportTab
+                    expanded: categoryMenu?.tab === viewportTab
                   }}
                   disabled={!categoryActionAvailable}
                   style={styles.categoryFilterButton}
@@ -530,10 +532,10 @@ export const LibraryScreen = memo(function LibraryScreen({
                     />
                   ) : null}
                 </Pressable>
-                {categoryMenuTab === viewportTab ? (
+                {categoryMenu?.tab === viewportTab ? (
                   <PopupMenu
                     accessibilityLabel="关闭分类菜单"
-                    placementStyle={categoryMenuPlacement}
+                    placementStyle={categoryMenu.placement}
                     visible
                     onRequestClose={closeCategoryMenu}
                   >
@@ -571,8 +573,7 @@ export const LibraryScreen = memo(function LibraryScreen({
     [
       categoryItems,
       categoryLabel,
-      categoryMenuPlacement,
-      categoryMenuTab,
+      categoryMenu,
       changeLibraryTab,
       changeSourceFilter,
       closeCategoryMenu,

@@ -300,7 +300,7 @@ describe('user query controller', () => {
   });
 
   it('keeps dismissed Yaohuo User login closed through identity reconciliation until explicit retry', async () => {
-    const requested: UserReference = {
+    let requested: UserReference = {
       source: 'yaohuo',
       id: '7',
       username: 'alice',
@@ -381,6 +381,67 @@ describe('user query controller', () => {
       clock.mockRestore();
     }
     await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(3));
+    for (const [id, count] of [
+      ['8', 4],
+      ['7', 5]
+    ] as const) {
+      requested = { ...requested, id };
+      await act(async () => hook.rerender(undefined));
+      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(count));
+    }
+  });
+
+  it('deduplicates concurrent Yaohuo activity failures and rearms each explicit lane retry', async () => {
+    const profile: UserProfile = {
+      ...user,
+      source: 'yaohuo',
+      id: '7',
+      url: 'https://www.yaohuo.me/space-7.html',
+      replies: [],
+      hasMoreTopics: true,
+      nextTopicsCursor: 'topics-2',
+      hasMoreReplies: true,
+      nextRepliesCursor: 'replies-2'
+    };
+    const pending = Promise.withResolvers<void>();
+    const getUserProfile = jest.fn<UserFixtureRead>(async ({ cursorType }) => {
+      if (!cursorType) return profile;
+      await pending.promise;
+      throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required', source: 'yaohuo' });
+    });
+    const showYaohuoLogin = jest.fn<(message?: string) => void>();
+    const hook = await renderUserController({ getUser: () => profile, getUserProfile, showYaohuoLogin });
+    await waitFor(() => expect(hook.result.current.userProfile?.hasMoreReplies).toBe(true));
+    let reads: Promise<unknown>[] = [];
+    try {
+      await act(async () => {
+        reads = [hook.result.current.loadMoreUserTopics(), hook.result.current.loadMoreUserReplies()];
+      });
+      await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
+      await act(async () => {
+        pending.resolve();
+        await Promise.all(reads);
+      });
+      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+      for (const [retry, loadMore, count] of [
+        ['retryUserTopics', 'loadMoreUserTopics', 2],
+        ['retryUserReplies', 'loadMoreUserReplies', 3]
+      ] as const) {
+        await act(async () => {
+          expect((await hook.result.current[retry]()).isError).toBe(false);
+        });
+        expect(showYaohuoLogin).toHaveBeenCalledTimes(count - 1);
+        await act(async () => {
+          await hook.result.current[loadMore]();
+        });
+        await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(count));
+        await act(async () => hook.rerender(undefined));
+        expect(showYaohuoLogin).toHaveBeenCalledTimes(count);
+      }
+    } finally {
+      pending.resolve();
+      await Promise.allSettled(reads);
+    }
   });
 
   it('gates route queries and commands while inactive', async () => {
