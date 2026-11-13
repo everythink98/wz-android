@@ -220,3 +220,25 @@ P07 已审查全部 **23 项、18 个 owner、77 个原始转换：1 项局部�
 累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 7 批、196 项的批末审查，其中 3 项完整转换、34 项局部简化、159 项保留；P08～P10 的 **88 项尚未实施及批末验收**。pending 281 包含已审查但保留或局部处理的 193 项，并非 281 个产品 Bug；P08/P09 的只读预审不计实施或消除。
 
 逐项决策：`.codex-tmp/state-machine-elimination/p07/decision-final.json`，SHA-256 `a1414477737d4606758507767a04aa2999520018e397337782d15e1ad5026009`；最终验收：`.codex-tmp/state-machine-elimination/p07/validation-final.json`，SHA-256 `61825a83c033f1a10a24503d230d24e0c4b9519df72be86d553cc8bc5c63152d`。旧审计中的 device pending 由最终限定收据补充，旧失败与不确定性不被覆盖。本批只保存一个本地提交，不 push、不合并、不发布。
+
+## P08 执行结果
+
+P08 已审查全部 **25 项、14 个 owner、78 个原始转换：1 项局部简化、24 项保留，新增完整转换计数 0**。`RenderRequest.totalTimeoutMs` 无属性读取者，删除 `val` 后不再生成 backing field 和 getter；构造参数、单调时钟截止时间、准入、结算及资源释放均保留，原模型继续 pending。根搜索、入口、测试和动态边界逐项留证；`UI-NEW-017` 原 canonical 空数组不改，补充找到的宿主测试单列，HTML token 与手动消息断言不冒充实际脚本执行。
+
+首次仪器包构建在设备安装前失败：P02 已将 Cookie batch 的 `successful` 改为 Boolean，一处仪器测试仍调用 `.get()`。本批只迁移该实参，保留前置 `await(5000)`、两条断言的顺序、消息与要求；原失败保留。重试后完整 AndroidTest 源编译通过，没有恢复冗余生产 API、排除测试或降低断言。Cookie 六例未动态执行，不据编译通过宣称设备行为通过。
+
+生产源码 **+1/−1 行、净 0 行、减少 4 字节**；既有测试修复另为 **+1/−1 行、净 0 行、减少 6 字节**。两个代码文件合计净 0 行、减少 10 字节；整文件删除 0、新增测试 0、依赖及版本变更 0。文档单列，包装、观察脚本、日志、截图与 APK 留在 ignored 目录；没有 APK 体积或性能收益声明。
+
+实际验证结果：
+
+- `STATIC_PASS`：类型检查与完整 `npm run verify` 均退出 0。Vitest **270 文件、4610 项**，seed `1794610447268`；`UI_PASS` 为 **105 suites、3269 项**，seed `-1604183129`，既有 act 与 Reanimated mock 告警保留。后续只修 Android hostTest 实参，原 85 份门禁输入逐字一致；新快照增加该测试及其生产类型 owner，重跑原失败的 AndroidTest 构建。
+- `UNIT_PASS`：既有两组 Native JVM 测试 **16 项通过、无跳过**，未新增测试。
+- `APK_SANITY`：成功仪器包构建 **1m26s**，普通 Release **2m30s**。普通 APK SHA-256 `b30f80bf8f108707cf18747623c9257d496d7e88c737a8091795bcf9ccaf0ddf`；`index.ts`、Hermes、非 debug、签名和版本均核对。真实 class、proof DEX 与本批 R8 mapping 对应的普通 DEX 均无旧属性/getter，`SystemClock + timeout` 写入 deadline 的路径保留。两次 Kotlin producer 为已绑定的 UP-TO-DATE 复用，不称新编译；proof 的旧 R8 map 不作证据。
+- 限定的 `DEVICE_REPLAY_PASS`：隔离 AVD 原 **3 个 SVG 仪器用例**各自完成、status 0、最终 code −1，覆盖真实准入上限与排空复用、复杂 SVG 海报排队/缓存/非透明像素及 idle WebView 销毁、独立 WebView 的动态图像帧变化和禁止外连。第三项不走 React Modal 或 RenderRequest，不能扩张为完整预览、分享或超时矩阵通过。
+- 限定的 `LIVE_PASS`：两个模拟器均同签名覆盖恢复普通包，UID 与首次安装时间保持，各有 **22 条匹配新 buildId 的成功启动记录**及正常 Feed。主模拟器北京时间 **2026-11-14 07:24** 左右刷新后，妖火与 NodeSeek 仍显示已登录；本轮 linux.do 匿名标签查询未匹配，未独立验证其状态。没有读取凭据或重新登录。仅关闭本任务隔离模拟器，主模拟器保持可见首页，ADB 与共享进程保留。
+
+`NOT_VERIFIED`：Cookie 六例动态行为、完整 React 预览/分享/真实站点矩阵、deadline 过期分支、物理设备及业务数据库/WAL/SHM 字节一致性。原测试包保持非 debug，未为读取私有数据改配置或使用 run-as。Avatar 高基数竞态仍未复现；P07 长会话黑图、妖火旧掉线及此前空回复原因未由本批 SVG 证据关闭。资源、并发、手势及动态公开契约状态继续保留。
+
+累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 **8 批、221 项的批末审查**，其中 3 项完整转换、35 项局部简化、183 项保留；P09～P10 的 **63 项尚未实施及批末验收**。pending 281 包含已审查但保留或局部处理的 218 项，并非 281 个产品 Bug；后续只读预审不计实施或消除。
+
+逐项决策：`.codex-tmp/state-machine-elimination/p08/decision-final.json`，SHA-256 `04a06eeee3a34dd398b167f5b5bcd52df9b5ba1c7e44ee6a3619de8d627ee7cd`；最终验收：`.codex-tmp/state-machine-elimination/p08/validation-final.json`，SHA-256 `af8dcec8a2372929528eed3f82545370962697f33429dfb40853bd9872684445`。本批只保存一个本地提交，不 push、不合并、不发布；首次构建失败和测试迁移修复均可追溯。

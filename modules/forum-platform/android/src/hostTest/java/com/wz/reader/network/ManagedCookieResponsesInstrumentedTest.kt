@@ -186,7 +186,7 @@ class ManagedCookieResponsesInstrumentedTest {
   private fun apply(url: String, vararg values: String) {
     val batch = writePlatformCookieResponses(url, values.toList())
     assertTrue("platform callbacks must settle", batch.await(5000))
-    assertTrue("platform must accept fixture cookies", batch.successful.get())
+    assertTrue("platform must accept fixture cookies", batch.successful)
   }
 
   @Test fun actualHttpUpdatesAndDeletionSurviveCancellationInThePlatformCookieStore() {

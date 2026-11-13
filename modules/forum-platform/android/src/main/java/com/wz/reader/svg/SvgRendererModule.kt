@@ -127,7 +127,7 @@ private class RenderRequest(
   val context: Context,
   val svgBase64: String,
   val cacheKey: String,
-  val totalTimeoutMs: Long,
+  totalTimeoutMs: Long,
   val promise: Promise
 ) {
   val deadlineUptimeMs = SystemClock.uptimeMillis() + totalTimeoutMs
