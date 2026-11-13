@@ -64,8 +64,9 @@ export function useTopicReadingEntry({
     void getTopicReading(topic.id, { signal: controller.signal, trackVisit: true })
       .catch(() => undefined)
       .finally(() => {
-        if (!controller.signal.aborted) visit.settled = true;
-        if (!controller.signal.aborted) setRegistration(visit.key);
+        if (controller.signal.aborted) return;
+        visit.settled = true;
+        setRegistration(visit.key);
       });
     return () => controller.abort();
   }, [focused, hasDetail, enabled, getTopicReading, topic.id, visit]);

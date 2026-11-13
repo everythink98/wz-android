@@ -143,3 +143,28 @@ P04 已完成全部 **28 项的批末审查：6 项局部简化、22 项保留�
 累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 **4 批、110 项的批末审查/验收**，其中 3 项完整转换、25 项局部简化、82 项保留；P05～P10 的 **174 项尚未实施及批末验收**。pending 281 包含已审查但保留/局部处理的 107 项，不是 281 个产品 Bug；P05 只读预审不记正式完成。CSV 继续保留原 284 项基线。
 
 逐项决策见 `.codex-tmp/state-machine-elimination/p04/decision-final.json`，SHA-256 为 `b765156f994c19cb54b135828b7fff36ca04a1bfe3065205eab1fc7d53b379ee`；完整验收为 `.codex-tmp/state-machine-elimination/p04/validation-final.json`，SHA-256 为 `0a6a0b6858c9904a71591ab8077270e650582a43ec2caf1aa907454d89d02501`。原 coverage 的测试净增 101 行及待补修状态由最终记录覆盖；`ui.scroll-controls` 的调用证据应为 `FeedScreen.tsx:138`，旧报告的 135 行不作现状引用。本批只保存一个本地提交，不 push、不合并、不发布。
+
+## P05 执行结果
+
+P05 已完成全部 **33 项的批末审查：7 项局部简化、26 项保留，新增完整转换计数 0**。Topic 首次响应时间只保留空值或完整的 key/time 对；必需的 Topic 参数及唯一生产调用证明部分判空分支不可达，删除对应回退与非空断言；妖火读取登录提示去掉重复意图计数，保留三处显式重试重置、当前主题校验和回调前登记。阅读登记合并连续 abort 检查，保持先结算 visit 再发布 registration 的顺序。FlashList 的两处局部 JS 条件同步更新 source、实际执行的 dist 与补丁。
+
+26 项保留真实的请求、窗口、数值、资源或生命周期职责。回复菜单关闭后仍需保留 Native fade 使用的坐标；楼层命令的 pending 与已处理标记不能在不改变同步前缀的情况下机械合并。阅读时钟、活动窗口、过期结果屏障、动作确认、支付及公开 SDK 行为没有为了减少计数重写。7 项局部简化的原模型仍有其他 authority，全部继续 pending，不计整项消除；动态消费者及生命周期证据不足的项单列保留。
+
+逻辑生产源码 5 文件新增 37 行、删除 55 行，**净减 18 行**；其中 App 3 文件净减 14 行，SDK source 2 文件净减 4 行。测试 2 文件新增 68 行、删除 3 行，净增 65 行，新增 1 个同步重入及重试行为用例，另加强既有首次响应时间断言。3 个负向控制均能识别对应错误，源码已逐字恢复。SDK dist 镜像净减 5 行、patch 传输文本净增 26 行，单列且不重复计入生产源码。整文件、命名生产函数及依赖删除均为 0，没有新增依赖。
+
+本批验证绑定同一组 36 个冻结输入，实际结果为：
+
+- `STATIC_PASS`：`npm run typecheck` 和完整 `npm run verify` 均退出 0。
+- `UNIT_PASS`：Vitest 270 文件、4610 项，seed `1794593736097`。
+- `UI_PASS`：105 suites、3269 项，seed `-371327050`。定向结果属于这些 owner 的补充证据，不与全量测试重复累计；既有 act 告警仍存在。
+- 补丁可安装性：干净锁定依赖树执行一次 `npm ci`，17 个 forward 检查、真实项目 postinstall 和 17 个 reverse 检查通过，135 个 postimage 与共享依赖逐字一致。首次 Windows 长路径失败已保留，同一棵干净依赖树使用单次命令的 `git -c core.longpaths=true` 后通过，没有更改全局 Git 配置。
+- `APK_SANITY`：普通 Release 构建用时 5m44s，APK SHA-256 为 `095bca6b9f39c04a57b9754f472e5ba8d1cf12bebab9d83265d84620b4f745fb`。实际 sourcemap 匹配 3 份 App 和 2 份 SDK dist 运行源码，正常入口为 `index.ts`、Hermes 开启；APK dex 和当前进程 22 条启动记录匹配 buildId。签名、版本、UID 与首次安装时间不变，安装后日志窗口未发现匹配 App 的崩溃或 ANR 信号。没有 Native 或原生配置改动，未重复之前的 Native 测试。
+- 限定范围的 `LIVE_PASS`：`TOPIC-01` 四站 Feed → Topic 主楼正文；`TOPIC-03` 的 NodeSeek、V2EX、linux.do 正倒序及恢复，linux.do 引用楼层定位；`NAV-02/03` 的 NodeSeek 用户页返回后保留同一回复坐标。NodeSeek 首条由 `#1` 切到 `#9` 再恢复 `#1`；V2EX 新读取到 `#110` 后恢复 `#1`，不把首次显示的 109 条当固定上限；linux.do 从 `#2` 切到 `#15` 再恢复，引用定位使 `#2` 头部从 y476 到 y389、进入原生视口。实际刷新账号结束后，妖火和 NodeSeek 仍已登录；linux.do 从匿名可用变为已验证，仍无已确认身份，总数保持 2/3。代理关闭、来源顺序及 4/4 启用保持，主模拟器最终停在可见首页。
+
+**妖火真实回复数据未通过。** `bbs-1608414.html` 主楼和 9 条回复统计可见，正序报「妖火边缘回复窗口为空」，显式重试后仍相同；倒序报「妖火普通回复窗口为空」，已恢复正序。独立 Chrome 的登录提示不能证明 App Cookie 或账号异常。只读排查确认 8 条读取、解析和传输路径字节不变，10 个回复调用 AST 不变；缺少同一 App transport 的最终回复 URL 与响应结构，原因未确定，不归因为既有问题、外部故障或本次回归，也不以其他来源通过覆盖此失败。证据及后续补证入口保留在 `.codex-tmp/state-machine-elimination/p05/yaohuo-live-triage.json`。
+
+`NOT_VERIFIED`：四站完整多页双向续读及晚测高像素矩阵、Native 动画与高亮时序；妖火成功回复窗口及真实登录拒绝、关闭、重试；已登录 linux.do 的阅读登记、统计与跨端续读；真实业务写入、TalkBack 和物理设备。仅人工检查最终首页静态 PNG，不宣称完整视觉或性能通过。本批没有 tracked Replay，MCP 观察不记 `DEVICE_REPLAY_PASS`。
+
+累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 **5 批、143 项的批末审查**，其中 3 项完整转换、32 项局部简化、108 项保留；P06～P10 还有 **141 项尚未实施及批末验收**。pending 281 包含已审查但保留或局部处理的 140 项，不是 281 个产品 Bug。固定 CSV 仍保留原 284 项基线。
+
+逐项决策见 `.codex-tmp/state-machine-elimination/p05/decision-final.json`，SHA-256 为 `3da21beca9fd81742c8389731ff4f8ab94e7e7f00454f22ea84849c94fde0e24`；完整验收为 `.codex-tmp/state-machine-elimination/p05/validation-final.json`，SHA-256 为 `9f73d57312be80d1a43c56f36bf9e8495648d8f0e8626d231c274e40705df75d`。早期 owner 报告中的待全量验证措辞由最终收据覆盖，不重写历史记录。本批只保存一个本地提交，不 push、不合并、不发布；P06 只读预审不记实施或验收。

@@ -589,24 +589,18 @@ export const TopicContentList = memo(function TopicContentList({
   const canShowReplies = Boolean(topic && !topicLoading);
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
   const detailTopicDiagnosticRef = item ? diagnosticRef('topic', `${item.source}:${item.id}`) : '';
-  const topicResponseReadyRef = useRef<{ readyAt?: number; topicKey: string }>({ topicKey: '' });
-  const topicResponseReadyCandidate =
-    topic &&
-    topicResponseReadyRef.current.topicKey === detailTopicStateKey &&
-    topicResponseReadyRef.current.readyAt !== undefined
+  const topicResponseReadyRef = useRef<{ readyAt: number; topicKey: string } | null>(null);
+  const topicResponseReadyCandidate = topic
+    ? topicResponseReadyRef.current?.topicKey === detailTopicStateKey
       ? topicResponseReadyRef.current.readyAt
-      : topic
-        ? monotonicNowMs()
-        : undefined;
+      : monotonicNowMs()
+    : undefined;
   useLayoutEffect(() => {
     if (!topic || topicResponseReadyCandidate === undefined) {
-      topicResponseReadyRef.current = { topicKey: detailTopicStateKey };
+      topicResponseReadyRef.current = null;
       return;
     }
-    if (
-      topicResponseReadyRef.current.topicKey !== detailTopicStateKey ||
-      topicResponseReadyRef.current.readyAt === undefined
-    ) {
+    if (topicResponseReadyRef.current?.topicKey !== detailTopicStateKey) {
       topicResponseReadyRef.current = {
         readyAt: topicResponseReadyCandidate,
         topicKey: detailTopicStateKey

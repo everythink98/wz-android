@@ -472,7 +472,7 @@ index 7717e3b..e488b41 100644
  //# sourceMappingURL=useBoundDetection.d.ts.map
 \ No newline at end of file
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
-index 034920b..302edcd 100644
+index 034920b1..7141440c 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
 @@ -11,7 +11,7 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
@@ -484,7 +484,19 @@ index 034920b..302edcd 100644
      // Track whether we've already triggered the end reached callback to prevent duplicate calls
      const pendingEndReached = useRef(false);
      // Track whether we've already triggered the start reached callback to prevent duplicate calls
-@@ -101,11 +101,12 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+@@ -90,22 +90,18 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+                 const autoscrollToBottomThresholdDistance = autoscrollToBottomThreshold * visibleLength;
+                 const isNearBottom = Math.ceil(lastScrollOffset + visibleLength) >=
+                     contentLength - autoscrollToBottomThresholdDistance;
+-                if (isNearBottom) {
+-                    pendingAutoscrollToBottom.current = true;
+-                }
+-                else {
+-                    pendingAutoscrollToBottom.current = false;
+-                }
++                pendingAutoscrollToBottom.current = isNearBottom;
+             }
+         }
      }, [recyclerViewManager]);
      const runAutoScrollToBottomCheck = useCallback(() => {
          // Suppress MVCP autoscroll while a programmatic scrollToIndex is in
@@ -500,7 +512,7 @@ index 034920b..302edcd 100644
              return;
          }
          if (pendingAutoscrollToBottom.current) {
-@@ -114,11 +115,16 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+@@ -114,11 +110,16 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
                  var _a, _b, _c;
                  const shouldAnimate = (_b = (_a = recyclerViewManager.props.maintainVisibleContentPosition) === null || _a === void 0 ? void 0 : _a.animateAutoScrollToBottom) !== null && _b !== void 0 ? _b : true;
                  (_c = scrollViewRef.current) === null || _c === void 0 ? void 0 : _c.scrollToEnd({
@@ -519,7 +531,7 @@ index 034920b..302edcd 100644
      // Reset end reached state when data changes
      useMemo(() => {
          pendingEndReached.current = false;
-@@ -144,4 +150,3 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+@@ -144,4 +145,3 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
          checkBounds,
      };
  }
@@ -542,7 +554,7 @@ index 62d55cd..35652dc 100644
      computeFirstVisibleIndexForOffsetCorrection: () => void;
      applyInitialScrollIndex: () => void;
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
-index 08724d1..657a7f0 100644
+index 08724d1f..b3412ec0 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
 @@ -1,10 +1,11 @@
@@ -774,6 +786,11 @@ index 08724d1..657a7f0 100644
              recyclerViewManager.shouldMaintainVisibleContentPosition()) {
 -            // Update the tracked first visible item
 -            const firstVisibleIndex = Math.max(0, recyclerViewManager.computeVisibleIndices().startIndex);
+-            if (firstVisibleIndex !== undefined && firstVisibleIndex >= 0) {
+-                firstVisibleItemKey.current =
+-                    recyclerViewManager.getDataKey(firstVisibleIndex);
+-                firstVisibleItemLayout.current = {
+-                    ...recyclerViewManager.getLayout(firstVisibleIndex),
 +            const anchor = firstVisibleItem.current;
 +            const scrollOffset = recyclerViewManager.getAbsoluteLastScrollOffset();
 +            const { data, maintainVisibleContentPosition } = recyclerViewManager.props;
@@ -807,11 +824,7 @@ index 08724d1..657a7f0 100644
 +                    return;
 +                }
 +            }
-             if (firstVisibleIndex !== undefined && firstVisibleIndex >= 0) {
--                firstVisibleItemKey.current =
--                    recyclerViewManager.getDataKey(firstVisibleIndex);
--                firstVisibleItemLayout.current = {
--                    ...recyclerViewManager.getLayout(firstVisibleIndex),
++            if (firstVisibleIndex >= 0) {
 +                firstVisibleItem.current = {
 +                    key: recyclerViewManager.getDataKey(firstVisibleIndex),
 +                    data,
@@ -1738,7 +1751,7 @@ index a2ccc53..74e8a7c 100644
     * Syncs an individual item by assigning it an appropriate key.
     * Will use an existing key if available, or generate a new one.
 diff --git a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
-index dd0f21f..9ad9232 100644
+index dd0f21f2..f3762aa4 100644
 --- a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
 +++ b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
 @@ -18,7 +18,8 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
@@ -1751,7 +1764,19 @@ index dd0f21f..9ad9232 100644
  ) {
    // Track whether we've already triggered the end reached callback to prevent duplicate calls
    const pendingEndReached = useRef(false);
-@@ -142,11 +143,14 @@ export function useBoundDetection<T>(
+@@ -131,22 +132,21 @@ export function useBoundDetection<T>(
+           Math.ceil(lastScrollOffset + visibleLength) >=
+           contentLength - autoscrollToBottomThresholdDistance;
+ 
+-        if (isNearBottom) {
+-          pendingAutoscrollToBottom.current = true;
+-        } else {
+-          pendingAutoscrollToBottom.current = false;
+-        }
++        pendingAutoscrollToBottom.current = isNearBottom;
+       }
+     }
+   }, [recyclerViewManager]);
  
    const runAutoScrollToBottomCheck = useCallback(() => {
      // Suppress MVCP autoscroll while a programmatic scrollToIndex is in
@@ -1769,7 +1794,7 @@ index dd0f21f..9ad9232 100644
        return;
      }
      if (pendingAutoscrollToBottom.current) {
-@@ -156,11 +160,16 @@ export function useBoundDetection<T>(
+@@ -156,11 +156,16 @@ export function useBoundDetection<T>(
            recyclerViewManager.props.maintainVisibleContentPosition
              ?.animateAutoScrollToBottom ?? true;
          scrollViewRef.current?.scrollToEnd({
@@ -1789,7 +1814,7 @@ index dd0f21f..9ad9232 100644
    // Reset end reached state when data changes
    useMemo(() => {
 diff --git a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
-index 3689830..0133bb6 100644
+index 3689830d..28b8e9a6 100644
 --- a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
 +++ b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
 @@ -6,7 +6,7 @@ import {
@@ -2107,6 +2132,11 @@ index 3689830..0133bb6 100644
 -        0,
 -        recyclerViewManager.computeVisibleIndices().startIndex
 -      );
+-      if (firstVisibleIndex !== undefined && firstVisibleIndex >= 0) {
+-        firstVisibleItemKey.current =
+-          recyclerViewManager.getDataKey(firstVisibleIndex);
+-        firstVisibleItemLayout.current = {
+-          ...recyclerViewManager.getLayout(firstVisibleIndex),
 +      const anchor = firstVisibleItem.current;
 +      const scrollOffset = recyclerViewManager.getAbsoluteLastScrollOffset();
 +      const { data, maintainVisibleContentPosition } =
@@ -2148,11 +2178,7 @@ index 3689830..0133bb6 100644
 +          return;
 +        }
 +      }
-       if (firstVisibleIndex !== undefined && firstVisibleIndex >= 0) {
--        firstVisibleItemKey.current =
--          recyclerViewManager.getDataKey(firstVisibleIndex);
--        firstVisibleItemLayout.current = {
--          ...recyclerViewManager.getLayout(firstVisibleIndex),
++      if (firstVisibleIndex >= 0) {
 +        firstVisibleItem.current = {
 +          key: recyclerViewManager.getDataKey(firstVisibleIndex),
 +          data,

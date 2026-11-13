@@ -195,11 +195,10 @@ export function useTopicController({
   const handledRouteTargetRef = useRef<{ key: string; queryIdentity: string; pending: boolean } | null>(null);
   const replyWindowGenerationRef = useRef(0);
   const replyLocationOwnerRef = useRef<{ generation: number; queryKey: readonly unknown[] } | null>(null);
-  const selectedSource = selectedTopic?.source || 'v2ex';
-  const selectedTopicId = selectedTopic?.id || '';
-  const selectedTopicKey = selectedTopic ? topicKey(selectedTopic) : '';
-  const yaohuoLoginIntentRef = useRef(0);
-  const handledYaohuoLoginIntentRef = useRef<{ topicKey: string; intent: number } | null>(null);
+  const selectedSource = selectedTopic.source;
+  const selectedTopicId = selectedTopic.id;
+  const selectedTopicKey = topicKey(selectedTopic);
+  const lastPromptedYaohuoTopicKeyRef = useRef<string | null>(null);
   const topicReadPlan = readGateway.getReadPlan(selectedSource, 'topic');
   const repliesReadPlan = readGateway.getReadPlan(selectedSource, 'replies');
   const topicReadBlocked = topicReadPlan.state === 'blocked';
@@ -245,7 +244,7 @@ export function useTopicController({
   const entryVisit = entryVisitRef.current;
   const ordinaryLinuxDoTopic =
     selectedSource === 'linuxdo' &&
-    !selectedTopic?.isPrivateMessage &&
+    !selectedTopic.isPrivateMessage &&
     !queryClient.getQueryData<Topic>(topicQueryKey)?.isPrivateMessage;
   const otherRepliesQueryKey = useMemo(
     () =>
@@ -324,7 +323,7 @@ export function useTopicController({
     queryKey: topicQueryKey,
     enabled: enabled && (!ordinaryLinuxDoTopic || !entryVisit.settled),
     queryFn: async ({ signal }) => {
-      const topic = selectedTopic!;
+      const topic = selectedTopic;
       const trackVisit = ordinaryLinuxDoTopic && !entryVisit.started;
       if (trackVisit) entryVisit.started = true;
       const trace = beginDiagnosticTrace('topic', 'open', {
@@ -651,15 +650,14 @@ export function useTopicController({
   );
   const showYaohuoLoginForRead = useCallback(
     (message: string) => {
-      const intent = yaohuoLoginIntentRef.current;
-      const handled = handledYaohuoLoginIntentRef.current;
+      const lastPromptedTopicKey = lastPromptedYaohuoTopicKeyRef.current;
       if (
         !interactionActiveRef.current ||
         topicCommands.getCurrentKey() !== selectedTopicKey ||
-        (handled?.topicKey === selectedTopicKey && handled.intent === intent)
+        lastPromptedTopicKey === selectedTopicKey
       )
         return;
-      handledYaohuoLoginIntentRef.current = { topicKey: selectedTopicKey, intent };
+      lastPromptedYaohuoTopicKeyRef.current = selectedTopicKey;
       showYaohuoLogin(message);
     },
     [interactionActiveRef, selectedTopicKey, showYaohuoLogin, topicCommands]
@@ -715,7 +713,7 @@ export function useTopicController({
   ]);
 
   useEffect(() => {
-    if (!selectedTopic || !detailQuery.error || handledTopicErrorRef.current === detailQuery.errorUpdatedAt) return;
+    if (!detailQuery.error || handledTopicErrorRef.current === detailQuery.errorUpdatedAt) return;
     handledTopicErrorRef.current = detailQuery.errorUpdatedAt;
     const topic = selectedTopic;
     handleReadError(
@@ -747,7 +745,6 @@ export function useTopicController({
 
   const activeQuoteRequests = useMemo(() => {
     const active = { ...quoteRequests };
-    if (!selectedTopic) return active;
     topicReplies.forEach((reply) => {
       const replyKey = replyRenderKey(reply);
       quotedPostsForSource(reply, selectedTopic.source).forEach(({ reference }) => {
@@ -919,8 +916,8 @@ export function useTopicController({
   }, [focused, cancelTopicQueries]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedTopic || !interactionActiveRef.current) return 'stale';
-    if (selectedTopic.source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
+    if (!interactionActiveRef.current) return 'stale';
+    if (selectedTopic.source === 'yaohuo') lastPromptedYaohuoTopicKeyRef.current = null;
     if (selectedReadBlocked) {
       const blockedPlan = topicReadBlocked ? topicReadPlan : repliesReadPlan;
       if (
@@ -1003,9 +1000,9 @@ export function useTopicController({
       command: ReplyRefreshCommand = { kind: 'manual' },
       diagnosticTrace?: DiagnosticTrace
     ): Promise<LinuxDoReadResumeOutcome> {
-      if (!selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
+      if (!topicDetail || repliesReadBlocked) return 'stale';
       if (selectedTopic.source === 'yaohuo' && command.kind === 'manual' && !command.silent) {
-        yaohuoLoginIntentRef.current += 1;
+        lastPromptedYaohuoTopicKeyRef.current = null;
         handledRepliesErrorRef.current = 0;
       }
 
@@ -1302,7 +1299,6 @@ export function useTopicController({
   const retryFailedReplies = useCallback(
     async function retryReplyWindow(edge?: ReplyWindowEdge): Promise<LinuxDoReadResumeOutcome> {
       if (
-        !selectedTopic ||
         repliesReadBlocked ||
         activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
         queryClient.isFetching({ queryKey: repliesQueryKey, exact: true }) > 0
@@ -1313,7 +1309,7 @@ export function useTopicController({
       const failure = replyWindowFailures[slot];
       if (!failure || failure.retryMode === 'none') return failure ? 'failed' : 'completed';
       if (selectedTopic.source === 'yaohuo' && failure.retryMode !== 'whole') {
-        yaohuoLoginIntentRef.current += 1;
+        lastPromptedYaohuoTopicKeyRef.current = null;
         handledRepliesErrorRef.current = 0;
       }
       if (failure.retryMode === 'whole') return refreshWholeTopic();
@@ -1345,7 +1341,7 @@ export function useTopicController({
   );
 
   useEffect(() => {
-    if (!selectedTopic || !repliesQuery.error || handledRepliesErrorRef.current === repliesQuery.errorUpdatedAt) return;
+    if (!repliesQuery.error || handledRepliesErrorRef.current === repliesQuery.errorUpdatedAt) return;
     handledRepliesErrorRef.current = repliesQuery.errorUpdatedAt;
     const failedEdge = repliesQuery.isFetchPreviousPageError
       ? ('start' as const)
@@ -1400,7 +1396,7 @@ export function useTopicController({
 
   const locateReply = useCallback(
     async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
-      if (!active || !selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
+      if (!active || !topicDetail || repliesReadBlocked) return 'stale';
       if (topicLocationForReply(selectedTopic.source, target, topicDetail).kind === 'opening') {
         replyWindowGenerationRef.current += 1;
         return 'completed';
@@ -1569,7 +1565,7 @@ export function useTopicController({
   }, [resolvedLocation?.kind, locationRequestId]);
 
   useEffect(() => {
-    if (!active || !targetReply || !topicDetail || !selectedTopic || repliesReadBlocked) return;
+    if (!active || !targetReply || !topicDetail || repliesReadBlocked) return;
     if (handledRouteTargetRef.current?.key === routeTargetKey) return;
     const request = { key: routeTargetKey, queryIdentity: repliesQueryIdentity, pending: true };
     handledRouteTargetRef.current = request;
@@ -1598,7 +1594,7 @@ export function useTopicController({
 
   const loadPreviousReplies = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
-      if (!selectedTopic || repliesReadBlocked) return 'stale';
+      if (repliesReadBlocked) return 'stale';
       if (!repliesQuery.hasPreviousPage || queryClient.isFetching({ queryKey: repliesQueryKey, exact: true }) > 0) {
         return 'completed';
       }
@@ -1630,7 +1626,7 @@ export function useTopicController({
 
   const loadMoreReplies = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
-      if (!selectedTopic || repliesReadBlocked) return 'stale';
+      if (repliesReadBlocked) return 'stale';
       if (!repliesQuery.hasNextPage || queryClient.isFetching({ queryKey: repliesQueryKey, exact: true }) > 0) {
         return 'completed';
       }
@@ -1711,7 +1707,7 @@ export function useTopicController({
 
   const toggleReplyQuote = useCallback(
     ({ replyKey, reference, quotedReply }: ToggleReplyQuoteOptions) => {
-      if (!selectedTopic || selectedTopic.source !== reference.source) {
+      if (selectedTopic.source !== reference.source) {
         notify('引用楼层未加载');
         return;
       }
@@ -1725,12 +1721,10 @@ export function useTopicController({
   );
 
   const currentTopic = topicDetail || selectedTopic;
-  const currentTopicKey = currentTopic ? topicKey(currentTopic) : null;
+  const currentTopicKey = topicKey(currentTopic);
   const topicError =
-    !topicDetail && detailQuery.error && selectedTopic
-      ? sourceErrorFromUnknown(selectedTopic.source, detailQuery.error)
-      : null;
-  const topicFavorite = Boolean(currentTopic && readerData.favorites[topicKey(currentTopic)]);
+    !topicDetail && detailQuery.error ? sourceErrorFromUnknown(selectedTopic.source, detailQuery.error) : null;
+  const topicFavorite = Boolean(readerData.favorites[topicKey(currentTopic)]);
   const unreadReplyCount =
     !ordinaryLinuxDoTopic && typeof topicDetail?.replyCount === 'number'
       ? Math.max(
@@ -1776,10 +1770,7 @@ export function useTopicController({
     isReadRecoveryCurrent,
     repliesError:
       replyWindowFailures.refresh?.error ||
-      (repliesQuery.error &&
-      !repliesQuery.isFetchPreviousPageError &&
-      !repliesQuery.isFetchNextPageError &&
-      selectedTopic
+      (repliesQuery.error && !repliesQuery.isFetchPreviousPageError && !repliesQuery.isFetchNextPageError
         ? sourceErrorFromUnknown(selectedTopic.source, repliesQuery.error)
         : null),
     replyStartError: replyWindowFailures.start?.error || null,

@@ -160,7 +160,8 @@ function renderTopicController({
   location,
   getLocation = () => location,
   getLocationRequestId = () => undefined,
-  topic = firstTopic
+  topic = firstTopic,
+  getTopicInput = () => topic
 }: {
   commitReaderData?: Parameters<typeof useTopicController>[0]['commitReaderData'];
   getActive?: () => boolean;
@@ -181,11 +182,13 @@ function renderTopicController({
   getLocation?: () => TopicLocationTarget | undefined;
   getLocationRequestId?: () => number | undefined;
   topic?: Topic;
+  getTopicInput?: () => Topic;
 }) {
   const readerData = createEmptyReaderData();
   return renderNativeHook(
     () => {
-      const session = useTopicSessionController({ notify, topic });
+      const currentTopic = getTopicInput();
+      const session = useTopicSessionController({ notify, topic: currentTopic });
       const gateway = useMemo(
         () =>
           ({
@@ -216,7 +219,7 @@ function renderTopicController({
         readGateway: gateway,
         location: getLocation(),
         locationRequestId: getLocationRequestId(),
-        topic,
+        topic: currentTopic,
         topicSession: session
       });
       return { controller, session };
@@ -1544,6 +1547,64 @@ describe('topic query controller', () => {
     await act(async () => hook.rerender(undefined));
     await waitFor(() => expect(hook.result.current.controller.topicBusy).toBe(false));
     expect(showYaohuoLogin).toHaveBeenCalledTimes(2);
+  });
+
+  it('rearms Yaohuo reply login for explicit retry, reentrant refresh and changed topic keys', async () => {
+    let topic: Topic = { ...firstTopic, source: 'yaohuo', url: 'https://www.yaohuo.me/bbs-1.html' };
+    let reenter = false;
+    const reentries: Promise<LinuxDoReadResumeOutcome>[] = [];
+    const showYaohuoLogin = jest.fn<(message?: string) => void>(() => {
+      if (reenter) {
+        reenter = false;
+        reentries.push(hook.result.current.controller.refreshTopicReplies());
+      }
+    });
+    const hook = await renderTopicController({
+      getTopicInput: () => topic,
+      readGateway: {
+        getTopic: async ({ source, id }) => ({ ...firstDetail, source, id }),
+        getReplies: async () => {
+          throw Object.assign(new Error('妖火登录已失效'), { kind: 'login-expired', source: 'yaohuo' });
+        }
+      },
+      showYaohuoLogin
+    });
+    try {
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+      expect(showYaohuoLogin).not.toHaveBeenCalled();
+      await act(async () => {
+        await hook.result.current.controller.refreshTopicReplies();
+      });
+      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await hook.result.current.controller.refreshTopicReplies({ kind: 'manual', silent: true });
+      });
+      expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+
+      reenter = true;
+      await act(async () => {
+        await hook.result.current.controller.retryReplies();
+      });
+      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(3));
+      await Promise.allSettled(reentries);
+
+      topic = { ...topic, id: '2', url: 'https://www.yaohuo.me/bbs-2.html' };
+      await act(async () => hook.rerender(undefined));
+      await waitFor(() => expect(hook.result.current.controller.topicDetail?.id).toBe('2'));
+      await act(async () => {
+        await hook.result.current.controller.refreshTopicReplies();
+      });
+      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(4));
+      topic = { ...topic, id: '1', url: 'https://www.yaohuo.me/bbs-1.html' };
+      await act(async () => hook.rerender(undefined));
+      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(5));
+      expect(hook.result.current.controller.currentTopicKey).toBe('yaohuo:1');
+      await act(async () => hook.rerender(undefined));
+      expect(showYaohuoLogin).toHaveBeenCalledTimes(5);
+    } finally {
+      await hook.unmount();
+      await Promise.allSettled(reentries);
+    }
   });
 
   it('does not let an inactive Yaohuo Topic error reopen login over the current source', async () => {

@@ -4228,6 +4228,10 @@ describe('Topic reply filters', () => {
       const view = await render(
         <TopicFilterHarness selectedTopic={layoutTopic} topicDetail={layoutTopic} topicReplies={sourceReplies} />
       );
+      now = 1_100;
+      await view.rerender(
+        <TopicFilterHarness selectedTopic={layoutTopic} topicDetail={{ ...layoutTopic }} topicReplies={sourceReplies} />
+      );
       now = 1_250;
       await fireEvent(view.getAllByTestId(/^topic-html-block-/)[0], 'layout', {
         nativeEvent: { layout: { height: 100, width: 720, x: 0, y: 0 } }
