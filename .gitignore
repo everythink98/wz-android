@@ -21,6 +21,8 @@ docs/*
 !docs/code-cleanup-map.md
 !docs/code-standards.md
 !docs/review-remediation.md
+!docs/state-machine-batches.md
+!docs/state-machine-batches.csv
 !docs/performance/
 docs/performance/*
 !docs/performance/*.md
