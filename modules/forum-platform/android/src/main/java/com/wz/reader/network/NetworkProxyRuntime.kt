@@ -1630,7 +1630,6 @@ object NetworkProxyRuntime {
   ) : Call {
     private val executed = AtomicBoolean(false)
     private val canceled = AtomicBoolean(false)
-    private val released = AtomicBoolean(false)
     private val failureRecorded = AtomicBoolean(false)
     private var startedGeneration = -1L
     @Volatile private var delegate: Call? = null
@@ -1669,7 +1668,6 @@ object NetworkProxyRuntime {
     }
 
     private fun release() {
-      if (!released.compareAndSet(false, true)) return
       val runtime = synchronized(lock) {
         imageCalls.remove(delegate)?.also { it.releaseExternalLease() }
       } ?: return

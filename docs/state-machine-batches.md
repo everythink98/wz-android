@@ -79,3 +79,22 @@ P01 登记后的累计盘点为 **已验收 89、pending 282、排除 4，共 37
 `NOT_VERIFIED`：生产 More/AsyncStorage 下载全链路、Release WebView 156 的成功上传及完整视觉矩阵、四来源 Live Feed 全流程。受控选图成功证据使用 Debug/WebView 124，受控下载使用独立 fixture，不能替代上述入口。没有真实发帖、回复、上传或最终安装。
 
 实际生产源码净增 22 行，测试及视觉 fixture 净增 121 行；SDK patch 文本不重复计入源码。整文件删除 0，内部函数净减少 0，新增依赖 0。完整验收记录为 `.codex-tmp/state-machine-elimination/p01/validation-final.json`，SHA-256 为 `60183809384988d25e54d642f3f1a96bcc1c2d79cefd7ba9a41e852f6d2ab504`。本批代码和结果作为一个本地提交；不 push、不合并、不发布。
+
+## P02 执行结果
+
+P02 已审查全部 **22 项：6 项局部简化、16 项保留，新增完整转换计数 0**。实际移除了 Cookie 批次重复成功标记、图片请求重复释放标记、诊断完成态的平行字段，以及代理启动/应用的 loaded、错误、就绪和递增 ID 镜像；WebView 的三个窗口历史标记合为单个生命周期 enum，保留首次构造回调和销毁后的语义。
+
+未将局部简化算作整个模型消除。窗口预热的首次绘制与图层恢复、异步结算、独立世代租约、真实超时和持久化屏障仍需保留。固定 `EXPO_PUBLIC_USE_RN_FETCH=1` 的应用请求走 RN Networking；没有为计数改写未接管全局请求的 Expo fetch，其公开入口和原补丁保留，动态调用不确定性单列。逐项入口、搜索、测试和保留理由见 `.codex-tmp/state-machine-elimination/p02/decision-final.json`，SHA-256 为 `5fc3a5ff568d79da841a0202263bb33d5ee9a685bba9b3881a1791b804f88593`。
+
+本批实际生产源码 5 文件新增 55 行、删除 73 行，**净减 18 行**；测试 3 文件净增 30 行。SDK patch 传输文本单列，不重复计算源码。整文件、命名函数及依赖删除均为 0，没有新增依赖。累计仍为已验收 89、pending 282、排除 4；十批计划已审查 51 项，后续八批还有 233 项未审查，已审查但保留/局部处理的 49 项不计消除。
+
+实际验证结果：
+
+- `STATIC_PASS`：类型检查及完整 `npm run verify` 退出 0；补丁尾换行修正后另补跑 17 项 patch 校验，干净 SDK 包的 11 个新旧 postimage 均逐字匹配。
+- `UNIT_PASS`：Vitest 270 文件、4608 项，seed `1794568651121`；Native JVM 的 Cookie、Network、WebView 三个 owner 共 141 项，新鲜 XML 无失败或跳过。
+- `UI_PASS`：105 suites、3266 项，seed `1714864192`；旧代理应用成功/失败不得覆盖新应用的定向负向控制均能转红，源码已按字节恢复。
+- `APK_SANITY`：普通 Release 和独立受控 Release 构建通过，分别绑定正常入口与 proof 入口、Hermes 和当前源码。普通包 SHA-256 为 `2197de737a8e681ffdf11fa1e8a15d72ff2a369fa5530ee602d7897c5226deba`；没有正式发布或版本递增。
+- `LIVE_PASS`：主模拟器覆盖安装后完成代理只读表单的取消/关闭、四来源首页首屏及 Topic 附件面板；原有空草稿占位在面板下仍可见，没有编辑、选附件、丢稿或发布。NodeSeek 规则首次读取出现网络错误，显式只读重试后成功，未归因该次失败。最终账号、关闭的代理、UID 与首次安装时间保持一致，主模拟器停在可见首页。
+- `DEVICE_REPLAY_PASS`：现有隔离 Insets AVD 的 WebView 156、Release/Hermes 包完成相册/文件浏览 × 有/无实际停靠 IME × 取消/成功八条路径；正文 marker 保留、每场景零发送，成功回执仅来自受控上传。私信入口另以合成凭据验证实际 picker 去返程和草稿保留。自有四份缓存复制件及两份媒体文件已清理，原 proof 文件恢复，隔离 AVD 关闭。
+
+`NOT_VERIFIED`：录像未能用现成本机解码器恢复帧或 PTS，case01 缺 before PNG，不能声明全过程无白帧；成功图片只验证受控回执和加载占位。未执行真实上传/发帖、实际配置代理切换、设备 Cookie 清除、强制原站 Cloudflare 验证循环、非空用户草稿像素或四来源完整分页。完整验收为 `.codex-tmp/state-machine-elimination/p02/validation-final.json`，SHA-256 为 `d9828410c3495b1c8713993d913de8d4c9f55074b4115eba69416944525773ef`。本批只做一个本地提交，不 push、不合并；P03 的 31 项只读预审不计本批修改或验收。

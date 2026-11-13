@@ -31,6 +31,7 @@ import {
 } from './networkProxy';
 
 type SettledApplyStatus = Extract<NetworkProxyApplyStatus, 'disabled' | 'applied'>;
+type ProxyApplyState = { kind: Exclude<NetworkProxyApplyStatus, 'failed'> } | { kind: 'failed'; error: string };
 const RESOLVED_VOID_PROMISE: Promise<void> = Promise.resolve();
 const NETWORK_PROXY_LOAD_TIMEOUT_MS = 3_000;
 const NETWORK_PROXY_RUNTIME_ENDED_MESSAGE = '代理运行时已结束';
@@ -89,18 +90,12 @@ export function useNetworkProxyRuntime({
   baseFetcher?: Fetcher;
 }) {
   const [proxyState, setProxyState] = useState<NetworkProxyState>(() => createEmptyNetworkProxyState());
-  const [loaded, setLoaded] = useState(false);
-  const [applyStatus, setApplyStatus] = useState<NetworkProxyApplyStatus>('loading');
-  const [applyError, setApplyError] = useState('');
-  const readyPromiseRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
+  const [applyState, setApplyStateValue] = useState<ProxyApplyState>({ kind: 'loading' });
   const proxyStateRef = useRef(proxyState);
-  const loadedRef = useRef(loaded);
-  const applyStatusRef = useRef(applyStatus);
-  const applyErrorRef = useRef(applyError);
+  const applyStateRef = useRef(applyState);
   const notifyRef = useRef(notify);
   const loadPromiseRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
   const proxyApplyQueueRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
-  const latestProxyApplyIdRef = useRef(0);
   const proxyEnabledQueueRef = useRef(createKeyedSerialRunner<null>('after-reaction'));
   const proxySaveQueueRef = useRef(createKeyedSerialRunner<null>());
   const ownerRef = useRef<AbortController | null>(null);
@@ -111,13 +106,14 @@ export function useNetworkProxyRuntime({
     notifyRef.current = notify;
   }, [notify]);
 
-  const setApplyState = useCallback((status: NetworkProxyApplyStatus, error = '') => {
-    applyStatusRef.current = status;
-    applyErrorRef.current = error;
-    setApplyStatus(status);
-    setApplyError(error);
+  const setApplyState = useCallback((state: ProxyApplyState) => {
+    applyStateRef.current = state;
+    setApplyStateValue(state);
   }, []);
 
+  const applyStatus = applyState.kind;
+  const applyError = applyState.kind === 'failed' ? applyState.error : '';
+  const loaded = applyStatus !== 'loading';
   const activeProfile = useMemo(() => activeNetworkProxyProfile(proxyState), [proxyState]);
   const summary = useMemo(() => networkProxySummary(proxyState, applyError), [applyError, proxyState]);
 
@@ -127,9 +123,7 @@ export function useNetworkProxyRuntime({
       const profile = state.enabled ? activeNetworkProxyProfile(state) : null;
       const trace = parentTrace || beginDiagnosticTrace('proxy', 'apply', diagnosticProxyState(state));
       const ownsTrace = !parentTrace;
-      const applyId = latestProxyApplyIdRef.current + 1;
-      latestProxyApplyIdRef.current = applyId;
-      setApplyState('applying');
+      setApplyState({ kind: 'applying' });
       markDiagnosticStage(trace, 'apply', { channel: 'native', state: 'start' });
       const task = proxyApplyQueueRef.current
         .then(() => {
@@ -138,8 +132,8 @@ export function useNetworkProxyRuntime({
         })
         .then(() => {
           const status: SettledApplyStatus = profile ? 'applied' : 'disabled';
-          if (!owner.signal.aborted && latestProxyApplyIdRef.current === applyId) {
-            setApplyState(status);
+          if (!owner.signal.aborted && proxyApplyQueueRef.current === queued) {
+            setApplyState({ kind: status });
           }
           markDiagnosticStage(trace, 'apply', { channel: 'native', state: status });
           if (ownsTrace) {
@@ -149,8 +143,8 @@ export function useNetworkProxyRuntime({
         })
         .catch((error) => {
           const message = errorMessage(error);
-          if (!owner.signal.aborted && latestProxyApplyIdRef.current === applyId) {
-            setApplyState('failed', message);
+          if (!owner.signal.aborted && proxyApplyQueueRef.current === queued) {
+            setApplyState({ kind: 'failed', error: message });
             if (notifyOnFailure) {
               notifyRef.current(message);
             }
@@ -168,11 +162,11 @@ export function useNetworkProxyRuntime({
           }
           throw error;
         });
-      proxyApplyQueueRef.current = task.then(
+      const queued: Promise<void> = task.then(
         () => undefined,
         () => undefined
       );
-      readyPromiseRef.current = proxyApplyQueueRef.current;
+      proxyApplyQueueRef.current = queued;
       return task;
     },
     [setApplyState]
@@ -182,12 +176,9 @@ export function useNetworkProxyRuntime({
     const previousOwner = ownerRef.current;
     const owner = previousOwner && !previousOwner.signal.aborted ? previousOwner : new AbortController();
     ownerRef.current = owner;
-    loadedRef.current = false;
-    setLoaded(false);
-    setApplyState('loading');
+    setApplyState({ kind: 'loading' });
     return () => {
       owner.abort();
-      latestProxyApplyIdRef.current += 1;
     };
   }, [setApplyState]);
 
@@ -219,10 +210,8 @@ export function useNetworkProxyRuntime({
           ? '代理配置读取超时，已阻止网络请求，请前往“更多”确认代理设置。'
           : '代理配置读取失败，已阻止网络请求，请重启 App 后重试。';
         proxyStateRef.current = emptyState;
-        loadedRef.current = true;
         setProxyState(emptyState);
-        setLoaded(true);
-        setApplyState('failed', message);
+        setApplyState({ kind: 'failed', error: message });
         notifyRef.current(message);
         markDiagnosticStage(trace, 'persist', { store: 'secure-store', state: 'failure' });
         finishDiagnosticTrace(trace, 'failure', { reason: loadTimedOut ? 'timeout' : 'storage_error' });
@@ -233,9 +222,7 @@ export function useNetworkProxyRuntime({
         return;
       }
       proxyStateRef.current = savedState;
-      loadedRef.current = true;
       setProxyState(savedState);
-      setLoaded(true);
       const fields = diagnosticProxyState(savedState);
       markDiagnosticStage(trace, 'persist', { store: 'secure-store', ...fields });
       finishDiagnosticTrace(trace, 'success', fields);
@@ -249,7 +236,6 @@ export function useNetworkProxyRuntime({
       if (!owner.signal.aborted) throw error;
     });
     loadPromiseRef.current = task;
-    readyPromiseRef.current = loadPromiseRef.current;
   }, [applyPersistedProxyState, setApplyState]);
 
   const replaceProxyState = useCallback(
@@ -277,9 +263,9 @@ export function useNetworkProxyRuntime({
             return { changed: true, requiresApply: false, state: saved };
           }
           const requiresApply =
-            applyStatusRef.current === 'failed' || networkProxyApplyKey(previous) !== networkProxyApplyKey(saved);
+            applyStateRef.current.kind === 'failed' || networkProxyApplyKey(previous) !== networkProxyApplyKey(saved);
           if (requiresApply) {
-            setApplyState('applying');
+            setApplyState({ kind: 'applying' });
           }
           proxyStateRef.current = saved;
           setProxyState(saved);
@@ -314,7 +300,7 @@ export function useNetworkProxyRuntime({
             return current;
           }
           if (current.enabled === enabled) {
-            if (!enabled && applyStatusRef.current === 'failed') {
+            if (!enabled && applyStateRef.current.kind === 'failed') {
               return { ...current };
             }
             return current;
@@ -454,19 +440,20 @@ export function useNetworkProxyRuntime({
     await withAbortableTimeout(
       async () => {
         requireNetworkProxyOwner(owner);
-        while (!loadedRef.current || applyStatusRef.current === 'applying') {
-          await readyPromiseRef.current;
+        while (applyStateRef.current.kind === 'loading' || applyStateRef.current.kind === 'applying') {
+          await (applyStateRef.current.kind === 'loading' ? loadPromiseRef.current : proxyApplyQueueRef.current);
           requireNetworkProxyOwner(owner);
         }
         const current = proxyStateRef.current;
-        if (applyStatusRef.current === 'failed') {
+        const apply = applyStateRef.current;
+        if (apply.kind === 'failed') {
           const trace = beginDiagnosticTrace('proxy', 'guard', {
             isEnabled: current.enabled,
             hasProxy: Boolean(activeNetworkProxyProfile(current)),
             state: 'failed'
           });
           finishDiagnosticTrace(trace, 'blocked', { reason: 'network_error' });
-          throw new Error(applyErrorRef.current || '代理状态不确定，请重新应用代理设置。');
+          throw new Error(apply.error || '代理状态不确定，请重新应用代理设置。');
         }
         if (!current.enabled) {
           return;
@@ -476,16 +463,16 @@ export function useNetworkProxyRuntime({
           finishDiagnosticTrace(trace, 'blocked', { reason: 'missing_credential' });
           throw new Error('代理未选择。');
         }
-        if (applyStatusRef.current !== 'applied') {
+        if (apply.kind !== 'applied') {
           const trace = beginDiagnosticTrace('proxy', 'guard', {
             isEnabled: true,
             hasProxy: true,
-            state: applyStatusRef.current
+            state: apply.kind
           });
           finishDiagnosticTrace(trace, 'blocked', {
             reason: 'not_ready'
           });
-          throw new Error(applyErrorRef.current || '代理未生效。');
+          throw new Error('代理未生效。');
         }
       },
       { signal: owner.signal, canceledError: () => new Error(NETWORK_PROXY_RUNTIME_ENDED_MESSAGE) }

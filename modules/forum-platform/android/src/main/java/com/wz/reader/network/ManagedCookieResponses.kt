@@ -51,10 +51,10 @@ internal class CookieResponseScope(val epoch: Long) {
 
 internal class CookieResponseBatch(val size: Int) {
   val done = CountDownLatch(size)
-  val successful = AtomicBoolean(true)
   val abandoned = AtomicBoolean(false)
   private val next = AtomicInteger()
   private val results = AtomicIntegerArray(size) // 0 pending, 1 accepted, 2 rejected, 3 not submitted
+  val successful: Boolean get() = (0 until size).all { results.get(it) <= 1 }
   private val settled = AtomicReference<(() -> Unit)?>(null)
   fun complete(accepted: Boolean, index: Int = next.getAndIncrement()) {
     finish(index, if (accepted) 1 else 2)
@@ -62,7 +62,6 @@ internal class CookieResponseBatch(val size: Int) {
   fun skip(index: Int) = finish(index, 3)
   private fun finish(index: Int, result: Int) {
     if (!results.compareAndSet(index, 0, result)) return
-    if (result != 1) successful.set(false)
     done.countDown()
     if (done.count == 0L) settled.getAndSet(null)?.invoke()
   }
@@ -361,7 +360,7 @@ internal class ManagedCookieResponses(
         }
         val after = runCatching { loginCookieValue(reader(url)) }
         emit(writeFields + mapOf("operation" to "cookie-response", "cookieResult" to "applied",
-          "outcome" to if (batch.successful.get()) "success" else "failure") +
+          "outcome" to if (batch.successful) "success" else "failure") +
           (if (after.isSuccess) mapOf("hasLoginCookie" to (after.getOrNull() != null)) else emptyMap()) +
           (if (before.isSuccess && after.isSuccess) mapOf("loginCookieChanged" to (before.getOrNull() != after.getOrNull())) else emptyMap()))
         flushDirty()

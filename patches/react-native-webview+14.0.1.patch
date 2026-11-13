@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-index 80c6803..e87a533 100644
+index 80c68034..d7fc092c 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 @@ -3,12 +3,16 @@ package com.reactnativecommunity.webview;
@@ -19,14 +19,17 @@ index 80c6803..e87a533 100644
  import android.webkit.JavascriptInterface;
  import android.webkit.ValueCallback;
  import android.webkit.WebChromeClient;
-@@ -91,6 +95,123 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -89,6 +93,125 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         super(reactContext);
+         mMessagingJSModule = ((ThemedReactContext) this.getContext()).getReactApplicationContext().getJSModule(RNCWebViewMessagingModule.class);
          progressChangedFilter = new ProgressChangedFilter();
-     }
- 
++        if (prewarmWindowState == null) prewarmWindowState = PrewarmWindowState.INITIAL;
++    }
++
 +    private boolean androidPrewarmOnWindowVisible;
-+    private boolean prewarmHasBeenVisible;
-+    private boolean prewarmWindowHidden;
-+    private boolean prewarmDestroyed;
++    private enum PrewarmWindowState { INITIAL, VISIBLE, HIDDEN, DESTROYED }
++    // WebView's constructor may publish visibility before this constructor resumes.
++    private PrewarmWindowState prewarmWindowState;
 +    private boolean prewarmStarted;
 +    private boolean prewarmLayerChanged;
 +    private int prewarmOriginalLayer;
@@ -80,7 +83,7 @@ index 80c6803..e87a533 100644
 +            if (prewarmStarted) return false;
 +            prewarmStarted = true;
 +            try {
-+                if (prewarmDestroyed || !isAttachedToWindow() ||
++                if (prewarmWindowState == PrewarmWindowState.DESTROYED || !isAttachedToWindow() ||
 +                    getWindowVisibility() != View.VISIBLE || getWidth() <= 0 || getHeight() <= 0 ||
 +                    !isHardwareAccelerated() || !isShown() || !getGlobalVisibleRect(new Rect())) {
 +                    releaseWindowPrewarm(epoch);
@@ -122,12 +125,14 @@ index 80c6803..e87a533 100644
 +
 +    @Override
 +    protected void onWindowVisibilityChanged(int visibility) {
-+        final boolean returning = visibility == View.VISIBLE && prewarmWindowHidden && prewarmHasBeenVisible;
-+        prewarmWindowHidden = visibility != View.VISIBLE;
-+        if (visibility == View.VISIBLE) prewarmHasBeenVisible = true;
-+        else releaseWindowPrewarm(prewarmEpoch);
++        final boolean returning = visibility == View.VISIBLE && prewarmWindowState == PrewarmWindowState.HIDDEN;
++        if (prewarmWindowState != PrewarmWindowState.DESTROYED) {
++            if (visibility == View.VISIBLE) prewarmWindowState = PrewarmWindowState.VISIBLE;
++            else if (prewarmWindowState == PrewarmWindowState.VISIBLE) prewarmWindowState = PrewarmWindowState.HIDDEN;
++        }
++        if (visibility != View.VISIBLE) releaseWindowPrewarm(prewarmEpoch);
 +        super.onWindowVisibilityChanged(visibility);
-+        if (returning && androidPrewarmOnWindowVisible && !prewarmDestroyed && isAttachedToWindow()) {
++        if (returning && androidPrewarmOnWindowVisible && prewarmWindowState != PrewarmWindowState.DESTROYED && isAttachedToWindow()) {
 +            prewarmReturningWindow();
 +        }
 +    }
@@ -135,19 +140,16 @@ index 80c6803..e87a533 100644
 +    @Override
 +    protected void onDetachedFromWindow() {
 +        releaseWindowPrewarm(prewarmEpoch);
-+        prewarmHasBeenVisible = false;
-+        prewarmWindowHidden = false;
++        if (prewarmWindowState != PrewarmWindowState.DESTROYED) prewarmWindowState = PrewarmWindowState.INITIAL;
 +        super.onDetachedFromWindow();
-+    }
-+
-     public void setBasicAuthCredential(RNCBasicAuthCredential credential) {
-         mRNCWebViewClient.setBasicAuthCredential(credential);
      }
-@@ -416,10 +537,19 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+ 
+     public void setBasicAuthCredential(RNCBasicAuthCredential credential) {
+@@ -416,10 +539,19 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
  
      @Override
      public void destroy() {
-+        prewarmDestroyed = true;
++        prewarmWindowState = PrewarmWindowState.DESTROYED;
 +        releaseWindowPrewarm(prewarmEpoch);
          if (mWebChromeClient != null) {
              mWebChromeClient.onHideCustomView();
@@ -163,7 +165,7 @@ index 80c6803..e87a533 100644
      }
  
    public ThemedReactContext getThemedReactContext() {
-@@ -465,4 +595,4 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -465,4 +597,4 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
              return waitingForCommandLoadUrl;
          }
      }

@@ -138,9 +138,7 @@ export function startCloudflareEgressProbe({
   const controller = new AbortController();
   let native: Sample | undefined;
   let webView: Sample | undefined;
-  let finished = false;
-  let completedAt: number | undefined;
-  let completedFields: DiagnosticFields | undefined;
+  let completion: { at: number; fields: DiagnosticFields } | undefined;
   let cancelReason: ProbeCancelReason | undefined;
   let resolveSettled!: () => void;
   const settled = new Promise<void>((resolve) => {
@@ -183,11 +181,9 @@ export function startCloudflareEgressProbe({
     }
   };
   const finish = () => {
-    if (finished || !native || !webView) return;
-    finished = true;
+    if (completion || !native || !webView) return;
     clearTimeout(timer);
-    completedAt = Date.now();
-    completedFields = fields();
+    completion = { at: Date.now(), fields: fields() };
     resolveSettled();
     finishDiagnosticTrace(
       trace,
@@ -199,14 +195,14 @@ export function startCloudflareEgressProbe({
       {
         source: 'linuxdo',
         parentTraceId,
-        ...completedFields
+        ...completion.fields
       }
     );
     native = undefined;
     webView = undefined;
   };
   const timer = setTimeout(() => {
-    if (finished) return;
+    if (completion) return;
     native ||= { result: 'timeout', failure: 'deadline', durationMs: elapsed() };
     webView ||= { result: 'timeout', failure: 'deadline', durationMs: elapsed() };
     controller.abort();
@@ -237,7 +233,7 @@ export function startCloudflareEgressProbe({
     })
     .catch((): Sample => ({ result: 'network-error', failure: 'transport' }))
     .then((sample) => {
-      if (finished || native) return;
+      if (completion || native) return;
       native = { ...sample, durationMs: elapsed() };
       finish();
     });
@@ -252,15 +248,15 @@ export function startCloudflareEgressProbe({
       return {
         traceId: trace.traceId,
         startedAt: trace.startedAt,
-        ...(completedAt === undefined ? {} : { completedAt }),
-        fields: { ...(completedFields || fields()) }
+        ...(completion ? { completedAt: completion.at } : {}),
+        fields: { ...(completion?.fields || fields()) }
       };
     },
     receive(data: unknown) {
       if (!data || typeof data !== 'object') return false;
       const input = data as Record<string, unknown>;
       if (input.type !== MESSAGE_TYPE || input.id !== probeId || input.documentKey !== documentKey) return false;
-      if (finished || webView) return true;
+      if (completion || webView) return true;
       const status =
         typeof input.status === 'number' && Number.isInteger(input.status) && input.status >= 100 && input.status <= 599
           ? input.status
@@ -297,7 +293,7 @@ export function startCloudflareEgressProbe({
       return true;
     },
     cancel(reason?: ProbeCancelReason) {
-      if (finished) return;
+      if (completion) return;
       cancelReason = reason;
       native ||= { result: 'canceled', failure: 'canceled', durationMs: elapsed() };
       webView ||= { result: 'canceled', failure: 'canceled', durationMs: elapsed() };

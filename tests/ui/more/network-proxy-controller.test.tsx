@@ -539,41 +539,67 @@ describe('network proxy controller', () => {
     expect(hook.result.current.applyStatus).toBe('applied');
   });
 
-  it('waits for an older native apply before applying the newly selected profile', async () => {
-    const firstApply = deferred<unknown>();
-    const secondApply = deferred<unknown>();
-    mockLoadNetworkProxyState.mockResolvedValue({
-      enabled: true,
-      activeId: profileA.id,
-      profiles: [profileA, profileB]
-    });
-    mockApplyNetworkProxy
-      .mockImplementationOnce(() => firstApply.promise)
-      .mockImplementationOnce(() => secondApply.promise);
-    const notify = jest.fn();
-    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
-    await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1));
+  it.each(['success', 'failure'])(
+    'waits for an older native apply before applying the newly selected profile (older result: %s)',
+    async (olderResult) => {
+      const firstApply = deferred<unknown>();
+      const secondApply = deferred<unknown>();
+      mockLoadNetworkProxyState.mockResolvedValue({
+        enabled: true,
+        activeId: profileA.id,
+        profiles: [profileA, profileB]
+      });
+      mockApplyNetworkProxy
+        .mockResolvedValueOnce({ ok: true })
+        .mockImplementationOnce(() => firstApply.promise)
+        .mockImplementationOnce(() => secondApply.promise);
+      const notify = jest.fn();
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
+      let editing: Promise<unknown> | undefined;
+      let selection: Promise<void> | undefined;
+      try {
+        await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+        await act(async () => {
+          editing = hook.result.current
+            .upsertProxyProfile({ ...profileA, host: 'older.proxy.example' })
+            .catch((error: unknown) => error);
+        });
+        await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(2));
+        await act(async () => {
+          selection = hook.result.current.selectProxyProfile(profileB.id);
+        });
+        await waitFor(() => expect(mockSaveNetworkProxyState).toHaveBeenCalledTimes(2));
+        expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(2);
+        await act(async () => {
+          if (olderResult === 'success') firstApply.resolve({ ok: true });
+          else firstApply.reject(new Error('superseded native apply failure'));
+          await editing;
+        });
+        await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(3));
+        expect(mockApplyNetworkProxy.mock.calls[2]?.[0]?.id).toBe(profileB.id);
+        const pendingApply = {
+          status: hook.result.current.applyStatus,
+          error: hook.result.current.applyError,
+          loaded: hook.result.current.loaded
+        };
 
-    let selection!: Promise<void>;
-    await act(async () => {
-      selection = hook.result.current.selectProxyProfile(profileB.id);
-      await Promise.resolve();
-    });
-
-    expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      firstApply.resolve({ ok: true });
-      await firstApply.promise;
-    });
-    await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(2));
-    expect(mockApplyNetworkProxy.mock.calls[1]?.[0]?.id).toBe(profileB.id);
-
-    await act(async () => {
-      secondApply.resolve({ ok: true });
-      await Promise.all([secondApply.promise, selection]);
-    });
-    await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
-  });
+        await act(async () => {
+          secondApply.resolve({ ok: true });
+          await selection;
+        });
+        expect(pendingApply).toEqual({ status: 'applying', error: '', loaded: true });
+        await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+        expect(notify).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => {
+          firstApply.resolve({ ok: true });
+          secondApply.resolve({ ok: true });
+          await Promise.allSettled([editing, selection]);
+        });
+        await hook.unmount();
+      }
+    }
+  );
 
   it('preserves the proxy readiness gate while using the read-only native cookie jar', async () => {
     const apply = deferred<unknown>();

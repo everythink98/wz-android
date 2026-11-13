@@ -583,6 +583,7 @@ class ManagedCookieResponsesTest {
     val items = events.filter { it["cookieResult"] == "settled" }
     assertEquals(listOf("rejected", "accepted"), items.map { it["cookieAccepted"] })
     assertTrue(items.all { it["cookieKind"] == "login" && it["cookieAction"] == "delete" })
+    assertEquals(listOf("failure", "success"), events.filter { it["cookieResult"] == "applied" }.map { it["outcome"] })
     assertFalse(events.toString().contains("Max-Age"))
   }
 
