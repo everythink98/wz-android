@@ -176,6 +176,12 @@ function useTopicHorizontalOffset(semanticId: string) {
   }, [localOffset, store, syncKey]);
 }
 
+type HorizontalPanIntent = {
+  phase: 'unclaimed' | 'claimed';
+  startX: number;
+  startY: number;
+};
+
 export function TopicHorizontalScroll({
   accessibilityHint = '横向滑动查看更多',
   accessibilityLabel,
@@ -205,9 +211,7 @@ export function TopicHorizontalScroll({
   const initialMaximum = contentWidth === undefined ? 0 : Math.max(0, contentWidth - viewportWidth);
   const maximumOffset = useSharedValue(initialMaximum);
   const selectionNativeId = useTopicSelectionHorizontalTarget(offset, maximumOffset);
-  const horizontalPanClaimed = useSharedValue(false);
-  const pointerStartX = useSharedValue(0);
-  const pointerStartY = useSharedValue(0);
+  const panIntent = useSharedValue<HorizontalPanIntent>({ phase: 'unclaimed', startX: 0, startY: 0 });
   const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
   const nativeContentGesture = useNativeGesture();
   const cancelNativeSelection = useTopicSelectionCancel();
@@ -227,33 +231,35 @@ export function TopicHorizontalScroll({
     block: nativeContentGesture,
     onTouchesDown: (event) => {
       'worklet';
-      horizontalPanClaimed.value = false;
+      panIntent.value = { ...panIntent.value, phase: 'unclaimed' };
       const touch = event.allTouches[0];
       if (event.numberOfTouches !== 1 || maximumOffset.value <= 0 || !touch) {
         GestureStateManager.fail(event.handlerTag);
         return;
       }
-      pointerStartX.value = touch.absoluteX;
-      pointerStartY.value = touch.absoluteY;
+      const startX = touch.absoluteX;
+      panIntent.value = { ...panIntent.value, startX };
+      const startY = touch.absoluteY;
+      panIntent.value = { ...panIntent.value, startY };
     },
     onTouchesMove: (event) => {
       'worklet';
       if (event.numberOfTouches !== 1 || maximumOffset.value <= 0) {
-        horizontalPanClaimed.value = false;
+        panIntent.value = { ...panIntent.value, phase: 'unclaimed' };
         GestureStateManager.fail(event.handlerTag);
         return;
       }
-      if (horizontalPanClaimed.value) return;
+      if (panIntent.value.phase === 'claimed') return;
       const touch = event.allTouches[0];
       if (!touch) {
         GestureStateManager.fail(event.handlerTag);
         return;
       }
-      const deltaX = touch.absoluteX - pointerStartX.value;
-      const deltaY = touch.absoluteY - pointerStartY.value;
+      const deltaX = touch.absoluteX - panIntent.value.startX;
+      const deltaY = touch.absoluteY - panIntent.value.startY;
       if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < HORIZONTAL_INTENT_LOCK_DISTANCE) return;
       if (Math.abs(deltaX) > Math.abs(deltaY)) {
-        horizontalPanClaimed.value = true;
+        panIntent.value = { ...panIntent.value, phase: 'claimed' };
         if (cancelNativeSelection) scheduleOnRN(cancelNativeSelection);
         GestureStateManager.activate(event.handlerTag);
         return;

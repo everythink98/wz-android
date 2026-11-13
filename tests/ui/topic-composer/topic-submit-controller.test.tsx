@@ -527,7 +527,7 @@ describe('创建主题发布控制器', () => {
     });
     expect(test.posts()).toHaveLength(1);
     expect(test.result.current.error).toContain('上次创建结果未知');
-    test.unmount();
+    await test.unmount();
   });
   it.each([
     ['linuxdo', 401],
@@ -557,7 +557,7 @@ describe('创建主题发布控制器', () => {
       ).toMatchObject({ title: '需要保留的编辑标题' });
       if (status === 401) expect(test.runtime.onSessionExpired).toHaveBeenCalledWith(source, 0);
       else expect(test.runtime.requestAccountRecheck).toHaveBeenCalledWith(source, 0);
-      test.unmount();
+      await test.unmount();
     }
   );
   it.each([401, 404])(
@@ -577,7 +577,7 @@ describe('创建主题发布控制器', () => {
       expect(test.result.current.attempt?.status).toBe('rejected');
       expect(test.runtime.onSessionExpired).not.toHaveBeenCalled();
       expect(test.runtime.requestAccountRecheck).not.toHaveBeenCalled();
-      test.unmount();
+      await test.unmount();
     }
   );
 
@@ -617,7 +617,7 @@ describe('创建主题发布控制器', () => {
         expect(test.runtime.requestAccountRecheck).toHaveBeenCalledWith(source, 0);
         expect(test.runtime.onSessionExpired).not.toHaveBeenCalled();
       }
-      test.unmount();
+      await test.unmount();
     }
   );
   it.each([false, true])(
@@ -1254,6 +1254,6 @@ it('keeps a child poll dispatch separate from an unsent main-topic edit and reta
     expect(rows).toEqual([{ local_id: poll.localId, remote_id: null }]);
     expect(test.result.current.error).toContain('上次创建结果未知');
   } finally {
-    test.unmount();
+    await test.unmount();
   }
 });

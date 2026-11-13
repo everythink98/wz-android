@@ -230,7 +230,7 @@ index b0b8cfb8..b8a4c2ee 100644
              mNotifyAboutKeyboardChange.call()
          }
 diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp
-index 2db064ce01b7..89323e2386c9 100644
+index 2db064c..87eac4f 100644
 --- a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp
 +++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp
 @@ -5,8 +5,10 @@
@@ -244,24 +244,22 @@ index 2db064ce01b7..89323e2386c9 100644
  
  namespace reanimated {
  
-@@ -35,26 +37,65 @@ void AnimatedPropsRegistry::update(jsi::Runtime &rt, const jsi::Value &operation
+@@ -35,26 +37,55 @@ void AnimatedPropsRegistry::update(jsi::Runtime &rt, const jsi::Value &operation
        addUpdatesToBatch(shadowNode->getFamilyShared(), jsi::dynamicFromValue(rt, updates));
      }
  
 -    if constexpr (StaticFeatureFlags::getFlag("FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS")) {
 -      timestampMap_[shadowNode->getTag()] = timestamp;
-+    // When USE_ANIMATION_BACKEND is enabled, updates bypass `updatesRegistry_`,
-+    // so entries added to `timestampMap_` would never be synced and thus never
-+    // evicted, leaking until view unmount.
++    // The animation backend bypasses `updatesRegistry_`, so it must not register
++    // settlement records that can never be collected.
 +    if constexpr (
 +        StaticFeatureFlags::getFlag("FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS") &&
 +        !StaticFeatureFlags::getFlag("USE_ANIMATION_BACKEND")) {
 +      const auto tag = shadowNode->getTag();
-+      timestampMap_[tag] = timestamp;
-+      // If JS already has a `settledProps` snapshot for this tag, it is now
-+      // stale — schedule a refresh on the next `collectSettledUpdates`.
-+      if (syncedTags_.erase(tag) > 0) {
-+        invalidatedTags_.insert(tag);
++      const auto &settlement = *settlementByTag_.insert(Settlement{timestamp, tag}).first;
++      settlement.timestamp = timestamp;
++      if (settlement.phase == SettlementPhase::Synced) {
++        settlement.phase = SettlementPhase::Invalidated;
 +      }
      }
    }
@@ -284,44 +282,36 @@ index 2db064ce01b7..89323e2386c9 100644
 +  for (auto it = updatesRegistry_.begin(); it != updatesRegistry_.end();) {
 +    const auto viewTag = it->first;
 +
-+    if (syncedTags_.contains(viewTag)) {
-+      // React already has the latest value for this tag (synced on a previous
-+      // call, so the `settledProps` state is committed by now) — the registry
-+      // entry is redundant. `syncedTags_` is intentionally retained to detect
-+      // re-animation staleness. Note that `syncedTags_` and `invalidatedTags_`
-+      // are disjoint — `update()` moves tags from the former to the latter.
-+      timestampMap_.erase(viewTag);
++    const auto settlementIt = settlementByTag_.find(Settlement{0, viewTag});
++    if (settlementIt == settlementByTag_.end()) {
++      ++it;
++      continue;
++    }
++    const auto &settlement = *settlementIt;
++    if (settlement.phase == SettlementPhase::Synced) {
++      // Keep the record after eviction to detect a later stale React snapshot.
 +      it = updatesRegistry_.erase(it);
 +      continue;
 +    }
 +
-+    const auto timestampIt = timestampMap_.find(viewTag);
-+    if (timestampIt == timestampMap_.end()) {
-+      ++it;
-+      continue;
-+    }
-+    const bool isSettled = timestampIt->second < settledTimestamp;
-+    const auto invalidatedIt = invalidatedTags_.find(viewTag);
-+    const bool isInvalidated = invalidatedIt != invalidatedTags_.end();
++    const bool isSettled = settlement.timestamp < settledTimestamp;
++    const bool isInvalidated = settlement.phase == SettlementPhase::Invalidated;
 +    if (isSettled || isInvalidated) {
 +      updates.emplace_back(viewTag, std::cref(it->second.second));
 +      if (isSettled) {
 +        // Only settled-path tags are tracked as "synced" so that an ongoing
 +        // animation doesn't re-trigger an invalidation/sync on every GC tick.
-+        syncedTags_.insert(viewTag);
-+      }
-+      if (isInvalidated) {
-+        // Only erase serviced invalidations; if a tag was invalidated but the
-+        // matching update batch hasn't been flushed into updatesRegistry_ yet,
-+        // we leave the entry so the next sync picks it up.
-+        invalidatedTags_.erase(invalidatedIt);
++        settlement.phase = SettlementPhase::Synced;
++      } else if (isInvalidated) {
++        // Consume the invalidation for the props emitted by this collection.
++        settlement.phase = SettlementPhase::Animating;
 +      }
      }
 +    ++it;
    }
  
    const jsi::Array array(rt, updates.size());
-@@ -69,22 +110,11 @@ jsi::Value AnimatedPropsRegistry::getUpdatesOlderThanTimestamp(
+@@ -69,22 +100,9 @@ jsi::Value AnimatedPropsRegistry::getUpdatesOlderThanTimestamp(
    return jsi::Value(rt, array);
  }
  
@@ -340,14 +330,13 @@ index 2db064ce01b7..89323e2386c9 100644
 -
  void AnimatedPropsRegistry::removeTag(const Tag tag) {
    updatesRegistry_.erase(tag);
-   timestampMap_.erase(tag);
-+  syncedTags_.erase(tag);
-+  invalidatedTags_.erase(tag);
+-  timestampMap_.erase(tag);
++  settlementByTag_.erase(Settlement{0, tag});
  }
  
  } // namespace reanimated
 diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h
-index 2197eec76c6f..a9cb24ce5f74 100644
+index 2197eec..3d7885d 100644
 --- a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h
 +++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h
 @@ -4,10 +4,8 @@
@@ -356,13 +345,14 @@ index 2197eec76c6f..a9cb24ce5f74 100644
  
 -#include <memory>
 -#include <string>
- #include <unordered_map>
+-#include <unordered_map>
 -#include <vector>
++#include <functional>
 +#include <unordered_set>
  
  namespace reanimated {
  
-@@ -15,13 +13,22 @@ class AnimatedPropsRegistry : public UpdatesRegistry {
+@@ -15,13 +13,28 @@ class AnimatedPropsRegistry : public UpdatesRegistry {
   public:
    void update(jsi::Runtime &rt, const jsi::Value &operations, double timestamp);
  
@@ -376,13 +366,20 @@ index 2197eec76c6f..a9cb24ce5f74 100644
 +  jsi::Value collectSettledUpdates(jsi::Runtime &rt, double settledTimestamp);
  
   private:
-   std::unordered_map<Tag, double> timestampMap_;
-+  // Tags whose latest values have already been pushed to React `settledProps`.
-+  // Intentionally retained after eviction to detect re-animation staleness.
-+  std::unordered_set<Tag> syncedTags_;
-+  // Tags that were synced to React but received a fresh worklet update since;
-+  // their `settledProps` are stale and need to be refreshed on the next sync.
-+  std::unordered_set<Tag> invalidatedTags_;
+-  std::unordered_map<Tag, double> timestampMap_;
++  enum class SettlementPhase { Animating, Synced, Invalidated };
++  struct Settlement {
++    mutable double timestamp;
++    Tag tag;
++    mutable SettlementPhase phase = SettlementPhase::Animating;
++    // Only the immutable tag participates in container identity.
++    bool operator==(const Settlement &other) const noexcept { return tag == other.tag; }
++  };
++  struct SettlementHash {
++    size_t operator()(const Settlement &settlement) const noexcept { return std::hash<Tag>{}(settlement.tag); }
++  };
++  // Synced records survive props eviction to detect re-animation staleness.
++  std::unordered_set<Settlement, SettlementHash> settlementByTag_;
  
 -  void removeUpdatesOlderThanTimestamp(double timestamp);
    void removeTag(Tag tag) override;

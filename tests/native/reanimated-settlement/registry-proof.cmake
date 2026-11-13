@@ -1,0 +1,10 @@
+function(wz_add_registry_proof)
+  if(NOT TARGET reanimated)
+    message(FATAL_ERROR "Expected actual Reanimated target")
+  endif()
+  find_package(hermes-engine REQUIRED CONFIG)
+  target_sources(reanimated PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/registry-proof.cpp")
+  target_link_libraries(reanimated hermes-engine::hermesvm)
+endfunction()
+
+cmake_language(DEFER CALL wz_add_registry_proof)

@@ -50,13 +50,12 @@ export function useAppStartupRuntime(onNavigationReady?: () => void, getCurrentR
   const callbacks = useCommittedRef({ onNavigationReady, getCurrentRouteKey });
   const page = useRef<StartupPage>({ phase: 'awaiting-navigation', layouts: new Set() });
   const mount = useRef<StartupMount | null>({});
-  const pendingSplashHide = useRef<(() => void) | null>(hideNativeSplash);
+  const splashHide = useRef<'pending' | 'consumed'>('pending');
 
   const hideSplashOnce = useCallback(() => {
-    if (!mount.current) return;
-    const hide = pendingSplashHide.current;
-    pendingSplashHide.current = null;
-    hide?.();
+    if (!mount.current || splashHide.current === 'consumed') return;
+    splashHide.current = 'consumed';
+    hideNativeSplash();
   }, []);
 
   const checkVisibleLayout = useCallback(() => {

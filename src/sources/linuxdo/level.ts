@@ -27,6 +27,7 @@ type LinuxDoSnapshot = {
   username: string;
   values: Partial<Record<LinuxDoLevelRequirement['key'], number>>;
 };
+type LevelBaseline = { kind: 'unseen' } | { kind: 'observed'; values: Record<string, unknown> };
 type LinuxDoCurrentUser = {
   username: string;
   user: Record<string, unknown>;
@@ -182,16 +183,18 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
   };
 }
 
-async function loadSnapshot(username: string): Promise<LinuxDoSnapshot | null> {
+async function loadSnapshot(username: string): Promise<LevelBaseline> {
   const raw = await AsyncStorage.getItem(`${SNAPSHOT_KEY_PREFIX}${username}`);
   if (!raw) {
-    return null;
+    return { kind: 'unseen' };
   }
   try {
     const parsed = JSON.parse(raw);
-    return isRecord(parsed) && isRecord(parsed.values) ? (parsed as LinuxDoSnapshot) : null;
+    return isRecord(parsed) && isRecord(parsed.values)
+      ? { kind: 'observed', values: parsed.values }
+      : { kind: 'unseen' };
   } catch {
-    return null;
+    return { kind: 'unseen' };
   }
 }
 
@@ -203,14 +206,14 @@ async function saveSnapshot(profile: LinuxDoLevelProfile) {
   await AsyncStorage.setItem(`${SNAPSHOT_KEY_PREFIX}${profile.username}`, JSON.stringify(snapshot));
 }
 
-function withSnapshotChange(profile: LinuxDoLevelProfile, snapshot: LinuxDoSnapshot | null): LinuxDoLevelProfile {
-  if (!snapshot?.values) {
+function withSnapshotChange(profile: LinuxDoLevelProfile, baseline: LevelBaseline): LinuxDoLevelProfile {
+  if (baseline.kind === 'unseen') {
     return profile;
   }
   return {
     ...profile,
     requirements: profile.requirements.map((item) => {
-      const previous = snapshot.values[item.key];
+      const previous = baseline.values[item.key];
       if (typeof previous !== 'number') {
         return item;
       }

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { File, Paths } from 'expo-file-system';
+import { NativeModules } from 'react-native';
 
 const boundary = vi.hoisted(() => ({
   failWrites: false,
@@ -456,6 +457,70 @@ describe('diagnostic file store', () => {
     }
   });
 
+  it('preserves getter reentry, older completion and outstanding-byte accounting', async () => {
+    vi.useFakeTimers();
+    const inner = Promise.withResolvers<void>();
+    const outer = Promise.withResolvers<void>();
+    const appendBatch = vi.fn((lines: string) => (lines.includes('"cell":"inner"') ? inner.promise : outer.promise));
+    boundary.nativeJournal = {
+      buildId: 'a'.repeat(32),
+      processSessionId: `process-${'b'.repeat(32)}`,
+      appendBatch,
+      persistCrashSync: () => true,
+      snapshot: async () => ({ health: { available: true } })
+    };
+    const coverage = () => JSON.parse(boundary.shared.at(-1)!.content.split('\n')[1]);
+    const exporting: Promise<void>[] = [];
+    const getter = vi.spyOn(NativeModules, 'DiagnosticsModule', 'get');
+    try {
+      await exportDiagnosticLog(metadata);
+      const baseline = coverage();
+      appendDiagnosticLogLine(JSON.stringify({ cell: 'outer', padding: 'x'.repeat(80 * 1024) }));
+      let reenter = true;
+      getter.mockImplementation(() => {
+        if (reenter) {
+          reenter = false;
+          appendDiagnosticLogLine('{"cell":"inner"}');
+          exporting.push(exportDiagnosticLog(metadata));
+        }
+        return boundary.nativeJournal;
+      });
+      const completed = vi.fn();
+      exporting.push(exportDiagnosticLog(metadata).then(completed));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(appendBatch.mock.calls.map(([lines]) => JSON.parse(lines).cell)).toEqual(['inner', 'outer']);
+      expect(completed).not.toHaveBeenCalled();
+      inner.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      await exporting[0];
+      expect(completed).not.toHaveBeenCalled();
+      appendDiagnosticLogLine(JSON.stringify({ cell: 'rejected', padding: 'y'.repeat(60 * 1024) }));
+      await exportDiagnosticLog(metadata);
+      expect(coverage().writerStatus).toBe('settled');
+      expect(coverage().droppedCount - baseline.droppedCount).toBe(1);
+      expect(boundary.shared.at(-1)!.content).not.toContain('"cell":"outer"');
+      expect(boundary.shared.at(-1)!.content).not.toContain('"cell":"rejected"');
+      expect(completed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5_001);
+      await exportDiagnosticLog(metadata);
+      expect(coverage().writeFailureCount - baseline.writeFailureCount).toBe(1);
+      outer.reject(new Error('late outer append failure'));
+      await vi.advanceTimersByTimeAsync(0);
+      await exportDiagnosticLog(metadata);
+      expect(coverage().writeFailureCount - baseline.writeFailureCount).toBe(1);
+      expect(coverage().droppedCount - baseline.droppedCount).toBe(2);
+      expect(appendBatch).toHaveBeenCalledTimes(2);
+      expect(completed).toHaveBeenCalledOnce();
+    } finally {
+      getter.mockRestore();
+      inner.resolve();
+      outer.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.allSettled(exporting);
+      vi.useRealTimers();
+    }
+  });
+
   it('shares one five-second evidence observation budget across a stalled writer and snapshot', async () => {
     vi.useFakeTimers();
     const append = Promise.withResolvers<void>();
@@ -497,6 +562,8 @@ describe('diagnostic file store', () => {
   it('waits for native persistence and exports previous-process events with their original build', async () => {
     let persisted = '';
     let crash = '';
+    const held = Promise.withResolvers<void>();
+    const appended: string[] = [];
     const oldEvent = JSON.stringify({
       schemaVersion: 1,
       time: '2026-09-07T00:00:00.000Z',
@@ -509,6 +576,8 @@ describe('diagnostic file store', () => {
       buildId: 'b'.repeat(32),
       processSessionId: `process-${'c'.repeat(32)}`,
       appendBatch: async (lines) => {
+        appended.push(lines);
+        await held.promise;
         await Promise.resolve();
         persisted += lines;
       },
@@ -524,10 +593,19 @@ describe('diagnostic file store', () => {
       })
     };
     setDiagnosticWriter(appendDiagnosticLogLine);
-    beginDiagnosticTrace('topic', 'open');
-    recordDiagnosticError('app', 'js-error', new Error('PRIVATE_SECRET'), { isFatal: true });
-    expect(crash).toContain('"isFatal":true');
-    expect(crash).toContain('"operation":"open"');
+    try {
+      beginDiagnosticTrace('topic', 'open');
+      await vi.waitFor(() => expect(appended).toHaveLength(1));
+      const queued = '{"sequence":"queued-before-crash"}\n';
+      appendDiagnosticLogLine(queued);
+      recordDiagnosticError('app', 'js-error', new Error('PRIVATE_SECRET'), { isFatal: true });
+      expect(crash.startsWith(appended[0] + queued)).toBe(true);
+      expect(crash.trim().split('\n')).toHaveLength(3);
+      expect(crash).toContain('"isFatal":true');
+      expect(crash).toContain('"operation":"open"');
+    } finally {
+      held.resolve();
+    }
     await exportDiagnosticLog(metadata);
     const lines = boundary.shared[0].content
       .trim()
@@ -827,6 +905,29 @@ describe('diagnostic file store', () => {
 
     await expect(exportDiagnosticLog(metadata)).rejects.toThrow('当前设备不支持分享诊断日志');
     expect([...boundary.files.keys()].some((uri) => uri.endsWith('.txt'))).toBe(false);
+  });
+
+  it('preserves an availability failure when deleting its unshared file also fails', async () => {
+    const Sharing = await import('expo-sharing');
+    const available = vi.mocked(Sharing.isAvailableAsync);
+    const originalAvailable = available.getMockImplementation();
+    const deletion = vi.spyOn(File.prototype, 'delete');
+    const failure = new Error('availability failed');
+    available.mockRejectedValueOnce(failure);
+    boundary.failDeletes = true;
+    try {
+      await expect(exportDiagnosticLog(metadata)).rejects.toBe(failure);
+      const files = [...boundary.files.keys()].filter((uri) => uri.endsWith('.txt'));
+      expect(files).toHaveLength(1);
+      expect(deletion).toHaveBeenCalledTimes(1);
+      expect(deletion).toHaveBeenCalledWith();
+      expect(boundary.shared).toHaveLength(0);
+    } finally {
+      available.mockReset();
+      if (originalAvailable) available.mockImplementation(originalAvailable);
+      deletion.mockRestore();
+      boundary.failDeletes = false;
+    }
   });
 
   it('keeps secrets, ids, content, URLs and paths out of the final exported file', async () => {
@@ -1185,6 +1286,28 @@ describe('diagnostic export leases', () => {
     expect(boundary.shared).toHaveLength(1);
     expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
   });
+
+  it.each([new Error('synchronous chooser failure'), 0])(
+    'retains the handed-off file when sharing synchronously throws %s',
+    async (failure) => {
+      const Sharing = await import('expo-sharing');
+      const share = vi.mocked(Sharing.shareAsync);
+      const originalShare = share.getMockImplementation();
+      let sharedUri: string | undefined;
+      share.mockImplementationOnce((uri) => {
+        sharedUri = uri;
+        throw failure;
+      });
+      try {
+        await expect(exportDiagnosticLog(metadata)).rejects.toBe(failure);
+        expect([...boundary.files.keys()].filter((uri) => uri.endsWith('.txt'))).toEqual([sharedUri]);
+        expect(boundary.files.get(sharedUri || '')?.byteLength).toBeGreaterThan(0);
+      } finally {
+        share.mockReset();
+        if (originalShare) share.mockImplementation(originalShare);
+      }
+    }
+  );
 
   it('installs startup diagnostics without scanning or deleting retained exports', async () => {
     vi.resetModules();

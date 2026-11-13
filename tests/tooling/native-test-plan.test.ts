@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -139,7 +139,10 @@ describe('image instrumentation runner mode isolation', () => {
     'realFabricScrollViewAndExpoImageCaptureThroughTheJsBridge',
     'realShareSheetPreservesOriginalImageDetailAndExportsOnePng'
   ].map((method) => `com.wz.reader.TopicShareCaptureInstrumentedTest#${method}`);
+  const registryOwner =
+    'com.wz.reader.AnimatedPropsRegistryInstrumentedTest#actualRegistrySettlesEvictsAndRefreshesInvalidatedProps';
   it.each([
+    ['--registry-settlement', [registryOwner], 180_000],
     ['--hardware-pressure', ['NetworkImageHardwarePressureInstrumentedTest'], 300_000],
     ['--topic-share', [topicShareOwners.join(',')], 300_000],
     ['--svg-only', ['SvgRendererInstrumentedTest'], 180_000],
@@ -163,8 +166,12 @@ describe('image instrumentation runner mode isolation', () => {
     ...['missing', 'started', 'skipped', 'duplicate', 'wrong-owner', 'failed', 'summary-only'].flatMap(
       (failure): [string, string[], number, string][] => [
         ['--platform-file-faults', [fileFaultOwners.join(',')], 300_000, failure],
-        ['--topic-share', [topicShareOwners.join(',')], 300_000, failure]
+        ['--topic-share', [topicShareOwners.join(',')], 300_000, failure],
+        ['--registry-settlement', [registryOwner], 180_000, failure]
       ]
+    ),
+    ...['missing-final-code', 'failed-final-code', 'duplicate-final-code', 'instrumentation-failed'].map(
+      (failure): [string, string[], number, string] => ['--registry-settlement', [registryOwner], 180_000, failure]
     ),
     [
       '',
@@ -184,15 +191,22 @@ describe('image instrumentation runner mode isolation', () => {
     'keeps %s restricted to completed owners with %s at timeout %s and failure %s',
     async (mode, owners, timeout, failure?: string) => {
       const originalArgv = process.argv;
+      const registry = mode === '--registry-settlement';
       const exec = vi.fn((_command: string, args: readonly string[], _options?: { timeout?: number }) => {
         if (args[0] === 'devices') return 'List of devices attached\nemulator-5556\tdevice\n';
         if (args.includes('emu')) return 'WZ_ImageRuntime_Test_API35\nOK\n';
         if (args.includes('dumpsys')) return '';
-        if (args.includes('instrument') && (mode === '--platform-file-faults' || mode === '--topic-share')) {
-          const expected = mode === '--topic-share' ? topicShareOwners : fileFaultOwners;
-          const completed = failure === 'missing' ? expected.slice(0, 1) : [...expected];
-          if (failure === 'duplicate') completed[3] = completed[0];
-          if (failure === 'wrong-owner') completed[3] = 'com.wz.reader.OtherTest#otherMethod';
+        if (
+          args.includes('instrument') &&
+          (registry || mode === '--platform-file-faults' || mode === '--topic-share')
+        ) {
+          const expected = registry ? [registryOwner] : mode === '--topic-share' ? topicShareOwners : fileFaultOwners;
+          const completed = failure === 'missing' ? expected.slice(0, registry ? 0 : 1) : [...expected];
+          if (failure === 'duplicate') {
+            if (registry) completed.push(registryOwner);
+            else completed[3] = completed[0];
+          }
+          if (failure === 'wrong-owner') completed[registry ? 0 : 3] = 'com.wz.reader.OtherTest#otherMethod';
           const statuses =
             failure === 'summary-only'
               ? ''
@@ -200,7 +214,7 @@ describe('image instrumentation runner mode isolation', () => {
                   .map((owner, index) => {
                     const [className, method] = owner.split('#');
                     const code =
-                      index === 3 && failure
+                      index === (registry ? 0 : 3) && failure
                         ? failure === 'started'
                           ? 1
                           : failure === 'skipped'
@@ -212,11 +226,18 @@ describe('image instrumentation runner mode isolation', () => {
                     return `INSTRUMENTATION_STATUS: test=${method}\r\nINSTRUMENTATION_STATUS: class=${className}\r\nINSTRUMENTATION_STATUS_CODE: ${code}\r\n`;
                   })
                   .join('');
-          return `${statuses}OK (${completed.length} tests)\n`;
+          const final =
+            !registry || failure === 'missing-final-code'
+              ? ''
+              : `INSTRUMENTATION_CODE: ${failure === 'failed-final-code' ? -2 : -1}\n` +
+                (failure === 'duplicate-final-code' ? 'INSTRUMENTATION_CODE: -1\n' : '') +
+                (failure === 'instrumentation-failed' ? 'INSTRUMENTATION_FAILED: fixture launch failed\n' : '');
+          return `${statuses}OK (${registry ? 1 : completed.length} tests)\n${final}`;
         }
         return 'OK (1 test)\n';
       });
-      const spawn = vi.fn(() => ({ status: 0 }));
+      const spawn = vi.fn((_command: string, _args: readonly string[]) => ({ status: 0 }));
+      const write = vi.fn<(file: string, contents: string) => void>();
       vi.resetModules();
       vi.doMock('node:child_process', () => ({ execFileSync: exec, spawnSync: spawn }));
       vi.doMock('node:crypto', async (importOriginal) => ({
@@ -232,7 +253,7 @@ describe('image instrumentation runner mode isolation', () => {
         readFileSync: (file: string) =>
           file.endsWith('BuildConfig.java') ? 'fixturebuildid' : Buffer.from('fixture-apk'),
         rmSync: vi.fn(),
-        writeFileSync: vi.fn()
+        writeFileSync: write
       }));
       const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
       const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -246,6 +267,28 @@ describe('image instrumentation runner mode isolation', () => {
           owners.map((owner) => (owner.startsWith('com.wz.reader.') ? owner : `com.wz.reader.${owner}`))
         );
         expect(instruments[0][2]?.timeout).toBe(timeout);
+        const initWrite = write.mock.calls.find(([file]) => file.endsWith('init.gradle'));
+        if (!initWrite) throw new Error('Expected generated instrumentation init script');
+        const [initFile, init] = initWrite;
+        if (registry) {
+          expect(init).toContain('tests/native/reanimated-settlement/registry-proof.cmake');
+          expect(init).toContain('CMAKE_PROJECT_Reanimated_INCLUDE=');
+          expect(init).toContain("p.dependencies.add('implementation', 'com.facebook.react:hermes-android')");
+          expect(init).toContain("getByName('release').java.srcDir(new File(registry, 'java'))");
+          expect(init).toContain("getByName('androidTest').java.srcDir(new File(registry, 'androidTest'))");
+          expect(init).not.toMatch(/entryFile|manifest\.srcFile|res\.srcDir/);
+          expect(
+            exec.mock.calls.some(([, args]) =>
+              args.some((arg) => ['force-stop', 'cookieProofStage', 'grant', 'revoke'].includes(arg))
+            )
+          ).toBe(false);
+          expect(instruments[0][1]).toEqual(expect.arrayContaining(['proofBuildId', 'fixturebuildid']));
+        } else {
+          expect(init).not.toMatch(/reanimated-settlement|CMAKE_PROJECT_Reanimated_INCLUDE|hermes-android/);
+        }
+        expect(spawn.mock.calls[0][1].some((arg) => arg.includes(initFile))).toBe(true);
+        expect(spawn.mock.calls.at(-1)?.[1]).toContain(':app:assembleRelease');
+        expect(spawn.mock.calls.at(-1)?.[1].some((arg) => arg.includes(initFile))).toBe(false);
         if (mode === '--hardware-pressure') {
           const forceStop = exec.mock.calls.findIndex(([, args]) => args.includes('force-stop'));
           expect(forceStop).toBeGreaterThan(-1);
@@ -264,12 +307,23 @@ describe('image instrumentation runner mode isolation', () => {
       }
     }
   );
+  it('keeps the registry oracle in a stable deferred CMake asset', () => {
+    const cmake = readFileSync(
+      new URL('../native/reanimated-settlement/registry-proof.cmake', import.meta.url),
+      'utf8'
+    );
+    expect(cmake).toContain('cmake_language(DEFER CALL wz_add_registry_proof)');
+    expect(cmake).toContain('${CMAKE_CURRENT_FUNCTION_LIST_DIR}/registry-proof.cpp');
+    expect(cmake).toContain('target_link_libraries(reanimated hermes-engine::hermesvm)');
+    expect(cmake).not.toMatch(/\.codex-tmp|registry-bootstrap/);
+  });
 });
 
 describe('image instrumentation permission lease cleanup', () => {
   async function runFixture(
     failures: {
       instrument?: { error: unknown };
+      grant?: { error: unknown };
       revoke?: { error: unknown };
       fixture?: { error: unknown };
       restoreBuild?: { error: unknown };
@@ -282,6 +336,7 @@ describe('image instrumentation permission lease cleanup', () => {
       if (args.includes('emu')) return 'WZ_ImageRuntime_Test_API35\nOK\n';
       if (args.includes('dumpsys'))
         return `android.permission.READ_MEDIA_IMAGES: granted=${failures.permissionGranted ?? false}`;
+      if (args.includes('grant') && failures.grant) throw failures.grant.error;
       if (args.includes('instrument')) {
         if (failures.instrument) throw failures.instrument.error;
         return 'OK (1 test)\n';
@@ -333,6 +388,24 @@ describe('image instrumentation permission lease cleanup', () => {
     }
     return { outcome, exec, spawn, remove };
   }
+
+  it('retains permission restoration responsibility when the temporary grant fails', async () => {
+    const failure = new Error('Permission grant failed');
+    const result = await runFixture({ grant: { error: failure } });
+    expect(
+      result.exec.mock.calls
+        .filter(([, args]) => args.includes('grant') || args.includes('revoke'))
+        .map(([, args]) => args.slice(2))
+    ).toEqual([
+      ['shell', 'pm', 'grant', 'com.wz.reader', 'android.permission.READ_MEDIA_IMAGES'],
+      ['shell', 'pm', 'revoke', 'com.wz.reader', 'android.permission.READ_MEDIA_IMAGES']
+    ]);
+    expect(result.exec.mock.calls.some(([, args]) => args.includes('instrument'))).toBe(false);
+    expect(result.remove).toHaveBeenCalledOnce();
+    expect(result.spawn).toHaveBeenCalledTimes(2);
+    if (result.outcome.kind !== 'failed') throw new Error('Expected grant failure');
+    expect(result.outcome.error).toBe(failure);
+  });
 
   it('restores the normal build and releases the fixture even when permission restoration fails', async () => {
     const failure = new Error('permission restore');

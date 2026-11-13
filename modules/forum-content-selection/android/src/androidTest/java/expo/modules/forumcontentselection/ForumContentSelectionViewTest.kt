@@ -15,6 +15,8 @@ import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.text.Layout
 import android.text.Selection
@@ -30,6 +32,7 @@ import android.view.InputDevice
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
@@ -53,6 +56,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.lang.reflect.Proxy
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -495,17 +500,19 @@ class ForumContentSelectionViewTest {
       scenario.onActivity {
         fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
         fixture.surface.onPreDraw()
-        probe = fixture.handleBodyProbe()
       }
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-      val selected = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
-      scenario.onActivity { fixture.surface.cancelSelection() }
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-      val clean = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+      val selected = captureCommittedWindow(scenario)
+      scenario.onActivity {
+        probe = fixture.handleBodyProbe()
+        fixture.surface.cancelSelection()
+      }
+      val clean = captureCommittedWindow(scenario)
       try {
+        val changedPixels = probe.changedPixelCount(selected, clean)
         assertTrue(
-          "native handle bodies must remain visible below a wrap-content TextView",
-          probe.changedPixelCount(selected, clean) > 0
+          "native handle bodies must remain visible below a wrap-content TextView; " +
+            "pixels=$changedPixels, window=${selected.width}x${selected.height}, probe=$probe",
+          changedPixels > 0
         )
       } finally {
         selected.recycle()
@@ -1383,14 +1390,76 @@ class ForumContentSelectionViewTest {
   }
 
   @Test
+  fun removingTheSurfaceRetiresPendingAndOwnedPointerGestures() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var parent: ViewGroup
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.first.text.setTextIsSelectable(false)
+        parent = fixture.surface.parent as ViewGroup
+      }
+      try {
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        scenario.onActivity {
+          assertTrue(fixture.surface.isAttachedToWindow)
+          val (x, y) = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+          fixture.send(MotionEvent.ACTION_DOWN, x, y, SystemClock.uptimeMillis())
+          assertTrue(fixture.surface.hasSelectionGestureForTest())
+          assertFalse(fixture.surface.interactionStateForTest().ownsGesture)
+          parent.removeView(fixture.surface)
+          assertFalse(fixture.surface.isAttachedToWindow)
+          assertFalse(fixture.surface.hasSelectionGestureForTest())
+          assertFalse(fixture.surface.interactionStateForTest().ownsGesture)
+          assertFalse(fixture.surface.interactionStateForTest().active)
+          parent.addView(fixture.surface)
+        }
+        Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        scenario.onActivity {
+          assertTrue(fixture.surface.isAttachedToWindow)
+          assertNull(fixture.surface.selectionSnapshotForTest())
+          assertFalse(fixture.surface.interactionStateForTest().active)
+          assertFalse(fixture.surface.hasSelectionGestureForTest())
+        }
+
+        holdLongPressSelection(scenario, fixture)
+        scenario.onActivity {
+          assertTrue(fixture.surface.interactionStateForTest().active)
+          assertTrue(fixture.surface.interactionStateForTest().ownsGesture)
+          assertTrue(fixture.surface.hasSelectionGestureForTest())
+          assertTrue(fixture.surface.selectionSnapshotForTest() != null)
+          parent.removeView(fixture.surface)
+          assertFalse(fixture.surface.isAttachedToWindow)
+          assertNull(fixture.surface.selectionSnapshotForTest())
+          assertFalse(fixture.surface.interactionStateForTest().active)
+          assertFalse(fixture.surface.interactionStateForTest().ownsGesture)
+          assertFalse(fixture.surface.interactionStateForTest().hasActionMode)
+          assertFalse(fixture.surface.hasSelectionGestureForTest())
+        }
+      } finally {
+        scenario.onActivity { fixture.close() }
+      }
+    }
+  }
+
+  @Test
   fun ordinaryLinkClickRunsOnceBeforeActiveSelectionCancels() {
     ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
       lateinit var fixture: SurfaceFixture
       lateinit var selectionTarget: Pair<Float, Float>
       var linkClickCount = 0
+      var replaceSelectionOnClick = false
       scenario.onActivity { activity ->
         fixture = SurfaceFixture(activity)
-        fixture.installSecondLink { linkClickCount += 1 }
+        fixture.installSecondLink {
+          linkClickCount += 1
+          if (replaceSelectionOnClick) {
+            val previous = requireNotNull(fixture.surface.selectionSnapshotForTest())
+            assertTrue(fixture.surface.selectAllForTest())
+            assertFalse(previous == requireNotNull(fixture.surface.selectionSnapshotForTest()))
+          }
+        }
         fixture.mountTogether(fixture.first, fixture.second)
       }
       InstrumentationRegistry.getInstrumentation().waitForIdleSync()
@@ -1415,6 +1484,7 @@ class ForumContentSelectionViewTest {
         )
         assertTrue(fixture.surface.interactionStateForTest().active)
 
+        replaceSelectionOnClick = true
         fixture.tap(fixture.pointInText(fixture.second.text, utf16Offset = 2))
         assertEquals(1, linkClickCount)
         assertNull(fixture.surface.selectionSnapshotForTest())
@@ -2493,6 +2563,28 @@ class ForumContentSelectionViewTest {
         "currentPixels=$currentChangedPixels/$requiredCurrentPixels, stalePixels=$staleChangedPixels"
   }
 
+  private fun captureCommittedWindow(scenario: ActivityScenario<ForumSelectionTestActivity>): Bitmap {
+    val copied = CountDownLatch(1)
+    var result = PixelCopy.ERROR_UNKNOWN
+    lateinit var bitmap: Bitmap
+    scenario.onActivity { activity ->
+      val window = activity.window
+      val root = window.decorView
+      assertTrue(root.isHardwareAccelerated)
+      bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+      root.viewTreeObserver.registerFrameCommitCallback {
+        PixelCopy.request(window, bitmap, { status ->
+          result = status
+          copied.countDown()
+        }, Handler(Looper.getMainLooper()))
+      }
+      root.postInvalidateOnAnimation()
+    }
+    assertTrue("Window frame commit and PixelCopy must complete", copied.await(5, TimeUnit.SECONDS))
+    assertEquals(PixelCopy.SUCCESS, result)
+    return bitmap
+  }
+
   private fun holdLongPressSelection(
     scenario: ActivityScenario<ForumSelectionTestActivity>,
     fixture: SurfaceFixture
@@ -2795,7 +2887,7 @@ class ForumContentSelectionViewTest {
     fun handleBodyProbe(): HandleBodyProbe {
       val handles = surface.overlayHandlesForTest().let { listOfNotNull(it.first, it.second) }
       check(handles.isNotEmpty())
-      val surfaceLocation = IntArray(2).also(surface::getLocationOnScreen)
+      val surfaceLocation = IntArray(2).also(surface::getLocationInWindow)
       return HandleBodyProbe(
         handles.map { PointF(surfaceLocation[0] + it.x, surfaceLocation[1] + it.y) },
         activity.resources.displayMetrics.density

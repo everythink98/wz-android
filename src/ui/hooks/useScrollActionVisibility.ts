@@ -16,7 +16,6 @@ export function useScrollActionVisibility({
   const scrollRef = useRef<{
     offset: number;
     anchor: number;
-    direction: number;
     contentHeight: number;
     viewportHeight: number;
   } | null>(null);
@@ -37,14 +36,14 @@ export function useScrollActionVisibility({
       const viewportHeight = layoutMeasurement.height;
       if (!previous || previous.contentHeight !== contentHeight || previous.viewportHeight !== viewportHeight) {
         // List measurement and viewport corrections are not a change in reading direction.
-        scrollRef.current = { offset, anchor: offset, direction: 0, contentHeight, viewportHeight };
+        scrollRef.current = { offset, anchor: offset, contentHeight, viewportHeight };
         if (contentOffset.y <= 12) setVisible(true);
         return;
       }
       if (offset === previous.offset) return;
       const direction = Math.sign(offset - previous.offset);
-      const anchor = direction === previous.direction ? previous.anchor : previous.offset;
-      scrollRef.current = { ...previous, offset, anchor, direction };
+      const anchor = direction === Math.sign(previous.offset - previous.anchor) ? previous.anchor : previous.offset;
+      scrollRef.current = { ...previous, offset, anchor };
       if (offset > 12 && Math.abs(offset - anchor) < 12) return;
       const nextVisible = offset <= 12 || direction < 0;
       setVisible(nextVisible);

@@ -20,6 +20,8 @@ type CompatibleSvgMessageEvent = Readonly<{
   nativeEvent: Readonly<{ data?: string }>;
 }>;
 
+type DocumentSettlement = { identity: string; phase: 'waiting' | 'error' | 'load' };
+
 const EMPTY_SVG_DATA_URI = 'data:image/svg+xml;base64,PHN2Zy8+';
 const GUARDED_DOCUMENT_ORIGINS = ['*'];
 const SVG_READY_MESSAGE = 'wz-svg-ready';
@@ -27,8 +29,7 @@ const SVG_ERROR_MESSAGE = 'wz-svg-error';
 
 export function CompatibleSvgDocumentView({ artifact, style, onLoad, onError }: CompatibleSvgDocumentViewProps) {
   const identity = `${artifact.requestIdentity}\u0000${artifact.documentDataUri}`;
-  const settledIdentityRef = useRef(identity);
-  const settlementOutcomeRef = useRef<'error' | 'load' | null>(null);
+  const settlementRef = useRef<DocumentSettlement>({ identity, phase: 'waiting' });
 
   const validDocumentDataUri = isSvgDocumentDataUri(artifact.documentDataUri);
   const source = useMemo(
@@ -41,10 +42,10 @@ export function CompatibleSvgDocumentView({ artifact, style, onLoad, onError }: 
 
   const settle = useCallback(
     (outcome: 'error' | 'load') => {
-      if (settledIdentityRef.current !== identity || settlementOutcomeRef.current) {
+      if (settlementRef.current.identity !== identity || settlementRef.current.phase !== 'waiting') {
         return;
       }
-      settlementOutcomeRef.current = outcome;
+      settlementRef.current = { identity, phase: outcome };
       if (outcome === 'load') {
         onLoad?.();
       } else {
@@ -55,11 +56,10 @@ export function CompatibleSvgDocumentView({ artifact, style, onLoad, onError }: 
   );
 
   useLayoutEffect(() => {
-    if (settledIdentityRef.current === identity) {
+    if (settlementRef.current.identity === identity) {
       return;
     }
-    settledIdentityRef.current = identity;
-    settlementOutcomeRef.current = null;
+    settlementRef.current = { identity, phase: 'waiting' };
   }, [identity]);
 
   useLayoutEffect(() => {
@@ -138,10 +138,11 @@ img { display: block; width: 100%; height: 100%; object-fit: contain; background
 <script nonce="wz-svg-ready">
 (() => {
   const image = document.querySelector('img');
-  let settled = false;
+  /** @type {'available' | 'consumed'} */
+  let delivery = 'available';
   const post = (message) => {
-    if (settled) return;
-    settled = true;
+    if (delivery === 'consumed') return;
+    delivery = 'consumed';
     window.ReactNativeWebView.postMessage(message);
   };
   const ready = () => requestAnimationFrame(() => requestAnimationFrame(() => post('${SVG_READY_MESSAGE}')));

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import {
   hashKey,
   useInfiniteQuery,
@@ -17,13 +18,7 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import {
-  createSearchHistoryWriteQueue,
-  enqueueSearchHistoryWrite,
-  mergeLoadedSearchHistory,
-  normalizeSearchHistory,
-  sameSearchHistory
-} from './history';
+import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from './history';
 import type { ReadGateway } from '@/sources/readGateway';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
@@ -62,6 +57,13 @@ import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 type SearchRunInput = Source | Partial<SearchRunOptions>;
+
+type RecentSearchHistoryOwner = {
+  read: 'waiting' | 'retryable' | 'hydrated';
+  write: { phase: 'none' } | { phase: 'target'; entries: string[] };
+  removedKeys: Set<string>;
+  writer: ReturnType<typeof createKeyedSerialRunner<null>>;
+};
 type SubmittedSearch = {
   filters: SearchFilterState;
   query: string;
@@ -200,11 +202,12 @@ export function useSearchController({
   const queryClient = useQueryClient();
   const searchActive = active;
   const aggregateSources = enabledSearchSources;
-  const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
-  const lastQueuedRecentSearchesRef = useRef<string[] | null>(null);
-  const recentSearchHistoryHydratedRef = useRef(false);
-  const recentSearchHistoryReadFailedRef = useRef(false);
-  const pendingRecentSearchRemovalKeysRef = useRef(new Set<string>());
+  const recentSearchHistoryRef = useRef<RecentSearchHistoryOwner>({
+    read: 'waiting',
+    write: { phase: 'none' },
+    writer: createKeyedSerialRunner<null>('after-reaction'),
+    removedKeys: new Set<string>()
+  });
   const handledSearchActionsRef = useRef(new WeakSet<RemoteSearchSourceResult>());
   const yaohuoLoginIntentRef = useRef(0);
   const handledYaohuoLoginIntentRef = useRef<number | null>(null);
@@ -214,7 +217,7 @@ export function useSearchController({
   const [submittedSearch, setSubmittedSearch] = useState<SubmittedSearch | null>(null);
   const [linuxDoAiEnabled, setLinuxDoAiEnabled] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [recentSearchesHydrated, setRecentSearchesHydrated] = useState(false);
+  const [recentSearchWritePermission, setRecentSearchWritePermission] = useState<'protected' | 'writable'>('protected');
   const [recentSearchHistoryReadAttempt, setRecentSearchHistoryReadAttempt] = useState(0);
   const enabledSearchSourcesRef = useRef(enabledSearchSources);
   useCommitRefValue(enabledSearchSourcesRef, enabledSearchSources);
@@ -230,46 +233,50 @@ export function useSearchController({
     setLinuxDoAiEnabled(false);
   }, [searchSourceIncluded, submittedSearchSourceIncluded]);
   useEffect(() => {
-    let active = true;
-    recentSearchHistoryReadFailedRef.current = false;
+    let observation: 'live' | 'retired' = 'live';
+    if (recentSearchHistoryRef.current.read !== 'hydrated') recentSearchHistoryRef.current.read = 'waiting';
     AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
       .then((raw) => {
-        if (!active) return;
+        if (observation === 'retired') return;
         const storedHistory = mergeLoadedSearchHistory([], raw);
-        const removedKeys = new Set(pendingRecentSearchRemovalKeysRef.current);
-        recentSearchHistoryHydratedRef.current = true;
-        pendingRecentSearchRemovalKeysRef.current.clear();
-        lastQueuedRecentSearchesRef.current = storedHistory;
+        const removedKeys = new Set(recentSearchHistoryRef.current.removedKeys);
+        recentSearchHistoryRef.current.read = 'hydrated';
+        recentSearchHistoryRef.current.removedKeys.clear();
+        recentSearchHistoryRef.current.write = { phase: 'target', entries: storedHistory };
         setRecentSearches((current) => {
           const merged = mergeLoadedSearchHistory(current, raw).filter((item) => !removedKeys.has(item.toLowerCase()));
           return sameSearchHistory(current, merged) ? current : merged;
         });
-        setRecentSearchesHydrated(true);
+        setRecentSearchWritePermission('writable');
       })
       .catch(() => {
-        if (active) recentSearchHistoryReadFailedRef.current = true;
+        if (observation === 'live' && recentSearchHistoryRef.current.read !== 'hydrated') {
+          recentSearchHistoryRef.current.read = 'retryable';
+        }
       });
     return () => {
-      active = false;
+      observation = 'retired';
     };
   }, [recentSearchHistoryReadAttempt]);
 
   useEffect(() => {
-    if (!recentSearchesHydrated || sameSearchHistory(lastQueuedRecentSearchesRef.current, recentSearches)) {
-      return;
-    }
+    if (recentSearchWritePermission !== 'writable') return;
+    const target = recentSearchHistoryRef.current.write;
+    if (sameSearchHistory(target.phase === 'target' ? target.entries : null, recentSearches)) return;
     const next = recentSearches;
-    lastQueuedRecentSearchesRef.current = next;
-    void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () =>
-      AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next))
-    ).catch(() => {
-      if (lastQueuedRecentSearchesRef.current === next) lastQueuedRecentSearchesRef.current = null;
-    });
-  }, [recentSearches, recentSearchesHydrated]);
+    recentSearchHistoryRef.current.write = { phase: 'target', entries: next };
+    void recentSearchHistoryRef.current.writer
+      .run(null, () => AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next)))
+      .catch(() => {
+        const target = recentSearchHistoryRef.current.write;
+        if (target.phase === 'target' && target.entries === next)
+          recentSearchHistoryRef.current.write = { phase: 'none' };
+      });
+  }, [recentSearches, recentSearchWritePermission]);
 
   const retryRecentSearchHistoryRead = useCallback(() => {
-    if (!recentSearchHistoryHydratedRef.current && recentSearchHistoryReadFailedRef.current) {
-      recentSearchHistoryReadFailedRef.current = false;
+    if (recentSearchHistoryRef.current.read === 'retryable') {
+      recentSearchHistoryRef.current.read = 'waiting';
       setRecentSearchHistoryReadAttempt((current) => current + 1);
     }
   }, []);
@@ -278,7 +285,7 @@ export function useSearchController({
     (query: string) => {
       const clean = query.trim();
       if (!clean) return;
-      pendingRecentSearchRemovalKeysRef.current.delete(clean.toLowerCase());
+      recentSearchHistoryRef.current.removedKeys.delete(clean.toLowerCase());
       retryRecentSearchHistoryRead();
       setRecentSearches((current) =>
         normalizeSearchHistory([clean, ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())])
@@ -289,8 +296,8 @@ export function useSearchController({
 
   const removeRecentSearch = useCallback(
     (query: string) => {
-      if (!recentSearchHistoryHydratedRef.current) {
-        pendingRecentSearchRemovalKeysRef.current.add(query.toLowerCase());
+      if (recentSearchHistoryRef.current.read !== 'hydrated') {
+        recentSearchHistoryRef.current.removedKeys.add(query.toLowerCase());
       }
       retryRecentSearchHistoryRead();
       setRecentSearches((current) => current.filter((item) => item !== query));

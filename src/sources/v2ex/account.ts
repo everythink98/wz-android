@@ -280,27 +280,31 @@ export async function getV2exUserDetails(
   );
 }
 
+type V2exMemberTopicRead =
+  | { kind: 'html'; result: Awaited<ReturnType<typeof fetchV2exMemberTopics>> }
+  | { kind: 'feed'; items: Topic[]; nextCursor: string | null };
+
 export async function getV2exUserTopics(profile: UserDetails, options: V2exOptions = {}): Promise<UserTopicsPage> {
   const page = parsePositiveInteger(options.cursor) || 1;
-  let result;
-  let usedFeed = false;
+  let read: V2exMemberTopicRead;
   try {
-    result = await fetchV2exMemberTopics(profile.username, profile.avatar, options, page);
+    read = { kind: 'html', result: await fetchV2exMemberTopics(profile.username, profile.avatar, options, page) };
   } catch (error) {
     if (options.cursor) throw error;
     const items = await fetchV2exMemberFeedTopics(profile.username, profile.avatar, options);
-    result = copySourceDiagnosticSummary({ items, nextCursor: null }, items);
-    usedFeed = true;
+    read = { kind: 'feed', items, nextCursor: null };
   }
-  let topics = result.items;
-  if (!topics.length && !options.cursor && !usedFeed) {
+  if (read.kind === 'html' && !read.result.items.length && !options.cursor) {
     // The HTML page already proved a real empty result; an optional feed failure cannot erase that evidence.
     try {
-      topics = await fetchV2exMemberFeedTopics(profile.username, profile.avatar, options);
+      const items = await fetchV2exMemberFeedTopics(profile.username, profile.avatar, options);
+      read = { kind: 'feed', items, nextCursor: read.result.nextCursor };
     } catch {
-      topics = result.items;
+      // The successful HTML state remains authoritative when this optional request fails.
     }
   }
+  const topics = read.kind === 'html' ? read.result.items : read.items;
+  const nextCursor = read.kind === 'html' ? read.result.nextCursor : read.nextCursor;
   return copySourceDiagnosticSummary(
     {
       topics: sortTopicsByCreatedAt(topics)
@@ -308,10 +312,10 @@ export async function getV2exUserTopics(profile: UserDetails, options: V2exOptio
         .map((topic) =>
           profile.levelLabel ? { ...topic, authorLevelLabel: topic.authorLevelLabel || profile.levelLabel } : topic
         ),
-      hasMoreTopics: Boolean(result.nextCursor),
-      nextTopicsCursor: result.nextCursor
+      hasMoreTopics: Boolean(nextCursor),
+      nextTopicsCursor: nextCursor
     },
-    topics === result.items ? result : topics
+    read.kind === 'html' ? read.result : read.items
   );
 }
 

@@ -127,7 +127,6 @@ function useCompatibleBodyImageArtifact({
   if (consumption.requestIdentity !== attemptIdentity) {
     setConsumption({ controller: new AbortController(), requestIdentity: attemptIdentity });
   }
-  const mountedRef = useRef(true);
   const attemptIdentityRef = useRef(attemptIdentity);
   const settledAttemptIdentityRef = useRef('');
   const posterRefreshIdentityRef = useRef('');
@@ -150,9 +149,7 @@ function useCompatibleBodyImageArtifact({
       setConsumption({ controller: new AbortController(), requestIdentity: attemptIdentity });
       return;
     }
-    mountedRef.current = true;
     return () => {
-      mountedRef.current = false;
       consumption.controller.abort();
     };
   }, [attemptIdentity, consumption, setConsumption]);
@@ -161,8 +158,7 @@ function useCompatibleBodyImageArtifact({
     onTerminalFailureRef.current = onTerminalFailure;
   }, [attemptIdentity, onTerminalFailure]);
   const isCurrent = useCallback(
-    () =>
-      mountedRef.current && !consumption.controller.signal.aborted && attemptIdentityRef.current === attemptIdentity,
+    () => !consumption.controller.signal.aborted && attemptIdentityRef.current === attemptIdentity,
     [attemptIdentity, consumption]
   );
   const isSettled = useCallback(() => settledAttemptIdentityRef.current === attemptIdentity, [attemptIdentity]);

@@ -8,6 +8,10 @@ import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { getLinuxDoCsrfToken, runLinuxDoAction } from './actionClient';
 import { fetchLinuxDoJson, type LinuxDoOptions } from './reader';
 
+type ReadingCsrfState = { kind: 'empty' } | { kind: 'token'; identity: string; agent: string; token: Promise<string> };
+type ReadingDeliveryState =
+  { kind: 'preparing'; attempt: 'initial' | 'csrf-refresh' } | { kind: 'posting'; attempt: 'initial' | 'csrf-refresh' };
+
 export async function getLinuxDoTopicReading(id: string, options: LinuxDoOptions) {
   if (!/^\d+$/.test(id)) throw new Error('linux.do 主题 ID 不正确');
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
@@ -53,7 +57,7 @@ export function createLinuxDoReadingSender({
   scope: () => string | null;
   userAgent: () => string;
 }) {
-  let csrf: { identity: string; agent: string; token: Promise<string> } | undefined;
+  let csrf: ReadingCsrfState = { kind: 'empty' };
   return async (
     batch: ReadingBatch,
     identity: string,
@@ -62,7 +66,7 @@ export function createLinuxDoReadingSender({
     recovering = false,
     beforePost?: () => void
   ) => {
-    if (recovering) csrf = undefined;
+    if (recovering) csrf = { kind: 'empty' };
     const agent = userAgent();
     const assertCurrent = () => {
       if (signal.aborted || scope() !== identity || userAgent() !== agent) throw new RequestCanceledError();
@@ -71,16 +75,16 @@ export function createLinuxDoReadingSender({
     const intent = { owner: 'write', priority: 'background' } as const;
     const token = async () => {
       assertCurrent();
-      if (!csrf || csrf.identity !== identity || csrf.agent !== agent) {
+      if (csrf.kind === 'empty' || csrf.identity !== identity || csrf.agent !== agent) {
         const promise = getLinuxDoCsrfToken({
           fetcher: trace ? withDiagnosticFetcher(trace, guardedFetcher) : guardedFetcher,
           signal,
           userAgent: agent,
           browserFetchIntent: intent
         });
-        csrf = { identity, agent, token: promise };
+        csrf = { kind: 'token', identity, agent, token: promise };
         void promise.catch(() => {
-          if (csrf?.token === promise) csrf = undefined;
+          if (csrf.kind === 'token' && csrf.token === promise) csrf = { kind: 'empty' };
         });
       }
       return csrf.token;
@@ -88,8 +92,8 @@ export function createLinuxDoReadingSender({
     const body = new URLSearchParams({ topic_id: batch.topicId, topic_time: String(batch.topicTime) });
     for (const [floor, milliseconds] of Object.entries(batch.timings))
       body.set(`timings[${floor}]`, String(milliseconds));
-    for (let attempt = 0; attempt < 2; attempt++) {
-      let started = false;
+    const delivery: { state: ReadingDeliveryState } = { state: { kind: 'preparing', attempt: 'initial' } };
+    while (true) {
       try {
         const csrfToken = await token();
         assertCurrent();
@@ -106,7 +110,7 @@ export function createLinuxDoReadingSender({
           },
           fetcher: withRequestBeforeSend((input, init) => {
             beforePost?.();
-            started = true;
+            delivery.state = { kind: 'posting', attempt: delivery.state.attempt };
             return fetcher(input, init);
           }, assertCurrent),
           signal,
@@ -119,15 +123,16 @@ export function createLinuxDoReadingSender({
       } catch (error) {
         const failure = error as Error & { status?: number; safeToRetry?: boolean };
         if (
-          attempt === 0 &&
+          delivery.state.attempt === 'initial' &&
           (failure.status === 400 || failure.status === 403) &&
           /csrf|authenticity[ _-]?token/i.test(failure.message)
         ) {
-          csrf = undefined;
+          csrf = { kind: 'empty' };
+          delivery.state = { kind: 'preparing', attempt: 'csrf-refresh' };
           continue;
         }
         if (
-          !started &&
+          delivery.state.kind === 'preparing' &&
           !signal.aborted &&
           failure.status !== 401 &&
           failure.status !== 403 &&

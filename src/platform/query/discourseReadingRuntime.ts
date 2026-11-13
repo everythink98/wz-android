@@ -43,6 +43,8 @@ export interface ReadingSession {
   end: () => void;
 }
 
+type ReadingSealSchedule = { phase: 'first' } | { phase: 'paced'; at: number };
+
 /** Query owns observable facts; the bounded queue owns only unacknowledged increments. */
 export function createDiscourseReadingRuntime({
   queryClient,
@@ -297,20 +299,19 @@ export function createDiscourseReadingRuntime({
   const begin = (topicId: string): ReadingSession => {
     if (paused && !recovery) unpause();
     const identity = scope();
-    let enabled = false;
-    let ended = false;
+    let phase: 'inactive' | 'active' | 'ended' = 'inactive';
     let timer: ReturnType<typeof setInterval> | undefined;
     let lastTick = now();
     let lastInteraction = now();
-    let lastSeal = Number.NEGATIVE_INFINITY;
+    let sealSchedule: ReadingSealSchedule = { phase: 'first' };
     let bufferStart = now();
     let topicTime = 0;
     let timings: Record<number, number> = {};
-    let hasNew = false;
+    let bufferContent: 'known' | 'new' = 'known';
     let anchor: ReadingAnchor | undefined;
     let onscreen = new Map<number, number>();
     const totals = [...sessions].find((session) => session.topicId === topicId)?.totals || new Map<number, number>();
-    const valid = () => !ended && Boolean(identity) && scope() === identity && !disposed;
+    const valid = () => phase !== 'ended' && Boolean(identity) && scope() === identity && !disposed;
     const seal = () => {
       if (!topicTime || !Object.keys(timings).length) return;
       if (valid())
@@ -327,8 +328,9 @@ export function createDiscourseReadingRuntime({
         });
       timings = {};
       topicTime = 0;
-      hasNew = false;
-      lastSeal = now();
+      bufferContent = 'known';
+      const sealedAt = now();
+      sealSchedule = sealedAt === Number.NEGATIVE_INFINITY ? { phase: 'first' } : { phase: 'paced', at: sealedAt };
       bufferStart = now();
       pump();
     };
@@ -336,7 +338,15 @@ export function createDiscourseReadingRuntime({
       const time = now();
       const diff = time - lastTick;
       lastTick = time;
-      if (!valid() || paused || !enabled || !foreground || time - lastInteraction >= 180000 || diff <= 0 || diff > 2000)
+      if (
+        !valid() ||
+        paused ||
+        phase !== 'active' ||
+        !foreground ||
+        time - lastInteraction >= 180000 ||
+        diff <= 0 ||
+        diff > 2000
+      )
         return;
       if (topicTime && (topicTime + diff > 60000 || time - bufferStart > 60000)) seal();
       const eligible = [...onscreen].filter(
@@ -355,7 +365,7 @@ export function createDiscourseReadingRuntime({
           if (readPosts === current.readPosts) readPosts = { ...readPosts };
           readPosts[floor] = true;
           changed = true;
-          hasNew = true;
+          bufferContent = 'new';
         }
       }
       topicTime += diff;
@@ -372,14 +382,18 @@ export function createDiscourseReadingRuntime({
         };
         publish(topicId, current);
       }
-      if (lastSeal === Number.NEGATIVE_INFINITY || (hasNew && time - lastSeal >= 5000) || time - bufferStart >= 60000)
+      if (
+        sealSchedule.phase === 'first' ||
+        (bufferContent === 'new' && time - sealSchedule.at >= 5000) ||
+        time - bufferStart >= 60000
+      )
         seal();
       pump();
     };
     const stop = () => {
       if (timer) clearInterval(timer);
       timer = undefined;
-      enabled = false;
+      if (phase !== 'ended') phase = 'inactive';
       lastTick = now();
     };
     const resume = () => {
@@ -394,20 +408,20 @@ export function createDiscourseReadingRuntime({
       discard() {
         topicTime = 0;
         timings = {};
-        hasNew = false;
+        bufferContent = 'known';
         bufferStart = now();
       },
       tick,
       seal,
       stop() {
-        ended = true;
+        phase = 'ended';
         stop();
       },
       foreground(active: boolean) {
         if (timer) clearInterval(timer);
         timer = undefined;
         lastTick = now();
-        if (active && enabled && valid()) resume();
+        if (active && phase === 'active' && valid()) resume();
       }
     };
     sessions.add(owner);
@@ -424,13 +438,15 @@ export function createDiscourseReadingRuntime({
         anchor = nextAnchor;
       },
       active(active) {
-        if (enabled === active || ended) return;
+        const previousPhase = phase;
+        if ((previousPhase === 'active') === active || previousPhase === 'ended') return;
         if (!active) {
           tick();
           seal();
           stop();
         } else if (valid()) {
-          enabled = true;
+          // A scope callback can end this session while valid() is being checked.
+          if (phase !== 'ended') phase = 'active';
           resume();
         }
       },
@@ -439,11 +455,11 @@ export function createDiscourseReadingRuntime({
         lastInteraction = now();
       },
       end() {
-        if (ended) return;
+        if (phase === 'ended') return;
         tick();
         seal();
         stop();
-        ended = true;
+        phase = 'ended';
         sessions.delete(owner);
       }
     };

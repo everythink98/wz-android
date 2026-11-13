@@ -539,6 +539,54 @@ describe('notification screens', () => {
           layoutMeasurement: { width: 360, height: 600 }
         }
       };
+      const nearBottom = {
+        nativeEvent: { ...position.nativeEvent, contentOffset: { x: 0, y: 520 } }
+      };
+      await fireEvent.scroll(scroll, position);
+      await fireEvent(scroll, 'contentSizeChange', 360, 1200);
+      await flushFrames();
+      expect(scrollToEnd).toHaveBeenCalledTimes(1);
+      expect(scrollToEnd).toHaveBeenLastCalledWith({ animated: false });
+      scrollToEnd.mockClear();
+
+      await fireEvent(scroll, 'scrollBeginDrag');
+      await fireEvent.scroll(scroll, nearBottom);
+      await fireEvent(scroll, 'contentSizeChange', 360, 1200);
+      await flushFrames();
+      expect(scrollToEnd).toHaveBeenCalledTimes(1);
+      await fireEvent.scroll(scroll, position);
+      await fireEvent(scroll, 'contentSizeChange', 360, 1200);
+      await flushFrames();
+      expect(scrollToEnd).toHaveBeenCalledTimes(1);
+
+      const returnToLatest = view.getByRole('button', { name: '回到最新消息' }).props.onClick;
+      await fireEvent(scroll, 'scroll', {
+        nativeEvent: {
+          ...position.nativeEvent,
+          contentSize: {
+            width: 360,
+            get height() {
+              returnToLatest({ nativeEvent: {} });
+              return 1200;
+            }
+          }
+        }
+      });
+      scrollToEnd.mockClear();
+      await fireEvent.scroll(scroll, nearBottom);
+      await fireEvent(scroll, 'contentSizeChange', 360, 1200);
+      await flushFrames();
+      expect(scrollToEnd).not.toHaveBeenCalled();
+      expect(view.getByRole('button', { name: '回到最新消息' })).toBeTruthy();
+      await fireEvent.press(view.getByRole('button', { name: '回到最新消息' }));
+      scrollToEnd.mockClear();
+      await fireEvent.scroll(scroll, position);
+      await fireEvent(scroll, 'contentSizeChange', 360, 1200);
+      await flushFrames();
+      expect(scrollToEnd).toHaveBeenCalledTimes(1);
+      expect(scrollToEnd).toHaveBeenLastCalledWith({ animated: false });
+      scrollToEnd.mockClear();
+
       await fireEvent.scroll(scroll, position);
       await fireEvent(scroll, 'contentSizeChange', 360, 1200);
       // A real drag takes ownership even if the previous content layout queued a follow frame.

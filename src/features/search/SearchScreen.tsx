@@ -47,6 +47,19 @@ import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
+type SearchPageAttempt = {
+  phase: 'awaiting' | 'settled';
+  permission: 'unarmed' | 'armed';
+  source: Source;
+  page: number;
+  previousItemCount: number;
+};
+
+type SearchPageAuthority = { phase: 'empty'; permission: 'unarmed' | 'armed' } | SearchPageAttempt;
+
+type SearchPageFeedback =
+  'none' | { phase: 'completed'; context: string; source: Source; page: number; previousItemCount: number };
+
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 50,
   minimumViewTime: 0,
@@ -240,13 +253,7 @@ export const SearchScreen = memo(function SearchScreen({
   const internalListRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const bottomBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const listRef = scrollRef || internalListRef;
-  const autoLoadArmedRef = useRef(false);
-  const pendingAutoLoadRef = useRef<{
-    source: Source;
-    page: number;
-    previousItemCount: number;
-    settled: boolean;
-  } | null>(null);
+  const pageAuthority = useRef<SearchPageAuthority>({ phase: 'empty', permission: 'unarmed' });
   const paginationStateRef = useRef<{
     busy: boolean;
     groups: SearchGroup[];
@@ -256,12 +263,7 @@ export const SearchScreen = memo(function SearchScreen({
     groups: [],
     onLoadMore: onLoadMoreSearchSource
   });
-  const [completedPagination, setCompletedPagination] = useState<{
-    context: string;
-    source: Source;
-    page: number;
-    previousItemCount: number;
-  } | null>(null);
+  const [completedPagination, setCompletedPagination] = useState<SearchPageFeedback>('none');
   const enabledSearchSourceItems = useMemo(
     () => [
       { value: 'all' as const, label: '全部' },
@@ -275,9 +277,8 @@ export const SearchScreen = memo(function SearchScreen({
   const externalSearchSelected =
     visibleSearchSource !== 'all' && externalSearchSources.includes(visibleSearchSource as Source);
   const resetPaginationFeedback = useCallback(() => {
-    autoLoadArmedRef.current = false;
-    pendingAutoLoadRef.current = null;
-    setCompletedPagination(null);
+    pageAuthority.current = { phase: 'empty', permission: 'unarmed' };
+    setCompletedPagination('none');
   }, []);
   const scrollSearchToTop = useCallback(() => {
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -344,13 +345,12 @@ export const SearchScreen = memo(function SearchScreen({
   const paginationBusy = busy || visibleSearchGroups.some((group) => group.loading || group.loadingMore);
   const paginationContext = `${submittedQuery}\u0000${visibleSearchSource}`;
   useLayoutEffect(() => {
-    autoLoadArmedRef.current = false;
-    pendingAutoLoadRef.current = null;
-    setCompletedPagination(null);
+    pageAuthority.current = { phase: 'empty', permission: 'unarmed' };
+    setCompletedPagination('none');
   }, [paginationContext]);
   useLayoutEffect(() => {
-    const pendingAutoLoad = pendingAutoLoadRef.current;
-    if (pendingAutoLoad) {
+    const pendingAutoLoad = pageAuthority.current;
+    if (pendingAutoLoad.phase !== 'empty') {
       const pendingGroup = visibleSearchGroups.find((group) => group.source === pendingAutoLoad.source);
       const paginationCompleted = Boolean(
         pendingGroup &&
@@ -360,6 +360,7 @@ export const SearchScreen = memo(function SearchScreen({
       );
       if (paginationCompleted) {
         setCompletedPagination({
+          phase: 'completed',
           context: paginationContext,
           source: pendingAutoLoad.source,
           page: pendingAutoLoad.page,
@@ -367,7 +368,7 @@ export const SearchScreen = memo(function SearchScreen({
         });
       }
       if (!pendingGroup || pendingGroup.error || paginationCompleted) {
-        pendingAutoLoadRef.current = null;
+        pageAuthority.current = { phase: 'empty', permission: pageAuthority.current.permission };
       }
     }
     paginationStateRef.current = {
@@ -404,7 +405,11 @@ export const SearchScreen = memo(function SearchScreen({
       groups: visibleSearchGroups,
       mode: visibleSearchSource === 'all' ? 'overview' : 'source'
     });
-    if (!completedPagination || completedPagination.context !== paginationContext || visibleSearchSource === 'all') {
+    if (
+      completedPagination === 'none' ||
+      completedPagination.context !== paginationContext ||
+      visibleSearchSource === 'all'
+    ) {
       return items;
     }
     const completedGroup = visibleSearchGroups.find((group) => group.source === completedPagination.source);
@@ -453,22 +458,22 @@ export const SearchScreen = memo(function SearchScreen({
           : '搜索结果，已完成，缺少结构化结果';
   const handleSearchScrollBeginDrag = useCallback(() => {
     const state = paginationStateRef.current;
-    autoLoadArmedRef.current = false;
-    if (state.busy || (pendingAutoLoadRef.current && !pendingAutoLoadRef.current.settled)) {
+    pageAuthority.current.permission = 'unarmed';
+    if (state.busy || pageAuthority.current.phase === 'awaiting') {
       return;
     }
-    autoLoadArmedRef.current = true;
+    pageAuthority.current.permission = 'armed';
     listRef.current?.recordInteraction();
     listRef.current?.recomputeViewableItems();
   }, []);
   const handleSearchViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<SearchListItem>[] }) => {
-      if (!autoLoadArmedRef.current) {
+      if (pageAuthority.current.permission !== 'armed') {
         return;
       }
       const state = paginationStateRef.current;
-      if (state.busy || (pendingAutoLoadRef.current && !pendingAutoLoadRef.current.settled)) {
-        autoLoadArmedRef.current = false;
+      if (state.busy || pageAuthority.current.phase === 'awaiting') {
+        pageAuthority.current.permission = 'unarmed';
         return;
       }
       const orderedItems = [...viewableItems].sort(
@@ -490,17 +495,18 @@ export const SearchScreen = memo(function SearchScreen({
         ) {
           continue;
         }
-        autoLoadArmedRef.current = false;
-        const pendingAutoLoad = {
+        pageAuthority.current.permission = 'unarmed';
+        const pendingAutoLoad: SearchPageAttempt = {
           source: group.source,
           page,
           previousItemCount: currentGroup.items.length,
-          settled: false
+          phase: 'awaiting',
+          permission: pageAuthority.current.permission
         };
-        pendingAutoLoadRef.current = pendingAutoLoad;
+        pageAuthority.current = pendingAutoLoad;
         const settle = () => {
           // Keep page feedback until Query commits; only settle this request's lock.
-          pendingAutoLoad.settled = true;
+          pendingAutoLoad.phase = 'settled';
         };
         void Promise.resolve(state.onLoadMore(group.source, page)).then(settle, settle);
         return;
@@ -509,7 +515,7 @@ export const SearchScreen = memo(function SearchScreen({
     []
   );
   useLayoutEffect(() => {
-    autoLoadArmedRef.current = false;
+    pageAuthority.current.permission = 'unarmed';
   }, [query, submittedQuery, visibleSearchSource]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(
     ({ index, item }) => {

@@ -126,13 +126,6 @@ class SvgRendererPolicyTest {
   }
 
   @Test
-  fun rendererQueueIsBoundedAndCountsTheActiveDocument() {
-    assertTrue(hasSvgPosterQueueCapacity(active = false, queued = MAX_RENDER_REQUESTS - 1))
-    assertFalse(hasSvgPosterQueueCapacity(active = false, queued = MAX_RENDER_REQUESTS))
-    assertFalse(hasSvgPosterQueueCapacity(active = true, queued = MAX_RENDER_REQUESTS - 1))
-  }
-
-  @Test
   fun stalePageErrorsCannotFailTheCurrentRenderRequest() {
     val current = "https://svg-renderer.invalid/render/2/"
     assertTrue(isCurrentSvgPageError(current, current, isForMainFrame = true))

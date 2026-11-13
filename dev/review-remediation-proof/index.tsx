@@ -1880,8 +1880,6 @@ function useRecoveryProbe(control: { active: boolean; scope: string; handoff: ()
     checkingRequestIdRef: useRef(0),
     closeYaohuoLoginPanel: () => undefined,
     commitLinuxDoWebViewUserAgent: () => undefined,
-    linuxDoPanelClosingSessionRef: useRef<number | null>(null),
-    linuxDoPanelCloseSettleTimerRef: useRef<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewMountTimerRef: useRef<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewRef: useRef<WebView | null>(null),
     linuxDoWebViewSessionRef: useRef(0),

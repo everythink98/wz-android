@@ -139,8 +139,6 @@ function createController(
     checkingRequestIdRef: ref(0),
     closeYaohuoLoginPanel: vi.fn(),
     commitLinuxDoWebViewUserAgent,
-    linuxDoPanelClosingSessionRef: ref<number | null>(null),
-    linuxDoPanelCloseSettleTimerRef: ref<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewMountTimerRef: ref<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewRef: linuxDoWebViewRef as never,
     linuxDoWebViewSessionRef,
@@ -404,6 +402,7 @@ describe('linux.do visible verification coordinator', () => {
     async (order) => {
       vi.useFakeTimers();
       let settleProbe!: () => void;
+      let reenterScopeRead: (() => void) | undefined;
       const probe = egressMocks.start.getMockImplementation()!(undefined);
       probe.settled = new Promise<void>((resolve) => (settleProbe = resolve));
       egressMocks.start.mockReturnValueOnce(probe);
@@ -412,7 +411,13 @@ describe('linux.do visible verification coordinator', () => {
       const resume = vi.fn(async () => 'verification-required' as const);
       const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
         fetcher: vi.fn<Fetcher>(),
-        awaitLinuxDoCookieHandoff: () => handoff
+        awaitLinuxDoCookieHandoff: () => handoff,
+        getRecoveryScope: () => {
+          const reenter = reenterScopeRead;
+          reenterScopeRead = undefined;
+          reenter?.();
+          return 'current';
+        }
       });
       await controller.showLinuxDoVerification('验证', { queryKey: recoveryQueryKeyFor('return'), resume });
       const key = linuxDoWebViewSessionRef.current;
@@ -447,9 +452,11 @@ describe('linux.do visible verification coordinator', () => {
       ready();
       await vi.advanceTimersByTimeAsync(0);
       expect(resume).not.toHaveBeenCalled();
+      reenterScopeRead = ready;
       settleProbe();
       await vi.advanceTimersByTimeAsync(0);
       expect(resume).not.toHaveBeenCalled();
+      expect(reenterScopeRead).toBeUndefined();
       finishHandoff();
       await vi.advanceTimersByTimeAsync(0);
       expect(resume).toHaveBeenCalledOnce();
@@ -618,14 +625,14 @@ describe('linux.do visible verification coordinator', () => {
       fetcher: vi.fn<Fetcher>()
     });
     await controller.showLinuxDoVerification();
-    const send = (status: string, userAgent: string) =>
+    const send = (status: string, userAgent: string, documentKey = 'https://linux.do/latest:1') =>
       controller.handleLinuxDoMessage(
         {
           nativeEvent: {
             url: 'https://linux.do/latest',
             data: JSON.stringify({
               type: 'linuxdo-webview',
-              documentKey: 'https://linux.do/latest:1',
+              documentKey,
               status,
               userAgent,
               hasChallengeMarker: true
@@ -635,16 +642,24 @@ describe('linux.do visible verification coordinator', () => {
         linuxDoWebViewSessionRef.current
       );
     send('logged-out', 'current-agent');
+    expect(commitLinuxDoWebViewUserAgent).toHaveBeenCalledTimes(1);
+    const probe = egressMocks.start.mock.results[0].value;
+    probe.cancel.mockImplementationOnce(() => send('logged-in', 'reentrant-agent', 'https://linux.do/latest:2'));
     controller.beginLinuxDoDocumentNavigation(linuxDoWebViewSessionRef.current);
+    expect(egressMocks.start).toHaveBeenCalledTimes(2);
+    expect(probe.cancel).toHaveBeenCalledTimes(2);
+    const replacement = egressMocks.start.mock.results[1].value;
+    expect(replacement.cancel).not.toHaveBeenCalled();
     const parseCount = events.filter((event) => event.phase === 'parse').length;
     send('logged-in', 'late-agent');
     expect(events.filter((event) => event.phase === 'parse')).toHaveLength(parseCount);
-    expect(commitLinuxDoWebViewUserAgent).toHaveBeenCalledTimes(1);
+    expect(commitLinuxDoWebViewUserAgent).toHaveBeenCalledTimes(2);
     await controller.checkLinuxDoCookie();
     const checkpoint = events.find((event) => event.egressCheckpoint === 'check');
     expect(checkpoint?.pageStatus).toBeUndefined();
     expect(checkpoint?.hasChallengeMarker).toBeUndefined();
     expect(checkpoint?.pageObservationAgeMs).toBeUndefined();
+    expect(replacement.snapshot).not.toHaveBeenCalled();
   });
 
   it.each(['completed', 'verification-required', 'failed', 'stale'] as const)(

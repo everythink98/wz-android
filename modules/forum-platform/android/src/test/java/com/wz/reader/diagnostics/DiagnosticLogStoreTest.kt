@@ -5,6 +5,15 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Delayed
+import java.util.concurrent.FutureTask
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class DiagnosticLogStoreTest {
   @Test fun retainsOnlyValidSocketLocalPortsWithoutAddresses() {
@@ -71,6 +80,8 @@ class DiagnosticLogStoreTest {
     assertFalse(DiagnosticJournal.recordStartupPhase("PRIVATE_STARTUP_PAYLOAD"))
     assertTrue(DiagnosticJournal.recordStartupPhase("page-ready"))
     assertFalse(DiagnosticJournal.recordStartupPhase("page-ready"))
+    assertTrue(DiagnosticJournal.recordStartupPhase("page-layout"))
+    assertFalse(DiagnosticJournal.recordStartupPhase("page-layout"))
   }
 
   @Test fun keepsFourBoundedSegmentsAndReopensAfterRestart() {
@@ -107,4 +118,121 @@ class DiagnosticLogStoreTest {
     assertTrue(failed.writeFailureCount >= 1L)
     assertEquals("", failed.read())
   }
+  @Test fun retainsQueuedDataAndSchedulingObligationAfterSchedulerRejection() {
+    val directory = temporary.newFolder()
+    val stores = RecordingDiagnosticStores(directory)
+    val scheduler = CapturingJournalScheduler()
+    val queue = PendingDiagnosticBatch(scheduler, Any(), { directory.isDirectory }, stores::drain)
+    try {
+      scheduler.rejectNext = true
+      queue.enqueue("js", "before-rejection")
+      queue.enqueue("native", "coalesced-after-rejection")
+      assertEquals(1, scheduler.attempts)
+      assertEquals(1L, queue.droppedCount)
+      assertEquals("", stores.js.read())
+      queue.flush()
+      assertEquals(listOf("js" to "before-rejection", "native" to "coalesced-after-rejection"), stores.batches.single())
+      assertEquals("before-rejection\n", stores.js.read())
+      assertEquals("coalesced-after-rejection\n", stores.native.read())
+      queue.enqueue("js", "rearmed")
+      assertEquals(2, scheduler.attempts)
+      scheduler.runScheduled(0)
+      assertEquals("before-rejection\nrearmed\n", stores.js.read())
+      assertEquals(1L, queue.droppedCount)
+    } finally { scheduler.shutdownNow() }
+  }
+
+  @Test fun allowsAnOlderScheduledFlushToDrainTheCurrentNewBatch() {
+    val directory = temporary.newFolder()
+    val stores = RecordingDiagnosticStores(directory)
+    val scheduler = CapturingJournalScheduler()
+    val queue = PendingDiagnosticBatch(scheduler, Any(), { directory.isDirectory }, stores::drain)
+    try {
+      queue.enqueue("js", "first")
+      queue.flush()
+      queue.enqueue("js", "second")
+      assertEquals(2, scheduler.attempts)
+      scheduler.runScheduled(0)
+      assertEquals("first\nsecond\n", stores.js.read())
+      assertEquals(listOf("js" to "second"), stores.batches.last())
+      scheduler.runScheduled(1)
+      assertEquals(listOf(listOf("js" to "first"), listOf("js" to "second"), emptyList<Pair<String, String>>()), stores.batches)
+      assertEquals("first\nsecond\n", stores.js.read())
+      assertEquals(0L, queue.droppedCount)
+    } finally { scheduler.shutdownNow() }
+  }
+
+  @Test fun detachesBeforeIoAndAdmitsReentrantAndConcurrentEntriesDuringDrain() {
+    val directory = temporary.newFolder()
+    val stores = RecordingDiagnosticStores(directory)
+    val scheduler = CapturingJournalScheduler()
+    val workerDone = CountDownLatch(1)
+    val workerFailure = AtomicReference<Throwable>()
+    var producer: Thread? = null
+    var firstDrain = true
+    lateinit var queue: PendingDiagnosticBatch
+    queue = PendingDiagnosticBatch(scheduler, Any(), { directory.isDirectory }, { batch ->
+      if (firstDrain) {
+        firstDrain = false
+        queue.enqueue("native", "from-callback")
+        producer = Thread({
+          try { queue.enqueue("js", "from-producer") }
+          catch (failure: Throwable) { workerFailure.set(failure) }
+          finally { workerDone.countDown() }
+        }, "journal-drain-producer").apply { isDaemon = true; start() }
+        // A timeout only fails the oracle; successful completion is the ordering proof.
+        assertTrue("producer must finish while the old drain is still held", workerDone.await(5, TimeUnit.SECONDS))
+        workerFailure.get()?.let { throw it }
+      }
+      stores.drain(batch)
+    })
+    try {
+      queue.enqueue("js", "outer-js")
+      queue.enqueue("native", "outer-native")
+      queue.flush()
+      assertEquals(listOf("js" to "outer-js", "native" to "outer-native"), stores.batches.single())
+      assertEquals("outer-js\n", stores.js.read())
+      assertEquals("outer-native\n", stores.native.read())
+      assertEquals(2, scheduler.attempts)
+      queue.flush()
+      assertEquals(listOf("native" to "from-callback", "js" to "from-producer"), stores.batches.last())
+      assertEquals("outer-js\nfrom-producer\n", stores.js.read())
+      assertEquals("outer-native\nfrom-callback\n", stores.native.read())
+      assertEquals(0L, queue.droppedCount)
+    } finally {
+      try { producer?.join(5_000) }
+      finally { scheduler.shutdownNow() }
+      assertFalse("own producer must terminate", producer?.isAlive == true)
+    }
+  }
+
+  private class RecordingDiagnosticStores(directory: File) {
+    val js = DiagnosticLogStore(directory, "js")
+    val native = DiagnosticLogStore(directory, "native")
+    val batches = mutableListOf<List<Pair<String, String>>>()
+    fun drain(batch: List<Pair<String, String>>) {
+      batches.add(batch.toList())
+      js.append(batch.filter { it.first == "js" }.map { it.second })
+      native.append(batch.filter { it.first == "native" }.map { it.second })
+    }
+  }
+
+  private class CapturingJournalScheduler : ScheduledThreadPoolExecutor(1,
+    ThreadFactory { throw AssertionError("captured scheduler must not start real workers") }) {
+    var rejectNext = false
+    var attempts = 0; private set
+    private val accepted = mutableListOf<FutureTask<Unit>>()
+    override fun schedule(command: Runnable, delay: Long, unit: TimeUnit): ScheduledFuture<*> {
+      assertEquals(200L, delay)
+      assertEquals(TimeUnit.MILLISECONDS, unit)
+      attempts++
+      if (rejectNext) { rejectNext = false; throw RejectedExecutionException("rejected by SDK boundary") }
+      return object : FutureTask<Unit>(command, Unit), ScheduledFuture<Unit> {
+        override fun getDelay(unit: TimeUnit): Long = error("unused future query")
+        override fun compareTo(other: Delayed): Int = error("unused future query")
+      }.also { accepted.add(it) }
+    }
+    fun runScheduled(index: Int) { accepted[index].run(); accepted[index].get() }
+  }
+
 }

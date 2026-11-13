@@ -28,6 +28,12 @@ interface NativeImageDownload {
   releaseDownload(id: string): void;
 }
 
+type ImageSaveLease =
+  | { kind: 'unowned' }
+  | { kind: 'local-file'; uri: string }
+  | { kind: 'downloading'; native: NativeImageDownload; id: string }
+  | { kind: 'downloaded'; native: NativeImageDownload; id: string; uri: string };
+
 function assertCurrent(options: ImageSaveRequestOptions) {
   if (options.signal?.aborted) throw new Error('图片保存已取消');
   options.assertCurrent?.();
@@ -72,39 +78,51 @@ export async function saveImageUriToLibrary(
       throw new Error('图片地址不支持保存');
     }
     assertCurrent(requestOptions);
-    let savedUri = '';
-    let native: NativeImageDownload | null = null;
-    let downloadId: string | undefined;
+    let lease: ImageSaveLease = { kind: 'unowned' };
     const abort = () => {
-      if (downloadId) native?.cancelDownload(downloadId);
+      if (lease.kind === 'downloading' || lease.kind === 'downloaded') lease.native.cancelDownload(lease.id);
     };
     try {
       markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
       if (dataImage) {
         const baseDirectory = FileSystem.cacheDirectory;
         if (!baseDirectory) throw new Error('无法创建图片文件');
-        savedUri = `${baseDirectory}${safeFileName('forum-image', dataImage.extension)}`;
-        await FileSystem.writeAsStringAsync(savedUri, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
+        lease = { kind: 'local-file', uri: `${baseDirectory}${safeFileName('forum-image', dataImage.extension)}` };
+        await FileSystem.writeAsStringAsync(lease.uri, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
       } else {
-        native = requireOptionalNativeModule<NativeImageDownload>('ImageDownload');
+        const native = requireOptionalNativeModule<NativeImageDownload>('ImageDownload');
         if (!native) throw new Error('当前安装包不支持保存图片，请更新后重试。');
-        downloadId = native.createDownload();
+        const id = native.createDownload();
+        lease = { kind: 'downloading', native, id };
         requestOptions.signal?.addEventListener('abort', abort);
         assertCurrent(requestOptions);
-        const downloaded = await native.download(downloadId, uri, imageRequestHeadersForUrl(uri, requestOptions) || {});
-        savedUri = downloaded.uri;
+        const downloaded = await native.download(id, uri, imageRequestHeadersForUrl(uri, requestOptions) || {});
+        lease = { kind: 'downloaded', native, id, uri: downloaded.uri };
         markDiagnosticStage(trace, 'parse', {
           contentType: downloaded.contentType || 'unknown',
           byteCount: downloaded.byteCount
         });
       }
       markDiagnosticStage(trace, 'persist', { state: 'media-library-start' });
-      await saveLocalImageFileToLibrary(savedUri, () => assertCurrent(requestOptions));
+      await saveLocalImageFileToLibrary(lease.uri, () => assertCurrent(requestOptions));
       markDiagnosticStage(trace, 'persist', { state: 'media-library' });
     } finally {
       requestOptions.signal?.removeEventListener('abort', abort);
-      if (native && downloadId) native.releaseDownload(downloadId);
-      else if (savedUri) await FileSystem.deleteAsync(savedUri, { idempotent: true }).catch(() => undefined);
+      switch (lease.kind) {
+        case 'unowned':
+          break;
+        case 'local-file':
+          await FileSystem.deleteAsync(lease.uri, { idempotent: true }).catch(() => undefined);
+          break;
+        case 'downloading':
+        case 'downloaded':
+          lease.native.releaseDownload(lease.id);
+          break;
+        default: {
+          const unreachable: never = lease;
+          throw new Error(`Unknown image save lease: ${unreachable}`);
+        }
+      }
     }
     if (ownsTrace) {
       finishDiagnosticTrace(trace, 'success');

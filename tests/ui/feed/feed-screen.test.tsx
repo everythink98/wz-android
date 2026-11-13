@@ -509,6 +509,9 @@ describe('feed initial content readiness', () => {
     await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
     await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
     expect(onInitialContentReady).toHaveBeenCalledTimes(1);
+    await view.rerender(renderFeed(false, [], { feedSource: 'linuxdo', onInitialContentReady }));
+    await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
+    expect(onInitialContentReady).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -966,10 +969,16 @@ describe('Feed loading', () => {
     }
   );
 
-  it('does not expose a terminal outcome while loading', async () => {
-    const view = await render(renderFeed(true, [topic], { feedOutcomeKind: 'data' }));
+  it('waits for a terminal result after list load and reports readiness only once', async () => {
+    const onInitialContentReady = jest.fn();
+    const view = await render(renderFeed(true, [topic], { feedOutcomeKind: 'data', onInitialContentReady }));
 
     expect(view.queryByTestId('feed-outcome-data-all-default')).toBeNull();
+    expect(onInitialContentReady).not.toHaveBeenCalled();
+    await view.rerender(renderFeed(false, [], { onInitialContentReady }));
+    expect(onInitialContentReady).toHaveBeenCalledTimes(1);
+    await view.rerender(renderFeed(false, [topic, { ...topic, id: 'second' }], { onInitialContentReady }));
+    expect(onInitialContentReady).toHaveBeenCalledTimes(1);
   });
 
   it('shows one stable loading scene before data and enables pull-to-refresh after data arrives', async () => {

@@ -118,7 +118,8 @@ CREATE TABLE topic_submission_attempts (source TEXT NOT NULL, identity_key TEXT 
 CREATE TABLE topic_creation_preferences (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 PRAGMA user_version = 2;
 `;
-let databasePromise: Promise<SQLiteDatabase> | undefined;
+type DraftConnection = { kind: 'cold' } | { kind: 'retained'; db: SQLiteDatabase };
+let connection: DraftConnection = { kind: 'cold' };
 const { enqueue, transaction, assertUsable } = createSqliteExecutor(
   '草稿事务状态不明，请重新启动后核对。',
   '草稿事务无法确认，未清理原记录。'
@@ -173,13 +174,13 @@ async function connect() {
   }
 }
 
-function database() {
+async function database() {
   assertUsable();
-  databasePromise ??= connect().catch((error) => {
-    databasePromise = undefined;
-    throw error;
-  });
-  return databasePromise;
+  if (connection.kind === 'retained') return connection.db;
+  // Public operations share the executor queue, so initialization cannot overlap.
+  const db = await connect();
+  connection = { kind: 'retained', db };
+  return db;
 }
 
 async function read<T extends TopicDraft | TopicSubmissionAttempt>(

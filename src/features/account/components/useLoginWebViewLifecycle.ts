@@ -4,6 +4,21 @@ import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import type { LoginWebViewDiagnosticState } from '../useAccountController';
 
+type AutomaticCheckPhase = 'available' | 'consumed' | 'failed' | 'failed-consumed';
+
+type LoginPage = {
+  error: string;
+  key: number;
+  stage: 'unsettled' | 'settled' | 'remount-required';
+};
+
+const AUTOMATIC_CHECK_TRANSITIONS = {
+  available: { consume: 'consumed', fail: 'failed', clearFailure: 'available' },
+  consumed: { consume: 'consumed', fail: 'failed-consumed', clearFailure: 'consumed' },
+  failed: { consume: 'failed-consumed', fail: 'failed', clearFailure: 'available' },
+  'failed-consumed': { consume: 'failed-consumed', fail: 'failed-consumed', clearFailure: 'consumed' }
+} as const satisfies Record<AutomaticCheckPhase, Record<'consume' | 'fail' | 'clearFailure', AutomaticCheckPhase>>;
+
 export function useLoginWebViewLifecycle({
   checking,
   recoveryPending = false,
@@ -29,11 +44,9 @@ export function useLoginWebViewLifecycle({
   onSetLoading: (value: boolean) => void;
   onWebViewState: (state: LoginWebViewDiagnosticState, attempt?: number) => void;
 }) {
-  const [page, setPage] = useState({ error: '', key: 0, needsRemount: false, settled: false });
+  const [page, setPage] = useState<LoginPage>({ error: '', key: 0, stage: 'unsettled' });
   const current = useCommittedRef({ visible: visible && !webViewBlockMessage, key: page.key });
-  const documentUrl = useRef('');
-  const autoChecked = useRef(false);
-  const failed = useRef(false);
+  const documentStateRef = useRef<{ phase: AutomaticCheckPhase; url: string }>({ phase: 'available', url: '' });
   const isCurrent = () => current.current.visible && current.current.key === page.key;
   useEffect(
     () => () => {
@@ -43,27 +56,28 @@ export function useLoginWebViewLifecycle({
   );
   useEffect(() => {
     if (visible && !webViewBlockMessage) return;
-    documentUrl.current = '';
-    if (!visible) autoChecked.current = false;
-    failed.current = false;
-    setPage((current) => ({ key: current.key + 1, error: '', needsRemount: false, settled: false }));
+    documentStateRef.current.url = '';
+    documentStateRef.current.phase = visible
+      ? AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].clearFailure
+      : 'available';
+    setPage((current) => ({ key: current.key + 1, error: '', stage: 'unsettled' }));
   }, [visible, webViewBlockMessage]);
   useEffect(() => {
     if (!visible) return;
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') autoChecked.current = true;
+      if (state !== 'active')
+        documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].consume;
     });
     return () => subscription.remove();
   }, [visible]);
   useEffect(() => {
     if (!visible || !loading || webViewBlockMessage) return;
     const timeout = setTimeout(() => {
-      failed.current = true;
+      documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].fail;
       setPage((current) => ({
         ...current,
         key: current.key + 1,
-        settled: true,
-        needsRemount: true,
+        stage: 'remount-required',
         error: `${messagePrefix}页面打开超时：请检查网络后重新打开。`
       }));
       onWebViewState('timeout', credentialAttempt);
@@ -72,11 +86,14 @@ export function useLoginWebViewLifecycle({
     return () => clearTimeout(timeout);
   }, [credentialAttempt, messagePrefix, loading, onSetLoading, onWebViewState, visible, webViewBlockMessage]);
   return {
-    ...page,
+    error: page.error,
+    key: page.key,
+    needsRemount: page.stage === 'remount-required',
+    settled: page.stage !== 'unsettled',
     isCurrent,
     check: () => {
       if (!isCurrent() || checking) return;
-      autoChecked.current = true;
+      documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].consume;
       onCheck();
     },
     message: (event: WebViewMessageEvent) => {
@@ -85,13 +102,12 @@ export function useLoginWebViewLifecycle({
         !isCurrent() ||
         checking ||
         webViewBlockMessage ||
-        failed.current ||
-        autoChecked.current ||
+        documentStateRef.current.phase !== 'available' ||
         AppState.currentState !== 'active'
       )
         return;
       try {
-        const url = new URL(documentUrl.current);
+        const url = new URL(documentStateRef.current.url);
         const messageUrl = new URL(event.nativeEvent.url);
         if (
           url.protocol !== 'https:' ||
@@ -119,7 +135,7 @@ export function useLoginWebViewLifecycle({
           (data.status !== 'logged-in' && data.status !== 'logged-out')
         )
           return;
-        autoChecked.current = true;
+        documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].consume;
         onWebViewState('auto-check', credentialAttempt);
         onCheck();
       } catch {
@@ -128,54 +144,56 @@ export function useLoginWebViewLifecycle({
     },
     refresh: () => {
       if (!isCurrent() || checking) return;
-      autoChecked.current = true;
-      failed.current = false;
-      documentUrl.current = '';
+      documentStateRef.current.phase = 'consumed';
+      documentStateRef.current.url = '';
       setPage((current) => ({
         error: '',
-        key: current.key + Number(current.needsRemount),
-        needsRemount: false,
-        settled: false
+        key: current.key + Number(current.stage === 'remount-required'),
+        stage: 'unsettled'
       }));
       onSetLoading(true);
-      if (!page.needsRemount) webViewRef.current?.reload();
+      if (page.stage !== 'remount-required') webViewRef.current?.reload();
     },
     start: (url = '', loading = true) => {
       if (!isCurrent()) return;
-      if (url !== documentUrl.current || loading) failed.current = false;
-      documentUrl.current = url;
+      if (url !== documentStateRef.current.url || loading)
+        documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].clearFailure;
+      documentStateRef.current.url = url;
       onWebViewState('start', credentialAttempt);
-      setPage((current) => ({ ...current, error: '', needsRemount: false, settled: false }));
+      setPage((current) => ({ ...current, error: '', stage: 'unsettled' }));
       onSetLoading(loading);
     },
     loadEnd: (failed: boolean) => {
       if (!isCurrent()) return;
       onSetLoading(false);
-      setPage((current) => ({ ...current, settled: true, error: failed ? current.error : '' }));
+      setPage((current) => ({
+        ...current,
+        stage: current.stage === 'remount-required' ? 'remount-required' : 'settled',
+        error: failed ? current.error : ''
+      }));
       if (failed) return;
       onWebViewState('ready', credentialAttempt);
     },
     fail: (description: string) => {
       if (!isCurrent()) return;
-      failed.current = true;
+      documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].fail;
       onWebViewState('error', credentialAttempt);
       onSetLoading(false);
       setPage((current) => ({
         ...current,
-        settled: true,
+        stage: current.stage === 'remount-required' ? 'remount-required' : 'settled',
         error: `${messagePrefix}页面加载失败：${description || '请检查网络后重试。'}`
       }));
     },
     rendererGone: () => {
       if (!isCurrent()) return;
-      failed.current = true;
+      documentStateRef.current.phase = AUTOMATIC_CHECK_TRANSITIONS[documentStateRef.current.phase].fail;
       onWebViewState('renderer-gone', credentialAttempt);
       onSetLoading(false);
       setPage((current) => ({
         ...current,
         key: current.key + 1,
-        settled: true,
-        needsRemount: true,
+        stage: 'remount-required',
         error: `${messagePrefix}登录页面已停止，请刷新页面重试。`
       }));
     }

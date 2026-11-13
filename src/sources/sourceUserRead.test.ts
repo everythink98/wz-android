@@ -88,6 +88,47 @@ describe('Yaohuo activity scan resources', () => {
 });
 
 describe('source user read', () => {
+  it('attempts the V2EX Atom fallback only once when HTML fails and the feed is empty', async () => {
+    const failure = new Error('HTML unavailable');
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith('/member/neo/topics')) throw failure;
+      if (url.endsWith('/feed/member/neo.xml')) return new Response('');
+      throw new Error(`Unexpected fixture request: ${url}`);
+    });
+    const profile: UserDetails = { source: 'v2ex', id: 'neo', username: 'neo', url: 'https://www.v2ex.com/member/neo' };
+    const result = await getUserTopics({ source: 'v2ex', profile, fetcher });
+    expect(result).toMatchObject({ topics: [], hasMoreTopics: false, nextTopicsCursor: null });
+    expect(sourceDiagnosticSummary(result)).toMatchObject({ parserVariant: 'atom-user-topics', isExpectedEmpty: true });
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      '/member/neo/topics',
+      '/feed/member/neo.xml'
+    ]);
+  });
+
+  it('propagates a V2EX cursor-page failure without attempting an Atom fallback', async () => {
+    const failure = new Error('next HTML page unavailable');
+    const fetcher = vi.fn(async () => {
+      throw failure;
+    });
+    const profile: UserDetails = { source: 'v2ex', id: 'neo', username: 'neo', url: 'https://www.v2ex.com/member/neo' };
+    await expect(getUserTopics({ source: 'v2ex', profile, cursor: '2', fetcher })).rejects.toBe(failure);
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith('https://www.v2ex.com/member/neo/topics?p=2', expect.anything());
+  });
+
+  it('retains an empty V2EX HTML page and its continuation when the optional Atom fallback fails', async () => {
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith('/member/neo/topics'))
+        return new Response('<div class="ps_container"><a href="/member/neo/topics?p=2">下一页</a></div>');
+      if (url.endsWith('/feed/member/neo.xml')) throw new Error('optional feed unavailable');
+      throw new Error(`Unexpected fixture request: ${url}`);
+    });
+    const profile: UserDetails = { source: 'v2ex', id: 'neo', username: 'neo', url: 'https://www.v2ex.com/member/neo' };
+    const result = await getUserTopics({ source: 'v2ex', profile, fetcher });
+    expect(result).toMatchObject({ topics: [], hasMoreTopics: true, nextTopicsCursor: '2' });
+    expect(sourceDiagnosticSummary(result)).toMatchObject({ parserVariant: 'html-user-topics', isExpectedEmpty: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it.each([8, 0, undefined])(
     'reads LinuxDo post_count as replies without subtracting topics (%s)',
     async (postCount) => {

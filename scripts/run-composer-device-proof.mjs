@@ -258,28 +258,38 @@ export async function connectComposerImeDom(adb) {
     { once: true }
   );
   let socket;
-  /** @type {(() => void) | null} */
-  let releaseSocket = null;
-  /** @type {(() => void) | null} */
-  let releaseForward = () => {
-    adb('forward', '--remove', `tcp:${port}`);
-  };
+  /**
+   * @type {{ kind: 'forward-only' } |
+   *   { kind: 'socket-and-forward' | 'socket-only', releaseSocket: () => void } |
+   *   { kind: 'released' }}
+   */
+  let cleanupState = { kind: 'forward-only' };
   const close = () => {
     owner.abort(new Error('Composer DOM connection closed'));
     /** @type {unknown[]} */
     const failures = [];
     try {
-      if (releaseSocket) {
-        releaseSocket();
-        releaseSocket = null;
+      if (cleanupState.kind === 'socket-and-forward' || cleanupState.kind === 'socket-only') {
+        cleanupState.releaseSocket();
+        cleanupState =
+          cleanupState.kind === 'socket-and-forward'
+            ? { kind: 'forward-only' }
+            : cleanupState.kind === 'socket-only'
+              ? { kind: 'released' }
+              : cleanupState;
       }
     } catch (error) {
       failures.push(error);
     }
     try {
-      if (releaseForward) {
-        releaseForward();
-        releaseForward = null;
+      if (cleanupState.kind === 'socket-and-forward' || cleanupState.kind === 'forward-only') {
+        adb('forward', '--remove', `tcp:${port}`);
+        cleanupState =
+          cleanupState.kind === 'socket-and-forward'
+            ? { kind: 'socket-only', releaseSocket: cleanupState.releaseSocket }
+            : cleanupState.kind === 'forward-only'
+              ? { kind: 'released' }
+              : cleanupState;
       }
     } catch (error) {
       failures.push(error);
@@ -298,10 +308,13 @@ export async function connectComposerImeDom(adb) {
     const closed = () => owner.abort(new Error('Composer DOM connection closed'));
     socket.addEventListener('error', failed);
     socket.addEventListener('close', closed);
-    releaseSocket = () => {
-      socket.removeEventListener('error', failed);
-      socket.removeEventListener('close', closed);
-      socket.close();
+    cleanupState = {
+      kind: 'socket-and-forward',
+      releaseSocket: () => {
+        socket.removeEventListener('error', failed);
+        socket.removeEventListener('close', closed);
+        socket.close();
+      }
     };
     await new Promise((resolve, reject) => {
       const cleanup = () => {
@@ -335,9 +348,13 @@ export async function connectComposerImeDom(adb) {
             return;
           }
           const requestId = ++id;
+          /** @type {'inactive' | 'waiting'} */
+          let settlement = 'inactive';
           /** @param {{error: unknown} | {value: unknown}} result */
           const finish = (result) => {
-            if (!pending.delete(cancel)) return;
+            if (settlement !== 'waiting') return;
+            settlement = 'inactive';
+            pending.delete(cancel);
             clearTimeout(timer);
             socket.removeEventListener('message', listener);
             if ('error' in result) reject(result.error);
@@ -353,6 +370,7 @@ export async function connectComposerImeDom(adb) {
           };
           const timer = setTimeout(() => cancel(new Error('Composer DOM capture timed out')), 5000);
           pending.add(cancel);
+          settlement = 'waiting';
           socket.addEventListener('message', listener);
           try {
             socket.send(

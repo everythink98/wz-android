@@ -88,6 +88,22 @@ afterEach(() => {
 });
 
 describe('topic drafts and publication receipts', () => {
+  it('retries a failed initialization for the next queued read and reuses its retained connection', async () => {
+    const store = await load();
+    harness.fail = 'PRAGMA busy_timeout';
+    const failed = expect(store.loadTopicDraft('nodeseek', 'nodeseek:42')).rejects.toThrow('disk unavailable');
+    const queued = store.loadTopicDraft('linuxdo', 'linuxdo:7');
+
+    await failed;
+    await expect(queued).resolves.toBeNull();
+    expect(harness.connections).toHaveLength(1);
+    const retained = harness.connections[0];
+
+    await expect(store.loadTopicDraft('nodeseek', 'nodeseek:42')).resolves.toBeNull();
+    expect(harness.connections).toHaveLength(1);
+    expect(harness.connections[0]).toBe(retained);
+  });
+
   it('migrates version one drafts, tombstones and unknown receipts without changing their payloads', async () => {
     const db = inspect();
     db.exec(`CREATE TABLE topic_drafts (source TEXT, identity_key TEXT, payload TEXT, PRIMARY KEY(source, identity_key));

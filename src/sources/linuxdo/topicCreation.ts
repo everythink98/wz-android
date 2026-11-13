@@ -21,6 +21,7 @@ import { LINUXDO_BASE_URL, linuxDoRequestError } from './protocol';
 import { normalizeLinuxDoPollCapabilities } from './pollCapabilities';
 
 type Options = { fetcher: Fetcher; userAgent: string; signal?: AbortSignal };
+type TopicCreationReceiptPolicy = 'ordinary-errors' | 'uncertain-response';
 
 function positive(value: unknown, fallback: number) {
   const parsed = Number(value);
@@ -195,7 +196,7 @@ export async function createLinuxDoTopic({
   if (draft.source !== 'linuxdo' || !draft.title.trim() || !body.trim() || !/^\d+$/.test(draft.categoryId))
     throw new Error('linux.do 发帖内容或版块不正确');
   let data: Record<string, unknown>;
-  let uncertainResponse = false;
+  const submission: { receiptPolicy: TopicCreationReceiptPolicy } = { receiptPolicy: 'ordinary-errors' };
   try {
     data = await runLinuxDoAction({
       ...options,
@@ -206,14 +207,16 @@ export async function createLinuxDoTopic({
             .clone()
             .json()
             .catch(() => null);
-          uncertainResponse =
+          submission.receiptPolicy =
             !isRecord(payload) ||
             !(
               payload.success === false ||
               (typeof payload.error === 'string' && payload.error.trim()) ||
               (Array.isArray(payload.errors) &&
                 payload.errors.some((error) => typeof error === 'string' && error.trim()))
-            );
+            )
+              ? 'uncertain-response'
+              : 'ordinary-errors';
         }
         return response;
       },
@@ -234,7 +237,8 @@ export async function createLinuxDoTopic({
       }
     });
   } catch (error) {
-    if (uncertainResponse) return { status: 'unknown', message: 'linux.do 未确认是否已发布，请到原站核对，勿直接重发' };
+    if (submission.receiptPolicy === 'uncertain-response')
+      return { status: 'unknown', message: 'linux.do 未确认是否已发布，请到原站核对，勿直接重发' };
     if (
       isRecord(error) &&
       typeof error.status === 'number' &&

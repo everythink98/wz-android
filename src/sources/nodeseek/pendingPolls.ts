@@ -16,6 +16,11 @@ import type { RequestDispatchState } from '@/platform/network/request';
 import { nodeSeekCreatedPollId } from './actionClient';
 
 const creations = createKeyedSerialRunner<string>();
+type PollCreationState =
+  | { kind: 'claimed-unsent' }
+  | { kind: 'sent-unconfirmed' }
+  | { kind: 'remote-known'; id: string; dispatch: 'observed' | 'not-observed' };
+type ReplacementDecision = 'unchecked' | 'approved';
 
 export class PendingNodeSeekPollError extends Error {
   constructor(
@@ -67,7 +72,7 @@ export async function materializePendingNodeSeekPolls({
     assertCurrent();
     if (fingerprintNodeSeekPoll(poll) !== poll.fingerprint) throw invalid('投票草稿校验失败，请重新打开投票编辑器');
   }
-  const confirmedReplacements = new Set<string>();
+  const replacements = new Map<string, ReplacementDecision>(polls.map((poll) => [poll.localId, 'unchecked']));
   const unknown = () => invalid('该投票上次创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。');
   const checkedRemoteId = async (poll: PendingNodeSeekPoll) => {
     assertCurrent();
@@ -77,9 +82,9 @@ export async function materializePendingNodeSeekPolls({
     if (journal) throw unknown();
     const previous = await readNodeSeekPollJournalEntry(identityKey, poll.localId);
     assertCurrent();
-    if (previous && !confirmedReplacements.has(poll.localId)) {
+    if (previous && replacements.get(poll.localId) !== 'approved') {
       if (!(await confirmReplacement(poll))) throw new PendingNodeSeekPollError('已取消创建新投票', 'canceled');
-      confirmedReplacements.add(poll.localId);
+      replacements.set(poll.localId, 'approved');
     }
     assertCurrent();
     return undefined;
@@ -98,24 +103,43 @@ export async function materializePendingNodeSeekPolls({
         if (reservation.entry.remoteId) return reservation.entry.remoteId;
         throw unknown();
       }
-      const dispatchState: RequestDispatchState = { mayHaveSent: false };
-      let createdId = '';
+      const attempt: { state: PollCreationState } = { state: { kind: 'claimed-unsent' } };
+      const dispatchState: RequestDispatchState = {
+        get mayHaveSent() {
+          return (
+            attempt.state.kind === 'sent-unconfirmed' ||
+            (attempt.state.kind === 'remote-known' && attempt.state.dispatch === 'observed')
+          );
+        },
+        set mayHaveSent(sent: boolean) {
+          attempt.state =
+            attempt.state.kind === 'remote-known'
+              ? { ...attempt.state, dispatch: sent ? 'observed' : 'not-observed' }
+              : { kind: sent ? 'sent-unconfirmed' : 'claimed-unsent' };
+        }
+      };
       const persistResult = async (result: unknown) => {
-        createdId = nodeSeekCreatedPollId(result);
-        await saveNodeSeekPollJournalEntry(identityKey, { ...intent, remoteId: createdId });
+        const id = nodeSeekCreatedPollId(result);
+        attempt.state = { kind: 'remote-known', id, dispatch: dispatchState.mayHaveSent ? 'observed' : 'not-observed' };
+        await saveNodeSeekPollJournalEntry(identityKey, { ...intent, remoteId: id });
       };
       try {
         assertCurrent();
         const result = await createPoll(poll, { dispatchState, persistResult });
-        if (!createdId) await persistResult(result);
+        if (attempt.state.kind !== 'remote-known') await persistResult(result);
         assertCurrent();
-        return createdId;
+        if (attempt.state.kind !== 'remote-known') throw new Error('NodeSeek 未确认投票 id');
+        return attempt.state.id;
       } catch (error) {
         const failure =
           error && typeof error === 'object' ? (error as { reason?: unknown; serverRejected?: unknown }) : null;
-        if (!createdId && (!dispatchState.mayHaveSent || failure?.reason === 'http-401' || failure?.serverRejected))
+        if (
+          attempt.state.kind !== 'remote-known' &&
+          (attempt.state.kind === 'claimed-unsent' || failure?.reason === 'http-401' || failure?.serverRejected)
+        )
           await releaseNodeSeekPollJournalEntry(identityKey, intent);
-        else if (!createdId) notify('投票创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。');
+        else if (attempt.state.kind !== 'remote-known')
+          notify('投票创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。');
         throw error;
       }
     });

@@ -1,9 +1,10 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 
 type SqliteHealth = { phase: 'usable' } | { phase: 'frozen'; cause: AggregateError };
 
 export function createSqliteExecutor(uncertainMessage: string, rollbackMessage: string) {
-  let queue: Promise<unknown> = Promise.resolve();
+  const operations = createKeyedSerialRunner<null>();
   let health: SqliteHealth = { phase: 'usable' };
   const assertUsable = () => {
     if (health.phase === 'frozen') throw new Error(uncertainMessage, { cause: health.cause });
@@ -11,9 +12,7 @@ export function createSqliteExecutor(uncertainMessage: string, rollbackMessage: 
   return {
     assertUsable,
     enqueue<T>(operation: () => Promise<T>): Promise<T> {
-      const result = queue.then(operation, operation);
-      queue = result.catch(() => undefined);
-      return result;
+      return operations.run(null, operation);
     },
     // Each database owns its queue and frozen state; no unrelated work may join a transaction.
     async transaction<T>(

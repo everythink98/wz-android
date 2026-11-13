@@ -1,6 +1,7 @@
 beforeProject { p ->
     p.plugins.withId('com.android.application') {
         p.extensions.getByName('android').sourceSets.getByName('test').java.srcDir(new File(p.rootDir.parentFile, 'tests/native'))
+        p.extensions.getByName('android').sourceSets.getByName('test').java.exclude('reanimated-settlement/**')
         p.dependencies.add('testImplementation', 'junit:junit:4.13.2')
         p.dependencies.add('testImplementation', 'org.robolectric:robolectric:4.16')
         // Expo's generated Record classes expose this implementation dependency as a supertype.

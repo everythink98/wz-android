@@ -63,6 +63,11 @@ type NotificationListPage = {
   historyNotices?: Partial<Record<NotificationSource, string>>;
 };
 
+type NotificationMarkAllRun = {
+  phase: 'confirming' | 'submitting';
+  controller: AbortController;
+};
+
 type NotificationMarkState =
   | { phase: 'idle' | 'confirmed' | 'retryable' }
   | { phase: 'pending'; attempt: { controller: AbortController; messageIds: string[] } };
@@ -91,15 +96,16 @@ export function NotificationsRoute({
   const [selectedCategoryId, setCategoryId] = useState('');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [markAllBusy, setMarkAllBusy] = useState(false);
-  const markAllControllerRef = useRef<AbortController | undefined>(undefined);
+  const markAllRef = useRef<{ phase: 'idle' } | NotificationMarkAllRun>({ phase: 'idle' });
   const [refreshing, setRefreshing] = useState(false);
   const refreshRequestRef = useRef<object | undefined>(undefined);
   const retryControllerRef = useRef<AbortController | undefined>(undefined);
   const recoveryIntentRef = useRef<{ controller: AbortController; pending: boolean } | undefined>(undefined);
   const latestRuntimeRef = useCommittedRef(runtime);
   const cancelMarkAll = useCallback(() => {
-    markAllControllerRef.current?.abort();
-    markAllControllerRef.current = undefined;
+    const current = markAllRef.current;
+    if (current.phase !== 'idle') current.controller.abort();
+    markAllRef.current = { phase: 'idle' };
     setMarkAllBusy(false);
   }, []);
   useEffect(() => {
@@ -590,7 +596,7 @@ export function NotificationsRoute({
   );
   const markAll = useCallback(() => {
     if (
-      markAllControllerRef.current ||
+      markAllRef.current.phase !== 'idle' ||
       !isFocused ||
       source === 'all' ||
       source === 'yaohuo' ||
@@ -603,26 +609,26 @@ export function NotificationsRoute({
     const expectedIdentityKey = runtime.identityKeys[source];
     if (!expectedIdentityKey) return;
     const controller = new AbortController();
-    markAllControllerRef.current = controller;
-    let submitted = false;
+    const run: NotificationMarkAllRun = { phase: 'confirming', controller };
+    markAllRef.current = run;
     Alert.alert('全部标记为已读', `将 ${sourceCatalog[source].label} 现有消息全部标记为已读？`, [
       {
         text: '取消',
         style: 'cancel',
         onPress: () => {
-          if (markAllControllerRef.current === controller) cancelMarkAll();
+          if (markAllRef.current === run) cancelMarkAll();
         }
       },
       {
         text: '确认',
         onPress: () => {
-          if (submitted || markAllControllerRef.current !== controller || controller.signal.aborted) return;
-          submitted = true;
+          if (run.phase === 'submitting' || markAllRef.current !== run || controller.signal.aborted) return;
+          run.phase = 'submitting';
           setMarkAllBusy(true);
           void runtime.gateway
             .markAllRead(source, expectedIdentityKey, controller.signal)
             .then((result) => {
-              if (markAllControllerRef.current !== controller || controller.signal.aborted) return;
+              if (markAllRef.current !== run || controller.signal.aborted) return;
               runtime.notify(result.confirmed ? '已按原站状态标记全部已读' : result.message || '原站未确认已读');
             })
             .finally(async () => {
@@ -633,13 +639,13 @@ export function NotificationsRoute({
               ]);
             })
             .catch((error) => {
-              if (markAllControllerRef.current === controller && !controller.signal.aborted) {
+              if (markAllRef.current === run && !controller.signal.aborted) {
                 runtime.notify(errorMessage(error));
               }
             })
             .finally(() => {
-              if (markAllControllerRef.current !== controller) return;
-              markAllControllerRef.current = undefined;
+              if (markAllRef.current !== run) return;
+              markAllRef.current = { phase: 'idle' };
               setMarkAllBusy(false);
             });
         }

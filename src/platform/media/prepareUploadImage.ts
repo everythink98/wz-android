@@ -1,6 +1,14 @@
 import { RequestCanceledError } from '@/platform/network/request';
+import type { File as ImageFile } from 'expo-file-system';
+import type { ImageManipulatorContext, ImageRef } from 'expo-image-manipulator';
 
 export type UploadImageAsset = { uri: string; name: string; mimeType: string; size?: number };
+type PreparationResources =
+  | { phase: 'original' }
+  | { phase: 'rendering'; context: ImageManipulatorContext }
+  | { phase: 'rendered'; context: ImageManipulatorContext; image: ImageRef }
+  | { phase: 'converted'; context: ImageManipulatorContext; image: ImageRef; file: ImageFile }
+  | { phase: 'owned-copy'; file: ImageFile };
 
 // Only this preparation owns the generated cache file; the picked original is never removed.
 export async function prepareUploadImage(file: UploadImageAsset, maxBytes: number, signal?: AbortSignal) {
@@ -8,7 +16,15 @@ export async function prepareUploadImage(file: UploadImageAsset, maxBytes: numbe
     if (signal?.aborted) throw new RequestCanceledError();
   };
   const invalid = (message: string) => Object.assign(new Error(message), { reason: 'image_conversion_failed' });
-  let cleanup = () => {};
+  let resources: PreparationResources = { phase: 'original' };
+  const cleanup = () => {
+    if (resources.phase !== 'converted' && resources.phase !== 'owned-copy') return;
+    try {
+      if (resources.file.exists) resources.file.delete();
+    } catch {
+      /* Cache cleanup must not turn confirmed uploads into failures. */
+    }
+  };
   try {
     assertCurrent();
     const { File } = await import('expo-file-system');
@@ -41,25 +57,20 @@ export async function prepareUploadImage(file: UploadImageAsset, maxBytes: numbe
     const { ImageManipulator, SaveFormat } = await import('expo-image-manipulator');
     assertCurrent();
     const context = ImageManipulator.manipulate(file.uri);
-    let rendered: Awaited<ReturnType<typeof context.renderAsync>> | undefined;
-    let output: InstanceType<typeof File>;
+    resources = { phase: 'rendering', context };
     try {
-      rendered = await context.renderAsync();
+      const rendered = await context.renderAsync();
+      resources = { phase: 'rendered', context, image: rendered };
       assertCurrent();
       const result = await rendered.saveAsync({ format: SaveFormat.WEBP, compress: 1 });
-      output = new File(result.uri);
-      cleanup = () => {
-        try {
-          if (output.exists) output.delete();
-        } catch {
-          /* Cache cleanup must not turn confirmed uploads into failures. */
-        }
-      };
+      resources = { phase: 'converted', context, image: rendered, file: new File(result.uri) };
     } finally {
-      rendered?.release();
+      if (resources.phase === 'rendered' || resources.phase === 'converted') resources.image?.release();
       context.release();
+      if (resources.phase === 'converted') resources = { phase: 'owned-copy', file: resources.file };
     }
     assertCurrent();
+    const output = resources.file;
     checkSize(output, true);
     return { file: { uri: output.uri, name: name('webp'), mimeType: 'image/webp', size: output.size }, cleanup };
   } catch (error) {

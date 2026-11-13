@@ -19,6 +19,10 @@ import {
 } from './protocol';
 
 type UserReadOptions = { fetcher?: Fetcher; signal?: AbortSignal; timeoutMs?: number; cursor?: string | null };
+type YaohuoUserTopicScan =
+  | { kind: 'discovering' }
+  | { kind: 'reading'; url: string; read: number }
+  | { kind: 'ready' | 'cycle'; nextUrl: string };
 
 async function readHtml(url: string, options: UserReadOptions) {
   const safeUrl = requireYaohuoRequestUrl(url);
@@ -59,11 +63,13 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
   const seen = new Set<string>();
   const visited = new Set<string>();
   const evidence: unknown[] = [];
-  let nextUrl = options.cursor || '';
-  if (!nextUrl) {
+  let scan: YaohuoUserTopicScan = options.cursor
+    ? { kind: 'reading', url: options.cursor, read: 0 }
+    : { kind: 'discovering' };
+  if (scan.kind === 'discovering') {
     // The first activity URL is parsed from the profile; do not synthesize a remote link.
     const page = await readHtml(profileUrl(profile.id), options);
-    nextUrl = yaohuoUserProfileTopicListUrlFromRoot(page.root, profile.id, page.url);
+    const nextUrl = yaohuoUserProfileTopicListUrlFromRoot(page.root, profile.id, page.url);
     if (!nextUrl) {
       const parsed = parseYaohuoUserProfileDocument(page.root, profile);
       if (!parsed.topics.length && parsed.topicCount !== 0) throw new Error('妖火资料页未提供可确认的主题入口');
@@ -72,15 +78,15 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
         parsed
       );
     }
+    scan = { kind: 'reading', url: nextUrl, read: 0 };
   }
-  let hasRepeatedCursor = false;
-  for (let read = 0; nextUrl && topics.length < 30 && read < (options.cursor ? 1 : 10); read += 1) {
-    if (visited.has(nextUrl)) {
-      hasRepeatedCursor = true;
+  while (scan.kind === 'reading') {
+    if (visited.has(scan.url)) {
+      scan = { kind: 'cycle', nextUrl: scan.url };
       break;
     }
-    visited.add(nextUrl);
-    const page = await readHtml(nextUrl, options);
+    visited.add(scan.url);
+    const page = await readHtml(scan.url, options);
     const requestedPage = Number(new URL(page.url).searchParams.get('page') || '1');
     const pageNumber = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
     const result = parseYaohuoListDocument(page.root, page.html, {
@@ -95,17 +101,22 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
       seen.add(topic.id);
       topics.push(topic.author ? topic : { ...topic, author: profile.displayName || profile.username });
     }
-    nextUrl = yaohuoTopicListNextPageUrlFromRoot(page.root, page.url, pageNumber, result.items.length, 30);
+    const nextUrl = yaohuoTopicListNextPageUrlFromRoot(page.root, page.url, pageNumber, result.items.length, 30);
+    const read: number = scan.read + 1;
+    scan =
+      nextUrl && topics.length < 30 && read < (options.cursor ? 1 : 10)
+        ? { kind: 'reading', url: nextUrl, read }
+        : { kind: 'ready', nextUrl };
   }
   return mergeSourceDiagnosticSummaries(
     {
       topics: sortTopicsByCreatedAt(topics),
-      hasMoreTopics: Boolean(nextUrl),
-      nextTopicsCursor: nextUrl || null
+      hasMoreTopics: Boolean(scan.nextUrl),
+      nextTopicsCursor: scan.nextUrl || null
     },
     'html-user',
     evidence,
-    { hasRepeatedCursor }
+    { hasRepeatedCursor: scan.kind === 'cycle' }
   );
 }
 

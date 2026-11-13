@@ -190,9 +190,8 @@ export async function runDiagnosticDeviceProof() {
     return /firstInstallTime=([^\r\n]+)/u.exec(dump)?.[1]?.trim();
   };
   const initialIdentity = installedIdentity();
-  let built = false;
-  let installed = false;
-  let deviceChangesFrozen = false;
+  /** @type {'unchanged' | 'rebuild-output' | 'rebuild-and-reinstall' | 'device-frozen'} */
+  let restorePolicy = 'unchanged';
   let proofPassed = false;
   let restorePassed = false;
   let symbols;
@@ -209,7 +208,7 @@ export async function runDiagnosticDeviceProof() {
     writeFileSync(path.join(fixture, 'AndroidManifest.xml'), contents.manifest);
     const init = path.join(fixture, 'init.gradle');
     writeFileSync(init, contents.init);
-    built = true;
+    restorePolicy = 'rebuild-output';
     gradle(['-I', process.platform === 'win32' ? `"${init}"` : init, ':app:assembleRelease']);
     const proofApk = path.join(fixture, 'diagnostic-proof-release.apk');
     copyFileSync(productionApk, proofApk);
@@ -231,9 +230,9 @@ export async function runDiagnosticDeviceProof() {
     });
     symbols = JSON.parse(readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
     adb('install', '-r', proofApk);
-    installed = true;
+    restorePolicy = 'rebuild-and-reinstall';
     if (initialIdentity && installedIdentity() !== initialIdentity) {
-      deviceChangesFrozen = true;
+      restorePolicy = 'device-frozen';
       throw new Error('Installation identity changed; device changes frozen.');
     }
     const readSnapshot = () => {
@@ -282,11 +281,11 @@ export async function runDiagnosticDeviceProof() {
     const status = () => (proofPassed && restorePassed && errors.length === 0 ? 'PASS' : 'FAILED');
     for (const cleanup of [
       () => {
-        if (installed && !deviceChangesFrozen) adb('shell', 'am', 'force-stop', packageName);
+        if (restorePolicy === 'rebuild-and-reinstall') adb('shell', 'am', 'force-stop', packageName);
       },
       () => {
         // Restore the ordinary entry so no test-only crash surface remains in the release output or AVD.
-        if (built) {
+        if (restorePolicy !== 'unchanged') {
           const composer = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build:composer'], {
             cwd: root,
             shell: process.platform === 'win32',
@@ -295,9 +294,9 @@ export async function runDiagnosticDeviceProof() {
           if (composer.error) throw composer.error;
           if (composer.status !== 0) throw new Error('Composer build failed while restoring the production entry.');
           gradle([':app:assembleRelease']);
-          if (installed && !deviceChangesFrozen) adb('install', '-r', productionApk);
+          if (restorePolicy === 'rebuild-and-reinstall') adb('install', '-r', productionApk);
         }
-        restorePassed = !deviceChangesFrozen;
+        restorePassed = restorePolicy !== 'device-frozen';
       },
       () => {
         if (path.dirname(path.resolve(fixture)) !== path.resolve(scratchRoot))

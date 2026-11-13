@@ -30,6 +30,8 @@ import {
 } from '@/platform/network/networkProxy';
 import { errorMessage } from '@/platform/network/errors';
 
+type ProxyOpeningState = { phase: 'closed' } | { phase: 'ready' | 'running'; opening: object };
+
 type Draft = {
   id?: string;
   name: string;
@@ -118,8 +120,7 @@ export function NetworkProxyModal({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draftKeyboardInset, setDraftKeyboardInset] = useState(0);
   const opening = useMemo(() => (visible ? {} : null), [visible]);
-  const activeOpening = useRef(opening);
-  const activeTask = useRef<object | null>(null);
+  const activeOpening = useRef<ProxyOpeningState>(opening ? { phase: 'ready', opening } : { phase: 'closed' });
   const draftProfile = useMemo(() => profileFromDraft(draft), [draft]);
   const errors = useMemo(() => validateNetworkProxyProfile(draftProfile), [draftProfile]);
   const visibleErrors = submitted ? errors : {};
@@ -134,10 +135,9 @@ export function NetworkProxyModal({
   const pageColor = theme.background;
 
   useLayoutEffect(() => {
-    activeOpening.current = opening;
+    activeOpening.current = opening ? { phase: 'ready', opening } : { phase: 'closed' };
     return () => {
-      activeOpening.current = null;
-      activeTask.current = null;
+      activeOpening.current = { phase: 'closed' };
     };
   }, [opening]);
 
@@ -184,22 +184,22 @@ export function NetworkProxyModal({
   }, [proxyState.profiles]);
 
   const executeProxyTask = async <T,>(task: () => Promise<T>) => {
-    if (!opening || activeOpening.current !== opening || activeTask.current) {
+    if (!opening || activeOpening.current.phase !== 'ready' || activeOpening.current.opening !== opening) {
       return null;
     }
-    const request = {};
-    activeTask.current = request;
+    const request = { phase: 'running' as const, opening };
+    activeOpening.current = request;
     setBusy(true);
     try {
       const value = await task();
-      return activeTask.current === request ? ({ ok: true, value } as const) : null;
+      return activeOpening.current === request ? ({ ok: true, value } as const) : null;
     } catch (error) {
-      if (activeTask.current !== request) return null;
+      if (activeOpening.current !== request) return null;
       Alert.alert('服务器代理', errorMessage(error));
       return { ok: false } as const;
     } finally {
-      if (activeTask.current === request) {
-        activeTask.current = null;
+      if (activeOpening.current === request) {
+        activeOpening.current = { phase: 'ready', opening };
         setBusy(false);
       }
     }

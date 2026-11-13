@@ -136,9 +136,7 @@ export function useAccountRuntime({
   const checkingRequestIdRef = useRef(0);
   const loginPanelCheckRef = useRef<{ source: 'nodeseek' | 'yaohuo'; requestId: number } | null>(null);
   const linuxDoWebViewSessionRef = useRef(0);
-  const linuxDoPanelClosingSessionRef = useRef<number | null>(null);
   const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nodeSeekWebViewUserAgentRef = useRef('');
   const linuxDoWebViewUserAgentRef = useRef('');
   const prepareAuthSurfaceOpenRef = useRef<(surface: AuthSurface) => void>(() => undefined);
@@ -1021,8 +1019,6 @@ export function useAccountRuntime({
     checkingRequestIdRef,
     closeYaohuoLoginPanel,
     commitLinuxDoWebViewUserAgent,
-    linuxDoPanelClosingSessionRef,
-    linuxDoPanelCloseSettleTimerRef,
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,

@@ -610,6 +610,19 @@ describe('Yaohuo notifications', () => {
 });
 
 describe('Yaohuo unread snapshot scan', () => {
+  it('rejects a repeated continuation before treating exactly 60 unread rows as an incomplete total', async () => {
+    const fetcher = vi.fn(async () =>
+      html(
+        Array.from({ length: 30 }, (_, index) => messageListRow({ id: String(index + 1), unread: true })).join('') +
+          '<div class="showpage">1/2 页</div>'
+      )
+    );
+    await expect(
+      yaohuoNotificationAdapter.readUnreadSnapshot({ fetcher, identityKey: 'yaohuo:7', userId: '7' })
+    ).rejects.toThrow('妖火消息分页格式不正确');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('finishes a legitimate long read-only history without treating 60 unread items as a raw page budget', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const page = Number(new URL(input).searchParams.get('page'));

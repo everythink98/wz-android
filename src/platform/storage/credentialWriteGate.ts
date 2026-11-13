@@ -1,12 +1,16 @@
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
+
 export type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
+  writes: ReturnType<typeof createKeyedSerialRunner<null>>;
 };
 
 export function createCredentialWriteGate(): CredentialWriteGate {
   return {
     generation: 0,
-    queue: Promise.resolve()
+    queue: Promise.resolve(),
+    writes: createKeyedSerialRunner<null>('after-reaction')
   };
 }
 
@@ -32,15 +36,13 @@ export function enqueueCredentialWriteForGeneration<T>(
   task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T
 ) {
   const isCurrent = () => isCredentialWriteCurrent(gate, generation);
-  const run = gate.queue
-    .catch(() => undefined)
-    .then(async () => {
-      if (!isCurrent()) {
-        return undefined;
-      }
-      const result = await task({ isCurrent });
-      return isCurrent() ? result : undefined;
-    });
+  const run = gate.writes.run(null, async () => {
+    if (!isCurrent()) {
+      return undefined;
+    }
+    const result = await task({ isCurrent });
+    return isCurrent() ? result : undefined;
+  });
   gate.queue = run.then(
     () => undefined,
     () => undefined

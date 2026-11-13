@@ -62,6 +62,53 @@ const context = () => ({
 beforeEach(() => journal.clear());
 
 describe('shared pending NodeSeek poll preparation', () => {
+  it('keeps dispatch evidence independent of an already persisted remote result', async () => {
+    const failure = new Error('late transport failure');
+    const observed: boolean[] = [];
+    await expect(
+      materializePendingNodeSeekPolls({
+        ...context(),
+        createPoll: async (_poll, lifecycle) => {
+          observed.push(lifecycle.dispatchState.mayHaveSent);
+          await lifecycle.persistResult({ id: 74 });
+          observed.push(lifecycle.dispatchState.mayHaveSent);
+          const local = withRequestBeforeSend(
+            async (_url, init) => {
+              prepareRequestToSend(init);
+              observed.push(lifecycle.dispatchState.mayHaveSent);
+              throw failure;
+            },
+            () => {},
+            lifecycle.dispatchState
+          );
+          return local('https://www.nodeseek.com/local-fixture', { method: 'POST' });
+        }
+      })
+    ).rejects.toBe(failure);
+    expect(observed).toEqual([false, false, true]);
+    expect([...journal.values()]).toEqual([{ localId: poll.localId, fingerprint: poll.fingerprint, remoteId: '74' }]);
+  });
+
+  it('retains a known remote claim when its journal write fails before any dispatch evidence', async () => {
+    const failure = new Error('journal unavailable');
+    const save = vi.spyOn(journalMock, 'saveNodeSeekPollJournalEntry').mockRejectedValueOnce(failure);
+    let lifecycle: PendingNodeSeekPollCreation | undefined;
+    const createPoll = vi.fn(async (_poll, owner: PendingNodeSeekPollCreation) => {
+      lifecycle = owner;
+      await owner.persistResult({ id: 75 });
+      return { id: 75 };
+    });
+    try {
+      await expect(materializePendingNodeSeekPolls({ ...context(), createPoll })).rejects.toBe(failure);
+      expect(lifecycle?.dispatchState.mayHaveSent).toBe(false);
+      expect(journal.size).toBe(1);
+      await expect(materializePendingNodeSeekPolls({ ...context(), createPoll })).rejects.toThrow('上次创建结果未知');
+      expect(createPoll).toHaveBeenCalledTimes(1);
+    } finally {
+      save.mockRestore();
+    }
+  });
+
   it('retains a confirmed poll claim after completion persistence fails and a fresh module reopens it', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'wz-pending-poll-'));
     const connections: DatabaseSync[] = [];

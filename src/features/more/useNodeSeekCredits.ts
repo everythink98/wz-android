@@ -16,6 +16,11 @@ export type NodeSeekCreditsGateway = Pick<
 >;
 
 type CreditPage = NodeSeekCreditPage | NodeSeekStardustCreditPage;
+type RefreshedPagination = { session: { firstRead: boolean; day: number }; day: number };
+type CreditRefreshState =
+  | { phase: 'idle' }
+  | { phase: 'refreshing'; pagination: RefreshedPagination | null }
+  | { phase: 'bookmarked'; pagination: RefreshedPagination };
 
 export function useNodeSeekCredits({
   active,
@@ -47,16 +52,14 @@ export function useNodeSeekCredits({
   );
   const owner = JSON.stringify(key);
   const currentOwner = useCommittedRef({ owner, enabled });
-  const refreshingRef = useRef(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const refreshStateRef = useRef<CreditRefreshState>({ phase: 'idle' });
+  const [refreshState, setRefreshState] = useState<CreditRefreshState>(refreshStateRef.current);
+  const refreshing = refreshState.phase === 'refreshing';
   const paginationSession = useMemo(
     () => ({ firstRead: enabled && !queryClient.getQueryData(key), day: new Date().setHours(0, 0, 0, 0) }),
     [enabled, key, queryClient]
   );
-  const [refreshedPagination, setRefreshedPagination] = useState<{
-    session: typeof paginationSession;
-    day: number;
-  } | null>(null);
+  const refreshedPagination = refreshState.phase === 'idle' ? null : refreshState.pagination;
   const ledger = useInfiniteQuery({
     queryKey: key,
     queryFn: ({ signal, pageParam }): Promise<CreditPage> =>
@@ -134,23 +137,36 @@ export function useNodeSeekCredits({
   );
 
   const refresh = useCallback(async () => {
-    if (!enabled || refreshingRef.current) return;
-    refreshingRef.current = true;
-    setRefreshing(true);
+    if (!enabled || refreshStateRef.current.phase === 'refreshing') return;
+    const current = refreshStateRef.current;
+    const refreshingState: CreditRefreshState = {
+      phase: 'refreshing',
+      pagination: current.phase === 'idle' ? null : current.pagination
+    };
+    refreshStateRef.current = refreshingState;
+    setRefreshState(refreshingState);
     try {
       await queryClient.cancelQueries({ queryKey: key, exact: true });
       if (!currentOwner.current.enabled || currentOwner.current.owner !== owner) return;
-      setRefreshedPagination({ session: paginationSession, day: new Date().setHours(0, 0, 0, 0) });
+      const bookmarkedState: CreditRefreshState = {
+        phase: 'refreshing',
+        pagination: { session: paginationSession, day: new Date().setHours(0, 0, 0, 0) }
+      };
+      refreshStateRef.current = bookmarkedState;
+      setRefreshState(bookmarkedState);
       queryClient.setQueryData<InfiniteData<CreditPage, number>>(key, keepFirstQueryPage);
       await refetchLedger();
     } finally {
-      refreshingRef.current = false;
-      setRefreshing(false);
+      const pagination = refreshStateRef.current.pagination;
+      const settledState: CreditRefreshState =
+        pagination === null ? { phase: 'idle' } : { phase: 'bookmarked', pagination };
+      refreshStateRef.current = settledState;
+      setRefreshState(settledState);
     }
   }, [currentOwner, enabled, key, refetchLedger, owner, paginationSession, queryClient]);
 
   const loadMore = useCallback(() => {
-    if (!enabled || ledger.isFetching || !ledger.hasNextPage || refreshingRef.current) return;
+    if (!enabled || ledger.isFetching || !ledger.hasNextPage || refreshStateRef.current.phase === 'refreshing') return;
     void fetchNextPage({ cancelRefetch: false });
   }, [enabled, fetchNextPage, ledger.hasNextPage, ledger.isFetching]);
 

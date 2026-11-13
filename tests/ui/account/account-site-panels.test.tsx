@@ -417,14 +417,20 @@ describe('Account site panels', () => {
     'keeps the latest %s error when a failed load ends in the same batch',
     async (site) => {
       const onWebViewState = jest.fn();
+      const onCheck = jest.fn();
       const view = await render(
         site === 'nodeseek' ? (
-          <SiteLoginHost {...nodeSeekProps({ visible: true, onWebViewState })} />
+          <SiteLoginHost {...nodeSeekProps({ visible: true, onWebViewState, onCheck, recoveryPending: true })} />
         ) : (
           <SiteLoginHost {...yaohuoProps({ onWebViewState })} />
         )
       );
       const events = mockLoginWebViewProps;
+      const url = 'https://www.nodeseek.com/';
+      if (site === 'nodeseek') {
+        await act(() => events.onLoadStart({ nativeEvent: { url } }));
+        onWebViewState.mockClear();
+      }
       await act(() => {
         events.onError({ nativeEvent: { description: '本次连接失败' } });
         events.onLoadEnd({ nativeEvent: { code: -2 } });
@@ -434,6 +440,28 @@ describe('Account site panels', () => {
       await act(() => mockLoginWebViewProps.onLoadEnd({ nativeEvent: {} }));
       expect(view.queryByText(/本次连接失败/)).toBeNull();
       expect(onWebViewState.mock.calls.map(([state]) => state)).toEqual(['error', 'ready']);
+      if (site === 'nodeseek') {
+        const message = {
+          nativeEvent: {
+            url,
+            data: JSON.stringify({
+              type: 'nodeseek-login',
+              documentKey: url + ':1234',
+              status: 'logged-in',
+              hasChallengeMarker: false
+            })
+          }
+        };
+        await act(() => mockLoginWebViewProps.onMessage(message));
+        expect(onCheck).not.toHaveBeenCalled();
+        onWebViewState.mockImplementation((state) => {
+          if (state === 'error') mockLoginWebViewProps.onLoadStart({ nativeEvent: { url, loading: true } });
+        });
+        await act(() => mockLoginWebViewProps.onError({ nativeEvent: { description: '重新进入的失败' } }));
+        expect(view.getByText('NodeSeek 页面加载失败：重新进入的失败')).toBeTruthy();
+        await act(() => mockLoginWebViewProps.onMessage(message));
+        expect(onCheck).toHaveBeenCalledTimes(1);
+      }
     }
   );
 

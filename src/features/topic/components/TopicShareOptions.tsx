@@ -9,6 +9,11 @@ import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createReaderFontSizer, readerRadii, type ReaderStyleSettings, type ReaderTheme } from '@/ui/theme/tokens';
 
+type ShareActivity =
+  { phase: 'idle' } | { phase: 'acquiring-controller' } | { phase: 'in-flight'; controller: AbortController };
+
+type ShareOwner = { lifetime: 'current' | 'retired'; activity: ShareActivity };
+
 export function TopicShareOptions({
   topic,
   onClose,
@@ -23,29 +28,29 @@ export function TopicShareOptions({
   onShareImage?: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
-  const current = useRef(true);
-  const running = useRef(false);
-  const operationAbort = useRef<AbortController | null>(null);
-  const [busy, setBusy] = useState<'link' | 'copy' | null>(null);
+  const owner = useRef<ShareOwner>({ lifetime: 'current', activity: { phase: 'idle' } });
+  const [busy, setBusy] = useState<'idle' | 'link' | 'copy'>('idle');
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
   useEffect(() => {
-    current.current = true;
+    owner.current = { ...owner.current, lifetime: 'current' };
     return () => {
-      current.current = false;
-      operationAbort.current?.abort();
+      owner.current = { ...owner.current, lifetime: 'retired' };
+      const activity = owner.current.activity;
+      if (activity.phase === 'in-flight') activity.controller.abort();
     };
   }, []);
   const close = () => {
-    current.current = false;
-    operationAbort.current?.abort();
+    owner.current = { ...owner.current, lifetime: 'retired' };
+    const activity = owner.current.activity;
+    if (activity.phase === 'in-flight') activity.controller.abort();
     onClose();
   };
   const run = async (action: 'link' | 'copy') => {
-    if (running.current || !current.current) return;
-    running.current = true;
+    if (owner.current.activity.phase !== 'idle' || owner.current.lifetime !== 'current') return;
+    owner.current = { ...owner.current, activity: { phase: 'acquiring-controller' } };
     const abort = new AbortController();
-    operationAbort.current = abort;
+    owner.current = { ...owner.current, activity: { phase: 'in-flight', controller: abort } };
     setBusy(action);
     setError('');
     setFeedback('');
@@ -53,14 +58,13 @@ export function TopicShareOptions({
       if (action === 'link') await onShareLink(abort.signal);
       else {
         await onCopyLink();
-        if (current.current) setFeedback('链接已复制');
+        if (owner.current.lifetime === 'current') setFeedback('链接已复制');
       }
     } catch (cause) {
-      if (current.current) setError(errorMessage(cause));
+      if (owner.current.lifetime === 'current') setError(errorMessage(cause));
     } finally {
-      operationAbort.current = null;
-      running.current = false;
-      if (current.current) setBusy(null);
+      owner.current = { ...owner.current, activity: { phase: 'idle' } };
+      if (owner.current.lifetime === 'current') setBusy('idle');
     }
   };
   const actions = [
@@ -87,7 +91,7 @@ export function TopicShareOptions({
       icon: Image,
       disabled: !onShareImage,
       onPress: () => {
-        if (current.current && !running.current) onShareImage?.();
+        if (owner.current.lifetime === 'current' && owner.current.activity.phase === 'idle') onShareImage?.();
       }
     }
   ];
@@ -109,10 +113,10 @@ export function TopicShareOptions({
             key={key}
             accessibilityRole="button"
             accessibilityLabel={label}
-            accessibilityState={{ disabled: disabled || busy !== null, busy: busy === key }}
-            disabled={disabled || busy !== null}
+            accessibilityState={{ disabled: disabled || busy !== 'idle', busy: busy === key }}
+            disabled={disabled || busy !== 'idle'}
             onPress={onPress}
-            style={[styles.action, (disabled || busy !== null) && styles.disabled]}
+            style={[styles.action, (disabled || busy !== 'idle') && styles.disabled]}
           >
             <View style={styles.icon}>
               {busy === key ? (

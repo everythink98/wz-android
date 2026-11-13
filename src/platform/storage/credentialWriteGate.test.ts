@@ -22,6 +22,7 @@ describe('credential write gate', () => {
       return 'second';
     });
     await Promise.resolve();
+    expect(order).toEqual([]);
     await Promise.resolve();
 
     expect(order).toEqual(['first:start']);

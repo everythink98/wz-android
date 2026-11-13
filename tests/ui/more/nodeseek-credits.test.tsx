@@ -447,6 +447,129 @@ describe('NodeSeek chicken-leg ledger', () => {
     expect(getCredits.mock.calls.map(([options]) => options.page)).toEqual([1, 2, 1]);
   });
 
+  it('admits one refresh and pauses load-more until the actual cancellation completes', async () => {
+    const getCredits = jest
+      .fn<NodeSeekCreditsGateway['getNodeSeekCredits']>()
+      .mockResolvedValue(page(1, [entry(3), entry(1, 1)]));
+    const hook = await controller(getCredits);
+    await waitFor(() => expect(hook.result.current.summary.today.complete).toBe(true));
+    const completion = Promise.withResolvers<void>();
+    const cancelQueries = hook.client.cancelQueries.bind(hook.client);
+    let cancellationCompleted = false;
+    const cancel = jest.spyOn(hook.client, 'cancelQueries').mockImplementationOnce((filters, options) => {
+      const actual = cancelQueries(filters, options);
+      if (filters?.predicate) return actual;
+      return actual.then(() => {
+        cancellationCompleted = true;
+        return completion.promise;
+      });
+    });
+    const refreshes: Promise<void>[] = [];
+    try {
+      await act(async () => {
+        refreshes.push(hook.result.current.refresh());
+        refreshes.push(hook.result.current.refresh());
+        hook.result.current.loadMore();
+      });
+      await waitFor(() => expect(cancellationCompleted).toBe(true));
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(getCredits).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.refreshing).toBe(true);
+      await act(async () => {
+        completion.resolve();
+        await Promise.all(refreshes);
+      });
+      expect(getCredits.mock.calls.map(([options]) => options.page)).toEqual([1, 1]);
+      expect(hook.result.current.refreshing).toBe(false);
+      await act(async () => hook.result.current.refresh());
+      expect(getCredits.mock.calls.map(([options]) => options.page)).toEqual([1, 1, 1]);
+    } finally {
+      completion.resolve();
+      cancel.mockRestore();
+      try {
+        await act(async () => {
+          await Promise.allSettled(refreshes);
+        });
+      } finally {
+        try {
+          await hook.unmount();
+        } finally {
+          hook.client.clear();
+        }
+      }
+    }
+  });
+
+  it('releases a stale refresh without trimming or refetching the departed owner', async () => {
+    const getCredits = jest.fn<NodeSeekCreditsGateway['getNodeSeekCredits']>(({ userId, page: pageNumber = 1 }) =>
+      Promise.resolve(
+        userId === '42'
+          ? page(pageNumber, [entry(pageNumber === 1 ? 5 : 1, pageNumber === 1 ? 0 : 1)], pageNumber === 1, userId)
+          : page(pageNumber, [entry(7)], false, userId)
+      )
+    );
+    const hook = await controller(getCredits);
+    await waitFor(() => expect(hook.result.current.summary.today.complete).toBe(true));
+    const oldKey = forumQueryKeys.accountData({
+      source: 'nodeseek',
+      kind: 'credits',
+      userId: '42',
+      sessionEpoch: 0,
+      readPlanScope: 'authenticated:0'
+    });
+    expect(hook.client.getQueryData<InfiniteData<NodeSeekCreditPage>>(oldKey)?.pages).toHaveLength(2);
+    const completion = Promise.withResolvers<void>();
+    const cancelQueries = hook.client.cancelQueries.bind(hook.client);
+    let cancellationCompleted = false;
+    const cancel = jest.spyOn(hook.client, 'cancelQueries').mockImplementationOnce((filters, options) => {
+      const actual = cancelQueries(filters, options);
+      if (filters?.predicate) return actual;
+      return actual.then(() => {
+        cancellationCompleted = true;
+        return completion.promise;
+      });
+    });
+    const refreshes: Promise<void>[] = [];
+    try {
+      await act(async () => {
+        refreshes.push(hook.result.current.refresh());
+      });
+      await waitFor(() => expect(cancellationCompleted).toBe(true));
+      expect(hook.result.current.refreshing).toBe(true);
+      await hook.rerender({ active: true, userId: '43', sessionEpoch: 1 });
+      await waitFor(() => expect(hook.result.current.summary.today.income).toBe(7));
+      expect(hook.result.current.refreshing).toBe(true);
+      await act(async () => {
+        completion.resolve();
+        await Promise.all(refreshes);
+      });
+      expect(hook.result.current.refreshing).toBe(false);
+      expect(hook.result.current.summary.today.income).toBe(7);
+      expect(
+        getCredits.mock.calls.filter(([options]) => options.userId === '42').map(([options]) => options.page)
+      ).toEqual([1, 2]);
+      expect(hook.client.getQueryData<InfiniteData<NodeSeekCreditPage>>(oldKey)?.pages).toHaveLength(2);
+      await act(async () => hook.result.current.refresh());
+      expect(
+        getCredits.mock.calls.filter(([options]) => options.userId === '43').map(([options]) => options.page)
+      ).toEqual([1, 1]);
+    } finally {
+      completion.resolve();
+      cancel.mockRestore();
+      try {
+        await act(async () => {
+          await Promise.allSettled(refreshes);
+        });
+      } finally {
+        try {
+          await hook.unmount();
+        } finally {
+          hook.client.clear();
+        }
+      }
+    }
+  });
+
   it('does not read while inactive and cancels stale identity requests', async () => {
     let finishOld: ((value: NodeSeekCreditPage) => void) | undefined;
     const oldPage = new Promise<NodeSeekCreditPage>((resolve) => {

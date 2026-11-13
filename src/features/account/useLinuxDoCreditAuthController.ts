@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import type { AuthSurfaceCloseReason, AuthSurfaceTicket } from '@/domain/session/authSurfaceCoordinator';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
@@ -15,7 +15,7 @@ type CreditAuthOpening = {
   ticket: AuthSurfaceTicket;
   controller: AbortController;
   mode: CreditAuthMode;
-  nonce: string | null;
+  nonce: { phase: 'unissued' } | { phase: 'issued'; value: string };
   timeout?: ReturnType<typeof setTimeout>;
   completion: Promise<void>;
   resolve: () => void;
@@ -23,6 +23,31 @@ type CreditAuthOpening = {
 type CreditAuthDocument = { generation: number; userAgent: string } & (
   { mode: 'manual' } | { mode: 'silent'; nonce: string }
 );
+
+type CreditAuthState = {
+  opening: { phase: 'idle' } | { phase: 'active'; opening: CreditAuthOpening };
+  closing: { phase: 'idle' } | { phase: 'settling'; promise: Promise<void>; mode: CreditAuthMode };
+  attempt: { phase: 'unattempted' } | { phase: 'attempted'; owner: string };
+  revision: number;
+  manualIntent: number;
+};
+type CreditAuthPage = { phase: 'empty' | 'preparing' } | { phase: 'loading' | 'ready'; document: CreditAuthDocument };
+
+function creditOpening(state: CreditAuthState['opening']) {
+  return state.phase === 'active' ? state.opening : null;
+}
+function creditClosing(state: CreditAuthState['closing']) {
+  return state.phase === 'settling' ? state : null;
+}
+function creditDocument(page: CreditAuthPage) {
+  return 'document' in page ? page.document : null;
+}
+function creditPageLoading(page: CreditAuthPage) {
+  return page.phase === 'preparing' || page.phase === 'loading';
+}
+function creditPage(document: CreditAuthDocument | null, loading: boolean): CreditAuthPage {
+  return document ? { phase: loading ? 'loading' : 'ready', document } : { phase: loading ? 'preparing' : 'empty' };
+}
 
 export function useLinuxDoCreditAuthController({
   appActive,
@@ -50,27 +75,41 @@ export function useLinuxDoCreditAuthController({
   surfaceVisible: boolean;
 }) {
   const webViewRef = useRef<WebView>(null);
-  const openingRef = useRef<CreditAuthOpening | null>(null);
-  const closingRef = useRef<{ promise: Promise<void>; mode: CreditAuthMode } | null>(null);
-  const revisionRef = useRef(0);
-  const manualIntentRef = useRef(0);
-  const attemptedOwnerRef = useRef<string | null>(null);
+  const authRef = useRef<CreditAuthState>({
+    opening: { phase: 'idle' },
+    closing: { phase: 'idle' },
+    attempt: { phase: 'unattempted' },
+    revision: 0,
+    manualIntent: 0
+  });
   const screenActiveRef = useCommittedRef(screenActive);
   const appActiveRef = useCommittedRef(appActive);
   const [generation, setGeneration] = useState(0);
-  const [document, setDocument] = useState<CreditAuthDocument | null>(null);
+  const [page, setPage] = useState<CreditAuthPage>({ phase: 'empty' });
+  const document = creditDocument(page);
+  const loading = creditPageLoading(page);
+  const setDocument = useCallback((next: CreditAuthDocument | null) => {
+    setPage((current) => (creditDocument(current) === next ? current : creditPage(next, creditPageLoading(current))));
+  }, []);
+  const setLoading = useCallback((action: SetStateAction<boolean>) => {
+    setPage((current) => {
+      const loading = creditPageLoading(current);
+      const next = typeof action === 'function' ? action(loading) : action;
+      return Object.is(loading, next) ? current : creditPage(creditDocument(current), next);
+    });
+  }, []);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [connectionFeedback, setConnectionFeedback] = useState<'idle' | 'connecting'>('idle');
+  const busy = connectionFeedback === 'connecting';
   const close = useCallback(
     (reason: AuthSurfaceCloseReason = 'close-button'): Promise<void> => {
-      ++manualIntentRef.current;
-      const opening = openingRef.current;
-      if (!opening) return closingRef.current?.promise || Promise.resolve();
-      openingRef.current = null;
+      ++authRef.current.manualIntent;
+      const opening = creditOpening(authRef.current.opening);
+      if (!opening) return creditClosing(authRef.current.closing)?.promise || Promise.resolve();
+      authRef.current.opening = { phase: 'idle' };
       opening.controller.abort();
       clearTimeout(opening.timeout);
-      const revision = ++revisionRef.current;
+      const revision = ++authRef.current.revision;
       try {
         webViewRef.current?.stopLoading();
       } finally {
@@ -80,7 +119,7 @@ export function useLinuxDoCreditAuthController({
         const closing = Promise.resolve(reconciliation)
           .then((result) => {
             if (
-              revisionRef.current !== revision ||
+              authRef.current.revision !== revision ||
               !result ||
               (result.status !== 'same' && result.status !== 'changed') ||
               (opening.mode === 'silent' && reason !== 'success')
@@ -104,16 +143,16 @@ export function useLinuxDoCreditAuthController({
           .catch(() => undefined)
           .finally(() => {
             opening.resolve();
-            if (closingRef.current?.promise === closing) {
-              closingRef.current = null;
+            if (creditClosing(authRef.current.closing)?.promise === closing) {
+              authRef.current.closing = { phase: 'idle' };
             }
-            if (revisionRef.current === revision) setBusy(false);
+            if (authRef.current.revision === revision) setConnectionFeedback('idle');
           });
-        closingRef.current = { promise: closing, mode: opening.mode };
+        authRef.current.closing = { phase: 'settling', promise: closing, mode: opening.mode };
       }
-      return closingRef.current.promise;
+      return authRef.current.closing.promise;
     },
-    [finishSurface, readRuntime]
+    [finishSurface, readRuntime, setDocument, setLoading]
   );
   const prepareDocument = useCallback(
     async (opening: CreditAuthOpening) => {
@@ -127,7 +166,7 @@ export function useLinuxDoCreditAuthController({
         ]);
         const runtime = readRuntime();
         if (
-          openingRef.current !== opening ||
+          creditOpening(authRef.current.opening) !== opening ||
           opening.controller.signal.aborted ||
           runtime.identityKey !== opening.ticket.identityKey ||
           runtime.sessionEpoch !== opening.ticket.sessionEpoch ||
@@ -136,11 +175,11 @@ export function useLinuxDoCreditAuthController({
           return;
         if (opening.mode === 'silent') {
           if (!nonce || !/^[0-9a-f]{32}$/.test(nonce)) throw new Error('Invalid authorization nonce');
-          opening.nonce = nonce;
+          opening.nonce = { phase: 'issued', value: nonce };
           setDocument({ generation: opening.ticket.generation, userAgent, mode: 'silent', nonce });
         } else setDocument({ generation: opening.ticket.generation, userAgent, mode: 'manual' });
       } catch {
-        if (openingRef.current !== opening || opening.controller.signal.aborted) return;
+        if (creditOpening(authRef.current.opening) !== opening || opening.controller.signal.aborted) return;
         if (opening.mode === 'silent') {
           void close('cancel');
           return;
@@ -149,7 +188,7 @@ export function useLinuxDoCreditAuthController({
         setError('LDC 页面准备失败，请刷新重试。');
       }
     },
-    [close, getUserAgent, prepareCookieBarrier, readRuntime]
+    [close, getUserAgent, prepareCookieBarrier, readRuntime, setDocument, setLoading]
   );
   const start = useCallback(
     (mode: CreditAuthMode) => {
@@ -161,30 +200,33 @@ export function useLinuxDoCreditAuthController({
         ticket: beginSurface(mode),
         controller: new AbortController(),
         mode,
-        nonce: null,
+        nonce: { phase: 'unissued' },
         completion,
         resolve
       };
-      openingRef.current = opening;
+      authRef.current.opening = { phase: 'active', opening };
       setGeneration(opening.ticket.generation);
-      ++revisionRef.current;
-      setBusy(mode === 'silent');
+      ++authRef.current.revision;
+      setConnectionFeedback(mode === 'silent' ? 'connecting' : 'idle');
       if (mode === 'silent')
         opening.timeout = setTimeout(() => {
-          if (openingRef.current === opening) void close('cancel');
+          if (creditOpening(authRef.current.opening) === opening) void close('cancel');
         }, 30_000);
       return { opening, prepared: prepareDocument(opening) };
     },
     [beginSurface, close, prepareDocument]
   );
   const open = useCallback(async () => {
-    if (openingRef.current?.mode === 'manual') return;
+    if (creditOpening(authRef.current.opening)?.mode === 'manual') return;
     const expectedIdentity = readRuntime().identityKey;
-    if (openingRef.current?.mode === 'silent' || closingRef.current?.mode === 'silent') {
+    if (
+      creditOpening(authRef.current.opening)?.mode === 'silent' ||
+      creditClosing(authRef.current.closing)?.mode === 'silent'
+    ) {
       const closing = close('switch-surface');
-      const closeIntent = manualIntentRef.current;
+      const closeIntent = authRef.current.manualIntent;
       await closing;
-      if (manualIntentRef.current !== closeIntent) return;
+      if (authRef.current.manualIntent !== closeIntent) return;
     }
     const runtime = readRuntime();
     if (
@@ -198,13 +240,14 @@ export function useLinuxDoCreditAuthController({
       return;
     }
     prepareSurfaceOpen();
-    attemptedOwnerRef.current = runtime.identityKey + ':' + runtime.sessionEpoch;
+    authRef.current.attempt = { phase: 'attempted', owner: runtime.identityKey + ':' + runtime.sessionEpoch };
     await start('manual').prepared;
   }, [close, notify, prepareSurfaceOpen, readRuntime, screenActiveRef, start]);
   const connectSilently = useCallback((): Promise<void> => {
-    if (openingRef.current)
-      return openingRef.current.mode === 'silent' ? openingRef.current.completion : Promise.resolve();
-    if (closingRef.current) return closingRef.current.promise;
+    const opening = creditOpening(authRef.current.opening);
+    if (opening) return opening.mode === 'silent' ? opening.completion : Promise.resolve();
+    const closing = creditClosing(authRef.current.closing);
+    if (closing) return closing.promise;
     const runtime = readRuntime();
     const owner = runtime.identityKey + ':' + runtime.sessionEpoch;
     if (
@@ -215,16 +258,16 @@ export function useLinuxDoCreditAuthController({
       runtime.identityTrust !== 'confirmed' ||
       runtime.authSurfaceOpen ||
       !canStartSilent() ||
-      attemptedOwnerRef.current === owner
+      (authRef.current.attempt.phase === 'attempted' && authRef.current.attempt.owner === owner)
     )
       return Promise.resolve();
-    attemptedOwnerRef.current = owner;
+    authRef.current.attempt = { phase: 'attempted', owner };
     return start('silent').opening.completion;
   }, [appActiveRef, canStartSilent, readRuntime, screenActiveRef, start]);
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      const opening = openingRef.current;
-      if (opening?.mode !== 'silent' || !opening.nonce) return;
+      const opening = creditOpening(authRef.current.opening);
+      if (opening?.mode !== 'silent' || opening.nonce.phase !== 'issued') return;
       const runtime = readRuntime();
       if (
         opening.controller.signal.aborted ||
@@ -235,24 +278,24 @@ export function useLinuxDoCreditAuthController({
         runtime.sessionEpoch !== opening.ticket.sessionEpoch
       )
         return;
-      const outcome = isLinuxDoCreditAuthMessage(event.nativeEvent.data, event.nativeEvent.url, opening.nonce);
+      const outcome = isLinuxDoCreditAuthMessage(event.nativeEvent.data, event.nativeEvent.url, opening.nonce.value);
       if (outcome) void close(outcome === 'complete' ? 'success' : 'cancel');
     },
     [appActiveRef, close, readRuntime, screenActiveRef]
   );
   const failSilent = useCallback(
     (expectedGeneration: number) => {
-      if (openingRef.current?.mode === 'silent' && openingRef.current.ticket.generation === expectedGeneration)
-        void close('cancel');
+      const opening = creditOpening(authRef.current.opening);
+      if (opening?.mode === 'silent' && opening.ticket.generation === expectedGeneration) void close('cancel');
     },
     [close]
   );
   const retry = useCallback(() => {
-    const previous = openingRef.current;
+    const previous = creditOpening(authRef.current.opening);
     if (!previous || document || loading || previous.mode !== 'manual') return;
     previous.controller.abort();
     const opening = { ...previous, controller: new AbortController() };
-    openingRef.current = opening;
+    authRef.current.opening = { phase: 'active', opening };
     void prepareDocument(opening);
   }, [document, loading, prepareDocument]);
   useLayoutEffect(() => {
@@ -265,7 +308,7 @@ export function useLinuxDoCreditAuthController({
       void close('navigation-away');
       return;
     }
-    const opening = openingRef.current;
+    const opening = creditOpening(authRef.current.opening);
     if (opening?.mode === 'silent' && !appActive) {
       void close('cancel');
       return;
@@ -278,13 +321,13 @@ export function useLinuxDoCreditAuthController({
   });
   useEffect(
     () => () => {
-      const opening = openingRef.current;
+      const opening = creditOpening(authRef.current.opening);
       opening?.controller.abort();
       clearTimeout(opening?.timeout);
       opening?.resolve();
-      openingRef.current = null;
-      ++revisionRef.current;
-      ++manualIntentRef.current;
+      authRef.current.opening = { phase: 'idle' };
+      ++authRef.current.revision;
+      ++authRef.current.manualIntent;
     },
     []
   );

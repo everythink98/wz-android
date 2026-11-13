@@ -39,6 +39,20 @@ class BackupExportTest {
     owner.finish(next)
   }
 
+  @Test fun deliveredResultIsStableAndFinishingCannotReviveADestroyedOwner() {
+    val owner = BackupExportOwner()
+    val operation = owner.begin()
+    val failure = BackupDocumentResult.Failed("provider result missing")
+    owner.complete(operation.requestCode, failure)
+    owner.complete(operation.requestCode, BackupDocumentResult.Canceled)
+    assertSame(failure, runBlocking { operation.result.await() })
+
+    owner.destroy()
+    owner.finish(operation)
+    assertThrows(IllegalStateException::class.java) { owner.ensureAlive() }
+    assertThrows(IllegalStateException::class.java) { owner.begin() }
+  }
+
   @Test fun malformedActivityResultsReturnToTheCoroutineWithoutThrowingOnTheMainThread() {
     val contract = BackupDocumentContract()
     assertTrue(contract.parseResult("backup.json", android.app.Activity.RESULT_OK, null) is BackupDocumentResult.Failed)

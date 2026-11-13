@@ -37,10 +37,9 @@ type LinuxDoConnectSessionRecoveryInit = RequestInit & {
   [LINUXDO_CONNECT_SESSION_RECOVERY_INTENT]?: true;
 };
 
-type LinuxDoEvidenceWindow = Readonly<{
-  epoch: number;
-  latestConfirmedDirectOrdinal: number;
-}>;
+type LinuxDoEvidenceWindow = Readonly<
+  { kind: 'unconfirmed'; epoch: number } | { kind: 'direct-confirmed'; epoch: number; ordinal: number }
+>;
 
 type LinuxDoReadTransport = { channel: 'direct'; response: Response } | { channel: 'webview'; response: Response };
 
@@ -244,7 +243,7 @@ export function createLinuxDoWebViewFallbackFetcher({
   recoverReadChannel?: (expectedGeneration: number, trace: DiagnosticTrace) => Promise<unknown>;
   webViewFetcher: Fetcher;
 }): Fetcher {
-  let evidenceWindow: LinuxDoEvidenceWindow = { epoch: 0, latestConfirmedDirectOrdinal: 0 };
+  let evidenceWindow: LinuxDoEvidenceWindow = { kind: 'unconfirmed', epoch: 0 };
   let requestOrdinal = 0;
   const recordQualifiedReadFallback = async (
     reason: 'network_error' | 'timeout',
@@ -260,7 +259,10 @@ export function createLinuxDoWebViewFallbackFetcher({
       generation: expectedGeneration,
       evidenceEpoch: evidenceWindow.epoch
     } as const;
-    if (expectedWindow !== evidenceWindow || ordinal <= evidenceWindow.latestConfirmedDirectOrdinal) {
+    if (
+      expectedWindow !== evidenceWindow ||
+      (evidenceWindow.kind === 'direct-confirmed' && ordinal <= evidenceWindow.ordinal)
+    ) {
       recordForumRecoveryDecision('linuxdo', 'superseded', fields);
       return;
     }
@@ -393,8 +395,8 @@ export function createLinuxDoWebViewFallbackFetcher({
     if (response.ok && transport.channel === 'direct') {
       registerForumReadResponseEvidence(init, response, {
         commit: async () => {
-          if (ordinal > evidenceWindow.latestConfirmedDirectOrdinal) {
-            evidenceWindow = { epoch: evidenceWindow.epoch + 1, latestConfirmedDirectOrdinal: ordinal };
+          if (evidenceWindow.kind === 'unconfirmed' || ordinal > evidenceWindow.ordinal) {
+            evidenceWindow = { kind: 'direct-confirmed', epoch: evidenceWindow.epoch + 1, ordinal };
             recordForumRecoveryDecision('linuxdo', 'direct-reset', {
               ...recoveryFields,
               evidenceKind: 'direct',

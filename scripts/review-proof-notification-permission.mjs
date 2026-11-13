@@ -8,24 +8,22 @@ export async function withProofNotificationPermission({ adb, pkg }, run) {
     adb('shell', 'dumpsys', 'package', pkg)
   )?.[1];
   if (!permissionBefore) throw new Error('Cannot establish notification permission baseline');
-  /** @type {(() => void) | null} */
-  let grantRequest = () => {
-    adb('shell', 'pm', 'grant', pkg, permission);
-  };
+  /** @type {'grantable' | 'closed'} */
+  let grantPolicy = 'grantable';
   /** @type {{ kind: 'none' } | { kind: 'failed', error: unknown }} */
   let businessFailure = { kind: 'none' };
   try {
     adb('shell', 'pm', 'revoke', pkg, permission);
     await run(() => {
-      const request = grantRequest;
-      grantRequest = null;
-      request?.();
+      if (grantPolicy !== 'grantable') return;
+      grantPolicy = 'closed';
+      adb('shell', 'pm', 'grant', pkg, permission);
     });
   } catch (error) {
     businessFailure = { kind: 'failed', error };
     throw error;
   } finally {
-    grantRequest = null;
+    grantPolicy = 'closed';
     /** @type {unknown[]} */
     const errors = [];
     for (const cleanup of [

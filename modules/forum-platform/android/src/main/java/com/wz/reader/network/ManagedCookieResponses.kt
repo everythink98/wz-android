@@ -28,9 +28,25 @@ private fun cfClearanceValues(header: String?): List<String> = header.orEmpty().
   .map { it.trim() }.filter { it.startsWith("cf_clearance=") }.map { it.substringAfter('=') }
 
 internal class CookieResponseScope(val epoch: Long) {
-  var downgraded = false
-  var url: String? = null
-  var managedRead = false
+  private sealed interface Access {
+    val url: String?
+    data class Unmanaged(override val url: String?) : Access
+    data class Managed(override val url: String) : Access
+    data class Downgraded(override val url: String) : Access
+  }
+  private var access: Access = Access.Unmanaged(null)
+  val downgraded: Boolean get() = access is Access.Downgraded
+  val url: String? get() = access.url
+  val managedRead: Boolean get() = access is Access.Managed
+
+  fun observe(url: String, source: String?) {
+    access = if (source != "linuxdo" || access is Access.Downgraded) Access.Downgraded(url) else Access.Managed(url)
+  }
+
+  fun revokeManagedRead() {
+    val current = access
+    if (current is Access.Managed) access = Access.Unmanaged(current.url)
+  }
 }
 
 internal class CookieResponseBatch(val size: Int) {
@@ -111,12 +127,60 @@ internal class ManagedCookieResponses(
   private val lock = Any()
   @Volatile private var epoch = 0L
   private var writeSequence = 0L
-  private var blocked = false
-  private var pending: PendingCookieWrite? = null
-  private var surfaceClearance: List<String>? = null
-  private var hasSurfaceClearanceBaseline = false
-  private var dirty: Map<String, Any>? = null
+  private sealed interface Handoff {
+    data object Open : Handoff
+    class OpenWithBaseline(val values: List<String>) : Handoff
+    data object Blocked : Handoff
+    class BlockedWithBaseline(val values: List<String>) : Handoff
+  }
+  private sealed interface Persistence {
+    data object Clean : Persistence
+    class Dirty(val fields: Map<String, Any>) : Persistence
+    class Awaiting(val write: PendingCookieWrite) : Persistence
+    class AwaitingDirty(val write: PendingCookieWrite, val fields: Map<String, Any>) : Persistence
+  }
+  private var handoff: Handoff = Handoff.Open
+  private var persistence: Persistence = Persistence.Clean
   private val local = ThreadLocal<CookieResponseScope?>()
+
+  private val blocked: Boolean
+    get() = handoff is Handoff.Blocked || handoff is Handoff.BlockedWithBaseline
+  private val surfaceClearance: List<String>?
+    get() = when (val current = handoff) {
+      is Handoff.OpenWithBaseline -> current.values
+      is Handoff.BlockedWithBaseline -> current.values
+      Handoff.Open, Handoff.Blocked -> null
+    }
+  private val pending: PendingCookieWrite?
+    get() = when (val current = persistence) {
+      is Persistence.Awaiting -> current.write
+      is Persistence.AwaitingDirty -> current.write
+      Persistence.Clean, is Persistence.Dirty -> null
+    }
+  private val dirty: Map<String, Any>?
+    get() = when (val current = persistence) {
+      is Persistence.Dirty -> current.fields
+      is Persistence.AwaitingDirty -> current.fields
+      Persistence.Clean, is Persistence.Awaiting -> null
+    }
+
+  private fun updateHandoff(nextBlocked: Boolean, baseline: List<String>?) {
+    handoff = when {
+      nextBlocked && baseline != null -> Handoff.BlockedWithBaseline(baseline)
+      nextBlocked -> Handoff.Blocked
+      baseline != null -> Handoff.OpenWithBaseline(baseline)
+      else -> Handoff.Open
+    }
+  }
+
+  private fun updatePersistence(nextPending: PendingCookieWrite?, nextDirty: Map<String, Any>?) {
+    persistence = when {
+      nextPending != null && nextDirty != null -> Persistence.AwaitingDirty(nextPending, nextDirty)
+      nextPending != null -> Persistence.Awaiting(nextPending)
+      nextDirty != null -> Persistence.Dirty(nextDirty)
+      else -> Persistence.Clean
+    }
+  }
 
   private fun emit(fields: Map<String, Any>) {
     try { report(mapOf("source" to "linuxdo", "phase" to "finish", "outcome" to "success") + fields) }
@@ -133,9 +197,7 @@ internal class ManagedCookieResponses(
 
   fun observed(url: String, source: String?, @Suppress("UNUSED_PARAMETER") header: String?) {
     val scope = local.get() ?: return
-    if (source != "linuxdo") scope.downgraded = true
-    scope.url = url
-    scope.managedRead = source == "linuxdo" && !scope.downgraded
+    scope.observe(url, source)
   }
 
   fun sending(request: Request, call: Call?, transport: String = "okhttp") {
@@ -173,7 +235,7 @@ internal class ManagedCookieResponses(
     if (!scope.managedRead) return request
     val next = request.newBuilder().removeHeader("Cookie")
     if (blocked || scope.epoch != epoch || scope.url != request.url.toString()) {
-      scope.managedRead = false
+      scope.revokeManagedRead()
     } else {
       val header = reader(request.url.toString())
       if (!header.isNullOrEmpty()) next.header("Cookie", header)
@@ -184,8 +246,7 @@ internal class ManagedCookieResponses(
   private fun settlePending(waitMs: Long): Boolean {
     val write = pending ?: return true
     if (!write.batch.await(waitMs)) return false
-    pending = null
-    dirty = write.fields
+    persistence = Persistence.Dirty(write.fields)
     write.items.forEachIndexed { index, item ->
       emit(write.fields + item + mapOf("operation" to "cookie-response", "cookieResult" to "settled",
         "cookieAccepted" to write.batch.result(index),
@@ -200,7 +261,7 @@ internal class ManagedCookieResponses(
     val start = System.nanoTime()
     try {
       flusher()
-      dirty = null
+      updatePersistence(pending, null)
       emit(fields + mapOf("operation" to "cookie-persist", "cookieResult" to "persisted",
         "elapsedMs" to TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)))
       return true
@@ -214,11 +275,10 @@ internal class ManagedCookieResponses(
   fun setBarrier(value: Boolean, reason: String = "identity-change", diagnostics: Map<String, Any> = emptyMap()) = synchronized(lock) {
     require(reason in setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"))
     if (reason != "startup" || blocked != value) epoch++
-    blocked = true
+    updateHandoff(true, surfaceClearance)
     val clearance = if (reason == "startup") null else runCatching { cfClearanceValues(reader("https://linux.do/")) }
     if (reason == "surface-open") {
-      surfaceClearance = clearance?.getOrNull()
-      hasSurfaceClearanceBaseline = clearance?.isSuccess == true
+      updateHandoff(blocked, clearance?.getOrNull())
     }
     val fields = diagnostics.filterKeys { it in setOf("appSessionId", "traceId", "surfaceGeneration") } +
       mapOf("operation" to "cookie-barrier", "cookieEpoch" to epoch, "cookieBarrierReason" to reason) +
@@ -227,11 +287,10 @@ internal class ManagedCookieResponses(
       (if (reason == "surface-open" || reason == "surface-close") mapOf("cookieTransport" to "webview") else emptyMap()) +
       (if (clearance?.isSuccess == true) mapOf("hasCfClearance" to clearance.getOrThrow().any { it.isNotEmpty() }) else emptyMap()) +
       (if (reason == "surface-open" || reason == "surface-close") cookieInfoFields() else emptyMap()) +
-      (if (reason == "surface-close" && hasSurfaceClearanceBaseline && clearance?.isSuccess == true)
+      (if (reason == "surface-close" && surfaceClearance != null && clearance?.isSuccess == true)
         mapOf("didCfClearanceChange" to (surfaceClearance != clearance.getOrNull())) else emptyMap())
     if (reason == "surface-close" || reason == "identity-change" || reason == "explicit-clear") {
-      surfaceClearance = null
-      hasSurfaceClearanceBaseline = false
+      updateHandoff(blocked, null)
     }
     emit(fields + mapOf("phase" to "intent", "cookieBarrierBlocked" to true))
     if (!settlePending(timeoutMs)) {
@@ -239,9 +298,9 @@ internal class ManagedCookieResponses(
       throw IOException("Cookie response barrier unavailable")
     }
     // WebView owns its internal responses; its handoff still needs an explicit durable flush.
-    if (reason == "surface-close") dirty = fields
+    if (reason == "surface-close") updatePersistence(pending, fields)
     if (!flushDirty()) throw IOException("Cookie persistence unavailable")
-    blocked = value
+    updateHandoff(value, surfaceClearance)
     emit(fields + mapOf("cookieBarrierBlocked" to value))
   }
 
@@ -286,7 +345,7 @@ internal class ManagedCookieResponses(
         val batch = writer(url, values)
         writeSequence++
         val writeFields = fields + mapOf("cookieWriteSequence" to writeSequence)
-        pending = PendingCookieWrite(batch, writeFields, items, System.nanoTime())
+        updatePersistence(PendingCookieWrite(batch, writeFields, items, System.nanoTime()), dirty)
         if (!settlePending(timeoutMs)) {
           batch.abandoned.set(true)
           batch.whenSettled {

@@ -399,6 +399,34 @@ describe('linux.do reader', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('continues a nonempty malformed feed page and retains overflow from the final upstream window', async () => {
+    const fetcher = vi.fn(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get('page') || '0');
+      return jsonResponse({
+        topic_list: {
+          topics: page === 0 ? [{}] : page === 1 ? [topic(1)] : [topic(2), topic(3)],
+          more_topics_url: page < 2 ? '/latest?page=next' : null
+        }
+      });
+    });
+    const result = await getLinuxDoFeed({ fetcher, limit: 2 });
+    expect(result.items.map(({ id }) => id)).toEqual(['1', '2']);
+    expect(result).toMatchObject({ hasMore: true, nextPage: 2 });
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).searchParams.get('page'))).toEqual([null, '1', '2']);
+  });
+
+  it('stops an empty raw feed window even when the server advertises more topics', async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ topic_list: { topics: [], more_topics_url: '/latest?page=next' } })
+    );
+    await expect(getLinuxDoFeed({ fetcher, limit: 2 })).resolves.toMatchObject({
+      items: [],
+      hasMore: false,
+      nextPage: null
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('shares one category request across catalog and feed in the same read scope', async () => {
     const fetcher = vi.fn(async (input: string) =>
       input.includes('/site.json')
@@ -563,6 +591,30 @@ describe('linux.do catalog ownership', () => {
 });
 
 describe('linux.do successful emoji cache', () => {
+  it('keeps concurrent initial emoji reads separate and retains another read success after a late failure', async () => {
+    vi.resetModules();
+    const { getLinuxDoEmojiUrls } = await import('./reader');
+    const pending = Promise.withResolvers<Response>();
+    const failure = new Error('old emoji request failed');
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValue(jsonResponse({}));
+    const first = getLinuxDoEmojiUrls({ fetcher });
+    const rejected = expect(first).rejects.toBe(failure);
+    try {
+      const second = await getLinuxDoEmojiUrls({ fetcher });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      pending.reject(failure);
+      await rejected;
+      expect(await getLinuxDoEmojiUrls({ fetcher })).toBe(second);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      pending.reject(failure);
+      await Promise.allSettled([first]);
+    }
+  });
+
   it('retries a failed emoji request and then reuses the exact successful map', async () => {
     vi.resetModules();
     const { getLinuxDoEmojiUrls } = await import('./reader');

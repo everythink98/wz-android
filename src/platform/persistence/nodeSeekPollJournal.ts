@@ -10,7 +10,8 @@ export type NodeSeekPollJournalEntry = {
 
 const KEY_PREFIX = 'wz:composer:nodeseek-polls:';
 const DATABASE_NAME = 'composer-journal.db';
-let databasePromise: Promise<SQLiteDatabase> | undefined;
+type PollJournalConnection = { kind: 'cold' } | { kind: 'retained'; db: SQLiteDatabase };
+let connection: PollJournalConnection = { kind: 'cold' };
 const { enqueue, transaction, assertUsable } = createSqliteExecutor(
   '投票事务状态不明，请重新启动后核对。',
   '投票事务无法确认，已阻止重复创建。'
@@ -70,13 +71,13 @@ async function connect() {
   }
 }
 
-function database() {
+async function database() {
   assertUsable();
-  databasePromise ??= connect().catch((error) => {
-    databasePromise = undefined;
-    throw error;
-  });
-  return databasePromise;
+  if (connection.kind === 'retained') return connection.db;
+  // Public operations share the executor queue, so initialization cannot overlap.
+  const db = await connect();
+  connection = { kind: 'retained', db };
+  return db;
 }
 
 async function readLegacyEntries(identityKey: string) {

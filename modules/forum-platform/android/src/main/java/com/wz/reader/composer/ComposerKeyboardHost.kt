@@ -59,14 +59,27 @@ private class KeyboardHiddenEvent(
 
 /** Keeps IME content alive until the editor's controlled hide animation has completed. */
 open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(context) {
-  private var hostEnabled = false
-  private var autoImeRequested = false
+  private enum class AutoImePhase {
+    DISABLED, DISABLED_WITH_REQUEST, ENABLED, ENABLED_WITH_REQUEST
+  }
+  private var autoImePhase = AutoImePhase.DISABLED
+  private val hostEnabled: Boolean
+    get() = autoImePhase == AutoImePhase.ENABLED || autoImePhase == AutoImePhase.ENABLED_WITH_REQUEST
+  private val autoImeRequested: Boolean
+    get() = autoImePhase == AutoImePhase.DISABLED_WITH_REQUEST || autoImePhase == AutoImePhase.ENABLED_WITH_REQUEST
   private var hiddenLayoutHeight = 0
-  private var pending: HideRequest? = null
-  private var backDownTime: Long? = null
-  private var backFocus: View? = null
-  private var backToken: IBinder? = null
-  private var backCanStart = false
+  private sealed class HideCycle(val request: HideRequest?) {
+    data object Idle : HideCycle(null)
+    class Active(request: HideRequest) : HideCycle(request)
+  }
+  private var hideCycle: HideCycle = HideCycle.Idle
+  private val pending: HideRequest? get() = hideCycle.request
+  private sealed class BackPair(val downTime: Long?) {
+    data object Idle : BackPair(null)
+    class Armed(downTime: Long, val focus: View, val token: IBinder?) : BackPair(downTime)
+    class Consumed(downTime: Long) : BackPair(downTime)
+  }
+  private var backPair: BackPair = BackPair.Idle
   private var focusObserver: ViewTreeObserver? = null
   private var imeAnimating = false
   private var imeProgressBottom: Int? = null
@@ -88,19 +101,31 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     val commands = linkedSetOf<Double>()
     val signal = CancellationSignal()
     var animator: ValueAnimator? = null
-    var fallback = false
-    var hiddenLayoutReady = false
+    enum class HidePath { CONTROL_PATH, FALLBACK_WAITING, FALLBACK_LAYOUT_SEEN }
+    var hidePath = HidePath.CONTROL_PATH
+    val fallback: Boolean get() = hidePath != HidePath.CONTROL_PATH
+    val hiddenLayoutReady: Boolean get() = hidePath == HidePath.FALLBACK_LAYOUT_SEEN
+    fun enterFallback() { if (!fallback) hidePath = HidePath.FALLBACK_WAITING }
+    fun resetHiddenLayout() { if (hiddenLayoutReady) hidePath = HidePath.FALLBACK_WAITING }
     var drawObserver: ViewTreeObserver? = null
     var drawListener: ViewTreeObserver.OnPreDrawListener? = null
-    var commitObserver: ViewTreeObserver? = null
-    var commitCallback: Runnable? = null
+    sealed class CommitBinding(val observer: ViewTreeObserver?, val callback: Runnable?) {
+      data object None : CommitBinding(null, null)
+      class Registered(observer: ViewTreeObserver?, callback: Runnable) : CommitBinding(observer, callback)
+    }
+    var commitBinding: CommitBinding = CommitBinding.None
+    val commitObserver: ViewTreeObserver? get() = commitBinding.observer
+    val commitCallback: Runnable? get() = commitBinding.callback
   }
 
   fun setHostEnabled(value: Boolean) {
     if (!value) resetImeInsets()
-    hostEnabled = value
+    autoImePhase = when {
+      !value -> AutoImePhase.DISABLED
+      autoImeRequested -> AutoImePhase.ENABLED_WITH_REQUEST
+      else -> AutoImePhase.ENABLED
+    }
     if (!value) {
-      autoImeRequested = false
       pending?.let(::cancelRequest)
     } else {
       syncImeInsets()
@@ -109,8 +134,16 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   }
 
   fun setAutoShowIme(value: Boolean) {
-    autoImeRequested = value
+    updateAutoImeRequest(value)
     showAutoImeWhenReady()
+  }
+
+  private fun updateAutoImeRequest(value: Boolean) {
+    autoImePhase = if (hostEnabled) {
+      if (value) AutoImePhase.ENABLED_WITH_REQUEST else AutoImePhase.ENABLED
+    } else {
+      if (value) AutoImePhase.DISABLED_WITH_REQUEST else AutoImePhase.DISABLED
+    }
   }
 
   private fun showAutoImeWhenReady() {
@@ -119,7 +152,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     val token = windowToken
     post {
       if (!autoImeRequested || !windowAvailable() || windowToken != token || findFocus() !== focus) return@post
-      autoImeRequested = false
+      updateAutoImeRequest(false)
       ViewCompat.getWindowInsetsController(this)?.show(WindowInsetsCompat.Type.ime())
         ?: (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(focus, 0)
     }
@@ -202,7 +235,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   }
 
   override fun onDetachedFromWindow() {
-    autoImeRequested = false
+    updateAutoImeRequest(false)
     pending?.let(::cancelRequest)
     resetImeInsets()
     focusObserver?.takeIf { it.isAlive }?.removeOnGlobalFocusChangeListener(focusListener)
@@ -211,9 +244,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     imeAnimating = false
     imeProgressBottom = null
     currentImeInsets = null
-    backDownTime = null
-    backFocus = null
-    backToken = null
+    backPair = BackPair.Idle
     super.onDetachedFromWindow()
   }
 
@@ -227,9 +258,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
     if (event.keyCode != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEventPreIme(event)
     if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-      backDownTime = null
-      backFocus = null
-      backToken = null
+      backPair = BackPair.Idle
       // A rejected control request must not trap later Back events in its fallback wait.
       pending?.takeIf { it.fallback }?.let {
         cancelRequest(it)
@@ -238,20 +267,18 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
       val focus = findFocus()?.takeUnless { it === this }
       val running = pending?.let(::owns) == true
       if (windowAvailable() && focus != null && (running || canControlVisibleIme())) {
-        backDownTime = event.downTime
-        backFocus = focus
-        backToken = windowToken
+        val downTime = event.downTime
+        val token = windowToken
         // A pair consumed during another hide must never turn into a new USER show request.
-        backCanStart = !running
+        backPair = if (running) BackPair.Consumed(downTime) else BackPair.Armed(downTime, focus, token)
       }
     }
-    if (backDownTime != event.downTime) return super.dispatchKeyEventPreIme(event)
+    val pair = backPair
+    if (pair.downTime != event.downTime) return super.dispatchKeyEventPreIme(event)
     if (event.action == KeyEvent.ACTION_UP) {
-      val shouldStart = backCanStart && !event.isCanceled && windowAvailable() &&
-        findFocus() === backFocus && windowToken == backToken && pending == null && canControlVisibleIme()
-      backDownTime = null
-      backFocus = null
-      backToken = null
+      val shouldStart = pair is BackPair.Armed && !event.isCanceled && windowAvailable() &&
+        findFocus() === pair.focus && windowToken == pair.token && pending == null && canControlVisibleIme()
+      backPair = BackPair.Idle
       if (shouldStart) startHide(null)
     }
     return true
@@ -276,7 +303,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
         if (animation.typeMask and WindowInsets.Type.ime() != 0) {
           running.add(animation)
           imeAnimating = true
-          pending?.hiddenLayoutReady = false
+          pending?.resetHiddenLayout()
         }
       }
 
@@ -335,7 +362,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
     if (focus == null || token == null) { reply(false); return }
     val request = HideRequest(focus, token, requestId == null)
     requestId?.let(request.commands::add)
-    pending = request
+    hideCycle = HideCycle.Active(request)
     if (Build.VERSION.SDK_INT < 30 || !canControlVisibleIme() || windowInsetsController == null) {
       fallback(request)
       return
@@ -436,8 +463,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
               }
             }
           }
-          request.commitObserver = observer
-          request.commitCallback = callback
+          request.commitBinding = HideRequest.CommitBinding.Registered(observer, callback)
           try { registerFrameCommit(observer, callback) } catch (_: RuntimeException) { fallback(request) }
         }
       }
@@ -455,8 +481,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
       }
       removeCallbacks(callback)
     }
-    request.commitObserver = null
-    request.commitCallback = null
+    request.commitBinding = HideRequest.CommitBinding.None
   }
 
   private fun clearDrawWait(request: HideRequest) {
@@ -480,7 +505,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
 
   private fun complete(request: HideRequest, success: Boolean) {
     if (pending !== request) return
-    pending = null
+    hideCycle = HideCycle.Idle
     stopAnimator(request)
     clearDrawWait(request)
     request.commands.forEach { emitKeyboardHidden(it, success) }
@@ -496,7 +521,7 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
   private fun fallback(request: HideRequest) {
     if (pending !== request) return
     if (!owns(request)) { cancelRequest(request); return }
-    request.fallback = true
+    request.enterFallback()
     stopAnimator(request)
     clearDrawWait(request)
     request.signal.cancel()
@@ -508,10 +533,10 @@ open class ComposerKeyboardHost(context: ThemedReactContext) : ReactViewGroup(co
         else if (hasHiddenImeLayout()) {
           if (request.hiddenLayoutReady) complete(request, true)
           else {
-            request.hiddenLayoutReady = true
+            request.hidePath = HideRequest.HidePath.FALLBACK_LAYOUT_SEEN
             postInvalidateOnAnimation()
           }
-        } else request.hiddenLayoutReady = false
+        } else request.resetHiddenLayout()
       }
       true
     }

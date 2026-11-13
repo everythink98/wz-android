@@ -125,20 +125,41 @@ internal class DiagnosticLogStore(
 }
 
 object DiagnosticJournal {
-  private const val MAX_PENDING_BYTES = 256 * 1024
   private const val MAX_CRASH_BYTES = 256 * 1024
   private val processSessionId = "process-" + UUID.randomUUID().toString().replace("-", "")
   private val executor = Executors.newSingleThreadScheduledExecutor { runnable ->
     Thread(runnable, "diagnostic-writer").apply { isDaemon = true }
   }
   private val lock = Any()
-  private var pending = mutableListOf<Pair<String, String>>()
-  private var pendingBytes = 0
-  private var flushScheduled = false
-  private var queueDroppedCount = 0L
-  private var storage: File? = null
-  private var jsStore: DiagnosticLogStore? = null
-  private var nativeStore: DiagnosticLogStore? = null
+  private sealed interface StorageBinding {
+    data object Unbound : StorageBinding
+    class DirectoryBound(val directory: File) : StorageBinding
+    class JsStoreBound(val directory: File, val js: DiagnosticLogStore) : StorageBinding
+    class StoresBound(val directory: File, val js: DiagnosticLogStore, val native: DiagnosticLogStore) : StorageBinding
+  }
+  private var binding: StorageBinding = StorageBinding.Unbound
+  private val storage: File? get() = when (val current = binding) {
+    StorageBinding.Unbound -> null
+    is StorageBinding.DirectoryBound -> current.directory
+    is StorageBinding.JsStoreBound -> current.directory
+    is StorageBinding.StoresBound -> current.directory
+  }
+  private val jsStore: DiagnosticLogStore? get() = when (val current = binding) {
+    StorageBinding.Unbound, is StorageBinding.DirectoryBound -> null
+    is StorageBinding.JsStoreBound -> current.js
+    is StorageBinding.StoresBound -> current.js
+  }
+  private val nativeStore: DiagnosticLogStore? get() = when (val current = binding) {
+    StorageBinding.Unbound, is StorageBinding.DirectoryBound, is StorageBinding.JsStoreBound -> null
+    is StorageBinding.StoresBound -> current.native
+  }
+  private val pendingBatch = PendingDiagnosticBatch(
+    executor, lock, { storage != null },
+    { batch ->
+      jsStore?.append(batch.filter { it.first == "js" }.map { it.second })
+      nativeStore?.append(batch.filter { it.first == "native" }.map { it.second })
+    }
+  )
   private var crashWriteFailureCount = 0L
   private var crashReadFailureCount = 0L
   private var previous: JSONObject? = null
@@ -163,9 +184,11 @@ object DiagnosticJournal {
       recordStartupPhase("diagnostics-start")
       val directory = File(application.noBackupFilesDir, "diagnostics")
       check(directory.isDirectory || directory.mkdirs())
-      storage = directory
-      jsStore = DiagnosticLogStore(directory, "js")
-      nativeStore = DiagnosticLogStore(directory, "native")
+      binding = StorageBinding.DirectoryBound(directory)
+      val js = DiagnosticLogStore(directory, "js")
+      binding = StorageBinding.JsStoreBound(directory, js)
+      val native = DiagnosticLogStore(directory, "native")
+      binding = StorageBinding.StoresBound(directory, js, native)
       val sessionFile = File(directory, "process.json")
       previous = try { JSONObject(sessionFile.readText()) } catch (_: Exception) { null }
       recordStartupPhase("diagnostics-read")
@@ -220,27 +243,28 @@ object DiagnosticJournal {
       .put("durationMs", 0).apply { fields.forEach { (key, value) -> put(key, value) } }
 
   private fun recordApp(operation: String, outcome: String, fields: Map<String, Any>) =
-    enqueue("native", event(operation, outcome, fields).toString())
+    pendingBatch.enqueue("native", event(operation, outcome, fields).toString())
 
-  private val startupPhases = setOf(
+  private enum class StartupPhaseRecord { UNRECORDED, RECORDED }
+  private val startupPhases = listOf(
     "diagnostics-start", "diagnostics-read", "diagnostics-written", "network-start", "network-client",
     "glide-start", "glide-ready", "image-loader-ready", "network-ready", "js-entry", "react-mounted",
     "reader-start", "reader-read", "reader-parsed", "reader-cleaned", "reader-serialized", "reader-ready",
     "sessions-start", "sessions-read", "sessions-ready", "navigation-ready", "page-layout", "page-ready",
     "splash-hidden", "feed-content", "feed-empty", "feed-error"
-  )
-  private val recordedStartupPhases = mutableSetOf<String>()
+  ).associateWith { StartupPhaseRecord.UNRECORDED }.toMutableMap()
 
   @Synchronized
   fun recordStartupPhase(phase: String): Boolean {
-    if (phase !in startupPhases || !recordedStartupPhases.add(phase)) return false
+    if (startupPhases[phase] != StartupPhaseRecord.UNRECORDED) return false
+    startupPhases[phase] = StartupPhaseRecord.RECORDED
     try {
       val fields = mapOf<String, Any>("state" to phase,
         "elapsedMs" to (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime()))
       val line = event("startup-timing", "success", fields).toString()
       // Only closed phase names and build/process identity enter logcat, never user data.
       Log.i("WzStartup", line)
-      if (storage != null) enqueue("native", line)
+      if (storage != null) pendingBatch.enqueue("native", line)
     } catch (_: Exception) { /* Timing must not change startup. */ }
     return true
   }
@@ -310,7 +334,7 @@ object DiagnosticJournal {
   } catch (_: Exception) { crashWriteFailureCount++; false }
 
   private fun flushBeforeCrash() {
-    try { executor.submit { flush() }.get(250, TimeUnit.MILLISECONDS) }
+    try { executor.submit { pendingBatch.flush() }.get(250, TimeUnit.MILLISECONDS) }
     catch (_: Exception) { /* Retain the independent crash summary even when the ordinary writer is unavailable. */ }
   }
 
@@ -321,45 +345,23 @@ object DiagnosticJournal {
   }
 
   fun appendJs(lines: String) {
-    if (lines.toByteArray().size > MAX_PENDING_BYTES) {
-      synchronized(lock) { queueDroppedCount++ }; return
+    if (lines.toByteArray().size > PendingDiagnosticBatch.MAX_PENDING_BYTES) {
+      pendingBatch.recordDrop(); return
     }
-    lines.lineSequence().filter { it.isNotBlank() }.forEach { enqueue("js", it) }
+    lines.lineSequence().filter { it.isNotBlank() }.forEach { pendingBatch.enqueue("js", it) }
   }
 
   fun recordNetwork(timeMs: Long, fields: Map<String, Any>) {
     try {
       val output = JSONObject(safeNetworkFields(fields)).put("diagnosticKind", "network").put("timeMs", timeMs)
       context().forEach { (key, value) -> output.put(key, value) }
-      enqueue("native", output.toString())
-    } catch (_: Exception) { synchronized(lock) { queueDroppedCount++ } }
-  }
-
-  private fun enqueue(channel: String, line: String) {
-    try {
-      synchronized(lock) {
-        val bytes = line.toByteArray().size
-        if (storage == null || bytes + pendingBytes > MAX_PENDING_BYTES) { queueDroppedCount++; return }
-        pending.add(channel to line); pendingBytes += bytes
-        if (!flushScheduled) {
-          flushScheduled = true
-          executor.schedule({ flush() }, 200, TimeUnit.MILLISECONDS)
-        }
-      }
-    } catch (_: Exception) { synchronized(lock) { queueDroppedCount++ } }
-  }
-
-  private fun flush() {
-    val batch = synchronized(lock) {
-      val batch = pending; pending = mutableListOf(); pendingBytes = 0; flushScheduled = false; batch
-    }
-    jsStore?.append(batch.filter { it.first == "js" }.map { it.second })
-    nativeStore?.append(batch.filter { it.first == "native" }.map { it.second })
+      pendingBatch.enqueue("native", output.toString())
+    } catch (_: Exception) { pendingBatch.recordDrop() }
   }
 
   fun snapshot(complete: (Map<String, Any>) -> Unit) {
     executor.execute {
-      flush()
+      pendingBatch.flush()
       val js = jsStore?.read() ?: ""
       val native = nativeStore?.read() ?: ""
       val crash = try {
@@ -369,7 +371,7 @@ object DiagnosticJournal {
       complete(mapOf(
         "jsLines" to js, "nativeLines" to native, "crashLines" to crash,
         "health" to mapOf(
-          "available" to (storage != null), "queueDroppedCount" to queueDroppedCount,
+          "available" to (storage != null), "queueDroppedCount" to pendingBatch.droppedCount,
           "crashWriteFailureCount" to crashWriteFailureCount,
           "crashReadFailureCount" to crashReadFailureCount,
           "js" to (jsStore?.health() ?: emptyMap<String, Any>()),

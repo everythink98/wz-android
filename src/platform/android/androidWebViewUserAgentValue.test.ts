@@ -28,6 +28,8 @@ describe('Android WebView user agent', () => {
     const read = createDefaultWebViewUserAgentReader(nativeRead);
     const first = read();
     const second = read();
+    expect(first).toBe(second);
+    expect(nativeRead).not.toHaveBeenCalled();
     provider.resolve('PRIVATE_DEVICE_USER_AGENT');
     await expect(Promise.all([first, second])).resolves.toEqual([
       'PRIVATE_DEVICE_USER_AGENT',
@@ -47,6 +49,64 @@ describe('Android WebView user agent', () => {
     ]);
     expect(events[1].traceId).toBe(events[0].traceId);
     expect(JSON.stringify(events)).not.toContain('PRIVATE_DEVICE');
+  });
+
+  it('publishes the cached identity before success diagnostics can reenter the reader', async () => {
+    const nativeRead = vi.fn(async () => 'PRIVATE_DEVICE_USER_AGENT');
+    const read = createDefaultWebViewUserAgentReader(nativeRead);
+    let cachedRead: Promise<string> | undefined;
+    setDiagnosticWriter((line) => {
+      const event: DiagnosticEvent = JSON.parse(line);
+      if (event.phase === 'finish' && event.outcome === 'success') cachedRead = read();
+    });
+
+    const first = read();
+    await expect(first).resolves.toBe('PRIVATE_DEVICE_USER_AGENT');
+    await expect(cachedRead).resolves.toBe('PRIVATE_DEVICE_USER_AGENT');
+    expect(cachedRead).not.toBe(first);
+    expect(nativeRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a fresh read after a reentrant intent attempt fails while another attempt is pending', async () => {
+    const innerProvider = Promise.withResolvers<unknown>();
+    const outerProvider = Promise.withResolvers<unknown>();
+    const retryProvider = Promise.withResolvers<unknown>();
+    const nativeRead = vi
+      .fn<() => Promise<unknown>>()
+      .mockReturnValueOnce(innerProvider.promise)
+      .mockReturnValueOnce(outerProvider.promise)
+      .mockReturnValueOnce(retryProvider.promise);
+    const read = createDefaultWebViewUserAgentReader(nativeRead);
+    let nested: Promise<string> | undefined;
+    let reentered = false;
+    setDiagnosticWriter((line) => {
+      const event: DiagnosticEvent = JSON.parse(line);
+      if (event.operation === 'read-user-agent' && event.phase === 'intent' && !reentered) {
+        reentered = true;
+        nested = read();
+        void nested.catch(() => undefined);
+      }
+    });
+    const outer = read();
+    if (!nested) throw new Error('The intent writer did not reenter the reader');
+    const failure = new Error('nested provider failed');
+    const rejected = expect(nested).rejects.toBe(failure);
+    await Promise.resolve();
+    expect(nativeRead).toHaveBeenCalledTimes(2);
+    innerProvider.reject(failure);
+    await rejected;
+    const retry = read();
+    await Promise.resolve();
+    try {
+      expect(nativeRead).toHaveBeenCalledTimes(3);
+      expect(retry).not.toBe(outer);
+    } finally {
+      outerProvider.resolve('outer identity');
+      retryProvider.resolve('retry identity');
+      await Promise.allSettled([outer, retry]);
+    }
+    await expect(outer).resolves.toBe('outer identity');
+    await expect(retry).resolves.toBe('retry identity');
   });
 
   it('closes a failed provider attempt and records a fresh retry without the native error text', async () => {

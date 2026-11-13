@@ -337,6 +337,23 @@ describe('account status queries', () => {
     expect(
       diagnosticEvents.filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
     ).toEqual([expect.objectContaining({ outcome: 'success', state: 'restored', itemCount: 1 })]);
+
+    await act(async () => {
+      hook.result.current.applyAccountSessionEvent({
+        site: 'nodeseek',
+        type: 'session-updated',
+        loggedIn: true,
+        currentUser: nextNodeSeekUser
+      });
+    });
+    const current = appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'));
+    await hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSourcesReady: false });
+    await hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSourcesReady: true });
+    expect(hook.result.current.hydrated).toBe(true);
+    expect(appQueryClient.getQueryData(accountQueryKeys.snapshot('nodeseek'))).toBe(current);
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
+    ).toHaveLength(1);
   });
 
   it('probes only migration candidates and marks the one-time migration complete', async () => {

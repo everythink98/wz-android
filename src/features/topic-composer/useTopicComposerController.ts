@@ -66,6 +66,20 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import type { TopicComposerRouteRuntimeValue } from './TopicComposerRouteRuntime';
 import { uploadTopicAttachment, validateTopicAttachment } from './topicCreationActions';
 
+type UploadJob = { abort: AbortController; promise: Promise<string | undefined> };
+type AttachmentWork =
+  | { kind: 'idle' }
+  | { kind: 'picking' }
+  | { kind: 'upload'; upload: UploadJob }
+  | { kind: 'picking-upload'; upload: UploadJob };
+
+function isPicking(work: AttachmentWork) {
+  return work.kind === 'picking' || work.kind === 'picking-upload';
+}
+function getUploadJob(work: AttachmentWork) {
+  return 'upload' in work ? work.upload : null;
+}
+
 const SOURCES: TopicCreationSource[] = ['nodeseek', 'linuxdo', 'yaohuo'];
 function confirm(title: string, message: string, label = '确定') {
   return new Promise<boolean>((resolve) =>
@@ -114,11 +128,9 @@ export function useTopicComposerController({
   const [loading, setLoading] = useState(true);
   const [contextLoading, setContextLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
-  const transitionRef = useRef(false);
+  const operationRef = useRef<'idle' | 'submitting' | 'travel'>('idle');
   const [uploading, setUploading] = useState(false);
-  const picking = useRef(false);
-  const uploadRef = useRef<{ abort: AbortController; promise: Promise<string | undefined> } | null>(null);
+  const attachmentWork = useRef<AttachmentWork>({ kind: 'idle' });
   const [error, setError] = useState('');
   const [contextError, setContextError] = useState('');
   const [contextNeedsVerification, setContextNeedsVerification] = useState(false);
@@ -189,8 +201,7 @@ export function useTopicComposerController({
       const current = draftRef.current;
       if (
         !current ||
-        busyRef.current ||
-        transitionRef.current ||
+        operationRef.current !== 'idle' ||
         siteSessionIdentityKey(runtimeRef.current.sessions[current.source]) !== current.identityKey
       )
         return;
@@ -286,7 +297,7 @@ export function useTopicComposerController({
     mounted.current = true;
     return () => {
       mounted.current = false;
-      uploadRef.current?.abort.abort();
+      getUploadJob(attachmentWork.current)?.abort.abort();
     };
   }, []);
   useEffect(() => {
@@ -325,7 +336,7 @@ export function useTopicComposerController({
       // Keep the old owner installed until its in-flight upload has recorded its result.
       // Do not abort an already dispatched request solely because the account changed:
       // its authoritative response still belongs to the original draft.
-      const pending = uploadRef.current;
+      const pending = getUploadJob(attachmentWork.current);
       if (pending) await pending.promise;
       if (!alive) return;
       // Explicit site switches already flush before changing source; account changes still need it.
@@ -674,7 +685,7 @@ export function useTopicComposerController({
   }, [active, context, contextKey, enabled, runtime.appActive, runtimeRef, session?.canWrite]);
 
   const waitForUploads = useCallback(async () => {
-    const pending = uploadRef.current;
+    const pending = getUploadJob(attachmentWork.current);
     if (!pending) return true;
     const choice = await new Promise<'wait' | 'cancel' | 'stay'>((resolve) =>
       Alert.alert(
@@ -695,8 +706,8 @@ export function useTopicComposerController({
   }, []);
   const switchSource = useCallback(
     async (next: TopicCreationSource) => {
-      if (editTopicId || busyRef.current || transitionRef.current || next === source) return;
-      transitionRef.current = true;
+      if (editTopicId || operationRef.current !== 'idle' || next === source) return;
+      operationRef.current = 'travel';
       try {
         if (!(await waitForUploads())) return;
         await flush();
@@ -704,17 +715,17 @@ export function useTopicComposerController({
       } catch (cause) {
         setError(errorMessage(cause));
       } finally {
-        transitionRef.current = false;
+        operationRef.current = 'idle';
       }
     },
     [flush, source, waitForUploads, editTopicId]
   );
   const leave = useCallback(async () => {
-    if (busyRef.current || transitionRef.current) {
+    if (operationRef.current !== 'idle') {
       setError('正在保存或发布，请等待结果');
       return false;
     }
-    transitionRef.current = true;
+    operationRef.current = 'travel';
     try {
       if (!(await waitForUploads())) return false;
       await flush();
@@ -723,7 +734,7 @@ export function useTopicComposerController({
       setError(errorMessage(cause));
       return false;
     } finally {
-      transitionRef.current = false;
+      operationRef.current = 'idle';
     }
   }, [flush, waitForUploads]);
 
@@ -750,15 +761,14 @@ export function useTopicComposerController({
 
   const submitEdit = useCallback(async () => {
     if (
-      busyRef.current ||
-      uploadRef.current ||
-      transitionRef.current ||
+      operationRef.current !== 'idle' ||
+      getUploadJob(attachmentWork.current) ||
       loading ||
       !editContext ||
       (attempt?.status === 'saved' && attempt.draftId === draftRef.current?.id)
     )
       return;
-    busyRef.current = true;
+    operationRef.current = 'submitting';
     setBusy(true);
     setError('');
     let value: TopicDraft | null = null;
@@ -888,7 +898,7 @@ export function useTopicComposerController({
         setError(result?.message || errorMessage(cause));
       }
     } finally {
-      busyRef.current = false;
+      operationRef.current = 'idle';
       if (mounted.current) setBusy(false);
     }
   }, [
@@ -905,8 +915,8 @@ export function useTopicComposerController({
 
   const submit = useCallback(async () => {
     if (editTopicId) return submitEdit();
-    if (busyRef.current || uploadRef.current || transitionRef.current || loading) return;
-    busyRef.current = true;
+    if (operationRef.current !== 'idle' || getUploadJob(attachmentWork.current) || loading) return;
+    operationRef.current = 'submitting';
     setBusy(true);
     setError('');
     let submission: TopicSubmissionAttempt | undefined;
@@ -1061,7 +1071,7 @@ export function useTopicComposerController({
         }
       } else setError(result ? '原站已返回发布结果，但本机记录保存失败。请先到原站核对，勿重复发布。' : message);
     } finally {
-      busyRef.current = false;
+      operationRef.current = 'idle';
       if (mounted.current) setBusy(false);
     }
   }, [
@@ -1081,7 +1091,7 @@ export function useTopicComposerController({
 
   const acknowledgeUnknown = useCallback(async () => {
     if (
-      busyRef.current ||
+      operationRef.current === 'submitting' ||
       !attempt ||
       !(await confirm(
         editTopicId ? '确认未保存的部分' : '确认没有发布成功',
@@ -1092,11 +1102,10 @@ export function useTopicComposerController({
       ))
     )
       return;
-    if (busyRef.current || transitionRef.current) return;
-    transitionRef.current = true;
+    if (operationRef.current !== 'idle') return;
+    operationRef.current = 'travel';
     try {
       if (
-        busyRef.current ||
         draftRef.current?.source !== attempt.source ||
         siteSessionIdentityKey(runtimeRef.current.sessions[attempt.source]) !== attempt.identityKey
       )
@@ -1126,13 +1135,13 @@ export function useTopicComposerController({
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      transitionRef.current = false;
+      operationRef.current = 'idle';
     }
   }, [attempt, runtimeRef, editTopicId, target, flush, applyConfirmedEdit]);
   const discard = useCallback(async () => {
-    if (busyRef.current || transitionRef.current || uploadRef.current || !draftRef.current) return;
+    if (operationRef.current !== 'idle' || getUploadJob(attachmentWork.current) || !draftRef.current) return;
     const owner = draftRef.current;
-    transitionRef.current = true;
+    operationRef.current = 'travel';
     try {
       if (!(await confirm('丢弃当前草稿', '只删除当前站点当前账号的本机草稿。', '丢弃'))) return;
       if (
@@ -1159,7 +1168,7 @@ export function useTopicComposerController({
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      transitionRef.current = false;
+      operationRef.current = 'idle';
     }
   }, [flush, installDraft, runtimeRef, onAccepted]);
 
@@ -1177,7 +1186,7 @@ export function useTopicComposerController({
 
   const uploadFiles = useCallback(
     (files: TopicDraftAttachment[], insert = true) => {
-      if (uploadRef.current || busyRef.current || transitionRef.current) return Promise.resolve(undefined);
+      if (getUploadJob(attachmentWork.current) || operationRef.current !== 'idle') return Promise.resolve(undefined);
       const value = draftRef.current;
       if (!value || !context || context.source !== value.source) return Promise.resolve(undefined);
       if (value.edit && !editContext?.permissions.body) return Promise.resolve(undefined);
@@ -1299,12 +1308,15 @@ export function useTopicComposerController({
         } catch (cause) {
           if (mounted.current) setError(errorMessage(cause));
         } finally {
-          uploadRef.current = null;
+          attachmentWork.current = isPicking(attachmentWork.current) ? { kind: 'picking' } : { kind: 'idle' };
           if (mounted.current) setUploading(false);
         }
         return markups.length ? markups.join('\n') : undefined;
       })();
-      uploadRef.current = { abort, promise };
+      const upload = { abort, promise };
+      attachmentWork.current = isPicking(attachmentWork.current)
+        ? { kind: 'picking-upload', upload }
+        : { kind: 'upload', upload };
       return promise;
     },
     [assertOwner, context, installDraft, persist, requestAccess, runtimeRef, editContext]
@@ -1312,8 +1324,14 @@ export function useTopicComposerController({
 
   const pickAttachments = useCallback(
     async (kind: TopicDraftAttachment['kind'], hostInsert = false) => {
-      if (!context || picking.current || busyRef.current || transitionRef.current || uploadRef.current) return;
-      picking.current = true;
+      if (
+        !context ||
+        isPicking(attachmentWork.current) ||
+        operationRef.current !== 'idle' ||
+        getUploadJob(attachmentWork.current)
+      )
+        return;
+      attachmentWork.current = { kind: 'picking' };
       setError('');
       const rejected: string[] = [];
       try {
@@ -1329,7 +1347,7 @@ export function useTopicComposerController({
         });
         assertLocalOwner(value, ticket);
         if (selected.canceled) return;
-        if (busyRef.current || transitionRef.current) throw new Error('正在保存或发布，请稍后重新选择文件');
+        if (operationRef.current !== 'idle') throw new Error('正在保存或发布，请稍后重新选择文件');
         if (
           kind === 'yaohuo-file' &&
           value.attachments.filter((file) => file.kind === kind).length + selected.assets.length > 9
@@ -1353,7 +1371,7 @@ export function useTopicComposerController({
               continue;
             }
             assertLocalOwner(value, ticket);
-            if (busyRef.current || transitionRef.current) throw new Error('正在保存或发布，请稍后重新选择文件');
+            if (operationRef.current !== 'idle') throw new Error('正在保存或发布，请稍后重新选择文件');
             added.push(file);
             change((current) => ({ ...current, attachments: [...current.attachments, file] }));
           } catch (cause) {
@@ -1370,7 +1388,8 @@ export function useTopicComposerController({
       } catch (cause) {
         setError(errorMessage(cause));
       } finally {
-        picking.current = false;
+        const upload = getUploadJob(attachmentWork.current);
+        attachmentWork.current = upload ? { kind: 'upload', upload } : { kind: 'idle' };
         if (rejected.length) setError((current) => [rejected.join('\n'), current].filter(Boolean).join('\n'));
       }
     },
@@ -1380,7 +1399,7 @@ export function useTopicComposerController({
   const removeAttachment = useCallback(
     async (file: TopicDraftAttachment) => {
       const value = draftRef.current;
-      if (!value || uploadRef.current || busyRef.current || transitionRef.current) return;
+      if (!value || getUploadJob(attachmentWork.current) || operationRef.current !== 'idle') return;
       change((current) => ({ ...current, attachments: current.attachments.filter((item) => item.id !== file.id) }));
       try {
         if (draftRef.current) await persist(draftRef.current);
@@ -1496,7 +1515,13 @@ export function useTopicComposerController({
       }
     },
     rebaseEdit: async () => {
-      if (!editContext || busyRef.current || attempt?.status === 'unknown' || attempt?.status === 'sending') return;
+      if (
+        !editContext ||
+        operationRef.current === 'submitting' ||
+        attempt?.status === 'unknown' ||
+        attempt?.status === 'sending'
+      )
+        return;
       try {
         const value = await flush();
         if (!value?.edit) return;
@@ -1525,7 +1550,7 @@ export function useTopicComposerController({
       }
     },
     changeCategory: async (categoryId: string) => {
-      if (!context || busyRef.current) return;
+      if (!context || operationRef.current === 'submitting') return;
       const request = ++categoryRequest.current;
       if (draftRef.current?.categoryId === categoryId) return;
       const before = draftRef.current;

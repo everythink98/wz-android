@@ -780,6 +780,12 @@ describe('native topic structured rendering', () => {
       scroll.props.onTouchesDown?.(invalidStart, invalidStartOwner);
       expect(invalidStartOwner.activate).not.toHaveBeenCalled();
       expect(invalidStartOwner.fail).toHaveBeenCalledTimes(1);
+      scroll.props.onTouchesMove?.(
+        { allTouches: [{ absoluteX: 105, absoluteY: 201 }], numberOfTouches: 1 },
+        invalidStartOwner
+      );
+      expect(invalidStartOwner.activate).toHaveBeenCalledTimes(1);
+      expect(invalidStartOwner.fail).toHaveBeenCalledTimes(1);
     }
 
     const missingMove = { activate: jest.fn(), fail: jest.fn() };
@@ -802,6 +808,9 @@ describe('native topic structured rendering', () => {
       latePointer
     );
     expect(latePointer.activate).toHaveBeenCalledTimes(1);
+    expect(latePointer.fail).toHaveBeenCalledTimes(1);
+    scroll.props.onTouchesMove?.({ allTouches: [{ absoluteX: 105, absoluteY: 201 }], numberOfTouches: 1 }, latePointer);
+    expect(latePointer.activate).toHaveBeenCalledTimes(2);
     expect(latePointer.fail).toHaveBeenCalledTimes(1);
   });
 

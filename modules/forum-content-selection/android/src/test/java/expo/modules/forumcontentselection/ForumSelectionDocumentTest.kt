@@ -74,6 +74,31 @@ class ForumSelectionDocumentTest {
   }
 
   @Test
+  fun `empty manifests accept same revision rows and reset discards document`() {
+    val document = ForumSelectionDocument()
+    assertEquals(ForumSelectionUpdate.Applied, document.replace("r1", emptyList()))
+    assertTrue(document.isEnabled)
+    assertFalse(document.selectAll("reply:42"))
+
+    val definition = row("row", "native", "text", "")
+    assertEquals(ForumSelectionUpdate.Applied, document.replace("r1", listOf(definition)))
+    val anchor = requireNotNull(document.anchor("reply:42", "row", 0, 0, ForumSelectionAffinity.Downstream))
+    assertTrue(document.select(anchor, anchor))
+    assertEquals("", document.copySelection())
+
+    document.cancel()
+    assertTrue(document.isEnabled)
+    assertNull(document.selection())
+    assertSame(definition, document.rowForNativeId("native"))
+    assertTrue(document.selectAll("reply:42"))
+    document.reset()
+    assertFalse(document.isEnabled)
+    assertNull(document.rowForNativeId("native"))
+    assertNull(document.copySelection())
+    assertFalse(document.selectAll("reply:42"))
+  }
+
+  @Test
   fun `revision change clears logical selection`() {
     val document = ForumSelectionDocument()
     val first = row("row", "native", "text", "")

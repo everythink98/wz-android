@@ -27,6 +27,8 @@ function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
 }
 
+type PreviewSaveState = { phase: 'idle' | 'acquiring' } | { phase: 'saving'; controller: AbortController };
+
 export function useImagePreviewController({
   beforeSave,
   contentSource,
@@ -54,12 +56,12 @@ export function useImagePreviewController({
       imagePreview?.referrer ? { ...previewSessionContext, referrer: imagePreview.referrer } : previewSessionContext,
     [imagePreview?.referrer, previewSessionContext]
   );
-  const saveBusyRef = useRef(false);
-  const saveAbortRef = useRef<AbortController | null>(null);
+  const saveRef = useRef<PreviewSaveState>({ phase: 'idle' });
   const previewMediaContextRef = useCommittedRef(previewMediaContext);
   useEffect(
     () => () => {
-      saveAbortRef.current?.abort();
+      const save = saveRef.current;
+      if (save.phase === 'saving') save.controller.abort();
     },
     [previewMediaContext.sessionIdentity]
   );
@@ -153,14 +155,14 @@ export function useImagePreviewController({
       finishDiagnosticTrace(trace, 'noop', { reason: 'not_ready' });
       return;
     }
-    if (saveBusyRef.current) {
+    if (saveRef.current.phase !== 'idle') {
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
-    saveBusyRef.current = true;
+    saveRef.current = { phase: 'acquiring' };
     const abortController = new AbortController();
-    saveAbortRef.current = abortController;
+    saveRef.current = { phase: 'saving', controller: abortController };
     const assertCurrent = () => {
       if (
         abortController.signal.aborted ||
@@ -194,8 +196,7 @@ export function useImagePreviewController({
       finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
       if (!abortController.signal.aborted) notify(errorMessage(error));
     } finally {
-      saveAbortRef.current = null;
-      saveBusyRef.current = false;
+      saveRef.current = { phase: 'idle' };
     }
   }, [beforeSave, imagePreview, nodeSeekMediaUserAgent, notify, previewMediaContext]);
 

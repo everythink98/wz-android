@@ -61,6 +61,10 @@ type RestoredAccountRecords = {
   trace: DiagnosticTrace;
 };
 type AccountRestoreRun = { owner: AbortSignal; promise: Promise<void>; cancel: () => void };
+type AccountRestoreState =
+  | { kind: 'reading'; records: RestoredAccountRecords | null }
+  | { kind: 'loaded'; records: RestoredAccountRecords }
+  | { kind: 'restoring' | 'ready'; records: RestoredAccountRecords; run: AccountRestoreRun };
 
 const ACCOUNT_SESSION_MIGRATION_TIMEOUT_MS = 5_000;
 
@@ -144,7 +148,10 @@ export function useAccountStatusController({
     return { next, previous };
   }, []);
 
-  const [hydrated, setHydrated] = useState(false);
+  const restoreRef = useRef<AccountRestoreState>({ kind: 'reading', records: null });
+  // React receives records and ready; synchronous admission stays with the owned restore.
+  const [restoreState, setRestoreState] = useState(restoreRef.current);
+  const hydrated = restoreState.kind === 'ready';
   const settleAccountSessionHandoff = useCallback(
     (source: StatusSource, error?: string) => {
       if (lifetimeRef.current.signal.aborted) return;
@@ -156,8 +163,7 @@ export function useAccountStatusController({
     },
     [commitAccountSnapshot]
   );
-  const [restoredAccounts, setRestoredAccounts] = useState<RestoredAccountRecords | null>(null);
-  const restoreRunRef = useRef<AccountRestoreRun | null>(null);
+  const restoredAccounts = restoreState.records;
   const interruptedSources = useMemo(
     () => restoredAccounts?.stored.filter(([, snapshot]) => snapshot?.handoffPending).map(([source]) => source) || [],
     [restoredAccounts]
@@ -197,13 +203,16 @@ export function useAccountStatusController({
   useEffect(() => {
     if (lifetimeRef.current.signal.aborted) {
       lifetimeRef.current = new AbortController();
-      restoreRunRef.current = null;
-      setHydrated(false);
+      const reading: AccountRestoreState = { kind: 'reading', records: restoreRef.current.records };
+      restoreRef.current = reading;
+      setRestoreState((current) => (current.kind === 'ready' ? reading : current));
     }
     const owner = lifetimeRef.current;
     return () => {
       owner.abort();
-      if (restoreRunRef.current?.owner === owner.signal) restoreRunRef.current.cancel();
+      const restore = restoreRef.current;
+      if ((restore.kind === 'restoring' || restore.kind === 'ready') && restore.run.owner === owner.signal)
+        restore.run.cancel();
       for (const source of sessionSources) {
         const active = activeProbeRef.current[source];
         supersedeProbe(source, 'canceled');
@@ -494,7 +503,9 @@ export function useAccountStatusController({
       .then(([migrationCompleted, stored]) => {
         if (owner.aborted || lifetimeRef.current.signal !== owner) return;
         recordStartupPhase('sessions-read');
-        setRestoredAccounts({ owner, migrationCompleted, stored, trace });
+        const loaded: AccountRestoreState = { kind: 'loaded', records: { owner, migrationCompleted, stored, trace } };
+        restoreRef.current = loaded;
+        setRestoreState(loaded);
       })
       .catch((error) => {
         if (owner.aborted || lifetimeRef.current.signal !== owner) return;
@@ -507,18 +518,29 @@ export function useAccountStatusController({
   }, []);
 
   useEffect(() => {
+    const restore = restoreRef.current;
     if (
       !enabledSourcesReady ||
-      !restoredAccounts ||
-      restoreRunRef.current ||
-      restoredAccounts.owner !== lifetimeRef.current.signal ||
-      restoredAccounts.owner.aborted
+      restoreState.kind !== 'loaded' ||
+      restore.kind !== 'loaded' ||
+      restore.records !== restoredAccounts ||
+      restore.records.owner !== lifetimeRef.current.signal ||
+      restore.records.owner.aborted
     )
       return;
-    const owner = restoredAccounts.owner;
-    const restoreTrace = restoredAccounts.trace;
+    const records = restore.records;
+    const owner = records.owner;
+    const restoreTrace = records.trace;
     let migrationTrace: DiagnosticTrace | undefined;
-    const isCurrent = () => !owner.aborted && lifetimeRef.current.signal === owner && restoreRunRef.current === run;
+    const isCurrent = () => {
+      const current = restoreRef.current;
+      return (
+        !owner.aborted &&
+        lifetimeRef.current.signal === owner &&
+        (current.kind === 'restoring' || current.kind === 'ready') &&
+        current.run === run
+      );
+    };
     const degradeRestore = (fields: DiagnosticFields) => {
       hintDiagnosticOutcome(restoreTrace, 'partial', fields);
       if (migrationTrace) hintDiagnosticOutcome(migrationTrace, 'partial', fields);
@@ -531,7 +553,7 @@ export function useAccountStatusController({
       },
       promise: Promise.resolve().then(async () => {
         try {
-          const { migrationCompleted, stored } = restoredAccounts;
+          const { migrationCompleted, stored } = records;
           if (!isCurrent()) return;
           for (const [source, snapshot] of stored) {
             if (snapshot) appQueryClient.setQueryData(accountQueryKeys.snapshot(source), snapshot);
@@ -640,13 +662,15 @@ export function useAccountStatusController({
         }
       })
     };
-    restoreRunRef.current = run;
+    restoreRef.current = { kind: 'restoring', records, run };
     void run.promise.then(() => {
       if (!isCurrent()) return;
-      setHydrated(true);
+      const ready: AccountRestoreState = { kind: 'ready', records, run };
+      restoreRef.current = ready;
+      setRestoreState(ready);
       recordStartupPhase('sessions-ready');
     });
-  }, [commitAccountSnapshot, enabledSourcesReady, restoreCommands, restoredAccounts, supersedeProbe]);
+  }, [commitAccountSnapshot, enabledSourcesReady, restoreCommands, restoredAccounts, restoreState, supersedeProbe]);
 
   const previousEnabledSourcesRef = useRef(new Set<StatusSource>(enabledSources));
   useEffect(() => {

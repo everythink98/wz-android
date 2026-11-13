@@ -71,8 +71,13 @@ internal fun writeBackupDocument(bytes: ByteArray, stream: OutputStream, checkAc
 
 internal class BackupExportOwner {
   data class Operation(val requestCode: Int, val result: CompletableDeferred<BackupDocumentResult>)
-  private var pending: Operation? = null
-  private var destroyed = false
+  private sealed interface State {
+    data object Idle : State
+    data class Picking(val operation: Operation) : State
+    data class Finishing(val operation: Operation) : State
+    data object Destroyed : State
+  }
+  private var state: State = State.Idle
   companion object {
     // Expo's registry uses upper bits; each invocation owns a lower-16-bit code for this
     // process, including across module replacement. Never recycle a late result's code.
@@ -81,25 +86,35 @@ internal class BackupExportOwner {
 
   @Synchronized fun begin(): Operation {
     ensureAlive()
-    check(pending == null) { "已有备份正在保存，请先完成或取消。" }
+    check(state == State.Idle) { "已有备份正在保存，请先完成或取消。" }
     val requestCode = nextRequestCode.getAndIncrement()
     check(requestCode <= 0xffff) { "系统保存请求已用尽，请重启应用后重试。" }
-    return Operation(requestCode, CompletableDeferred()).also { pending = it }
+    return Operation(requestCode, CompletableDeferred()).also { state = State.Picking(it) }
   }
 
   @Synchronized fun complete(requestCode: Int, result: BackupDocumentResult) {
-    pending?.takeIf { it.requestCode == requestCode }?.result?.complete(result)
+    val picking = state as? State.Picking ?: return
+    if (picking.operation.requestCode != requestCode) return
+    state = State.Finishing(picking.operation)
+    picking.operation.result.complete(result)
   }
 
-  @Synchronized fun ensureAlive() { check(!destroyed) { "备份保存已中止。" } }
+  @Synchronized fun ensureAlive() { check(state != State.Destroyed) { "备份保存已中止。" } }
 
-  @Synchronized fun finish(operation: Operation) { if (pending === operation) pending = null }
+  @Synchronized fun finish(operation: Operation) {
+    if (currentOperation() === operation) state = State.Idle
+  }
 
   @Synchronized fun destroy() {
-    destroyed = true
-    val abandoned = pending
-    pending = null
+    val abandoned = currentOperation()
+    state = State.Destroyed
     abandoned?.result?.completeExceptionally(IllegalStateException("备份保存已中止。"))
+  }
+
+  private fun currentOperation(): Operation? = when (val current = state) {
+    is State.Picking -> current.operation
+    is State.Finishing -> current.operation
+    State.Idle, State.Destroyed -> null
   }
 }
 

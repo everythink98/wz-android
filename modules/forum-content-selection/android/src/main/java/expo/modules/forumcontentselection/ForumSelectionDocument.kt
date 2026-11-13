@@ -110,28 +110,34 @@ private data class ParsedRow(
 )
 
 internal class ForumSelectionDocument {
-  private var revision = ""
-  private var definitions: List<ForumSelectionRowDefinition> = emptyList()
-  private var rows: List<ParsedRow> = emptyList()
-  private var rowsByKey: Map<String, ParsedRow> = emptyMap()
-  private var rowsByNativeId: Map<String, ParsedRow> = emptyMap()
-  private var rowIndexesByKey: Map<String, Int> = emptyMap()
-  private var selectedRange: ForumSelectionRange? = null
-  private var selectAllDocumentId: String? = null
+  private class CompiledDocument(
+    val revision: String,
+    val definitions: List<ForumSelectionRowDefinition>,
+    val rows: List<ParsedRow>
+  ) {
+    val rowsByKey = rows.associateBy { it.definition.rowKey }
+    val rowsByNativeId = rows.associateBy { it.definition.nativeId }
+    val rowIndexesByKey = rows.mapIndexed { index, row -> row.definition.rowKey to index }.toMap()
+  }
 
-  var isEnabled: Boolean = false
-    private set
+  private sealed interface Selection {
+    val range: ForumSelectionRange?
+    data object Empty : Selection { override val range: ForumSelectionRange? = null }
+    data class Range(override val range: ForumSelectionRange) : Selection
+    data class All(override val range: ForumSelectionRange) : Selection
+  }
+
+  private sealed interface DocumentState {
+    data object Disabled : DocumentState
+    data class Ready(val document: CompiledDocument, val selection: Selection) : DocumentState
+  }
+  private var state: DocumentState = DocumentState.Disabled
+
+  val isEnabled: Boolean
+    get() = state is DocumentState.Ready
 
   fun reset() {
-    revision = ""
-    definitions = emptyList()
-    rows = emptyList()
-    rowsByKey = emptyMap()
-    rowsByNativeId = emptyMap()
-    rowIndexesByKey = emptyMap()
-    selectedRange = null
-    selectAllDocumentId = null
-    isEnabled = false
+    state = DocumentState.Disabled
   }
 
   fun replace(nextRevision: String, nextDefinitions: List<ForumSelectionRowDefinition>): ForumSelectionUpdate {
@@ -145,10 +151,12 @@ internal class ForumSelectionDocument {
     if (nextDefinitions.distinctBy { it.nativeId }.size != nextDefinitions.size) {
       return invalidate(ForumSelectionFailure.DuplicateNativeId)
     }
-    if (revision == nextRevision && definitions.isNotEmpty() && definitions != nextDefinitions) {
+    val current = (state as? DocumentState.Ready)?.document
+    if (current != null && current.revision == nextRevision &&
+        current.definitions.isNotEmpty() && current.definitions != nextDefinitions) {
       return invalidate(ForumSelectionFailure.RevisionReused)
     }
-    if (isEnabled && revision == nextRevision && definitions == nextDefinitions) {
+    if (current != null && current.revision == nextRevision && current.definitions == nextDefinitions) {
       return ForumSelectionUpdate.Applied
     }
 
@@ -158,47 +166,46 @@ internal class ForumSelectionDocument {
       ParsedRow(definition, token)
     }
 
-    val identityChanged = revision != nextRevision || definitions != nextDefinitions
-    revision = nextRevision
-    definitions = nextDefinitions.toList()
-    rows = parsedRows
-    rowsByKey = parsedRows.associateBy { it.definition.rowKey }
-    rowsByNativeId = parsedRows.associateBy { it.definition.nativeId }
-    rowIndexesByKey = parsedRows.mapIndexed { index, row -> row.definition.rowKey to index }.toMap()
-    isEnabled = true
-    if (identityChanged) selectedRange = null
-    if (identityChanged) selectAllDocumentId = null
+    state = DocumentState.Ready(
+      CompiledDocument(nextRevision, nextDefinitions.toList(), parsedRows),
+      Selection.Empty
+    )
     return ForumSelectionUpdate.Applied
   }
 
   fun cancel() {
-    selectedRange = null
-    selectAllDocumentId = null
+    val current = state as? DocumentState.Ready ?: return
+    state = current.copy(selection = Selection.Empty)
   }
 
-  fun selection(): ForumSelectionRange? = selectedRange
+  fun selection(): ForumSelectionRange? = (state as? DocumentState.Ready)?.selection?.range
 
-  fun rowForNativeId(nativeId: String): ForumSelectionRowDefinition? = rowsByNativeId[nativeId]?.definition
+  fun rowForNativeId(nativeId: String): ForumSelectionRowDefinition? =
+    (state as? DocumentState.Ready)?.document?.rowsByNativeId?.get(nativeId)?.definition
 
   fun select(start: ForumSelectionAnchor, end: ForumSelectionAnchor): Boolean {
-    if (!isEnabled || !isValid(start) || !isValid(end) || start.documentId != end.documentId) return false
+    val current = state as? DocumentState.Ready ?: return false
+    if (!isValid(start) || !isValid(end) || start.documentId != end.documentId) return false
     val nextRange = ForumSelectionRange(start, end)
-    if (selectedRange == nextRange) return false
-    selectedRange = nextRange
-    selectAllDocumentId = null
+    if (current.selection.range == nextRange) return false
+    state = current.copy(selection = Selection.Range(nextRange))
     return true
   }
 
   fun extend(anchor: ForumSelectionAnchor): Boolean {
-    val current = selectedRange ?: return false
+    val current = selection() ?: return false
     return select(current.start, anchor)
   }
 
-  fun canSelectAll(documentId: String): Boolean =
-    isEnabled && selectAllDocumentId != documentId &&
-      rows.any { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
+  fun canSelectAll(documentId: String): Boolean {
+    val current = state as? DocumentState.Ready ?: return false
+    val selection = current.selection
+    return (selection !is Selection.All || selection.range.start.documentId != documentId) &&
+      current.document.rows.any { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
+  }
 
   fun atDocumentBoundary(anchor: ForumSelectionAnchor, towardEnd: Boolean): Boolean {
+    val rows = (state as? DocumentState.Ready)?.document?.rows ?: return false
     val row = if (towardEnd) rows.lastOrNull {
       it.definition.documentId == anchor.documentId && it.token.owners.isNotEmpty()
     } else rows.firstOrNull {
@@ -210,13 +217,15 @@ internal class ForumSelectionDocument {
   }
 
   fun selectAll(documentId: String): Boolean {
-    val selectableRows = rows.filter { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
+    val current = state as? DocumentState.Ready ?: return false
+    val document = current.document
+    val selectableRows = document.rows.filter { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
     if (selectableRows.isEmpty()) return false
     val first = selectableRows.first()
     val last = selectableRows.last()
     val start = ForumSelectionAnchor(
       documentId,
-      revision,
+      document.revision,
       first.definition.rowKey,
       0,
       0,
@@ -224,20 +233,20 @@ internal class ForumSelectionDocument {
     )
     val end = ForumSelectionAnchor(
       documentId,
-      revision,
+      document.revision,
       last.definition.rowKey,
       last.token.owners.lastIndex,
       last.token.owners.last().text.length,
       ForumSelectionAffinity.Downstream
     )
-    val selectionChanged = select(start, end)
-    if (!selectionChanged && selectedRange != ForumSelectionRange(start, end)) return false
-    val selectAllChanged = selectAllDocumentId != documentId
-    selectAllDocumentId = documentId
-    return selectionChanged || selectAllChanged
+    val selection = Selection.All(ForumSelectionRange(start, end))
+    if (current.selection == selection) return false
+    state = current.copy(selection = selection)
+    return true
   }
 
-  fun expectedOwnerTexts(documentId: String, rowKey: String): List<String>? = rowsByKey[rowKey]
+  fun expectedOwnerTexts(documentId: String, rowKey: String): List<String>? =
+    (state as? DocumentState.Ready)?.document?.rowsByKey?.get(rowKey)
     ?.takeIf { it.definition.documentId == documentId }
     ?.token
     ?.owners
@@ -250,6 +259,7 @@ internal class ForumSelectionDocument {
     utf16Offset: Int,
     affinity: ForumSelectionAffinity
   ): ForumSelectionAnchor? {
+    val revision = (state as? DocumentState.Ready)?.document?.revision ?: return null
     val anchor = ForumSelectionAnchor(
       documentId,
       revision,
@@ -262,9 +272,10 @@ internal class ForumSelectionDocument {
   }
 
   fun selectedOffsets(documentId: String, rowKey: String, ownerOrdinal: Int): IntRange? {
-    val normalized = selectedRange?.let(::normalize) ?: return null
+    val current = state as? DocumentState.Ready ?: return null
+    val normalized = current.selection.range?.let(::normalize) ?: return null
     val candidate = anchor(documentId, rowKey, ownerOrdinal, 0, ForumSelectionAffinity.Downstream) ?: return null
-    val owner = rowsByKey.getValue(rowKey).token.owners[ownerOrdinal]
+    val owner = current.document.rowsByKey.getValue(rowKey).token.owners[ownerOrdinal]
     val ownerEnd = candidate.copy(utf16Offset = owner.text.length)
     if ((compare(ownerEnd, normalized.start) ?: return null) <= 0) return null
     if ((compare(candidate, normalized.end) ?: return null) >= 0) return null
@@ -283,8 +294,9 @@ internal class ForumSelectionDocument {
   }
 
   fun selectedSlice(documentId: String, rowKey: String, ownerOrdinal: Int): ForumOwnerSelectionSlice? {
-    val normalized = selectedRange?.let(::normalize) ?: return null
-    val owner = rowsByKey[rowKey]
+    val current = state as? DocumentState.Ready ?: return null
+    val normalized = current.selection.range?.let(::normalize) ?: return null
+    val owner = current.document.rowsByKey[rowKey]
       ?.takeIf { it.definition.documentId == documentId }
       ?.token
       ?.owners
@@ -318,13 +330,15 @@ internal class ForumSelectionDocument {
 
   fun compareAnchors(left: ForumSelectionAnchor, right: ForumSelectionAnchor): Int? = compare(left, right)
 
-  fun normalizedSelection(): ForumSelectionRange? = selectedRange?.let(::normalize)
+  fun normalizedSelection(): ForumSelectionRange? = selection()?.let(::normalize)
 
   fun copySelection(): String? {
-    val range = selectedRange ?: return null
-    selectAllDocumentId?.let { documentId ->
+    val current = state as? DocumentState.Ready ?: return null
+    val rows = current.document.rows
+    val range = current.selection.range ?: return null
+    if (current.selection is Selection.All) {
       return rows.asSequence()
-        .filter { it.definition.documentId == documentId }
+        .filter { it.definition.documentId == range.start.documentId }
         .joinToString(separator = "") { it.token.fullCopyText() }
     }
     val normalized = normalize(range) ?: return null
@@ -381,7 +395,8 @@ internal class ForumSelectionDocument {
   }
 
   private fun compare(left: ForumSelectionAnchor, right: ForumSelectionAnchor): Int? {
-    if (left.documentId != right.documentId || left.revision != revision || right.revision != revision) return null
+    val document = (state as? DocumentState.Ready)?.document ?: return null
+    if (left.documentId != right.documentId || left.revision != document.revision || right.revision != document.revision) return null
     val leftRow = rowIndex(left)
     val rightRow = rowIndex(right)
     if (leftRow < 0 || rightRow < 0) return null
@@ -392,14 +407,16 @@ internal class ForumSelectionDocument {
   }
 
   private fun rowIndex(anchor: ForumSelectionAnchor): Int {
-    val row = rowsByKey[anchor.rowKey] ?: return -1
+    val document = (state as? DocumentState.Ready)?.document ?: return -1
+    val row = document.rowsByKey[anchor.rowKey] ?: return -1
     if (row.definition.documentId != anchor.documentId) return -1
-    return rowIndexesByKey[anchor.rowKey] ?: -1
+    return document.rowIndexesByKey[anchor.rowKey] ?: -1
   }
 
   private fun isValid(anchor: ForumSelectionAnchor): Boolean {
-    if (anchor.revision != revision || anchor.ownerOrdinal < 0 || anchor.utf16Offset < 0) return false
-    val row = rowsByKey[anchor.rowKey]?.takeIf {
+    val document = (state as? DocumentState.Ready)?.document ?: return false
+    if (anchor.revision != document.revision || anchor.ownerOrdinal < 0 || anchor.utf16Offset < 0) return false
+    val row = document.rowsByKey[anchor.rowKey]?.takeIf {
       it.definition.documentId == anchor.documentId
     } ?: return false
     val owner = row.token.owners.getOrNull(anchor.ownerOrdinal) ?: return false

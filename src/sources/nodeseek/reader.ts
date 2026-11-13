@@ -630,33 +630,37 @@ function assertNodeSeekTerminalWindow(result: NodeSeekChronologicalReplies, page
   }
 }
 
+type NodeSeekTargetScan =
+  | { kind: 'reading'; page: number; lastPage: number }
+  | { kind: 'matched'; page: number; result: NodeSeekChronologicalReplies }
+  | { kind: 'missing' };
+
 async function resolveNodeSeekTailChronological(
   id: string,
   options: NodeSeekChronologicalRepliesOptions,
   initialPage: number,
   initialResult: NodeSeekChronologicalReplies
 ) {
-  let page = initialPage;
-  let result = projectNodeSeekOrderedPage(initialResult, initialPage);
-  assertNodeSeekAdjacentPageEvidence(result, page, {
-    allowEmpty: page === 1 && options.replyCount === 0 && !result.hasMore && !result.nextPage
+  const initial = projectNodeSeekOrderedPage(initialResult, initialPage);
+  assertNodeSeekAdjacentPageEvidence(initial, initialPage, {
+    allowEmpty: initialPage === 1 && options.replyCount === 0 && !initial.hasMore && !initial.nextPage
   });
-  const candidate = Math.max(page, result.nodeSeekLastPage || page, result.nextPage || page);
-  if (candidate > page) {
-    page = candidate;
-    result = projectNodeSeekOrderedPage(
-      await getNodeSeekRepliesChronological(id, {
-        ...options,
-        page,
-        offset: (page - 1) * NODESEEK_FLOORS_PER_PAGE,
-        limit: NODESEEK_FLOORS_PER_PAGE,
-        fillPages: false,
-        orderedWindow: true,
-        targetReply: undefined
-      }),
-      page
-    );
-  }
+  const page = Math.max(initialPage, initial.nodeSeekLastPage || initialPage, initial.nextPage || initialPage);
+  const result =
+    page > initialPage
+      ? projectNodeSeekOrderedPage(
+          await getNodeSeekRepliesChronological(id, {
+            ...options,
+            page,
+            offset: (page - 1) * NODESEEK_FLOORS_PER_PAGE,
+            limit: NODESEEK_FLOORS_PER_PAGE,
+            fillPages: false,
+            orderedWindow: true,
+            targetReply: undefined
+          }),
+          page
+        )
+      : initial;
   assertNodeSeekTerminalWindow(result, page);
   return { page, result };
 }
@@ -775,29 +779,43 @@ async function getNodeSeekRepliesChronological(
       }
       return result.items.some((reply) => matchesNodeSeekReplyLocation(reply, target));
     };
-    let seedPage = firstPage;
-    let firstResult = await fetchPage(firstPage);
-    if (firstResult.currentPage !== firstPage || firstResult.resolvedPageConfirmed !== true) {
+    const firstResult = await fetchPage(firstPage);
+    const needsConfirmation = firstResult.currentPage !== firstPage || firstResult.resolvedPageConfirmed !== true;
+    if (needsConfirmation) {
       if (!commentId || firstResult.responsePageResolved !== true || !positiveReplyLocation(firstResult.currentPage)) {
         assertNodeSeekResolvedPage(firstResult, firstPage);
       }
-      seedPage = firstResult.currentPage!;
-      firstResult = await readPage(seedPage);
     }
-    const firstWindow = projectNodeSeekOrderedPage(firstResult, seedPage);
+    const seedPage = needsConfirmation ? firstResult.currentPage! : firstPage;
+    const seedResult = needsConfirmation ? await readPage(seedPage) : firstResult;
+    const firstWindow = projectNodeSeekOrderedPage(seedResult, seedPage);
     if (hasTarget(firstWindow)) {
       return targetResult(firstWindow, seedPage);
     }
     if (commentId) {
-      let lastPage = Math.max(seedPage, firstWindow.nodeSeekLastPage || seedPage, firstWindow.nextPage || seedPage);
-      for (let page = 1; page <= lastPage; page += 1) {
-        if (page === seedPage) continue;
-        const result = projectNodeSeekOrderedPage(await readPage(page), page);
-        lastPage = Math.max(lastPage, result.nodeSeekLastPage || page, result.nextPage || page);
-        if (hasTarget(result)) {
-          return targetResult(result, page);
+      let scan: NodeSeekTargetScan = {
+        kind: 'reading',
+        page: 1,
+        lastPage: Math.max(seedPage, firstWindow.nodeSeekLastPage || seedPage, firstWindow.nextPage || seedPage)
+      };
+      while (scan.kind === 'reading') {
+        if (scan.page === seedPage) {
+          scan = scan.page < scan.lastPage ? { ...scan, page: scan.page + 1 } : { kind: 'missing' };
+          continue;
         }
+        const result: NodeSeekChronologicalReplies = projectNodeSeekOrderedPage(await readPage(scan.page), scan.page);
+        const lastPage: number = Math.max(
+          scan.lastPage,
+          result.nodeSeekLastPage || scan.page,
+          result.nextPage || scan.page
+        );
+        scan = hasTarget(result)
+          ? { kind: 'matched', page: scan.page, result }
+          : scan.page < lastPage
+            ? { kind: 'reading', page: scan.page + 1, lastPage }
+            : { kind: 'missing' };
       }
+      if (scan.kind === 'matched') return targetResult(scan.result, scan.page);
     }
     throw new Error(commentId ? 'NodeSeek 目标评论未找到' : 'NodeSeek 目标楼层未找到');
   }
@@ -965,34 +983,23 @@ export async function getNodeSeekReplies(
   }
 ): Promise<RepliesResponse> {
   const { order, position } = options;
-  let page = 1;
-  let offset: number | null = 0;
-  let targetReply: ReplyLocationTarget | undefined;
-  if (position.kind === 'cursor') {
-    page = position.page;
-    offset = position.offset;
-  } else if (position.kind === 'target') {
-    targetReply = position.target;
-    page = position.target.pageHint || 1;
-    offset = null;
-  }
-
-  let chronological = await getNodeSeekRepliesChronological(id, {
+  const requestPosition =
+    position.kind === 'cursor'
+      ? { page: position.page, offset: position.offset, targetReply: undefined }
+      : position.kind === 'target'
+        ? { page: position.target.pageHint || 1, offset: null, targetReply: position.target }
+        : { page: 1, offset: 0, targetReply: undefined };
+  const initial = await getNodeSeekRepliesChronological(id, {
     ...options,
-    page,
-    offset,
-    targetReply,
+    ...requestPosition,
     orderedWindow: position.kind !== 'target',
     fillPages: order === 'oldest' ? options.fillPages : false
   });
-  if (position.kind !== 'target') {
-    chronological = projectNodeSeekOrderedPage(chronological, page);
-  }
-  if (position.kind === 'start' && order === 'newest') {
-    const confirmedTail = await resolveNodeSeekTailChronological(id, options, page, chronological);
-    page = confirmedTail.page;
-    chronological = confirmedTail.result;
-  }
+  const projected = position.kind !== 'target' ? projectNodeSeekOrderedPage(initial, requestPosition.page) : initial;
+  const { page, result: chronological } =
+    position.kind === 'start' && order === 'newest'
+      ? await resolveNodeSeekTailChronological(id, options, requestPosition.page, projected)
+      : { page: requestPosition.page, result: projected };
   if (position.kind === 'cursor' || (position.kind === 'start' && !chronological.items.length)) {
     assertNodeSeekAdjacentPageEvidence(chronological, page, {
       allowEmpty:

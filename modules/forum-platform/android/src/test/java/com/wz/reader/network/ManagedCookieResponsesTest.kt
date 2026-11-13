@@ -268,6 +268,151 @@ class ManagedCookieResponsesTest {
     }
   }
 
+  @Test fun flushReentryPreservesPendingCallbacksAndOriginalDirtyClearing() {
+    for (leavePending in listOf(true, false)) {
+      val nested = CookieResponseBatch(1)
+      val completions = mutableListOf<() -> Unit>()
+      val trace = mutableListOf<String>()
+      var writes = 0
+      var flushes = 0
+      lateinit var store: ManagedCookieResponses
+      store = ManagedCookieResponses({ "_t=fixture" }, { _, _ ->
+        writes++
+        trace.add("write:$writes")
+        assertTrue(writes <= 2)
+        if (writes == 1) CookieResponseBatch(1).also { it.complete(true, 0) }
+        else nested.also { if (!leavePending) it.complete(true, 0) }
+      }, report = { event ->
+        val result = event["cookieResult"]
+        if (result in setOf("settled", "applied", "callback_timeout", "persisted", "flush_failed", "absent")) {
+          trace.add("$result:${event["cookieWriteSequence"]}")
+        }
+      }, timeoutMs = 1, flusher = {
+        val attempt = ++flushes
+        trace.add("flush:$attempt:enter")
+        if (attempt == 1) store.within {
+          store.observed(url, "linuxdo", null)
+          store.receive(response("_t=nested"))
+        }
+        if (!leavePending && attempt == 2) {
+          trace.add("flush:$attempt:throw")
+          throw java.io.IOException("synthetic nested flush failure")
+        }
+        trace.add("flush:$attempt:return")
+      }, background = {
+        trace.add("scheduled")
+        completions.add(it)
+      })
+      try {
+        store.within {
+          store.observed(url, "linuxdo", null)
+          store.receive(response("_t=outer"))
+        }
+        assertEquals(2, writes)
+        if (leavePending) {
+          assertEquals(1, flushes)
+          assertTrue(nested.abandoned.get())
+          assertTrue(completions.isEmpty())
+          assertEquals(listOf("write:1", "settled:1", "applied:1", "flush:1:enter", "write:2",
+            "callback_timeout:2", "flush:1:return", "persisted:1"), trace)
+          nested.complete(true, 0)
+          assertEquals(1, flushes)
+          assertEquals(1, completions.size)
+          completions.removeAt(0).invoke()
+          assertEquals(2, flushes)
+          assertEquals(listOf("write:1", "settled:1", "applied:1", "flush:1:enter", "write:2",
+            "callback_timeout:2", "flush:1:return", "persisted:1", "scheduled", "settled:2",
+            "flush:2:enter", "flush:2:return", "persisted:2"), trace)
+        } else {
+          assertFalse(nested.abandoned.get())
+          assertTrue(completions.isEmpty())
+          assertEquals(2, flushes)
+          store.within {
+            store.observed(url, "linuxdo", null)
+            store.receive(response())
+          }
+          assertEquals(2, flushes)
+          assertEquals(listOf("write:1", "settled:1", "applied:1", "flush:1:enter", "write:2",
+            "settled:2", "applied:2", "flush:2:enter", "flush:2:throw", "flush_failed:2",
+            "flush:1:return", "persisted:1", "absent:2"), trace)
+        }
+      } finally {
+        nested.complete(false, 0)
+        while (completions.isNotEmpty()) completions.removeAt(0).invoke()
+      }
+    }
+  }
+
+  @Test fun surfaceCallbackReentryKeepsLiveBarrierAndBaselineUntilOuterPublication() {
+    for (reenterInfo in listOf(false, true)) {
+      val events = mutableListOf<Map<String, Any>>()
+      var current = "_t=fixture"
+      var readerReentered = false
+      var receivedAtIntent = false
+      var infoArmed = false
+      var writes = 0
+      lateinit var store: ManagedCookieResponses
+      store = ManagedCookieResponses({
+        if (!readerReentered) {
+          readerReentered = true
+          store.setBarrier(false, "startup")
+        }
+        current
+      }, { _, values ->
+        writes++
+        CookieResponseBatch(values.size).also { batch -> values.indices.forEach { batch.complete(true, it) } }
+      }, report = { event ->
+        events.add(event)
+        if (!receivedAtIntent && event["operation"] == "cookie-barrier" &&
+          event["cookieBarrierReason"] == "surface-open" && event["phase"] == "intent") {
+          receivedAtIntent = true
+          store.within {
+            store.observed(url, "linuxdo", null)
+            store.receive(response("_t=intent"))
+          }
+        }
+      }, cookieInfoReader = {
+        if (infoArmed) {
+          infoArmed = false
+          store.setBarrier(true, "surface-open")
+        }
+        emptyList()
+      })
+      store.setBarrier(true, "surface-open")
+      assertTrue(readerReentered)
+      assertTrue(receivedAtIntent)
+      assertEquals(1, writes)
+      store.within {
+        store.observed(url, "linuxdo", null)
+        store.receive(response("_t=blocked"))
+      }
+      assertEquals(1, writes)
+      assertTrue(events.any { it["cookieResult"] == "barrier_blocked" })
+      current = "_t=fixture; cf_clearance=changed"
+      infoArmed = reenterInfo
+      store.setBarrier(false, "surface-close")
+      assertFalse(infoArmed)
+      val close = events.filter { it["operation"] == "cookie-barrier" && it["cookieBarrierReason"] == "surface-close" }
+      assertEquals(2, close.size)
+      assertEquals(listOf(!reenterInfo, !reenterInfo), close.map { it["didCfClearanceChange"] })
+      val expected = mutableListOf("startup:intent:true:2", "startup:finish:false:2",
+        "surface-open:intent:true:2", "surface-open:finish:true:2")
+      if (reenterInfo) expected.addAll(listOf("surface-open:intent:true:4", "surface-open:finish:true:4"))
+      expected.addAll(listOf("surface-close:intent:true:3", "surface-close:finish:false:3"))
+      assertEquals(expected, events.filter { it["operation"] == "cookie-barrier" }.map {
+        "${it["cookieBarrierReason"]}:${it["phase"]}:${it["cookieBarrierBlocked"]}:${it["cookieEpoch"]}"
+      })
+      store.within {
+        store.observed(url, "linuxdo", null)
+        store.receive(response("_t=after-close"))
+      }
+      assertEquals(2, writes)
+      val applied = events.last { it["cookieResult"] == "applied" }
+      assertEquals(if (reenterInfo) 4L else 3L, applied["requestCookieEpoch"])
+      assertEquals(applied["requestCookieEpoch"], applied["cookieEpoch"])
+    }
+  }
+
   private fun response(vararg values: String, status: Int = 200): Response = Response.Builder()
     .request(Request.Builder().url(url).build()).protocol(Protocol.HTTP_1_1).code(status).message("fixture")
     .apply { values.forEach { addHeader("Set-Cookie", it) } }.build()
@@ -300,6 +445,32 @@ class ManagedCookieResponsesTest {
       store.receive(response("_t=B"))
     }
     assertEquals(0, writes)
+  }
+
+  @Test fun fallbackRevocationCanRecoverWhileNestedRedirectStaysDenied() {
+    val written = mutableListOf<String>()
+    val store = ManagedCookieResponses({ "_t=A" }, { _, values ->
+      written += values
+      CookieResponseBatch(values.size).also { batch -> values.indices.forEach { batch.complete(true, it) } }
+    })
+    store.within {
+      store.observed(url, "linuxdo", "_t=A")
+      val fallback = store.fallbackRequest(Request.Builder()
+        .url("https://linux.do/t/999/1.json").header("Cookie", "_t=old").build())
+      assertNull(fallback.header("Cookie"))
+      store.receive(response("_t=revoked"))
+
+      store.observed(url, "linuxdo", "_t=A")
+      store.receive(response("_t=recovered"))
+      store.within {
+        store.observed(url, "linuxdo", "_t=A")
+        store.observed("https://example.com/", null, null)
+        store.observed(url, "linuxdo", "_t=A")
+        store.receive(response("_t=redirect-denied"))
+      }
+      store.receive(response("_t=outer"))
+    }
+    assertEquals(listOf("_t=recovered", "_t=outer"), written)
   }
 
   @Test fun accountHandoffRejectsLateResponsesBeforeAndAfterNewLogin() {

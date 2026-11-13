@@ -48,7 +48,7 @@
     "test:performance": "vitest run tests/integration/performance src/platform/query/discourseReadingRuntime.test.ts --sequence.shuffle --maxWorkers=1 --no-file-parallelism --silent=false --disableConsoleIntercept && npm run test:ui -- --runTestsByPath tests/ui/account/account-performance-stress.test.tsx tests/ui/account/session-controller-browser-flow.test.tsx tests/ui/search/search-performance-stress.test.tsx tests/ui/topic/composer-performance-stress.test.tsx tests/ui/topic/media-pressure.test.tsx tests/ui/app/app-navigator.test.tsx tests/ui/app/content-source-query-cleanup.test.tsx tests/ui/topic-composer/topic-composer-performance-stress.test.tsx tests/ui/topic-composer/topic-draft-controller.test.tsx tests/ui/notifications/notifications-performance-stress.test.tsx tests/ui/more/app-update-runtime.test.tsx",
     "test:architecture": "node --test tests/tooling/check-architecture.test.mjs tests/tooling/visual-gallery-guard.test.mjs",
     "pretest:ui": "npm run build:composer",
-    "test:ui": "jest --config jest.config.cjs --runInBand --randomize --showSeed",
+    "test:ui": "jest --config jest.config.cjs --maxWorkers=1 --workerIdleMemoryLimit=1GB --randomize --showSeed",
     "test:visual:device": "node scripts/run-visual-device.mjs",
     "test:composer:device": "node scripts/run-composer-device-proof.mjs",
     "test:device": "node scripts/run-device-replay.mjs",

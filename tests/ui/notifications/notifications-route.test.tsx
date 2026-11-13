@@ -3114,7 +3114,9 @@ describe('notification routes', () => {
       const runtime = routeRuntime(gateway);
       const navigation = createNavigationContainerRef<FocusTestStackParamList>();
       const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
-        buttons?.find((button) => button.text === '确认')?.onPress?.();
+        const confirm = buttons?.find((button) => button.text === '确认')?.onPress;
+        confirm?.();
+        confirm?.();
       });
       const view = await render(
         <NotificationRouteRuntimeProvider value={runtime}>
@@ -3133,6 +3135,7 @@ describe('notification routes', () => {
         await waitFor(() => expect(view.getByText('全部已读')).toBeTruthy());
         await fireEvent.press(view.getByText('全部已读'));
         await waitFor(() => expect(view.getByText('处理中')).toBeTruthy());
+        expect(markAllRead).toHaveBeenCalledTimes(1);
         if (scope === 'source') {
           await fireEvent.press(view.getByTestId('notification-source-all'));
           await fireEvent.press(view.getByTestId('notification-source-nodeseek'));

@@ -195,6 +195,43 @@ describe('image library saving', () => {
     expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
   });
 
+  it('deletes a partially written data image while preserving the write failure', async () => {
+    const failure = new Error('partial write failed');
+    vi.mocked(FileSystem.writeAsStringAsync).mockRejectedValueOnce(failure);
+
+    await expect(saveImageUriToLibrary('data:image/png;base64,abc123', publicMediaOptions)).rejects.toBe(failure);
+
+    const temporaryFile = vi.mocked(FileSystem.writeAsStringAsync).mock.calls[0][0];
+    expect(FileSystem.deleteAsync).toHaveBeenCalledWith(temporaryFile, { idempotent: true });
+    expect(native.createDownload).not.toHaveBeenCalled();
+    expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+  });
+
+  it('retains the native download until an already-started library copy settles', async () => {
+    const controller = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const copy = Promise.withResolvers<MediaLibrary.Asset>();
+    vi.mocked(MediaLibrary.Asset.create).mockImplementationOnce(() => {
+      entered.resolve();
+      return copy.promise;
+    });
+    const saving = saveImageUriToLibrary('https://cdn.example.com/photo.jpg', {
+      ...publicMediaOptions,
+      signal: controller.signal
+    });
+
+    await entered.promise;
+    controller.abort();
+    expect(native.cancelDownload).toHaveBeenCalledWith('download-1');
+    expect(native.releaseDownload).not.toHaveBeenCalled();
+    expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+
+    copy.resolve(new MediaLibrary.Asset('content://media/external/images/1'));
+    await expect(saving).resolves.toBeUndefined();
+    expect(native.releaseDownload).toHaveBeenCalledTimes(1);
+    expect(native.releaseDownload).toHaveBeenCalledWith('download-1');
+  });
+
   it('checks the session again after file inspection before creating an asset', async () => {
     let current = true;
     vi.mocked(FileSystem.getInfoAsync).mockImplementationOnce(async () => {

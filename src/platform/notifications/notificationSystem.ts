@@ -7,6 +7,7 @@ import type { NotificationState } from './notificationStore';
 import { notificationIdentifiersForIdentity } from './notificationWorker';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 
 export const NOTIFICATION_BACKGROUND_TASK = 'wz-message-notifications';
 export const NOTIFICATION_CHANNEL_ID = 'message-notifications';
@@ -75,7 +76,7 @@ export function openNotificationSystemSettings() {
   return Linking.openSettings();
 }
 
-let backgroundRegistrationQueue = Promise.resolve<unknown>(undefined);
+const backgroundRegistrationRunner = createKeyedSerialRunner<null>();
 
 export function syncNotificationBackgroundRegistration(
   state: NotificationState,
@@ -86,7 +87,7 @@ export function syncNotificationBackgroundRegistration(
     state.globalEnabled &&
     permissionGranted &&
     eligibleSources.some((source) => state.sources[source].intentEnabled && state.sources[source].identityKey);
-  const operation = backgroundRegistrationQueue.then(async () => {
+  const operation = backgroundRegistrationRunner.run(null, async () => {
     const trace = beginDiagnosticTrace('app', 'notification-registration', { shouldRun, isGranted: permissionGranted });
     try {
       const registered = await TaskManager.isTaskRegisteredAsync(NOTIFICATION_BACKGROUND_TASK);
@@ -104,7 +105,6 @@ export function syncNotificationBackgroundRegistration(
       throw error;
     }
   });
-  backgroundRegistrationQueue = operation.catch(() => undefined);
   return operation;
 }
 

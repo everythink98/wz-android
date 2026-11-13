@@ -108,6 +108,38 @@ describe('review proof notification permission', () => {
     expect(calls.at(-1)).toEqual(['shell', 'pm', 'revoke', pkg, permission]);
   });
 
+  it('consumes a grant request before invoking a failing command and rejects later reuse', async () => {
+    const device = fixture(false);
+    const failure = new Error('Permission grant failed');
+    device.adb.mockImplementation((...args) => {
+      if (args[1] === 'dumpsys') return `${permission}: granted=false`;
+      if (args[2] === 'grant') throw failure;
+      return '';
+    });
+    let lateGrant = () => {};
+    await withProofNotificationPermission(device, async (grant) => {
+      lateGrant = grant;
+      let caught: unknown;
+      try {
+        grant();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(failure);
+      grant();
+    });
+    const calls = [...device.adb.mock.calls];
+    lateGrant();
+    expect(device.adb.mock.calls).toEqual(calls);
+    expect(calls).toEqual([
+      ['shell', 'dumpsys', 'package', pkg],
+      ['shell', 'pm', 'revoke', pkg, permission],
+      ['shell', 'pm', 'grant', pkg, permission],
+      ['shell', 'am', 'force-stop', pkg],
+      ['shell', 'pm', 'revoke', pkg, permission]
+    ]);
+  });
+
   it('attempts both cleanup actions and retains all three original failures', async () => {
     const device = fixture();
     const business = new Error('business failed');

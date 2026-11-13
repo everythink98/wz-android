@@ -165,17 +165,20 @@ internal const val FORUM_READ_SOURCE_HEADER = "X-WZ-Forum-Read-Source"
 internal const val FORUM_READ_CANCEL_CLASS_HEADER = "X-WZ-Forum-Read-Cancel-Class"
 internal const val FORUM_READ_COOKIE_POLICY_HEADER = "X-WZ-Forum-Read-Cookie-Policy"
 
-private class MediaRequestCookiePolicy(
-  private val credentialSource: String?
-) {
-  private var downgraded = credentialSource == null
+private class MediaRequestCookiePolicy(credentialSource: String?) {
+  private sealed interface Access {
+    class Granted(val source: String) : Access
+    data object Denied : Access
+  }
+  private var access: Access = credentialSource?.let { Access.Granted(it) } ?: Access.Denied
 
   fun allows(source: String?): Boolean {
-    if (source == null || source != credentialSource) {
-      downgraded = true
+    val current = access
+    if (source == null || current !is Access.Granted || source != current.source) {
+      access = Access.Denied
       return false
     }
-    return !downgraded
+    return true
   }
 }
 
@@ -263,8 +266,23 @@ internal data class ForumReadRequestTag(
   val cancelClass: String
 )
 
-internal class ForumReadClearancePolicy(val source: String?, val origin: HttpUrl) {
-  var downgraded = false
+internal class ForumReadClearancePolicy(source: String?, origin: HttpUrl) {
+  private sealed class Access(val source: String?, val origin: HttpUrl) {
+    class Bound(source: String?, origin: HttpUrl) : Access(source, origin)
+    class Downgraded(source: String?, origin: HttpUrl) : Access(source, origin)
+  }
+  private var access: Access = Access.Bound(source, origin)
+  val allowsCookies: Boolean get() = access is Access.Bound
+
+  fun observe(request: Request, sourceForUri: (URI) -> String?) {
+    val current = access
+    val url = request.url
+    if (current.source == null || sourceForUri(URI(url.toString())) != current.source ||
+      url.scheme != current.origin.scheme || url.host != current.origin.host || url.port != current.origin.port ||
+      (request.method != "GET" && request.method != "HEAD")) {
+      access = Access.Downgraded(current.source, current.origin)
+    }
+  }
 }
 
 internal class ForumReadRequestInterceptor : Interceptor {
@@ -309,11 +327,9 @@ internal class ForumReadClearanceInterceptor(
     val request = chain.request()
     val policy = request.tag(ForumReadClearancePolicy::class.java) ?: return chain.proceed(request)
     val url = request.url
-    if (policy.source == null || sourceForUri(URI(url.toString())) != policy.source ||
-      url.scheme != policy.origin.scheme || url.host != policy.origin.host || url.port != policy.origin.port ||
-      (request.method != "GET" && request.method != "HEAD")) policy.downgraded = true
+    policy.observe(request, sourceForUri)
     val sanitized = request.newBuilder().removeHeader("Cookie")
-    if (!policy.downgraded) {
+    if (policy.allowsCookies) {
       cfClearanceValue(cookieReader(url.toString()))?.let { sanitized.header("Cookie", "cf_clearance=$it") }
     }
     // Clearance-only reads never own authenticated response-cookie writes or fallback.
@@ -380,11 +396,21 @@ internal class CloseSafeGlideStreamFetcher(
   private val transformBody: (ResponseBody) -> ResponseBody = { body -> body }
 ) : DataFetcher<InputStream>, okhttp3.Callback {
   private val lock = Any()
-  private var callback: DataFetcher.DataCallback<in InputStream>? = null
-  private var call: Call? = null
-  private var responseBody: ResponseBody? = null
-  private var canceled = false
-  private var cleaned = false
+  private sealed interface State {
+    sealed interface Active : State {
+      val call: Call?
+      val callback: DataFetcher.DataCallback<in InputStream>?
+    }
+    data class Open(override val call: Call?, override val callback: DataFetcher.DataCallback<in InputStream>?) : Active
+    data class Streaming(
+      override val call: Call?,
+      override val callback: DataFetcher.DataCallback<in InputStream>?,
+      val body: ResponseBody
+    ) : Active
+    data class Cleaned(val call: Call?) : State
+    data object Cancelled : State
+  }
+  private var state: State = State.Open(null, null)
 
   override fun loadData(priority: Priority, callback: DataFetcher.DataCallback<in InputStream>) {
     val requestBuilder = Request.Builder().url(glideUrl.toStringUrl())
@@ -397,12 +423,10 @@ internal class CloseSafeGlideStreamFetcher(
     }
     val nextCall = callFactory.newCall(requestBuilder.build())
     val shouldEnqueue = synchronized(lock) {
-      if (canceled || cleaned) {
-        false
-      } else {
-        this.callback = callback
-        call = nextCall
-        true
+      when (val current = state) {
+        is State.Open -> { state = State.Open(nextCall, callback); true }
+        is State.Streaming -> { state = State.Streaming(nextCall, callback, current.body); true }
+        is State.Cleaned, State.Cancelled -> false
       }
     }
     if (shouldEnqueue) {
@@ -414,7 +438,7 @@ internal class CloseSafeGlideStreamFetcher(
 
   override fun onFailure(call: Call, e: IOException) {
     synchronized(lock) {
-      if (!canceled && !cleaned) callback?.onLoadFailed(e)
+      (state as? State.Active)?.callback?.onLoadFailed(e)
     }
   }
 
@@ -422,7 +446,7 @@ internal class CloseSafeGlideStreamFetcher(
     if (!response.isSuccessful) {
       response.close()
       synchronized(lock) {
-        if (!canceled && !cleaned) callback?.onLoadFailed(HttpException(response.message, response.code))
+        (state as? State.Active)?.callback?.onLoadFailed(HttpException(response.message, response.code))
       }
       return
     }
@@ -430,7 +454,7 @@ internal class CloseSafeGlideStreamFetcher(
     if (originalBody == null) {
       response.close()
       synchronized(lock) {
-        if (!canceled && !cleaned) callback?.onLoadFailed(IOException("Successful image response has no body"))
+        (state as? State.Active)?.callback?.onLoadFailed(IOException("Successful image response has no body"))
       }
       return
     }
@@ -441,16 +465,17 @@ internal class CloseSafeGlideStreamFetcher(
     } catch (error: Exception) {
       transformedBody.close()
       synchronized(lock) {
-        if (!canceled && !cleaned) callback?.onLoadFailed(error)
+        (state as? State.Active)?.callback?.onLoadFailed(error)
       }
       return
     }
     val accepted = synchronized(lock) {
-      if (canceled || cleaned) {
+      val current = state as? State.Active
+      if (current == null) {
         false
       } else {
-        responseBody = transformedBody
-        callback?.onDataReady(nextStream)
+        state = State.Streaming(current.call, current.callback, transformedBody)
+        current.callback?.onDataReady(nextStream)
         true
       }
     }
@@ -459,23 +484,24 @@ internal class CloseSafeGlideStreamFetcher(
 
   override fun cleanup() {
     val body = synchronized(lock) {
-      if (cleaned) return
-      cleaned = true
-      callback = null
-      responseBody.also { responseBody = null }
+      val current = state as? State.Active ?: return
+      state = State.Cleaned(current.call)
+      when (current) {
+        is State.Open -> null
+        is State.Streaming -> current.body
+      }
     }
     body?.close()
   }
 
   override fun cancel() {
     val owned = synchronized(lock) {
-      if (canceled) return
-      canceled = true
-      callback = null
-      val activeCall = call
-      val body = responseBody
-      responseBody = null
-      activeCall to body
+      when (val current = state) {
+        is State.Open -> { state = State.Cancelled; current.call to null }
+        is State.Streaming -> { state = State.Cancelled; current.call to current.body }
+        is State.Cleaned -> { state = State.Cancelled; current.call to null }
+        State.Cancelled -> return
+      }
     }
     try {
       owned.first?.cancel()
@@ -543,9 +569,10 @@ private class ReleasingResponseBody(
   private val delegate: ResponseBody,
   private val release: () -> Unit
 ) : ResponseBody() {
-  private val released = AtomicBoolean(false)
+  private enum class ReleaseClaim { AVAILABLE, CONSUMED }
+  private val releaseClaim = AtomicReference(ReleaseClaim.AVAILABLE)
   private fun releaseOnce() {
-    if (released.compareAndSet(false, true)) release()
+    if (releaseClaim.compareAndSet(ReleaseClaim.AVAILABLE, ReleaseClaim.CONSUMED)) release()
   }
 
   private val trackedSource = object : ForwardingSource(delegate.source()) {
@@ -577,17 +604,18 @@ internal interface CronetMediaTransportHandle {
   fun retire(cancelActive: Boolean = true)
 }
 
-private class CronetMediaTransport(
+internal class CronetMediaTransport(
   override val generation: Long,
-  private val engine: CronetEngine,
-  private val interceptor: CronetInterceptor,
-  private val client: OkHttpClient,
-  private val lifecycleExecutor: ScheduledExecutorService
+  private val client: Call.Factory,
+  private val lifecycleExecutor: ScheduledExecutorService,
+  private val closeTransport: () -> Unit
 ) : CronetMediaTransportHandle {
   private val lock = Any()
   private val activeCalls = mutableMapOf<Call, Call>()
-  private var retired = false
-  private var shutdownStarted = false
+  private enum class Lifetime { ACCEPTING, RETIRING, SHUTDOWN_CLAIMED }
+  private var lifetime = Lifetime.ACCEPTING
+  private val retired: Boolean get() = lifetime != Lifetime.ACCEPTING
+  private val shutdownStarted: Boolean get() = lifetime == Lifetime.SHUTDOWN_CLAIMED
   private val cancellationWatch = lifecycleExecutor.scheduleWithFixedDelay(
     {
       val canceled = synchronized(lock) {
@@ -635,7 +663,7 @@ private class CronetMediaTransport(
 
   override fun retire(cancelActive: Boolean) {
     val calls = synchronized(lock) {
-      retired = true
+      if (!shutdownStarted) lifetime = Lifetime.RETIRING
       if (cancelActive) activeCalls.keys.toList() else emptyList()
     }
     calls.forEach { call -> call.cancel() }
@@ -654,27 +682,10 @@ private class CronetMediaTransport(
     if (!shouldShutdown) return
     synchronized(lock) {
       if (shutdownStarted || !retired || activeCalls.isNotEmpty()) return
-      shutdownStarted = true
+      lifetime = Lifetime.SHUTDOWN_CLAIMED
     }
     cancellationWatch.cancel(false)
-    lifecycleExecutor.execute {
-      var failureType: String? = null
-      try {
-        interceptor.close()
-      } catch (error: Exception) {
-        failureType = error.javaClass.simpleName
-      }
-      try {
-        engine.shutdown()
-      } catch (error: Exception) {
-        failureType = failureType ?: error.javaClass.simpleName
-      }
-      if (failureType == null) {
-        Log.i(LOG_TAG, "closed media cronet generation=$generation")
-      } else {
-        Log.w(LOG_TAG, "failed to close media cronet generation=$generation type=" + failureType)
-      }
-    }
+    lifecycleExecutor.execute { closeTransport() }
   }
 }
 
@@ -739,7 +750,24 @@ private fun createCronetMediaTransport(
     .followSslRedirects(false)
     .addInterceptor(interceptor)
     .build()
-  return CronetMediaTransport(generation, engine, interceptor, client, lifecycleExecutor)
+  return CronetMediaTransport(generation, client, lifecycleExecutor) {
+    var failureType: String? = null
+    try {
+      interceptor.close()
+    } catch (error: Exception) {
+      failureType = error.javaClass.simpleName
+    }
+    try {
+      engine.shutdown()
+    } catch (error: Exception) {
+      failureType = failureType ?: error.javaClass.simpleName
+    }
+    if (failureType == null) {
+      Log.i(LOG_TAG, "closed media cronet generation=$generation")
+    } else {
+      Log.w(LOG_TAG, "failed to close media cronet generation=$generation type=" + failureType)
+    }
+  }
 }
 
 internal class ReadOnlyWebViewCookieHandler(
@@ -1355,8 +1383,12 @@ private class ReadNetworkRuntimeGeneration(
   val proxySelector: ProxySelector = ReadNetworkGenerationProxySelector(proxySelectorDelegate)
   private val cronetLock = Any()
   private var mediaTransportRevision = 0L
-  private var cronetMediaTransport: CronetMediaTransportHandle? = null
-  private var retirementSealed = false
+  private sealed class TransportCache(val handle: CronetMediaTransportHandle?) {
+    data object Empty : TransportCache(null)
+    class Ready(handle: CronetMediaTransportHandle) : TransportCache(handle)
+    class Sealed(retained: CronetMediaTransportHandle?) : TransportCache(retained)
+  }
+  private var transportCache: TransportCache = TransportCache.Empty
   @Volatile private var idleSince = 0L
   private val externalLeaseCount = AtomicInteger(0)
   private var lastDrainQueued = -1
@@ -1391,15 +1423,19 @@ private class ReadNetworkRuntimeGeneration(
     proxy: Proxy?,
     lifecycleExecutor: ScheduledExecutorService
   ): CronetMediaTransportHandle = synchronized(cronetLock) {
-    check(!retirementSealed) { "媒体网络 generation 已退休" }
-    cronetMediaTransport?.let { return@synchronized it }
+    check(transportCache !is TransportCache.Sealed) { "媒体网络 generation 已退休" }
+    transportCache.handle?.let { return@synchronized it }
     createCronetMediaTransport(
       context,
       currentMediaTransportGeneration(),
       proxy,
       lifecycleExecutor
     ).also { created ->
-      cronetMediaTransport = created
+      transportCache = if (transportCache is TransportCache.Sealed) {
+        TransportCache.Sealed(created)
+      } else {
+        TransportCache.Ready(created)
+      }
       Log.i(
         LOG_TAG,
         "media-cronet phase=publish generation=" + generation +
@@ -1410,23 +1446,27 @@ private class ReadNetworkRuntimeGeneration(
 
   fun resetCronetMediaTransport(): CronetMediaTransportHandle? = synchronized(cronetLock) {
     mediaTransportRevision += 1
-    cronetMediaTransport.also { cronetMediaTransport = null }
+    val previous = transportCache
+    transportCache = if (previous is TransportCache.Sealed) TransportCache.Sealed(null) else TransportCache.Empty
+    previous.handle
   }
 
   fun retireCronetMediaTransport(): CronetMediaTransportHandle? = synchronized(cronetLock) {
-    cronetMediaTransport.also { cronetMediaTransport = null }
+    val previous = transportCache
+    transportCache = if (previous is TransportCache.Sealed) TransportCache.Sealed(null) else TransportCache.Empty
+    previous.handle
   }
 
   fun installCronetMediaTransportForTests(transport: CronetMediaTransportHandle): Boolean =
     synchronized(cronetLock) {
-      if (cronetMediaTransport != null || retirementSealed) false else {
-        cronetMediaTransport = transport
+      if (transportCache !is TransportCache.Empty) false else {
+        transportCache = TransportCache.Ready(transport)
         true
       }
     }
 
   fun activeCronetCalls(): Int = synchronized(cronetLock) {
-    cronetMediaTransport?.activeCallsCount() ?: 0
+    transportCache.handle?.activeCallsCount() ?: 0
   }
 
   fun markRetiring(traceIdentity: String, source: String, diagnosticsEnabled: Boolean = true) {
@@ -1436,7 +1476,7 @@ private class ReadNetworkRuntimeGeneration(
   }
 
   fun sealRetirement() = synchronized(cronetLock) {
-    retirementSealed = true
+    transportCache = TransportCache.Sealed(transportCache.handle)
   }
 
   fun retainExternalLease() {
@@ -1539,7 +1579,17 @@ object NetworkProxyRuntime {
   private val rotationLock = Any()
   private val selector = NetworkProxySelector()
   private val blockedProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", BLOCKED_PROXY_PORT))
-  @Volatile private var localProxy: Proxy? = blockedProxy
+  private sealed interface RouteOverride {
+    data object Blocked : RouteOverride
+    data object NoAppOverride : RouteOverride
+    class LocalRelay(val proxy: Proxy) : RouteOverride
+  }
+  @Volatile private var routeOverride: RouteOverride = RouteOverride.Blocked
+  private val localProxy: Proxy? get() = when (val current = routeOverride) {
+    RouteOverride.Blocked -> blockedProxy
+    RouteOverride.NoAppOverride -> null
+    is RouteOverride.LocalRelay -> current.proxy
+  }
   private val cookieHandler = ReadOnlyWebViewCookieHandler()
   private val cookieJar = ReadOnlyCookieJarContainer(JavaNetCookieJar(cookieHandler))
   private val cronetLifecycleExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -1558,7 +1608,12 @@ object NetworkProxyRuntime {
     cookieJar,
     selector
   )
-  @Volatile private var applicationContext: Context? = null
+  private sealed class ContextBinding(val value: Context?) {
+    data object Unavailable : ContextBinding(null)
+    class Bound(value: Context) : ContextBinding(value)
+  }
+  @Volatile private var contextBinding: ContextBinding = ContextBinding.Unavailable
+  private val applicationContext: Context? get() = contextBinding.value
   private val imageCalls = mutableMapOf<Call, ReadNetworkRuntimeGeneration>()
   internal val frescoCallFactory = Call.Factory { request -> RuntimeImageCall(request, false) }
   internal val imageCallFactory = Call.Factory { request -> RuntimeImageCall(request, true) }
@@ -1671,7 +1726,8 @@ object NetworkProxyRuntime {
       } catch (error: Throwable) { failed(error); throw error }
     }
   }
-  private var installed = false
+  private enum class InstallAdmission { OPEN, CLOSED }
+  private var installAdmission = InstallAdmission.OPEN
 
   fun install(context: Context) {
     DiagnosticJournal.recordStartupPhase("network-start")
@@ -1679,7 +1735,7 @@ object NetworkProxyRuntime {
     val installedGeneration: ReadNetworkRuntimeGeneration
     val appContext = context.applicationContext
     synchronized(lock) {
-      if (installed) return
+      if (installAdmission == InstallAdmission.CLOSED) return
       selector.setDelegate(ProxySelector.getDefault())
       ProxySelector.setDefault(selector)
       baseClientTemplate = OkHttpClientProvider.createClientBuilder(appContext).build()
@@ -1693,12 +1749,12 @@ object NetworkProxyRuntime {
       )
       currentGeneration = installedGeneration
       nextGenerationNumber = maxOf(nextGenerationNumber, installedGeneration.generation + 1L)
-      applicationContext = appContext
+      contextBinding = appContext?.let { ContextBinding.Bound(it) } ?: ContextBinding.Unavailable
       OkHttpClientProvider.setOkHttpClientFactory { currentGeneration.mediaClient }
       NetworkingModule.setCustomClientBuilder { builder ->
         configureManagedClient(builder)
       }
-      installed = true
+      installAdmission = InstallAdmission.CLOSED
     }
     FrescoModule.setNetworkFetcherFactory(frescoCallFactory, imageCancellationExecutor)
     installExpoImageClientOnMainThread(appContext, imageCallFactory)
@@ -1715,7 +1771,7 @@ object NetworkProxyRuntime {
   fun setLocalProxyPort(port: Int?) = synchronized(rotationLock) {
     val next = port?.let { Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", it)) }
     val retired = synchronized(lock) {
-      localProxy = next
+      routeOverride = next?.let { RouteOverride.LocalRelay(it) } ?: RouteOverride.NoAppOverride
       allGenerationsLocked().mapNotNull { generation -> generation.resetCronetMediaTransport() }
     }
     retired.forEach { transport -> transport.retire() }
@@ -1726,7 +1782,7 @@ object NetworkProxyRuntime {
     val generations: List<ReadNetworkRuntimeGeneration>
     val retired: List<CronetMediaTransportHandle>
     synchronized(lock) {
-      localProxy = blockedProxy
+      routeOverride = RouteOverride.Blocked
       generations = allGenerationsLocked()
       retired = generations.mapNotNull { generation -> generation.resetCronetMediaTransport() }
     }
@@ -2211,10 +2267,15 @@ private fun installExpoImageClientOnMainThread(context: Context, callFactory: Ca
 }
 
 class NetworkProxySelector : ProxySelector() {
-  @Volatile private var delegate: ProxySelector? = null
+  private sealed class DelegateRoute(val value: ProxySelector?) {
+    data object NoDelegate : DelegateRoute(null)
+    class ForwardTo(value: ProxySelector) : DelegateRoute(value)
+  }
+  @Volatile private var delegateRoute: DelegateRoute = DelegateRoute.NoDelegate
+  private val delegate: ProxySelector? get() = delegateRoute.value
 
   fun setDelegate(next: ProxySelector?) {
-    delegate = next
+    delegateRoute = next?.let { DelegateRoute.ForwardTo(it) } ?: DelegateRoute.NoDelegate
   }
 
   override fun select(uri: URI?): MutableList<Proxy> {
@@ -2254,9 +2315,13 @@ internal class LocalNetworkProxyServer(
     SynchronousQueue()
   )
   private val copyExecutor = Executors.newFixedThreadPool(maxConnections * 2)
-  private val sockets = ConcurrentHashMap.newKeySet<Socket>()
+  private sealed interface SocketOwnership {
+    class Accepting(val sockets: MutableSet<Socket>) : SocketOwnership
+    data object Stopped : SocketOwnership
+  }
+  @Volatile private var socketOwnership: SocketOwnership =
+    SocketOwnership.Accepting(ConcurrentHashMap.newKeySet<Socket>())
   private val socketLock = Any()
-  @Volatile private var running = true
 
   init {
     require(maxConnections > 0)
@@ -2269,7 +2334,7 @@ internal class LocalNetworkProxyServer(
   fun start() {
     Log.i(LOG_TAG, "local proxy started")
     acceptExecutor.execute {
-      while (running) {
+      while (socketOwnership is SocketOwnership.Accepting) {
         try {
           val client = own(serverSocket.accept())
           try {
@@ -2285,11 +2350,11 @@ internal class LocalNetworkProxyServer(
             }
           }
         } catch (_: SocketException) {
-          if (running) {
+          if (socketOwnership is SocketOwnership.Accepting) {
             break
           }
         } catch (_: IOException) {
-          if (running) {
+          if (socketOwnership is SocketOwnership.Accepting) {
             continue
           }
         }
@@ -2299,8 +2364,11 @@ internal class LocalNetworkProxyServer(
 
   fun stop() {
     val ownedSockets = synchronized(socketLock) {
-      running = false
-      sockets.toList().also { sockets.clear() }
+      val previous = socketOwnership
+      socketOwnership = SocketOwnership.Stopped
+      if (previous is SocketOwnership.Accepting) {
+        previous.sockets.toList().also { previous.sockets.clear() }
+      } else emptyList()
     }
     Log.i(LOG_TAG, "local proxy stopped")
     try {
@@ -2320,11 +2388,12 @@ internal class LocalNetworkProxyServer(
 
   private fun <T : Socket> own(socket: T): T {
     synchronized(socketLock) {
-      if (!running) {
+      val current = socketOwnership
+      if (current !is SocketOwnership.Accepting) {
         socket.close()
         throw SocketException("Proxy server stopped")
       }
-      sockets.add(socket)
+      current.sockets.add(socket)
     }
     return socket
   }
@@ -2335,7 +2404,7 @@ internal class LocalNetworkProxyServer(
     } catch (_: IOException) {
     } finally {
       synchronized(socketLock) {
-        sockets.remove(socket)
+        (socketOwnership as? SocketOwnership.Accepting)?.sockets?.remove(socket)
       }
     }
   }
@@ -2399,7 +2468,7 @@ internal class LocalNetworkProxyServer(
       }
     } finally {
       synchronized(socketLock) {
-        sockets.remove(client)
+        (socketOwnership as? SocketOwnership.Accepting)?.sockets?.remove(client)
       }
     }
   }

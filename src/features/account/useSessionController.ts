@@ -804,13 +804,7 @@ export function useSessionController({
         }
         const legacyCleanupFailed = cleanup.some((result) => result.status === 'rejected');
         const event: SiteSessionEvent = { type: 'cleared' };
-        if (source === 'nodeseek') {
-          updateNodeSeekSession(event);
-        } else if (source === 'linuxdo') {
-          updateLinuxDoSession(event);
-        } else {
-          updateYaohuoSession(event);
-        }
+        dispatchSiteSessionEvent({ ...event, site: source });
         finishDiagnosticTrace(trace, legacyCleanupFailed ? 'partial' : 'success', {
           source,
           ...(legacyCleanupFailed ? { reason: 'storage_error' } : {})
@@ -825,13 +819,7 @@ export function useSessionController({
           return false;
         }
         const message = `${source === 'nodeseek' ? 'NodeSeek' : source === 'linuxdo' ? 'linux.do' : '妖火'} 登录清理未完成，请重试。`;
-        if (source === 'nodeseek') {
-          updateNodeSeekSession({ type: 'check-failed', message });
-        } else if (source === 'linuxdo') {
-          updateLinuxDoSession({ type: 'check-failed', message });
-        } else {
-          updateYaohuoSession({ type: 'check-failed', message });
-        }
+        dispatchSiteSessionEvent({ type: 'check-failed', message, site: source });
         finishDiagnosticTrace(trace, 'failure', {
           source,
           reason: normalizeDiagnosticReason(error)
@@ -839,7 +827,7 @@ export function useSessionController({
         throw error;
       }
     },
-    [forumSessionEpochsRef, notify, updateLinuxDoSession, updateNodeSeekSession, updateYaohuoSession]
+    [dispatchSiteSessionEvent, forumSessionEpochsRef, notify]
   );
 
   const clearNodeSeekLoginState = useCallback(

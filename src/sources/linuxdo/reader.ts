@@ -60,7 +60,8 @@ import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 
 export const LIST_PAGE_SIZE = 30;
 
-let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
+type LinuxDoEmojiCache = { kind: 'empty' } | { kind: 'ready'; urls: DiscourseEmojiUrlMap };
+let emojiUrlCache: LinuxDoEmojiCache = { kind: 'empty' };
 type LinuxDoCategoryMap = Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>;
 type LinuxDoCategoryCache =
   | { scope: null }
@@ -72,6 +73,10 @@ type LinuxDoCategoryCache =
         | { kind: 'ready'; data: Record<string, unknown>; map: LinuxDoCategoryMap };
     };
 let categoryCache: LinuxDoCategoryCache = { scope: null };
+
+type LinuxDoFeedScan =
+  | { kind: 'reading'; page: number; items: Topic[]; droppedCount: number; categories: LinuxDoCategoryMap }
+  | { kind: 'ready'; items: Topic[]; droppedCount: number; hasMore: boolean };
 
 export type LinuxDoReadAuth = {
   authenticated?: boolean;
@@ -267,12 +272,13 @@ function linuxDoAccessRequirementFromError(error: unknown): Topic['accessRequire
 
 export async function getLinuxDoEmojiUrls(options: LinuxDoOptions = {}) {
   options = withDefaultBrowserFetchIntent(options, 'topic', 'foreground');
-  if (emojiUrlCache) {
-    return emojiUrlCache;
+  if (emojiUrlCache.kind === 'ready') {
+    return emojiUrlCache.urls;
   }
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/emojis.json', undefined, options);
-  emojiUrlCache = discourseEmojiUrlMapFromData(data, BASE_URL);
-  return emojiUrlCache;
+  const urls = discourseEmojiUrlMapFromData(data, BASE_URL);
+  emojiUrlCache = { kind: 'ready', urls };
+  return urls;
 }
 
 function boostCount(value: unknown) {
@@ -467,19 +473,18 @@ export async function getLinuxDoFeed(
   const start = (page - 1) * limit;
   const firstListPage = Math.floor(start / LIST_PAGE_SIZE) + 1;
   const firstOffset = start % LIST_PAGE_SIZE;
-  const collected: Topic[] = [];
-  let listPage = firstListPage;
-  let hasMore = false;
-  let droppedCount = 0;
-  let categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>();
-  while (collected.length < limit) {
+  let scan: LinuxDoFeedScan =
+    0 < limit
+      ? { kind: 'reading', page: firstListPage, items: [], droppedCount: 0, categories: new Map() }
+      : { kind: 'ready', items: [], droppedCount: 0, hasMore: false };
+  while (scan.kind === 'reading') {
     const data = await fetchLinuxDoJson<Record<string, unknown>>(
       linuxDoFeedPath(linuxDoFilter),
-      linuxDoFeedParams(listPage, options.category, linuxDoFilter),
+      linuxDoFeedParams(scan.page, options.category, linuxDoFilter),
       options
     );
     const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
-    categoryMap = await categoryMapForTopics(data, topics, categoryMap, options);
+    const categoryMap = await categoryMapForTopics(data, topics, scan.categories, options);
     const users = discourseUsersById(data.users);
     const items = topics
       .map((topic) => {
@@ -487,32 +492,30 @@ export async function getLinuxDoFeed(
         return normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
       })
       .filter(Boolean) as Topic[];
-    droppedCount += Math.max(0, topics.length - items.length);
+    const droppedCount = scan.droppedCount + Math.max(0, topics.length - items.length);
     const serverHasMore = Boolean(isRecord(data.topic_list) && data.topic_list.more_topics_url);
-    collected.push(...(listPage === firstListPage && firstOffset > 0 ? items.slice(firstOffset) : items));
-    if (collected.length >= limit) {
-      hasMore = collected.length > limit || serverHasMore;
-      break;
+    scan.items.push(...(scan.page === firstListPage && firstOffset > 0 ? items.slice(firstOffset) : items));
+    if (scan.items.length >= limit) {
+      scan = { kind: 'ready', items: scan.items, droppedCount, hasMore: scan.items.length > limit || serverHasMore };
+    } else if (serverHasMore && (items.length > 0 || topics.length > 0)) {
+      scan = { kind: 'reading', page: scan.page + 1, items: scan.items, droppedCount, categories: categoryMap };
+    } else {
+      scan = { kind: 'ready', items: scan.items, droppedCount, hasMore: false };
     }
-    if (serverHasMore && (items.length > 0 || topics.length > 0)) {
-      listPage += 1;
-      continue;
-    }
-    break;
   }
   const result = {
-    items: collected.slice(0, limit),
+    items: scan.items.slice(0, limit),
     errors: {},
-    hasMore,
-    nextPage: hasMore ? page + 1 : null
+    hasMore: scan.hasMore,
+    nextPage: scan.hasMore ? page + 1 : null
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'discourse-feed',
-    candidateCount: result.items.length + droppedCount,
+    candidateCount: result.items.length + scan.droppedCount,
     validCount: result.items.length,
-    droppedCount,
-    isExpectedEmpty: result.items.length === 0 && droppedCount === 0 && (page > 1 || Boolean(options.category)),
-    isParseEmpty: page === 1 && !options.category && result.items.length === 0 && droppedCount === 0,
+    droppedCount: scan.droppedCount,
+    isExpectedEmpty: result.items.length === 0 && scan.droppedCount === 0 && (page > 1 || Boolean(options.category)),
+    isParseEmpty: page === 1 && !options.category && result.items.length === 0 && scan.droppedCount === 0,
     hasRepeatedCursor: result.nextPage === page
   });
 }

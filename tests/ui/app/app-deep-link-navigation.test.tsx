@@ -37,6 +37,26 @@ function internalTopicLink(topicUrl: string) {
 }
 
 describe('app deep-link navigation', () => {
+  it('does not navigate when the initial URL resolves after unmount', async () => {
+    const initial = Promise.withResolvers<string | null>();
+    const subscription = Linking.addEventListener('url', () => {});
+    const remove = jest.spyOn(subscription, 'remove');
+    const linking: Pick<typeof Linking, 'addEventListener' | 'getInitialURL'> = {
+      addEventListener: () => subscription,
+      getInitialURL: () => initial.promise
+    };
+    mockPushTopicRoute.mockReturnValue(true);
+    const hook = await renderHook(() => useAppDeepLinkNavigation(linking, mockPushTopicRoute));
+    try {
+      await hook.unmount();
+      await act(async () => initial.resolve('https://linux.do/t/late/111/3'));
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(mockPushTopicRoute).not.toHaveBeenCalled();
+    } finally {
+      initial.resolve(null);
+    }
+  });
+
   it('records an initial URL failure without the rejected URL or message', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {

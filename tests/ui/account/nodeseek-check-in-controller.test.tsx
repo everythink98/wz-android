@@ -157,16 +157,18 @@ describe('NodeSeek account check-in controller', () => {
     const ensureWritableSession = jest.fn(async () => session.promise);
     const firstTransport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => firstTransport.promise);
-    const { hook } = await renderController({ ensureWritableSession });
+    const { hook, readAttendance } = await renderController({ ensureWritableSession });
     let first!: Promise<void>;
     let second!: Promise<void>;
 
     await act(async () => {
       first = hook.result.current.checkIn();
       second = hook.result.current.checkIn(true);
+      await hook.result.current.refresh(ticket);
       await Promise.resolve();
     });
     expect(ensureWritableSession).toHaveBeenCalledTimes(1);
+    expect(readAttendance).not.toHaveBeenCalled();
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
     expect(hook.result.current.busy).toBe(true);
     await act(async () => {
@@ -841,17 +843,25 @@ describe('NodeSeek account check-in controller', () => {
 
   it.each([
     ['ordinary', new Error('签到网络失败')],
-    ['permission-denied', Object.assign(new Error('当前账号不能签到'), { status: 403 })]
+    ['permission-denied', Object.assign(new Error('当前账号不能签到'), { status: 403 })],
+    ['session-preparation', new Error('登录准备失败')]
   ])('leaves identity unchanged for %s attendance failure', async (_kind, error) => {
     mockRunNodeSeekAction.mockRejectedValueOnce(error);
     const notify = jest.fn();
-    const { hook, onSessionExpired } = await renderController({ notify });
+    const { hook, onSessionExpired } = await renderController({
+      notify,
+      ensureWritableSession: async () => {
+        if (_kind === 'session-preparation') throw error;
+        return ticket;
+      }
+    });
 
     await act(async () => {
       await hook.result.current.checkIn();
     });
 
     expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(_kind === 'session-preparation' ? 0 : 1);
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
   });

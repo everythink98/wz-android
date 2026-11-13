@@ -1,22 +1,27 @@
 import { errorMessage } from '@/platform/network/errors';
 
-type BackupBusyRef = { current: boolean };
+type BackupObserver = { signal: AbortSignal };
+export type BackupOperationGate = {
+  current: { phase: 'idle' } | { phase: 'running'; observer: BackupObserver };
+};
 
 export async function runBackupOperation({
-  busyRef,
+  gate,
+  observer,
   notify,
   setBusy,
   task
 }: {
-  busyRef: BackupBusyRef;
+  gate: BackupOperationGate;
+  observer: BackupObserver;
   notify: (message: string) => void;
   setBusy: (value: boolean) => void;
   task: () => Promise<void>;
 }) {
-  if (busyRef.current) {
+  if (gate.current.phase === 'running') {
     return false;
   }
-  busyRef.current = true;
+  gate.current = { phase: 'running', observer };
   setBusy(true);
   try {
     await task();
@@ -25,7 +30,7 @@ export async function runBackupOperation({
     notify(errorMessage(error));
     return false;
   } finally {
-    busyRef.current = false;
+    gate.current = { phase: 'idle' };
     setBusy(false);
   }
 }

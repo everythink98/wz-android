@@ -199,6 +199,10 @@ export interface NotificationDeliveryCommit {
   notificationIdentifier: string;
 }
 
+type DeliveryRecording =
+  | { phase: 'uncommitted'; newIds: string[] }
+  | { phase: 'committed'; newIds: string[]; previous: Pick<NotificationSourceState, 'baselineReady' | 'deliveredIds'> };
+
 export function recordNotificationDelivery(
   source: NotificationSource,
   identityKey: string,
@@ -206,14 +210,13 @@ export function recordNotificationDelivery(
   fields: { lastSuccessAt: string },
   delivery?: NotificationDeliveryCommit
 ) {
-  let newIds: string[] = [];
-  let committed = false;
-  let previousDeliveryState: Pick<NotificationSourceState, 'baselineReady' | 'deliveredIds'> | undefined;
+  let recording: DeliveryRecording = { phase: 'uncommitted', newIds: [] };
   const operation = updateNotificationState((current) => {
     const sourceState = current.sources[source];
     if (!current.globalEnabled || !sourceState.intentEnabled || sourceState.identityKey !== identityKey) return current;
     const advanced = advanceNotificationDelivery(sourceState, identityKey, scannedIds);
-    newIds = advanced.newIds;
+    const newIds = advanced.newIds;
+    recording = { phase: 'uncommitted', newIds };
     const plannedIdsMatch = delivery
       ? delivery.expectedNewIds.length === newIds.length &&
         delivery.expectedNewIds.every((id, index) => id === newIds[index])
@@ -225,11 +228,14 @@ export function recordNotificationDelivery(
     ) {
       return current;
     }
-    previousDeliveryState = {
-      baselineReady: sourceState.baselineReady,
-      deliveredIds: sourceState.deliveredIds
+    recording = {
+      phase: 'committed',
+      newIds,
+      previous: {
+        baselineReady: sourceState.baselineReady,
+        deliveredIds: sourceState.deliveredIds
+      }
     };
-    committed = true;
     return {
       ...current,
       sources: {
@@ -242,34 +248,37 @@ export function recordNotificationDelivery(
       }
     };
   });
-  return operation.then((state) => ({
-    state,
-    newIds,
-    committed,
-    rollback: () =>
-      !committed || !delivery
-        ? Promise.resolve(state)
-        : updateNotificationState((current) => {
-            const sourceState = current.sources[source];
-            if (
-              sourceState.identityKey !== identityKey ||
-              sourceState.notificationIdentifier !== delivery.notificationIdentifier
-            ) {
-              return current;
-            }
-            return {
-              ...current,
-              sources: {
-                ...current.sources,
-                [source]: {
-                  ...sourceState,
-                  ...previousDeliveryState,
-                  notificationIdentifier: delivery.previousIdentifier
-                }
+  return operation.then((state) => {
+    const receipt = recording;
+    return {
+      state,
+      newIds: receipt.newIds,
+      committed: receipt.phase === 'committed',
+      rollback: () =>
+        receipt.phase !== 'committed' || !delivery
+          ? Promise.resolve(state)
+          : updateNotificationState((current) => {
+              const sourceState = current.sources[source];
+              if (
+                sourceState.identityKey !== identityKey ||
+                sourceState.notificationIdentifier !== delivery.notificationIdentifier
+              ) {
+                return current;
               }
-            };
-          })
-  }));
+              return {
+                ...current,
+                sources: {
+                  ...current.sources,
+                  [source]: {
+                    ...sourceState,
+                    ...receipt.previous,
+                    notificationIdentifier: delivery.previousIdentifier
+                  }
+                }
+              };
+            })
+    };
+  });
 }
 
 export function resetNotificationSourceIdentity(source: NotificationSource, identityKey?: string) {

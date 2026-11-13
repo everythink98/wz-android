@@ -1,9 +1,12 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { renderHook } from '@testing-library/react-native';
+import type { ReactNode } from 'react';
 import { describe, expect, it, jest } from '@jest/globals';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { accountQueryKeys, forumQueryKeys } from '@/platform/query/serverState';
-import { cleanupContentSourceQueries } from '@/app/useContentSourceQueryCleanup';
+import { cleanupContentSourceQueries, useContentSourceQueryCleanup } from '@/app/useContentSourceQueryCleanup';
 import { canonicalEnabledSourcesKey } from '@/domain/reader/contentSourcePreferences';
+import type { Source } from '@/domain/forum/models';
 
 function pendingRead(onAbort: () => void) {
   return ({ signal }: { signal: AbortSignal }) =>
@@ -20,6 +23,55 @@ function pendingRead(onAbort: () => void) {
 }
 
 describe('content source query cleanup', () => {
+  it('keeps initial caches and advances the previous scope through disable and reenable', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
+    const sources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
+    const allKey = canonicalEnabledSourcesKey(sources.map((source) => ({ source, enabled: true })));
+    const disabledKey = canonicalEnabledSourcesKey(
+      sources.map((source) => ({ source, enabled: source !== 'linuxdo' }))
+    );
+    const linuxDo = forumQueryKeys.topic({
+      source: 'linuxdo',
+      topicId: 'scope-hook',
+      scope: initialForumSessionEpochs
+    });
+    const v2ex = forumQueryKeys.topic({ source: 'v2ex', topicId: 'scope-hook', scope: initialForumSessionEpochs });
+    const allFeed = forumQueryKeys.feed({ source: 'all', scope: initialForumSessionEpochs, enabledSourcesKey: allKey });
+    const disabledFeed = forumQueryKeys.feed({
+      source: 'all',
+      scope: initialForumSessionEpochs,
+      enabledSourcesKey: disabledKey
+    });
+    client.setQueryData(linuxDo, 'linuxdo cached');
+    client.setQueryData(v2ex, 'v2ex retained');
+    client.setQueryData(allFeed, 'initial aggregate');
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    }
+    type Props = { sources: readonly Source[]; scopeKey: string };
+    const hook = await renderHook((props: Props) => useContentSourceQueryCleanup(props.sources, props.scopeKey), {
+      initialProps: { sources, scopeKey: allKey },
+      wrapper: Wrapper
+    });
+    try {
+      expect(client.getQueryData(linuxDo)).toBe('linuxdo cached');
+      expect(client.getQueryData(allFeed)).toBe('initial aggregate');
+      await hook.rerender({ sources: sources.filter((source) => source !== 'linuxdo'), scopeKey: disabledKey });
+      expect(client.getQueryData(linuxDo)).toBeUndefined();
+      expect(client.getQueryData(allFeed)).toBeUndefined();
+      expect(client.getQueryData(v2ex)).toBe('v2ex retained');
+      client.setQueryData(disabledFeed, 'previous disabled aggregate');
+      client.setQueryData(allFeed, 'reenabled aggregate');
+      await hook.rerender({ sources, scopeKey: allKey });
+      expect(client.getQueryData(disabledFeed)).toBeUndefined();
+      expect(client.getQueryData(allFeed)).toBe('reenabled aggregate');
+      expect(client.getQueryData(v2ex)).toBe('v2ex retained');
+    } finally {
+      await hook.unmount();
+      client.clear();
+    }
+  });
+
   it('bounds cached queries and pending reads across repeated source disable and enable cycles', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
     const sources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;

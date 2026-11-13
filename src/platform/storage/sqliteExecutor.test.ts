@@ -73,3 +73,56 @@ it.each(['BEGIN IMMEDIATE', 'COMMIT'])('keeps the owner usable after a recoverab
   expect(() => executor.assertUsable()).not.toThrow();
   await expect(executor.transaction(db, false, operation)).resolves.toBe(7);
 });
+
+it.each(['fulfilled', 'rejected'] as const)(
+  'dispatches the next queued callback before observer microtasks after a %s result',
+  async (outcome) => {
+    const executor = createSqliteExecutor('frozen', 'rollback failed');
+    const pending = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const first = executor.enqueue(() => pending.promise);
+    const second = executor.enqueue(async () => {
+      events.push('next');
+    });
+    const observe = () => {
+      events.push('observer');
+      queueMicrotask(() => events.push('observer:microtask'));
+    };
+    const observed = first.then(observe, observe);
+
+    if (outcome === 'fulfilled') pending.resolve();
+    else pending.reject(new Error('failed'));
+    await Promise.all([observed, second]);
+    expect(events).toEqual(['observer', 'next', 'observer:microtask']);
+  }
+);
+
+it('keeps dispatching queued callbacks after an uncertain transaction while blocking further SQL', async () => {
+  const executor = createSqliteExecutor('frozen', 'rollback failed');
+  const db = {
+    execAsync: vi.fn(async (sql: string) => {
+      if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error(sql);
+    })
+  };
+  const events: string[] = [];
+  const first = executor.enqueue(() => executor.transaction(db, true, async () => 1)).catch((error) => error);
+  const queued = executor
+    .enqueue(() => {
+      events.push('queued callback');
+      return executor.transaction(db, false, async () => 2);
+    })
+    .catch((error) => error);
+  const maintenance = executor.enqueue(async () => {
+    events.push('maintenance');
+  });
+
+  const failure: unknown = await first;
+  const blocked: unknown = await queued;
+  await maintenance;
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(blocked).toBeInstanceOf(Error);
+  if (!(blocked instanceof Error)) throw new Error('Missing frozen-owner failure');
+  expect(blocked.cause).toBe(failure);
+  expect(events).toEqual(['queued callback', 'maintenance']);
+  expect(db.execAsync.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN IMMEDIATE', 'COMMIT', 'ROLLBACK']);
+});

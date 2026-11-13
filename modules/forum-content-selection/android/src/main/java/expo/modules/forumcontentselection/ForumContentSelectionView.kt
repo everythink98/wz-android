@@ -114,10 +114,62 @@ class ForumContentSelectionView(
   private var lastTouchX = 0f
   private var lastTouchY = 0f
   private var activePointerId = MotionEvent.INVALID_POINTER_ID
-  private var coordinatorOwnsGesture = false
-  private var selectionGestureRoot: View? = null
-  private var cancelSelectionOnTap = false
-  private var draggingHandle: DraggingHandle? = null
+  private sealed class PointerGesture(
+    val root: View? = null,
+    val cancelOnTap: Boolean = false,
+    val handle: DraggingHandle? = null,
+    val owns: Boolean = false
+  ) {
+    sealed class Settled(
+      root: View? = null,
+      cancelOnTap: Boolean = false,
+      handle: DraggingHandle? = null,
+      owns: Boolean = false
+    ) : PointerGesture(root, cancelOnTap, handle, owns)
+
+    object Child : Settled()
+    class MarkedChild(root: View) : Settled(root)
+    object TapToCancel : Settled(cancelOnTap = true)
+    class MarkedTapToCancel(root: View) : Settled(root, cancelOnTap = true)
+    class Owned(root: View?, val endpoint: DraggingHandle) : Settled(root, handle = endpoint, owns = true)
+    class HandleHit(val previous: Settled, val endpoint: DraggingHandle) :
+      PointerGesture(previous.root, previous.cancelOnTap, endpoint, previous.owns)
+  }
+
+  private var pointerGesture: PointerGesture = PointerGesture.Child
+  private val coordinatorOwnsGesture: Boolean get() = pointerGesture.owns
+  private val selectionGestureRoot: View? get() = pointerGesture.root
+  private val cancelSelectionOnTap: Boolean get() = pointerGesture.cancelOnTap
+  private val draggingHandle: DraggingHandle? get() = pointerGesture.handle
+
+  private fun PointerGesture.settled(): PointerGesture.Settled = when (this) {
+    is PointerGesture.Settled -> this
+    is PointerGesture.HandleHit -> previous
+  }
+
+  private fun childGesture(root: View?, cancelOnTap: Boolean): PointerGesture.Settled =
+    if (root == null) {
+      if (cancelOnTap) PointerGesture.TapToCancel else PointerGesture.Child
+    } else {
+      if (cancelOnTap) PointerGesture.MarkedTapToCancel(root) else PointerGesture.MarkedChild(root)
+    }
+
+  private fun updateGesturePermission(root: View?, cancelOnTap: Boolean) {
+    val current = pointerGesture
+    if (current.root === root && current.cancelOnTap == cancelOnTap) return
+    val settled = current.settled()
+    val next = if (settled is PointerGesture.Owned) {
+      PointerGesture.Owned(root, settled.endpoint)
+    } else {
+      childGesture(root, cancelOnTap)
+    }
+    pointerGesture = if (current is PointerGesture.HandleHit) {
+      PointerGesture.HandleHit(next, current.endpoint)
+    } else next
+  }
+
+  private fun updateGestureRoot(root: View?) = updateGesturePermission(root, cancelSelectionOnTap)
+  private fun clearGestureTapCancellation() = updateGesturePermission(selectionGestureRoot, false)
   private var handleDragOffsetX = 0f
   private var handleDragOffsetY = 0f
   private var autoScrollPosted = false
@@ -212,8 +264,8 @@ class ForumContentSelectionView(
 
   override fun onDetachedFromWindow() {
     removeCallbacks(longPressRunnable)
-    selectionGestureRoot = null
-    cancelSelectionOnTap = false
+    updateGestureRoot(null)
+    clearGestureTapCancellation()
     removeCallbacks(autoScrollRunnable)
     autoScrollPosted = false
     detachPreDraw()
@@ -241,20 +293,18 @@ class ForumContentSelectionView(
         handleDragOffsetX = 0f
         handleDragOffsetY = 0f
         val touchedHandle = handleAt(event.x, event.y)
-        draggingHandle = touchedHandle?.first
         if (touchedHandle != null) {
+          pointerGesture = PointerGesture.HandleHit(pointerGesture.settled(), touchedHandle.first)
           handleDragOffsetX = touchedHandle.second.x - event.x
           handleDragOffsetY = touchedHandle.second.y - event.y
-          cancelSelectionOnTap = false
-          coordinatorOwnsGesture = true
+          pointerGesture = PointerGesture.Owned(selectionGestureRoot, touchedHandle.first)
           parent?.requestDisallowInterceptTouchEvent(true)
           beginHandleDrag()
           return true
         }
-        cancelSelectionOnTap = selectionActive
-        coordinatorOwnsGesture = false
+        pointerGesture = childGesture(selectionGestureRoot, selectionActive)
         removeCallbacks(longPressRunnable)
-        selectionGestureRoot = markedSelectionRowAt(event.x, event.y)
+        updateGestureRoot(markedSelectionRowAt(event.x, event.y))
         if (selectionGestureRoot != null) {
           postDelayed(longPressRunnable, ViewConfiguration.getLongPressTimeout().toLong())
         }
@@ -262,10 +312,10 @@ class ForumContentSelectionView(
       MotionEvent.ACTION_MOVE -> {
         val pointerIndex = event.findPointerIndex(activePointerId)
         if (pointerIndex < 0) {
-          cancelSelectionOnTap = false
+          clearGestureTapCancellation()
           if (coordinatorOwnsGesture) return finishOwnedGesture(cancelled = true)
           removeCallbacks(longPressRunnable)
-          selectionGestureRoot = null
+          updateGestureRoot(null)
           return super.dispatchTouchEvent(event)
         }
         val x = event.getX(pointerIndex)
@@ -279,32 +329,32 @@ class ForumContentSelectionView(
           return true
         }
         if (hypot(x - downX, y - downY) > longPressMotionTolerance) {
-          cancelSelectionOnTap = false
+          clearGestureTapCancellation()
           removeCallbacks(longPressRunnable)
         }
       }
       MotionEvent.ACTION_UP -> {
         removeCallbacks(longPressRunnable)
         if (coordinatorOwnsGesture) {
-          cancelSelectionOnTap = false
+          clearGestureTapCancellation()
           return finishOwnedGesture(cancelled = false)
         }
         cancelAfterDispatch = cancelSelectionOnTap &&
           event.eventTime - downTime < ViewConfiguration.getLongPressTimeout().toLong() &&
           hypot(event.x - downX, event.y - downY) <= longPressMotionTolerance
-        cancelSelectionOnTap = false
+        clearGestureTapCancellation()
         activePointerId = MotionEvent.INVALID_POINTER_ID
-        selectionGestureRoot = null
+        updateGestureRoot(null)
       }
       MotionEvent.ACTION_CANCEL -> {
         removeCallbacks(longPressRunnable)
-        cancelSelectionOnTap = false
+        clearGestureTapCancellation()
         if (coordinatorOwnsGesture) return finishOwnedGesture(cancelled = true)
         activePointerId = MotionEvent.INVALID_POINTER_ID
-        selectionGestureRoot = null
+        updateGestureRoot(null)
       }
       MotionEvent.ACTION_POINTER_DOWN -> {
-        cancelSelectionOnTap = false
+        clearGestureTapCancellation()
         removeCallbacks(longPressRunnable)
         if (coordinatorOwnsGesture) return finishOwnedGesture(cancelled = true)
       }
@@ -320,7 +370,7 @@ class ForumContentSelectionView(
     if (!isAttachedToWindow || !enabled || coordinatorOwnsGesture || selectionGestureRoot == null) {
       return
     }
-    cancelSelectionOnTap = false
+    clearGestureTapCancellation()
     val mounted = mountedOwners(selectionGestureRoot ?: return)
     if (mounted.deferred) {
       postOnAnimation(longPressRunnable)
@@ -344,8 +394,7 @@ class ForumContentSelectionView(
     ) ?: return
     if (!selectionDocument.select(start, end)) return
 
-    coordinatorOwnsGesture = true
-    draggingHandle = DraggingHandle.RawEnd
+    pointerGesture = PointerGesture.Owned(selectionGestureRoot, DraggingHandle.RawEnd)
     parent?.requestDisallowInterceptTouchEvent(true)
     cancelChildTouch()
     setSelectionActive(true)
@@ -444,13 +493,10 @@ class ForumContentSelectionView(
     dragUpdatePending = false
     dragLine = null
     lastAutoScrollTime = 0L
-    draggingHandle = null
     handleDragOffsetX = 0f
     handleDragOffsetY = 0f
-    coordinatorOwnsGesture = false
     activePointerId = MotionEvent.INVALID_POINTER_ID
-    selectionGestureRoot = null
-    cancelSelectionOnTap = false
+    pointerGesture = PointerGesture.Child
     parent?.requestDisallowInterceptTouchEvent(false)
     if (cancelled && selectionDocument.selection() == null) setSelectionActive(false)
     actionMode?.invalidate()
@@ -475,13 +521,10 @@ class ForumContentSelectionView(
     removeCallbacks(longPressRunnable)
     removeCallbacks(autoScrollRunnable)
     autoScrollPosted = false
-    draggingHandle = null
     handleDragOffsetX = 0f
     handleDragOffsetY = 0f
-    coordinatorOwnsGesture = false
     activePointerId = MotionEvent.INVALID_POINTER_ID
-    selectionGestureRoot = null
-    cancelSelectionOnTap = false
+    pointerGesture = PointerGesture.Child
     parent?.requestDisallowInterceptTouchEvent(false)
     markedRowAlignments.clear()
     clearOverlay()

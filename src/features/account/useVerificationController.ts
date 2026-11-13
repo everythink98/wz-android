@@ -32,6 +32,34 @@ const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
 
 type Ref<T> = RefObject<T>;
 
+type PostChallengePhase = 'armed' | 'waiting' | 'consumed';
+
+type PostChallengeCheck =
+  | { phase: 'unarmed' }
+  | {
+      phase: PostChallengePhase;
+      webViewKey: number;
+      generation: number;
+      scope: string;
+      documentKey?: string;
+    };
+
+type LinuxDoDocumentState = {
+  automatic: PostChallengeCheck;
+  observation: { phase: 'unobserved' } | { phase: 'observed'; page: LinuxDoLoginPage & { at: number } };
+  probe:
+    | { phase: 'empty' }
+    | { phase: 'active' | 'stopped'; documentKey: string; probe: ReturnType<typeof startCloudflareEgressProbe> };
+};
+
+function observedLinuxDoPage(observation: LinuxDoDocumentState['observation']) {
+  return observation.phase === 'observed' ? observation.page : null;
+}
+
+function probeDocumentKey(probe: LinuxDoDocumentState['probe']) {
+  return probe.phase === 'empty' ? undefined : probe.documentKey;
+}
+
 type LinuxDoVerificationPhase = 'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'closing';
 
 type RecoveryTarget = {
@@ -59,15 +87,22 @@ type RecoverySession = {
 };
 
 type QueuedLinuxDoVerification =
-  | { kind: 'login'; trace: DiagnosticTrace }
+  | { phase: 'empty' }
+  | { phase: 'login-pending'; trace: DiagnosticTrace }
   | {
-      kind: 'verification';
+      phase: 'verification-pending';
       trace: DiagnosticTrace;
       message: string;
       promise: Promise<boolean>;
       recovery?: LinuxDoReadRecovery;
       resolve: (accepted: boolean) => void;
     };
+
+type LinuxDoCloseHandoff = {
+  closing: { phase: 'idle' } | { phase: 'closing'; session: number };
+  request: QueuedLinuxDoVerification;
+  timer: ReturnType<typeof setTimeout> | null;
+};
 
 function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
   if ('kind' in recovery) return recovery.isCurrent();
@@ -106,8 +141,6 @@ export function useVerificationController({
   checkingRequestIdRef,
   closeYaohuoLoginPanel,
   commitLinuxDoWebViewUserAgent,
-  linuxDoPanelClosingSessionRef,
-  linuxDoPanelCloseSettleTimerRef,
   linuxDoWebViewMountTimerRef,
   linuxDoWebViewRef,
   linuxDoWebViewSessionRef,
@@ -140,8 +173,6 @@ export function useVerificationController({
   checkingRequestIdRef: Ref<number>;
   closeYaohuoLoginPanel: (reason?: AuthSurfaceCloseReason) => void;
   commitLinuxDoWebViewUserAgent: (userAgent: string) => void;
-  linuxDoPanelClosingSessionRef: Ref<number | null>;
-  linuxDoPanelCloseSettleTimerRef: Ref<ReturnType<typeof setTimeout> | null>;
   linuxDoWebViewMountTimerRef: Ref<ReturnType<typeof setTimeout> | null>;
   linuxDoWebViewRef: Ref<WebView | null>;
   linuxDoWebViewSessionRef: Ref<number>;
@@ -172,28 +203,23 @@ export function useVerificationController({
   const linuxDoVerificationPhaseRef = useRef<LinuxDoVerificationPhase>('idle');
   const linuxDoVerificationGenerationRef = useRef(0);
   const linuxDoEgressSequenceRef = useRef(0);
-  const linuxDoEgressProbeRef = useRef<{
-    documentKey: string;
-    probe: ReturnType<typeof startCloudflareEgressProbe>;
-    stopped?: boolean;
-  } | null>(null);
-  const linuxDoPageObservationRef = useRef<(LinuxDoLoginPage & { at: number }) | null>(null);
+  const linuxDoDocumentRef = useRef<LinuxDoDocumentState>({
+    automatic: { phase: 'unarmed' },
+    observation: { phase: 'unobserved' },
+    probe: { phase: 'empty' }
+  });
   const linuxDoInitializationConfirmedRef = useRef(false);
   const linuxDoTerminalWebViewSessionRef = useRef<number | null>(null);
   const recoverySessionRef = useRef<RecoverySession | null>(null);
   const canceledQueriesRef = useRef(new WeakMap<object, number | undefined>());
   const linuxDoCanceledRecoveriesRef = useRef(new WeakSet<LinuxDoReadRecovery>());
   const linuxDoActiveCheckRef = useRef<number | null>(null);
-  const postChallengeCheckRef = useRef<{
-    webViewKey: number;
-    generation: number;
-    scope: string;
-    documentKey?: string;
-    waiting: boolean;
-    consumed: boolean;
-  } | null>(null);
   const checkLinuxDoCookieRef = useRef<() => Promise<void>>(async () => undefined);
-  const queuedLinuxDoVerificationRef = useRef<QueuedLinuxDoVerification | null>(null);
+  const linuxDoCloseRef = useRef<LinuxDoCloseHandoff>({
+    closing: { phase: 'idle' },
+    request: { phase: 'empty' },
+    timer: null
+  });
   const onQueuedLinuxDoLoginCanceledRef = useRef(onQueuedLinuxDoLoginCanceled);
   useCommitRefValue(onQueuedLinuxDoLoginCanceledRef, onQueuedLinuxDoLoginCanceled);
   const changeLinuxDoPanelRef = useRef<(visible: boolean) => boolean>(() => false);
@@ -203,15 +229,20 @@ export function useVerificationController({
 
   const cancelLinuxDoEgressProbe = useCallback(
     (reason: NonNullable<DiagnosticFields['egressCheckpoint']>, forgetDocument = true) => {
-      const automatic = postChallengeCheckRef.current;
-      const current = linuxDoEgressProbeRef.current;
+      const automatic = linuxDoDocumentRef.current.automatic;
+      const current = linuxDoDocumentRef.current.probe;
       // The expected CDK -> forum navigation precedes binding the returned document.
-      if (automatic && (reason !== 'navigation' || current || linuxDoPageObservationRef.current))
-        automatic.consumed = true;
+      if (
+        automatic.phase !== 'unarmed' &&
+        (reason !== 'navigation' ||
+          current.phase !== 'empty' ||
+          linuxDoDocumentRef.current.observation.phase === 'observed')
+      )
+        automatic.phase = 'consumed';
       const trace = linuxDoVerificationTraceRef.current;
-      const snapshot = current?.probe.snapshot();
-      const page = linuxDoPageObservationRef.current;
-      if (trace && (reason === 'check' || (current && !current.stopped))) {
+      const snapshot = current.phase === 'empty' ? undefined : current.probe.snapshot();
+      const page = observedLinuxDoPage(linuxDoDocumentRef.current.observation);
+      if (trace && (reason === 'check' || current.phase === 'active')) {
         markDiagnosticStage(trace, 'guard', {
           source: 'linuxdo',
           surfaceGeneration: getLinuxDoSurfaceGenerationRef.current(),
@@ -233,8 +264,9 @@ export function useVerificationController({
             : {})
         });
       }
-      if (current && !current.stopped) current.probe.cancel(reason);
-      linuxDoEgressProbeRef.current = forgetDocument || !current ? null : { ...current, stopped: true };
+      if (current.phase === 'active') current.probe.cancel(reason);
+      linuxDoDocumentRef.current.probe =
+        forgetDocument || current.phase === 'empty' ? { phase: 'empty' } : { ...current, phase: 'stopped' };
     },
     []
   );
@@ -273,13 +305,14 @@ export function useVerificationController({
         .forEach(cancelRecoveryTarget);
       recoverySessionRef.current = null;
       ++checkingRequestIdRef.current;
-      const queued = queuedLinuxDoVerificationRef.current;
-      if (queued) finishDiagnosticTrace(queued.trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
-      if (queued?.kind === 'verification') {
+      const queued = linuxDoCloseRef.current.request;
+      if (queued.phase !== 'empty')
+        finishDiagnosticTrace(queued.trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+      if (queued.phase === 'verification-pending') {
         if (queued.recovery) cancelRecoveryTarget({ recovery: queued.recovery });
         queued.resolve(false);
       }
-      queuedLinuxDoVerificationRef.current = null;
+      linuxDoCloseRef.current.request = { phase: 'empty' };
       if (linuxDoVerificationTraceRef.current) {
         finishDiagnosticTrace(linuxDoVerificationTraceRef.current, 'canceled', {
           source: 'linuxdo',
@@ -288,15 +321,9 @@ export function useVerificationController({
         linuxDoVerificationTraceRef.current = null;
       }
       if (linuxDoWebViewMountTimerRef.current) clearTimeout(linuxDoWebViewMountTimerRef.current);
-      if (linuxDoPanelCloseSettleTimerRef.current) clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
+      if (linuxDoCloseRef.current.timer) clearTimeout(linuxDoCloseRef.current.timer);
     },
-    [
-      cancelLinuxDoEgressProbe,
-      cancelRecoveryTarget,
-      checkingRequestIdRef,
-      linuxDoWebViewMountTimerRef,
-      linuxDoPanelCloseSettleTimerRef
-    ]
+    [cancelLinuxDoEgressProbe, cancelRecoveryTarget, checkingRequestIdRef, linuxDoWebViewMountTimerRef]
   );
 
   const validateRecoveryTargets = useCallback(
@@ -359,28 +386,26 @@ export function useVerificationController({
   );
 
   const tryLinuxDoPostChallengeCheck = useCallback(() => {
-    const automatic = postChallengeCheckRef.current;
-    const page = linuxDoPageObservationRef.current;
-    const probe = linuxDoEgressProbeRef.current;
+    const automatic = linuxDoDocumentRef.current.automatic;
+    const page = observedLinuxDoPage(linuxDoDocumentRef.current.observation);
+    const probe = linuxDoDocumentRef.current.probe;
     if (
-      !automatic ||
-      automatic.consumed ||
-      automatic.waiting ||
+      automatic.phase !== 'armed' ||
       !page ||
       page.pageStatus === 'unknown' ||
       page.hasChallengeMarker !== false ||
-      (probe && (probe.stopped || probe.documentKey !== page.documentKey))
+      (probe.phase !== 'empty' && (probe.phase === 'stopped' || probe.documentKey !== page.documentKey))
     )
       return;
     automatic.documentKey = page.documentKey;
-    automatic.waiting = true;
+    if (automatic.phase === 'armed') automatic.phase = 'waiting';
     // A diagnostic failure or timeout is still a completion, never a business verdict.
-    void (probe?.probe.settled || Promise.resolve()).then(() => {
-      automatic.waiting = false;
-      const currentPage = linuxDoPageObservationRef.current;
+    void ((probe.phase === 'empty' ? undefined : probe.probe.settled) || Promise.resolve()).then(() => {
+      if (automatic.phase === 'waiting') automatic.phase = 'armed';
+      const currentPage = observedLinuxDoPage(linuxDoDocumentRef.current.observation);
       if (
-        postChallengeCheckRef.current !== automatic ||
-        automatic.consumed ||
+        linuxDoDocumentRef.current.automatic !== automatic ||
+        automatic.phase === 'consumed' ||
         automatic.webViewKey !== linuxDoWebViewSessionRef.current ||
         automatic.generation !== linuxDoVerificationGenerationRef.current ||
         automatic.scope !== getRecoveryScope() ||
@@ -393,7 +418,7 @@ export function useVerificationController({
         currentPage.hasChallengeMarker !== false
       )
         return;
-      automatic.consumed = true;
+      automatic.phase = 'consumed';
       markDiagnosticStage(currentLinuxDoVerificationTrace('manual'), 'guard', {
         source: 'linuxdo',
         channel: 'webview',
@@ -417,17 +442,17 @@ export function useVerificationController({
         webViewKey !== linuxDoWebViewSessionRef.current ||
         !isLinuxDoSurfaceVisible() ||
         !canOpenLinuxDoPanel() ||
-        postChallengeCheckRef.current?.webViewKey === webViewKey ||
+        (linuxDoDocumentRef.current.automatic.phase !== 'unarmed' &&
+          linuxDoDocumentRef.current.automatic.webViewKey === webViewKey) ||
         linuxDoActiveCheckRef.current !== null ||
         (recoverySessionRef.current && recoverySessionRef.current.phase !== 'web')
       )
         return;
-      postChallengeCheckRef.current = {
+      linuxDoDocumentRef.current.automatic = {
         webViewKey,
         generation: linuxDoVerificationGenerationRef.current,
         scope: getRecoveryScope(),
-        waiting: false,
-        consumed: false
+        phase: 'armed'
       };
       tryLinuxDoPostChallengeCheck();
     },
@@ -461,7 +486,7 @@ export function useVerificationController({
   const nextLinuxDoWebViewSession = useCallback(
     (reason: 'check' | 'close' | 'refresh') => {
       cancelLinuxDoEgressProbe(reason);
-      linuxDoPageObservationRef.current = null;
+      linuxDoDocumentRef.current.observation = { phase: 'unobserved' };
       if (reason !== 'check') linuxDoInitializationConfirmedRef.current = false;
       const nextSession = linuxDoWebViewSessionRef.current + 1;
       linuxDoWebViewSessionRef.current = nextSession;
@@ -497,7 +522,7 @@ export function useVerificationController({
       if (webViewKey !== linuxDoWebViewSessionRef.current || !isLinuxDoSurfaceVisible() || !canOpenLinuxDoPanel())
         return;
       cancelLinuxDoEgressProbe('navigation', false);
-      linuxDoPageObservationRef.current = null;
+      linuxDoDocumentRef.current.observation = { phase: 'unobserved' };
       linuxDoInitializationConfirmedRef.current = false;
       if (linuxDoActiveCheckRef.current !== null) {
         invalidateLinuxDoCheck();
@@ -558,7 +583,7 @@ export function useVerificationController({
   const resetLinuxDoWebView = useCallback(() => {
     if (
       !canOpenLinuxDoPanel() ||
-      linuxDoPanelClosingSessionRef.current !== null ||
+      linuxDoCloseRef.current.closing.phase === 'closing' ||
       (recoverySessionRef.current && recoverySessionRef.current.phase !== 'web')
     )
       return;
@@ -620,7 +645,6 @@ export function useVerificationController({
     validateRecoveryTargets,
     checkingRequestIdRef,
     currentLinuxDoVerificationTrace,
-    linuxDoPanelClosingSessionRef,
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
@@ -636,8 +660,8 @@ export function useVerificationController({
   const closeLinuxDoPanel = useCallback(
     (cancelCurrentRecovery = true, reason: AuthSurfaceCloseReason = 'close-button', authoritativeResult = false) => {
       const session = recoverySessionRef.current;
-      if (!isLinuxDoSurfaceVisible() && !session && linuxDoPanelClosingSessionRef.current === null) return;
-      const page = linuxDoPageObservationRef.current;
+      if (!isLinuxDoSurfaceVisible() && !session && linuxDoCloseRef.current.closing.phase === 'idle') return;
+      const page = observedLinuxDoPage(linuxDoDocumentRef.current.observation);
       // The page permits cookie handoff; Account still confirms identity after unmount.
       const initializedDocument =
         page?.pageStatus === 'logged-in' && page.hasSessionInitialization === true && page.hasChallengeMarker === false;
@@ -656,25 +680,25 @@ export function useVerificationController({
           notify('本次阅读同步已停止，未确认的请求不会重发。');
       }
       recoverySessionRef.current = null;
-      if (linuxDoPanelClosingSessionRef.current === null) {
+      if (linuxDoCloseRef.current.closing.phase === 'idle') {
         publishRecovery();
         linuxDoVerificationGenerationRef.current += 1;
         linuxDoVerificationPhaseRef.current = 'closing';
         invalidateLinuxDoCheck();
       }
       if (cancelCurrentRecovery) {
-        const queuedRecovery = queuedLinuxDoVerificationRef.current;
-        if (queuedRecovery)
+        const queuedRecovery = linuxDoCloseRef.current.request;
+        if (queuedRecovery.phase !== 'empty')
           finishDiagnosticTrace(queuedRecovery.trace, 'canceled', {
             source: 'linuxdo',
             reason: 'canceled',
             closeReason: reason
           });
-        if (queuedRecovery?.kind === 'verification') {
+        if (queuedRecovery.phase === 'verification-pending') {
           if (queuedRecovery.recovery) cancelRecoveryTarget({ recovery: queuedRecovery.recovery });
           queuedRecovery.resolve(false);
-        } else if (queuedRecovery?.kind === 'login') onQueuedLinuxDoLoginCanceledRef.current();
-        queuedLinuxDoVerificationRef.current = null;
+        } else if (queuedRecovery.phase === 'login-pending') onQueuedLinuxDoLoginCanceledRef.current();
+        linuxDoCloseRef.current.request = { phase: 'empty' };
       }
       const trace = linuxDoVerificationTraceRef.current;
       if (trace) {
@@ -686,7 +710,7 @@ export function useVerificationController({
           finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled', closeReason: reason });
         }
       }
-      if (linuxDoPanelClosingSessionRef.current !== null) {
+      if (linuxDoCloseRef.current.closing.phase === 'closing') {
         try {
           linuxDoWebViewRef.current?.stopLoading();
         } finally {
@@ -698,27 +722,31 @@ export function useVerificationController({
       }
       const wasVisible = isLinuxDoSurfaceVisible();
       const nextSession = nextLinuxDoWebViewSession('close');
-      linuxDoPanelClosingSessionRef.current = nextSession;
+      linuxDoCloseRef.current.closing = { phase: 'closing', session: nextSession };
       if (linuxDoWebViewMountTimerRef.current) {
         clearTimeout(linuxDoWebViewMountTimerRef.current);
         linuxDoWebViewMountTimerRef.current = null;
       }
-      if (linuxDoPanelCloseSettleTimerRef.current) {
-        clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
-        linuxDoPanelCloseSettleTimerRef.current = null;
+      if (linuxDoCloseRef.current.timer) {
+        clearTimeout(linuxDoCloseRef.current.timer);
+        linuxDoCloseRef.current.timer = null;
       }
       const settleClosingPanel = () => {
-        if (linuxDoPanelClosingSessionRef.current !== nextSession || isLinuxDoSurfaceVisible()) {
+        if (
+          linuxDoCloseRef.current.closing.phase !== 'closing' ||
+          linuxDoCloseRef.current.closing.session !== nextSession ||
+          isLinuxDoSurfaceVisible()
+        ) {
           return;
         }
-        linuxDoPanelClosingSessionRef.current = null;
+        linuxDoCloseRef.current.closing = { phase: 'idle' };
         linuxDoVerificationPhaseRef.current = 'idle';
-        const queued = queuedLinuxDoVerificationRef.current;
-        queuedLinuxDoVerificationRef.current = null;
-        if (!queued) {
+        const queued = linuxDoCloseRef.current.request;
+        linuxDoCloseRef.current.request = { phase: 'empty' };
+        if (queued.phase === 'empty') {
           return;
         }
-        if (queued.kind === 'login') {
+        if (queued.phase === 'login-pending') {
           const opened = changeLinuxDoPanelRef.current(true);
           finishDiagnosticTrace(queued.trace, opened ? 'success' : 'blocked', {
             source: 'linuxdo',
@@ -772,8 +800,8 @@ export function useVerificationController({
         setLinuxDoWebViewErrorForSession('', nextSession);
         if (wasVisible) {
           onLinuxDoSurfaceClosed({ authoritativeResult, reason });
-          linuxDoPanelCloseSettleTimerRef.current = setTimeout(() => {
-            linuxDoPanelCloseSettleTimerRef.current = null;
+          linuxDoCloseRef.current.timer = setTimeout(() => {
+            linuxDoCloseRef.current.timer = null;
             settleClosingPanel();
           }, LINUXDO_PANEL_CLOSE_SETTLE_MS);
         } else {
@@ -788,8 +816,6 @@ export function useVerificationController({
       finishLinuxDoVerificationTrace,
       invalidateLinuxDoCheck,
       isLinuxDoSurfaceVisible,
-      linuxDoPanelCloseSettleTimerRef,
-      linuxDoPanelClosingSessionRef,
       linuxDoWebViewMountTimerRef,
       linuxDoWebViewRef,
       nextLinuxDoWebViewSession,
@@ -824,17 +850,17 @@ export function useVerificationController({
           finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'source_disabled' });
           return false;
         }
-        if (linuxDoPanelClosingSessionRef.current !== null) {
-          const queued = queuedLinuxDoVerificationRef.current;
-          if (queued?.kind === 'verification') {
+        if (linuxDoCloseRef.current.closing.phase === 'closing') {
+          const queued = linuxDoCloseRef.current.request;
+          if (queued.phase === 'verification-pending') {
             finishDiagnosticTrace(queued.trace, 'canceled', { source: 'linuxdo', reason: 'superseded' });
             if (queued.recovery) cancelRecoveryTarget({ recovery: queued.recovery });
             queued.resolve(false);
           }
-          queuedLinuxDoVerificationRef.current = {
-            kind: 'login',
+          linuxDoCloseRef.current.request = {
+            phase: 'login-pending',
             trace:
-              queued?.kind === 'login'
+              queued.phase === 'login-pending'
                 ? queued.trace
                 : beginDiagnosticTrace('webview', 'open', {
                     source: 'linuxdo',
@@ -875,7 +901,6 @@ export function useVerificationController({
       finishLinuxDoVerificationTrace,
       invalidateLinuxDoCheck,
       isLinuxDoSurfaceVisible,
-      linuxDoPanelClosingSessionRef,
       onBeforeLinuxDoSurfaceOpened,
       onLinuxDoSurfaceOpened,
       resetLinuxDoWebView
@@ -922,9 +947,9 @@ export function useVerificationController({
           return true;
         }
       }
-      if (linuxDoPanelClosingSessionRef.current !== null) {
-        const previousQueued = queuedLinuxDoVerificationRef.current;
-        if (previousQueued?.kind === 'verification' && previousQueued.recovery === recovery) {
+      if (linuxDoCloseRef.current.closing.phase === 'closing') {
+        const previousQueued = linuxDoCloseRef.current.request;
+        if (previousQueued.phase === 'verification-pending' && previousQueued.recovery === recovery) {
           markDiagnosticStage(previousQueued.trace, 'guard', {
             source: 'linuxdo',
             reason: 'duplicate',
@@ -934,18 +959,18 @@ export function useVerificationController({
           notify(message);
           return previousQueued.promise;
         }
-        if (previousQueued)
+        if (previousQueued.phase !== 'empty')
           finishDiagnosticTrace(previousQueued.trace, 'canceled', { source: 'linuxdo', reason: 'superseded' });
-        if (previousQueued?.kind === 'verification') {
+        if (previousQueued.phase === 'verification-pending') {
           if (previousQueued.recovery) cancelRecoveryTarget({ recovery: previousQueued.recovery });
           previousQueued.resolve(false);
-        } else if (previousQueued?.kind === 'login') onQueuedLinuxDoLoginCanceledRef.current();
+        } else if (previousQueued.phase === 'login-pending') onQueuedLinuxDoLoginCanceledRef.current();
         let resolveQueued!: (accepted: boolean) => void;
         const queuedPromise = new Promise<boolean>((resolve) => {
           resolveQueued = resolve;
         });
-        queuedLinuxDoVerificationRef.current = {
-          kind: 'verification',
+        linuxDoCloseRef.current.request = {
+          phase: 'verification-pending',
           trace: beginDiagnosticTrace('webview', 'recover', {
             source: 'linuxdo',
             state: 'queued',
@@ -1003,7 +1028,6 @@ export function useVerificationController({
       closeYaohuoLoginPanel,
       finishLinuxDoVerificationTrace,
       invalidateLinuxDoCheck,
-      linuxDoPanelClosingSessionRef,
       notify,
       startLinuxDoVerificationTrace,
       updateLinuxDoSession
@@ -1041,8 +1065,8 @@ export function useVerificationController({
         };
         if (
           data.type === 'linuxdo-webview' &&
-          linuxDoEgressProbeRef.current?.stopped &&
-          data.documentKey === linuxDoEgressProbeRef.current.documentKey
+          linuxDoDocumentRef.current.probe.phase === 'stopped' &&
+          data.documentKey === linuxDoDocumentRef.current.probe.documentKey
         )
           return;
         const isEgressDocument =
@@ -1052,10 +1076,11 @@ export function useVerificationController({
         if (data.type === 'linuxdo-egress-probe') {
           if (
             isEgressDocument &&
-            data.documentKey === linuxDoEgressProbeRef.current?.documentKey &&
-            !linuxDoEgressProbeRef.current?.stopped
+            data.documentKey === probeDocumentKey(linuxDoDocumentRef.current.probe) &&
+            linuxDoDocumentRef.current.probe.phase !== 'stopped'
           ) {
-            linuxDoEgressProbeRef.current?.probe.receive(data);
+            const currentProbe = linuxDoDocumentRef.current.probe;
+            if (currentProbe.phase !== 'empty') currentProbe.probe.receive(data);
           }
           return;
         }
@@ -1098,10 +1123,16 @@ export function useVerificationController({
           if (fetcher && webView && !hasDocumentKey && trace) {
             markDiagnosticStage(trace, 'guard', { source: 'linuxdo', channel: 'webview', reason: 'invalid_response' });
           }
-          if (fetcher && webView && hasDocumentKey && documentKey !== linuxDoEgressProbeRef.current?.documentKey) {
+          if (
+            fetcher &&
+            webView &&
+            hasDocumentKey &&
+            documentKey !== probeDocumentKey(linuxDoDocumentRef.current.probe)
+          ) {
             cancelLinuxDoEgressProbe('navigation');
             const parentTrace = currentLinuxDoVerificationTrace('open');
-            linuxDoEgressProbeRef.current = {
+            linuxDoDocumentRef.current.probe = {
+              phase: 'active',
               documentKey,
               probe: startCloudflareEgressProbe({
                 fetcher,
@@ -1114,12 +1145,15 @@ export function useVerificationController({
             };
           }
           if (hasDocumentKey) {
-            linuxDoPageObservationRef.current = {
-              documentKey,
-              pageStatus,
-              hasChallengeMarker,
-              hasSessionInitialization: data.hasSessionInitialization === true,
-              at: Date.now()
+            linuxDoDocumentRef.current.observation = {
+              phase: 'observed',
+              page: {
+                documentKey,
+                pageStatus,
+                hasChallengeMarker,
+                hasSessionInitialization: data.hasSessionInitialization === true,
+                at: Date.now()
+              }
             };
             tryLinuxDoPostChallengeCheck();
           }
@@ -1190,7 +1224,13 @@ export function useVerificationController({
       setChecking(true);
       setLinuxDoWebViewError('');
       try {
-        if (!(await waitForLinuxDoLoginInitialization(() => linuxDoPageObservationRef.current, current)) || !current())
+        if (
+          !(await waitForLinuxDoLoginInitialization(
+            () => observedLinuxDoPage(linuxDoDocumentRef.current.observation),
+            current
+          )) ||
+          !current()
+        )
           return;
         linuxDoInitializationConfirmedRef.current = true;
         session.phase = 'checking';
@@ -1316,7 +1356,8 @@ export function useVerificationController({
   );
 
   const checkLinuxDoCookie = useCallback(async () => {
-    if (postChallengeCheckRef.current) postChallengeCheckRef.current.consumed = true;
+    const automatic = linuxDoDocumentRef.current.automatic;
+    if (automatic.phase !== 'unarmed') automatic.phase = 'consumed';
     const session = recoverySessionRef.current;
     if (session) return checkRecovery(session);
     if (!canOpenLinuxDoPanel() || !isLinuxDoSurfaceVisible()) return;
@@ -1359,7 +1400,10 @@ export function useVerificationController({
     setLinuxDoWebViewError('');
     try {
       if (
-        !(await waitForLinuxDoLoginInitialization(() => linuxDoPageObservationRef.current, isCurrentLinuxDoCheck)) ||
+        !(await waitForLinuxDoLoginInitialization(
+          () => observedLinuxDoPage(linuxDoDocumentRef.current.observation),
+          isCurrentLinuxDoCheck
+        )) ||
         !isCurrentLinuxDoCheck()
       )
         return;
@@ -1466,13 +1510,13 @@ export function useVerificationController({
   useCommitRefValue(checkLinuxDoCookieRef, checkLinuxDoCookie);
 
   const cancelLinuxDoCheckForInactiveApp = useCallback(() => {
-    if (queuedLinuxDoVerificationRef.current?.kind === 'login') {
-      finishDiagnosticTrace(queuedLinuxDoVerificationRef.current.trace, 'canceled', {
+    if (linuxDoCloseRef.current.request.phase === 'login-pending') {
+      finishDiagnosticTrace(linuxDoCloseRef.current.request.trace, 'canceled', {
         source: 'linuxdo',
         reason: 'canceled',
         state: 'background'
       });
-      queuedLinuxDoVerificationRef.current = null;
+      linuxDoCloseRef.current.request = { phase: 'empty' };
       const trace = linuxDoVerificationTraceRef.current;
       if (trace) finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
       onQueuedLinuxDoLoginCanceledRef.current();

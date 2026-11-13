@@ -3853,17 +3853,25 @@ describe('topic action query mutations', () => {
 
   it('sends no NodeSeek request when vote confirmation is canceled', async () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const ensureWritableSession = jest.fn(async () => {
+      throw new Error('Canceled confirmation must not request a writable session');
+    });
     const { detailKey } = seedTopicCache();
-    const hook = await renderActions();
+    const hook = await renderActions({ ensureWritableSession });
+    expect(hook.result.current.actions.decisionFor({ action: 'vote', poll }).allowed).toBe(true);
 
     await act(async () => {
       await hook.result.current.actions.votePoll(poll, ['1']);
     });
     const buttons = alert.mock.calls[0]?.[2] || [];
+    const submit = buttons.find((button) => button.style === 'destructive')?.onPress;
+    expect(submit).toBeDefined();
     await act(async () => {
       buttons.find((button) => button.text === '取消')?.onPress?.();
+      submit?.();
     });
 
+    expect(ensureWritableSession).not.toHaveBeenCalled();
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
     expect(mockFetchNodeSeekVoteInfo).not.toHaveBeenCalled();
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.voted).not.toBe(true);
@@ -3890,8 +3898,12 @@ describe('topic action query mutations', () => {
   it('sends no request when the poll owner cancels locking', async () => {
     const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const ensureWritableSession = jest.fn(async () => {
+      throw new Error('Canceled confirmation must not request a writable session');
+    });
     const { detailKey } = seedTopicCache(topic);
     const hook = await renderActions({
+      ensureWritableSession,
       siteSessionViewModels: nodeSeekLoggedInViewModels(),
       topicDetail: topic
     });
@@ -3899,10 +3911,15 @@ describe('topic action query mutations', () => {
     await act(async () => {
       await hook.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
     });
+    const buttons = alert.mock.calls[0]?.[2] || [];
+    const submit = buttons.find((button) => button.style === 'destructive')?.onPress;
+    expect(submit).toBeDefined();
     await act(async () => {
-      alert.mock.calls[0]?.[2]?.find((button) => button.style === 'cancel')?.onPress?.();
+      buttons.find((button) => button.style === 'cancel')?.onPress?.();
+      submit?.();
     });
 
+    expect(ensureWritableSession).not.toHaveBeenCalled();
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
     expect(mockFetchNodeSeekVoteInfo).not.toHaveBeenCalled();
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).not.toBe(true);

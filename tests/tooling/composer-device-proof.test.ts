@@ -821,6 +821,10 @@ it('still removes the owned port when socket close throws', async () => {
     socket.closeFailure = failure;
     expect(() => dom.close()).toThrow(failure);
     expect(adb.mock.calls.filter((args) => args[0] === 'forward' && args[1] === '--remove')).toHaveLength(1);
+    socket.closeFailure = undefined;
+    dom.close();
+    expect(socket.close).toHaveBeenCalledTimes(2);
+    expect(adb.mock.calls.filter((args) => args[0] === 'forward' && args[1] === '--remove')).toHaveLength(1);
   });
 });
 

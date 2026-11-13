@@ -5,7 +5,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { saveBackupDocument } from '@/platform/storage/backupExport';
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { readBackupFileText } from '@/platform/storage/backupImportFile';
-import { runBackupOperation } from '@/platform/storage/backupOperation';
+import { runBackupOperation, type BackupOperationGate } from '@/platform/storage/backupOperation';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 
@@ -19,34 +19,35 @@ export function useBackupStatusController({
   exportBackup: () => Promise<string>;
 }) {
   const lifetimeRef = useRef(new AbortController());
-  const gate = useRef({ current: false, owner: lifetimeRef.current.signal }).current;
+  const gate = useRef<BackupOperationGate>({ current: { phase: 'idle' } }).current;
   const notifyRef = useCommittedRef(notify);
   const [backupBusy, setBackupBusy] = useState(false);
 
   useLayoutEffect(() => {
     if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
     const lifetime = lifetimeRef.current;
-    if (gate.current) gate.owner = lifetime.signal;
+    if (gate.current.phase === 'running') gate.current.observer.signal = lifetime.signal;
     return () => lifetime.abort();
   }, [gate]);
 
   const exportBackupFile = useCallback(async () => {
     if (lifetimeRef.current.signal.aborted) return;
     const trace = beginDiagnosticTrace('backup', 'export');
-    if (gate.current) {
+    if (gate.current.phase === 'running') {
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
     let failureReason: DiagnosticReason = 'unknown';
     let canceled = false;
-    gate.owner = lifetimeRef.current.signal;
-    const isCurrent = () => !gate.owner.aborted && lifetimeRef.current.signal === gate.owner;
+    const observer = { signal: lifetimeRef.current.signal };
+    const isCurrent = () => !observer.signal.aborted && lifetimeRef.current.signal === observer.signal;
     const report = (message: string) => {
       if (isCurrent()) notifyRef.current(message);
     };
     const completed = await runBackupOperation({
-      busyRef: gate,
+      gate,
+      observer,
       notify: report,
       setBusy: (value) => {
         if (isCurrent()) setBackupBusy(value);
@@ -81,20 +82,21 @@ export function useBackupStatusController({
   const importBackupFile = useCallback(async () => {
     if (lifetimeRef.current.signal.aborted) return;
     const trace = beginDiagnosticTrace('backup', 'import');
-    if (gate.current) {
+    if (gate.current.phase === 'running') {
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
     let canceled = false;
     let failureReason: DiagnosticReason = 'unknown';
-    gate.owner = lifetimeRef.current.signal;
-    const isCurrent = () => !gate.owner.aborted && lifetimeRef.current.signal === gate.owner;
+    const observer = { signal: lifetimeRef.current.signal };
+    const isCurrent = () => !observer.signal.aborted && lifetimeRef.current.signal === observer.signal;
     const report = (message: string) => {
       if (isCurrent()) notifyRef.current(message);
     };
     const completed = await runBackupOperation({
-      busyRef: gate,
+      gate,
+      observer,
       notify: report,
       setBusy: (value) => {
         if (isCurrent()) setBackupBusy(value);

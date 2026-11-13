@@ -486,6 +486,59 @@ describe('network proxy controller', () => {
     });
   });
 
+  it('rolls back a failed save before dispatching a queued edit from the retained state', async () => {
+    const saving = deferred<NetworkProxyState>();
+    const failure = new Error('controlled profile save failure');
+    const events: string[] = [];
+    mockLoadNetworkProxyState.mockResolvedValue({ enabled: true, activeId: profileA.id, profiles: [profileA] });
+    mockSaveNetworkProxyState
+      .mockImplementationOnce(() => {
+        events.push('first:save');
+        return saving.promise;
+      })
+      .mockImplementationOnce(async (state) => {
+        events.push('second:save');
+        return state;
+      });
+    setDiagnosticWriter((line) => {
+      const event = JSON.parse(line);
+      if (
+        event.area === 'proxy' &&
+        event.operation === 'save' &&
+        event.phase === 'finish' &&
+        event.outcome === 'failure'
+      )
+        events.push('rollback:finished');
+    });
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+    let first!: Promise<void>;
+    let observed!: Promise<unknown>;
+    let second!: Promise<void>;
+    await act(async () => {
+      first = hook.result.current.upsertProxyProfile({ ...profileA, host: 'uncommitted.proxy.example' });
+      observed = first.catch((error: unknown) => {
+        events.push('first:rejected');
+        queueMicrotask(() => events.push('observer:microtask'));
+        return error;
+      });
+      second = hook.result.current.upsertProxyProfile(profileB);
+    });
+    await waitFor(() => expect(mockSaveNetworkProxyState).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      saving.reject(failure);
+      await expect(observed).resolves.toBe(failure);
+      await second;
+    });
+
+    expect(events).toEqual(['first:save', 'rollback:finished', 'first:rejected', 'observer:microtask', 'second:save']);
+    const committed = mockSaveNetworkProxyState.mock.calls[1]?.[0];
+    expect(committed?.profiles).toEqual([profileA, profileB]);
+    expect(hook.result.current.proxyState).toEqual(committed);
+    expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.applyStatus).toBe('applied');
+  });
+
   it('waits for an older native apply before applying the newly selected profile', async () => {
     const firstApply = deferred<unknown>();
     const secondApply = deferred<unknown>();
@@ -681,8 +734,12 @@ describe('network proxy controller', () => {
 
   it('settles rapid enable then disable commands in order', async () => {
     const lines: string[] = [];
+    const commandOrder: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
+      const event = JSON.parse(line);
+      if (event.operation === 'set-enabled' && event.phase === 'intent')
+        commandOrder.push(event.isEnabled ? 'enable:start' : 'disable:start');
     });
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: false,
@@ -697,13 +754,19 @@ describe('network proxy controller', () => {
 
     let enable!: Promise<void>;
     let disable!: Promise<void>;
+    let observed!: Promise<void>;
     await act(async () => {
       enable = hook.result.current.setProxyEnabled(true);
+      observed = enable.then(() => {
+        commandOrder.push('enable:done');
+        queueMicrotask(() => commandOrder.push('observer:microtask'));
+      });
       disable = hook.result.current.setProxyEnabled(false);
       await Promise.resolve();
     });
     await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(3));
-    await Promise.all([enable, disable]);
+    await Promise.all([enable, disable, observed]);
+    expect(commandOrder).toEqual(['enable:start', 'enable:done', 'observer:microtask', 'disable:start']);
 
     expect(hook.result.current.proxyState.enabled).toBe(false);
     expect(hook.result.current.applyStatus).toBe('disabled');
@@ -725,7 +788,7 @@ describe('network proxy controller', () => {
     expect(enableEvents[finishIndex]).toEqual(expect.objectContaining({ outcome: 'success', state: 'applied' }));
   });
 
-  it('remains fail-closed when native proxy disable fails', async () => {
+  it('keeps failed native disable closed and permits a later enable retry', async () => {
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: true,
       activeId: profileA.id,
@@ -742,6 +805,12 @@ describe('network proxy controller', () => {
     expect(hook.result.current.proxyState.enabled).toBe(false);
     expect(hook.result.current.applyStatus).toBe('failed');
     await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('native disable failed');
+    await act(async () => {
+      await hook.result.current.setProxyEnabled(true);
+    });
+    expect(hook.result.current.proxyState.enabled).toBe(true);
+    expect(hook.result.current.applyStatus).toBe('applied');
+    expect(mockApplyNetworkProxy).toHaveBeenLastCalledWith(profileA);
   });
 
   it.each(['success', 'failure'] as const)(

@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { runInNewContext } from 'node:vm';
 import { CompatibleSvgDocumentView } from '@/ui/content/CompatibleSvgDocumentView';
 
 jest.mock('react-native-webview', () => {
@@ -20,6 +21,62 @@ function navigation(url: string) {
 }
 
 describe('CompatibleSvgDocumentView', () => {
+  it('consumes document delivery before reentrant bridge access and a thrown post', async () => {
+    const view = await render(<CompatibleSvgDocumentView artifact={artifact()} />);
+    const html = String(view.getByTestId('compatible-svg-document-view').props.source.html);
+    const script = /<script nonce="wz-svg-ready">([\s\S]*?)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('Missing SVG bootstrap script');
+    const listeners = new Map<string, () => void>();
+    const frames: (() => void)[] = [];
+    const calls: string[] = [];
+    const failure = new Error('bridge unavailable');
+    const reenter = () => listeners.get('error')?.();
+    runInNewContext(script, {
+      document: {
+        querySelector: () => ({
+          complete: false,
+          addEventListener: (name: string, listener: () => void) => listeners.set(name, listener)
+        })
+      },
+      requestAnimationFrame: (callback: () => void) => frames.push(callback),
+      window: {
+        get ReactNativeWebView() {
+          calls.push('bridge');
+          reenter();
+          return {
+            get postMessage() {
+              calls.push('method');
+              reenter();
+              return (message: string) => {
+                calls.push(message);
+                reenter();
+                throw failure;
+              };
+            }
+          };
+        }
+      }
+    });
+    const load = listeners.get('load');
+    const error = listeners.get('error');
+    if (!load || !error) throw new Error('Missing image listeners');
+    load();
+    expect(frames).toHaveLength(1);
+    let thrown: unknown;
+    try {
+      error();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBe(failure);
+    frames.shift()?.();
+    expect(frames).toHaveLength(1);
+    frames.shift()?.();
+    error();
+    expect(frames).toHaveLength(0);
+    expect(calls).toEqual(['bridge', 'method', 'wz-svg-error']);
+  });
+
   it('renders one isolated local document with only a nonce-bound readiness bridge', async () => {
     const containerStyle = { bottom: 0, left: 0, position: 'absolute' as const, right: 0, top: 0 };
     const view = await render(<CompatibleSvgDocumentView artifact={artifact()} style={containerStyle} />);

@@ -4,6 +4,8 @@ import { expect, it, vi } from 'vitest';
 
 async function fixture(
   failures: {
+    prepare?: { error: unknown };
+    proofBuild?: { error: unknown };
     stop?: { error: unknown };
     composer?: { error: unknown };
     report?: { error: unknown };
@@ -32,9 +34,12 @@ async function fixture(
     }
     throw new Error('Unexpected synthetic command: ' + command + ' ' + args.join(' '));
   });
-  const spawn = vi.fn((command: string) =>
-    command.includes('npm') && failures.composer ? { error: failures.composer.error, status: 1 } : { status: 0 }
-  );
+  const spawn = vi.fn((command: string, args: readonly string[]) => {
+    if (command.includes('npm') && failures.composer) return { error: failures.composer.error, status: 1 };
+    if (command.includes('gradlew') && args.includes('-I') && failures.proofBuild)
+      return { error: failures.proofBuild.error, status: 1 };
+    return { status: 0 };
+  });
   const remove = vi.fn();
   vi.resetModules();
   vi.doMock('node:child_process', () => ({ execFileSync: exec, spawnSync: spawn }));
@@ -53,7 +58,10 @@ async function fixture(
     }
   }));
   vi.doMock('../../scripts/device-proof-build.mjs', () => ({
-    deviceProofFixture: () => ({ java: 'fixture', manifest: 'fixture', init: 'fixture', buildId: 'a'.repeat(32) })
+    deviceProofFixture: () => {
+      if (failures.prepare) throw failures.prepare.error;
+      return { java: 'fixture', manifest: 'fixture', init: 'fixture', buildId: 'a'.repeat(32) };
+    }
   }));
   vi.doMock('../../scripts/diagnostic-symbols.mjs', () => ({
     archiveDiagnosticSymbols: () => ({ directory: path.join(temporary, 'symbols') }),
@@ -79,6 +87,28 @@ async function fixture(
   }
   return { outcome, exec, spawn, installs, remove, temporary, report, outputLines };
 }
+
+it.each(['prepare', 'proofBuild'] as const)(
+  'handles a %s failure before installation without acquiring device cleanup authority',
+  async (stage) => {
+    const failure = new Error('Proof setup failed');
+    const result = await fixture({ [stage]: { error: failure } });
+    expect(result.spawn.mock.calls.filter(([command]) => command.includes('gradlew'))).toHaveLength(
+      stage === 'prepare' ? 0 : 2
+    );
+    expect(result.spawn.mock.calls.filter(([command]) => command.includes('npm'))).toHaveLength(
+      stage === 'prepare' ? 0 : 1
+    );
+    expect(result.installs).toBe(0);
+    expect(result.exec.mock.calls.some(([, args]) => /^(install |shell am )/u.test(args.slice(2).join(' ')))).toBe(
+      false
+    );
+    expect(result.remove).toHaveBeenCalledWith(result.temporary, { recursive: true, force: true });
+    expect(result.report?.restorePassed).toBe(true);
+    if (result.outcome.kind !== 'failed') throw new Error('Expected setup failure');
+    expect(result.outcome.error).toBe(failure);
+  }
+);
 
 it('restores the ordinary entry after a failure to stop the proof app', async () => {
   const stop = new Error('Stop failed');

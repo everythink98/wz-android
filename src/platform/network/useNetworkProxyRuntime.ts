@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import { withNativeForumReadIntent } from './browserFetchIntent';
 import { prepareRequestToSend, RequestTimeoutError, withAbortableTimeout, type Fetcher } from './request';
@@ -80,20 +81,6 @@ function networkProxyApplyKey(state: NetworkProxyState) {
     : '';
 }
 
-function enqueueProxyEnabledTransition(
-  queueRef: { current: Promise<void> },
-  runTransition: (enabled: boolean) => Promise<void>,
-  enabled: boolean
-) {
-  const previousTask = queueRef.current;
-  const task = previousTask.catch(() => undefined).then(() => runTransition(enabled));
-  queueRef.current = task.then(
-    () => undefined,
-    () => undefined
-  );
-  return task;
-}
-
 export function useNetworkProxyRuntime({
   notify,
   baseFetcher = fetch
@@ -114,8 +101,8 @@ export function useNetworkProxyRuntime({
   const loadPromiseRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
   const proxyApplyQueueRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
   const latestProxyApplyIdRef = useRef(0);
-  const proxyEnabledQueueRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
-  const proxySaveQueueRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
+  const proxyEnabledQueueRef = useRef(createKeyedSerialRunner<null>('after-reaction'));
+  const proxySaveQueueRef = useRef(createKeyedSerialRunner<null>());
   const ownerRef = useRef<AbortController | null>(null);
   const bootstrapReadRef = useRef<Promise<NetworkProxyState> | null>(null);
   if (!ownerRef.current) ownerRef.current = new AbortController();
@@ -271,7 +258,7 @@ export function useNetworkProxyRuntime({
       parentTrace?: DiagnosticTrace
     ) => {
       const owner = requireNetworkProxyOwner(ownerRef.current);
-      const task = proxySaveQueueRef.current.then(async () => {
+      const task = proxySaveQueueRef.current.run(null, async () => {
         requireNetworkProxyOwner(owner);
         await loadPromiseRef.current;
         requireNetworkProxyOwner(owner);
@@ -312,10 +299,6 @@ export function useNetworkProxyRuntime({
           throw error;
         }
       });
-      proxySaveQueueRef.current = task.then(
-        () => undefined,
-        () => undefined
-      );
       return task;
     },
     [setApplyState]
@@ -365,14 +348,10 @@ export function useNetworkProxyRuntime({
   const setProxyEnabled = useCallback(
     (enabled: boolean) => {
       const owner = ownerRef.current;
-      return enqueueProxyEnabledTransition(
-        proxyEnabledQueueRef,
-        (next) => {
-          requireNetworkProxyOwner(owner);
-          return runSetProxyEnabled(next);
-        },
-        enabled
-      );
+      return proxyEnabledQueueRef.current.run(null, () => {
+        requireNetworkProxyOwner(owner);
+        return runSetProxyEnabled(enabled);
+      });
     },
     [runSetProxyEnabled]
   );

@@ -1,9 +1,8 @@
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_RECENT_SEARCHES,
   MAX_SEARCH_HISTORY_QUERY_LENGTH,
-  createSearchHistoryWriteQueue,
-  enqueueSearchHistoryWrite,
   mergeLoadedSearchHistory,
   normalizeSearchHistory,
   sameSearchHistory,
@@ -47,20 +46,30 @@ describe('search history helpers', () => {
   });
 
   it('serializes writes so the latest history state wins', async () => {
-    const queue = createSearchHistoryWriteQueue();
+    const queue = createKeyedSerialRunner<null>('after-reaction');
     const writes: string[] = [];
+    const delivery: string[] = [];
     const releaseFirstWrite = Promise.withResolvers<void>();
-    const first = enqueueSearchHistoryWrite(queue, async () => {
+    const first = queue.run(null, async () => {
+      delivery.push('first:start');
       await releaseFirstWrite.promise;
       writes.push('with A');
     });
-    const second = enqueueSearchHistoryWrite(queue, async () => {
+    const second = queue.run(null, async () => {
+      delivery.push('second:start');
       writes.push('without A');
     });
 
+    const observer = first.then(() => {
+      delivery.push('observer');
+      queueMicrotask(() => delivery.push('observer:microtask'));
+    });
+    await Promise.resolve();
+    expect(delivery).toEqual([]);
     releaseFirstWrite.resolve();
-    await Promise.all([first, second]);
+    await Promise.all([first, second, observer]);
 
     expect(writes).toEqual(['with A', 'without A']);
+    expect(delivery).toEqual(['first:start', 'observer', 'observer:microtask', 'second:start']);
   });
 });

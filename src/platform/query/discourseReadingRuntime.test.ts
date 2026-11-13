@@ -35,6 +35,40 @@ function setup() {
 }
 
 describe('Discourse reading lifecycle', () => {
+  it('keeps an ended reading session retired when a scope callback ends activation', async () => {
+    vi.useFakeTimers();
+    const { now, advance } = createDiscourseReadingClock();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
+    let endOnScope: (() => void) | undefined;
+    let sends = 0;
+    const runtime = createDiscourseReadingRuntime({
+      queryClient,
+      now,
+      scope: () => {
+        const end = endOnScope;
+        endOnScope = undefined;
+        end?.();
+        return 'alice';
+      },
+      send: async () => {
+        sends++;
+      }
+    });
+    try {
+      const session = runtime.begin('1');
+      session.visible([1]);
+      endOnScope = session.end;
+      session.active(true);
+      expect(vi.getTimerCount()).toBe(1);
+      await advance(1000);
+      expect(sends).toBe(0);
+      expect(runtime.state()).toEqual({});
+    } finally {
+      runtime.dispose();
+      vi.clearAllTimers();
+      queryClient.clear();
+    }
+  });
   it('serializes multi-topic backlogs and discards expired or replaced-account work across repeated slow sends', async () => {
     const { runtime, send, advance, switchAccount, queryClient } = setup();
     let nextSlow: ReturnType<typeof Promise.withResolvers<void>> | undefined;
@@ -408,6 +442,11 @@ describe('Discourse reading lifecycle', () => {
     expect(send).not.toHaveBeenCalled();
     session.visible([4]);
     await advance(1000);
+    session.visible([5]);
+    await advance(4000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await advance(1000);
+    expect(send).toHaveBeenCalledTimes(2);
     runtime.foreground(false);
     const before = send.mock.calls.length;
     await advance(10000);

@@ -181,6 +181,68 @@ describe('Android notification system', () => {
     expect(mocks.register).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['fulfilled', 'rejected'] as const)(
+    'keeps captured registration intent and observer order during diagnostic reentry after %s',
+    async (outcome) => {
+      const enabled = defaultNotificationState();
+      enabled.globalEnabled = true;
+      enabled.sources.nodeseek = { ...enabled.sources.nodeseek, intentEnabled: true, identityKey: 'nodeseek:7' };
+      const disabled = { ...enabled, globalEnabled: false };
+      const failure = new Error('registration failed after applying');
+      const events: string[] = [];
+      let intents = 0;
+      let finishes = 0;
+      let nested: ReturnType<typeof syncNotificationBackgroundRegistration> | undefined;
+      mocks.register.mockImplementationOnce(async () => {
+        events.push('register');
+        mocks.registered = true;
+        if (outcome === 'rejected') throw failure;
+      });
+      mocks.unregister.mockImplementationOnce(async () => {
+        events.push('unregister');
+        mocks.registered = false;
+      });
+      setDiagnosticWriter((line) => {
+        const event = JSON.parse(line);
+        if (event.operation !== 'notification-registration') return;
+        if (event.phase === 'intent') {
+          events.push(`intent:${++intents}`);
+          if (intents === 1) {
+            nested = syncNotificationBackgroundRegistration(disabled, true, ['nodeseek']);
+            disabled.globalEnabled = true;
+          }
+        } else if (event.phase === 'finish') {
+          events.push(`finish:${++finishes}`);
+        }
+      });
+      const observe = (result: boolean | Error) => {
+        events.push('observer');
+        queueMicrotask(() => events.push('observer:microtask'));
+        return result;
+      };
+
+      try {
+        const outer = syncNotificationBackgroundRegistration(enabled, true, ['nodeseek']);
+        expect(await outer.then(observe, observe)).toBe(outcome === 'fulfilled' ? true : failure);
+        expect(await nested).toBe(false);
+      } finally {
+        setDiagnosticWriter(null);
+      }
+
+      expect(events).toEqual([
+        'intent:1',
+        'register',
+        'finish:1',
+        'observer',
+        'intent:2',
+        'observer:microtask',
+        'unregister',
+        'finish:2'
+      ]);
+      expect(mocks.registered).toBe(false);
+    }
+  );
+
   it('does not register when the only intended source is not currently eligible', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;

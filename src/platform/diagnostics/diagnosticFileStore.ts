@@ -43,14 +43,22 @@ export type DiagnosticExportMetadata = {
   yaohuoSession?: DiagnosticSessionStatus;
 };
 
+type DiagnosticExportOwnership = { phase: 'owned'; file: File } | { phase: 'handed-off'; file: File };
+
 let writerInstalled = false;
-let flushScheduled = false;
-let pendingLogLines: Uint8Array[] = [];
-let pendingBytes = 0;
-let nativeWrites: Promise<void> = Promise.resolve();
-let nativeWriting = false;
-let inFlightNativeLines = '';
-let queuedNativeBytes = 0;
+type NativeDiagnosticBatch = { readonly lines: string; readonly byteLength: number; watchdog: 'armed' | 'expired' };
+type DiagnosticFlushState = {
+  pending: { phase: 'empty' } | { phase: 'waiting' | 'scheduled'; chunks: Uint8Array[]; byteLength: number };
+  native: { phase: 'idle' } | { phase: 'occupied'; batch: NativeDiagnosticBatch };
+  tail: Promise<void>;
+  queuedNativeBytes: number;
+};
+const diagnosticFlush: DiagnosticFlushState = {
+  pending: { phase: 'empty' },
+  native: { phase: 'idle' },
+  tail: Promise.resolve(),
+  queuedNativeBytes: 0
+};
 let droppedCount = 0;
 let writeFailureCount = 0;
 let rotationCount = 0;
@@ -120,6 +128,16 @@ function joinedBytes(chunks: Uint8Array[], byteLength: number) {
   return joined;
 }
 
+function bufferedDiagnosticLines() {
+  const pending = diagnosticFlush.pending;
+  return (
+    (diagnosticFlush.native.phase === 'occupied' ? diagnosticFlush.native.batch.lines : '') +
+    decoder.decode(
+      joinedBytes(pending.phase === 'empty' ? [] : pending.chunks, pending.phase === 'empty' ? 0 : pending.byteLength)
+    )
+  );
+}
+
 class DiagnosticDeadlineError extends Error {
   constructor() {
     super('diagnostic preparation timeout');
@@ -143,11 +161,10 @@ async function beforeDiagnosticDeadline<T>(read: () => Promise<T>, deadline: num
 }
 
 function flushPendingDiagnosticLines() {
-  flushScheduled = false;
-  if (nativeWriting) return;
-  const pending = pendingLogLines;
-  pendingLogLines = [];
-  pendingBytes = 0;
+  if (diagnosticFlush.pending.phase === 'scheduled') diagnosticFlush.pending.phase = 'waiting';
+  if (diagnosticFlush.native.phase === 'occupied') return;
+  const pending = diagnosticFlush.pending.phase === 'empty' ? [] : diagnosticFlush.pending.chunks;
+  diagnosticFlush.pending = { phase: 'empty' };
   const native = nativeDiagnosticJournal();
   if (native?.appendBatch && pending.length) {
     const lines = decoder.decode(
@@ -157,27 +174,25 @@ function flushPendingDiagnosticLines() {
       )
     );
     const byteCount = pending.reduce((sum, bytes) => sum + bytes.byteLength, 0);
-    queuedNativeBytes += byteCount;
-    nativeWriting = true;
-    inFlightNativeLines = lines;
-    let timedOut = false;
+    const batch: NativeDiagnosticBatch = { lines, byteLength: byteCount, watchdog: 'armed' };
+    diagnosticFlush.queuedNativeBytes += byteCount;
+    diagnosticFlush.native = { phase: 'occupied', batch };
     const timeout = setTimeout(() => {
-      timedOut = true;
+      batch.watchdog = 'expired';
       writeFailureCount += 1;
     }, 5_000);
     // A watchdog cannot cancel the bridge call; only its real settlement releases this slot.
-    nativeWrites = Promise.resolve()
+    diagnosticFlush.tail = Promise.resolve()
       .then(() => native.appendBatch!(lines))
       .catch(() => {
-        if (!timedOut) writeFailureCount += 1;
+        if (batch.watchdog === 'armed') writeFailureCount += 1;
         droppedCount += pending.length;
       })
       .finally(() => {
         clearTimeout(timeout);
-        queuedNativeBytes -= byteCount;
-        nativeWriting = false;
-        inFlightNativeLines = '';
-        if (pendingLogLines.length) flushPendingDiagnosticLines();
+        diagnosticFlush.queuedNativeBytes -= batch.byteLength;
+        diagnosticFlush.native = { phase: 'idle' };
+        if (diagnosticFlush.pending.phase !== 'empty') flushPendingDiagnosticLines();
       });
     return;
   }
@@ -212,10 +227,10 @@ function flushPendingDiagnosticLines() {
 }
 
 function scheduleDiagnosticFlush() {
-  if (flushScheduled) {
+  if (diagnosticFlush.pending.phase !== 'waiting') {
     return;
   }
-  flushScheduled = true;
+  diagnosticFlush.pending.phase = 'scheduled';
   if (typeof queueMicrotask === 'function') {
     queueMicrotask(flushPendingDiagnosticLines);
   } else {
@@ -231,7 +246,7 @@ export function appendDiagnosticLogLine(line: string) {
         line = `${JSON.stringify({ ...event, ...diagnosticBuildContext() })}\n`;
         if (event.isFatal === true) {
           try {
-            const lastStages = inFlightNativeLines + decoder.decode(joinedBytes(pendingLogLines, pendingBytes));
+            const lastStages = bufferedDiagnosticLines();
             if (nativeDiagnosticJournal()?.persistCrashSync?.(lastStages + line) === false) writeFailureCount += 1;
           } catch {
             writeFailureCount += 1;
@@ -244,12 +259,20 @@ export function appendDiagnosticLogLine(line: string) {
     const bytes = encoder.encode(line.endsWith('\n') ? line : `${line}\n`);
     // Keep the JS->Native queue bounded even while native storage is unavailable.
     const limit = nativeDiagnosticJournal()?.appendBatch ? MAX_PENDING_BYTES : 3 * MAX_LOG_BYTES;
-    if (bytes.byteLength + pendingBytes + queuedNativeBytes > limit) {
+    const pending = diagnosticFlush.pending;
+    if (
+      bytes.byteLength + (pending.phase === 'empty' ? 0 : pending.byteLength) + diagnosticFlush.queuedNativeBytes >
+      limit
+    ) {
       droppedCount += 1;
       return;
     }
-    pendingLogLines.push(bytes);
-    pendingBytes += bytes.byteLength;
+    if (pending.phase === 'empty') {
+      diagnosticFlush.pending = { phase: 'waiting', chunks: [bytes], byteLength: bytes.byteLength };
+    } else {
+      pending.chunks.push(bytes);
+      pending.byteLength += bytes.byteLength;
+    }
     scheduleDiagnosticFlush();
   } catch {
     // Diagnostic persistence must never change app behavior.
@@ -376,13 +399,11 @@ function sourceCoverage(content: string, status: string) {
 
 export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
   const deadline = Date.now() + 5_000;
-  const bufferedJs = mergeDiagnosticLinesChronologically([
-    inFlightNativeLines + decoder.decode(joinedBytes(pendingLogLines, pendingBytes))
-  ]).lines.join('\n');
+  const bufferedJs = mergeDiagnosticLinesChronologically([bufferedDiagnosticLines()]).lines.join('\n');
   flushPendingDiagnosticLines();
   closeActiveLogHandle();
   const writer = beforeDiagnosticDeadline(async () => {
-    while (nativeWriting) await nativeWrites;
+    while (diagnosticFlush.native.phase === 'occupied') await diagnosticFlush.tail;
   }, deadline).then(
     () => 'settled',
     () => 'timeout'
@@ -514,24 +535,26 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
       lastCheck?.processSessionId && lastCheck.processSessionId === diagnosticBuildContext().processSessionId
     )
   });
-  const temporary = await createDiagnosticExport(
-    `${metadataLine(metadata)}\n${coverage}\n${accountSummary}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
-  );
-  let sharingStarted = false;
+  let ownership: DiagnosticExportOwnership = {
+    phase: 'owned',
+    file: await createDiagnosticExport(
+      `${metadataLine(metadata)}\n${coverage}\n${accountSummary}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
+    )
+  };
   try {
     const Sharing = await import('expo-sharing');
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('当前设备不支持分享诊断日志。');
     }
-    sharingStarted = true;
-    await Sharing.shareAsync(temporary.uri, {
+    ownership = { phase: 'handed-off', file: ownership.file };
+    await Sharing.shareAsync(ownership.file.uri, {
       dialogTitle: '分享诊断日志',
       mimeType: 'text/plain'
     });
   } finally {
     try {
-      if (!sharingStarted && temporary.exists) {
-        temporary.delete();
+      if (ownership.phase === 'owned' && ownership.file.exists) {
+        ownership.file.delete();
       }
     } catch {
       // A failed cleanup must not replace the actual export result.

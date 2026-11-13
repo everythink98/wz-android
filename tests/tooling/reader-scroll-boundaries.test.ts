@@ -5,11 +5,13 @@ async function runFixture({
   expandedByRunner = true,
   body = new Error('snapshot failed'),
   remote,
+  expand,
   appearance
 }: {
   expandedByRunner?: boolean;
   body?: unknown;
   remote?: { error: unknown };
+  expand?: { error: unknown };
   appearance?: { error: unknown };
 } = {}) {
   const originalArgv = process.argv;
@@ -25,6 +27,7 @@ async function runFixture({
         return JSON.stringify({ data: { nodes: [{ label: expandedByRunner ? '展开外观' : '收起外观' }] } });
       throw body;
     }
+    if (args[1] === 'label="展开外观"' && expand) throw expand.error;
     if (args[1] === 'label="收起外观"' && appearance) throw appearance.error;
     return '';
   });
@@ -53,6 +56,18 @@ async function runFixture({
   }
   return { outcome, exec, device, body };
 }
+
+it('retains collapse responsibility when the runner expansion command fails', async () => {
+  const failure = new Error('appearance expansion');
+  const result = await runFixture({ expand: { error: failure } });
+  const remote = result.exec.mock.calls.findIndex(([, args]) => args.includes('rm'));
+  const collapse = result.device.mock.calls.findIndex(([args]) => args[1] === 'label="收起外观"');
+  expect(remote).toBeGreaterThanOrEqual(0);
+  expect(collapse).toBeGreaterThanOrEqual(0);
+  expect(result.exec.mock.invocationCallOrder[remote]).toBeLessThan(result.device.mock.invocationCallOrder[collapse]);
+  if (result.outcome.kind !== 'failed') throw new Error('Expected expansion failure');
+  expect(result.outcome.error).toBe(failure);
+});
 
 it('collapses runner-owned appearance even when removing its remote trace fails', async () => {
   const remote = new Error('remote cleanup');

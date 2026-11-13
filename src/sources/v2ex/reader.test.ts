@@ -1,6 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('V2EX topic reader', () => {
+  it.each(['target', 'newest'] as const)(
+    'retains the existing linked-page request boundary for %s reads',
+    async (mode) => {
+      const pages: number[] = [];
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname !== '/t/555') throw new Error('Unexpected API fallback');
+        const page = Number(url.searchParams.get('p') || 1);
+        pages.push(page);
+        return new Response(
+          `<a href="/t/555?p=${page + 1}">下一页</a>` +
+            `<div id="r_${page}"><span class="no">${(page - 1) * 100 + 1}</span>` +
+            '<strong><a href="/member/alice">alice</a></strong><div class="reply_content">reply</div></div>'
+        );
+      });
+      const { getV2exReplies } = await import('./reader');
+      if (mode === 'target') {
+        await expect(
+          getV2exReplies('555', {
+            fetcher,
+            position: { kind: 'target', target: { floor: 9999999 } }
+          })
+        ).rejects.toThrow('目标楼层未找到');
+        expect(pages).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+      } else {
+        await expect(getV2exReplies('555', { fetcher, order: 'newest' })).resolves.toMatchObject({
+          currentPage: 101,
+          items: [{ floor: 10001 }]
+        });
+        expect(pages).toEqual(Array.from({ length: 101 }, (_, index) => index + 1));
+      }
+    }
+  );
+
   it.each([false, true])(
     'uses only a complete origin count/floor contract as the watermark (conflict: %s)',
     async (conflict) => {

@@ -171,6 +171,10 @@ function messageFromError(error: unknown) {
 
 type CredentialEditorOpening = { owner: AbortSignal };
 type CredentialEditorOperation = { opening: CredentialEditorOpening };
+type CredentialEditorState =
+  | { phase: 'closed' }
+  | { phase: 'editing'; opening: CredentialEditorOpening }
+  | { phase: 'working'; operation: CredentialEditorOperation };
 
 function CredentialEditor({
   active,
@@ -191,37 +195,45 @@ function CredentialEditor({
 }) {
   const { height } = useWindowDimensions();
   const { styles: settingStyles } = useReaderThemeStyles(createMoreSiteSettingStyles);
-  const [editing, setEditing] = useState(false);
+  const [editorState, setEditorState] = useState<CredentialEditorState>({ phase: 'closed' });
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
   const [keyboardAvoidingEnabled, setKeyboardAvoidingEnabled] = useState(false);
   const lifetimeRef = useRef(new AbortController());
-  const openingRef = useRef<CredentialEditorOpening | null>(null);
-  const operationRef = useRef<CredentialEditorOperation | null>(null);
+  const editorRef = useRef(editorState);
   const callbacks = useCommittedRef({ active, onCommand });
+  const editing = editorState.phase !== 'closed';
+  const busy = editorState.phase === 'working';
+  const currentOpening = () => {
+    const state = editorRef.current;
+    return state.phase === 'closed' ? null : state.phase === 'editing' ? state.opening : state.operation.opening;
+  };
+  const transitionEditor = (state: CredentialEditorState) => {
+    editorRef.current = state;
+    if (!lifetimeRef.current.signal.aborted) setEditorState(state);
+  };
   const isCurrentOpening = (opening: CredentialEditorOpening) =>
-    openingRef.current === opening &&
+    currentOpening() === opening &&
     callbacks.current.active &&
     !opening.owner.aborted &&
     lifetimeRef.current.signal === opening.owner;
   const isCurrentOperation = (operation: CredentialEditorOperation) =>
-    operationRef.current === operation && isCurrentOpening(operation.opening);
+    editorRef.current.phase === 'working' &&
+    editorRef.current.operation === operation &&
+    isCurrentOpening(operation.opening);
 
   useLayoutEffect(() => {
     if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
     const lifetime = lifetimeRef.current;
-    if (openingRef.current) openingRef.current.owner = lifetime.signal;
+    const opening = currentOpening();
+    if (opening) opening.owner = lifetime.signal;
     return () => lifetime.abort();
   }, []);
 
   const openEditor = () => {
     if (!callbacks.current.active || lifetimeRef.current.signal.aborted) return;
     recordUserInteraction();
-    openingRef.current = { owner: lifetimeRef.current.signal };
-    operationRef.current = null;
-    setBusy(false);
-    setEditing(true);
+    transitionEditor({ phase: 'editing', opening: { owner: lifetimeRef.current.signal } });
   };
 
   const clearDraft = () => {
@@ -231,12 +243,9 @@ function CredentialEditor({
 
   useEffect(() => {
     if (!active) {
-      openingRef.current = null;
-      operationRef.current = null;
-      setBusy(false);
+      transitionEditor({ phase: 'closed' });
       setKeyboardAvoidingEnabled(false);
       clearDraft();
-      setEditing(false);
     }
   }, [active]);
 
@@ -253,35 +262,31 @@ function CredentialEditor({
   }, [editing]);
 
   const closeEditor = () => {
-    if (operationRef.current) {
+    if (editorRef.current.phase === 'working') {
       return;
     }
     setKeyboardAvoidingEnabled(false);
     Keyboard.dismiss();
     clearDraft();
-    openingRef.current = null;
-    setEditing(false);
+    transitionEditor({ phase: 'closed' });
   };
 
   const beginOperation = (opening: CredentialEditorOpening) => {
-    if (!isCurrentOpening(opening) || operationRef.current) return null;
+    if (editorRef.current.phase !== 'editing' || !isCurrentOpening(opening)) return null;
     const operation = { opening };
-    operationRef.current = operation;
-    setBusy(true);
+    transitionEditor({ phase: 'working', operation });
     return operation;
   };
   const finishOperation = (operation: CredentialEditorOperation) => {
-    if (operationRef.current !== operation) return;
-    operationRef.current = null;
-    if (!lifetimeRef.current.signal.aborted) setBusy(false);
+    if (editorRef.current.phase !== 'working' || editorRef.current.operation !== operation) return;
+    transitionEditor({ phase: 'editing', opening: operation.opening });
   };
   const finishEditor = () => {
     clearDraft();
-    openingRef.current = null;
-    setEditing(false);
+    transitionEditor({ phase: 'closed' });
   };
 
-  const persist = async (allowUnprotected = false, opening = openingRef.current) => {
+  const persist = async (allowUnprotected = false, opening = currentOpening()) => {
     if (!opening) return;
     const operation = beginOperation(opening);
     if (!operation) {
@@ -321,7 +326,7 @@ function CredentialEditor({
   };
 
   const confirmDelete = () => {
-    const opening = openingRef.current;
+    const opening = currentOpening();
     if (!opening || !isCurrentOpening(opening)) return;
     Alert.alert('删除已保存登录信息？', '只删除保存的账号密码，不会退出当前网站登录。', [
       { text: '取消', style: 'cancel' },
@@ -556,10 +561,9 @@ export function AccountCenterPanel({
   onSelectedSiteChange?: (site: SessionSite) => void;
 }) {
   const [expandedSite, setExpandedSite] = useState<SessionSite>('nodeseek');
-  const [settingsState, setSettingsState] = useState<{
-    owner: string;
-    phase: 'expanded' | 'collapsed';
-  } | null>(null);
+  const [settingsState, setSettingsState] = useState<
+    { phase: 'unvisited' } | { owner: string; phase: 'expanded' | 'collapsed' }
+  >({ phase: 'unvisited' });
   const availableViews = useMemo(
     () => createSiteAccountViews(sessions, credentials, nodeSeekUserId),
     [credentials, nodeSeekUserId, sessions]
@@ -574,9 +578,10 @@ export function AccountCenterPanel({
   const { styles: settingStyles } = useReaderThemeStyles(createMoreSiteSettingStyles);
   const selectedView = views.find((view) => view.site === (selectedSite ?? expandedSite)) ?? views[0];
   const settingsOwner = selectedView ? `${selectedView.site}:${selectedView.user?.id ?? 'anonymous'}` : '';
-  const settingsVisited = settingsState?.owner === settingsOwner;
+  const settingsVisited = settingsState.phase !== 'unvisited' && settingsState.owner === settingsOwner;
   const settingsExpanded = settingsVisited && settingsState.phase === 'expanded';
-  if (settingsState !== null && settingsState.owner !== settingsOwner) setSettingsState(null);
+  if (settingsState.phase !== 'unvisited' && settingsState.owner !== settingsOwner)
+    setSettingsState({ phase: 'unvisited' });
   const headerContent = (
     <View style={[accountStyles.header, styles.morePageInset]}>
       <Text style={accountStyles.title}>我的</Text>
@@ -645,7 +650,7 @@ export function AccountCenterPanel({
       onPress={() =>
         setSettingsState((current) => ({
           owner: settingsOwner,
-          phase: current?.owner === settingsOwner && current.phase === 'expanded' ? 'collapsed' : 'expanded'
+          phase: current.phase === 'expanded' && current.owner === settingsOwner ? 'collapsed' : 'expanded'
         }))
       }
     >
@@ -674,7 +679,7 @@ export function AccountCenterPanel({
                   if (selected) return;
                   if (selectedSite === undefined) setExpandedSite(view.site);
                   onSelectedSiteChange?.(view.site);
-                  setSettingsState(null);
+                  setSettingsState({ phase: 'unvisited' });
                 }}
               >
                 <Text
@@ -752,7 +757,7 @@ export function AccountCenterPanel({
                   labelStyle={settingStyles.buttonLabel}
                   onPress={() => {
                     recordUserInteraction();
-                    setSettingsState(null);
+                    setSettingsState({ phase: 'unvisited' });
                     void onCommand({ type: 'open-login', site: selectedView.site });
                   }}
                 >
@@ -768,7 +773,7 @@ export function AccountCenterPanel({
                     disabled={waitingForForm}
                     onPress={() => {
                       recordUserInteraction();
-                      setSettingsState(null);
+                      setSettingsState({ phase: 'unvisited' });
                       void onCommand({ type: 'open-login-with-fill', site: selectedView.site });
                     }}
                   >

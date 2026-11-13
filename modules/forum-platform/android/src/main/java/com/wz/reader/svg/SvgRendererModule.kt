@@ -87,11 +87,6 @@ internal data class SvgPosterCacheEntry(
   val lastModified: Long
 )
 
-internal fun hasSvgPosterQueueCapacity(active: Boolean, queued: Int): Boolean {
-  require(queued >= 0)
-  return queued + (if (active) 1 else 0) < MAX_RENDER_REQUESTS
-}
-
 internal fun boundedSvgFetchTimeoutMs(requestedMs: Double): Long =
   requestedMs.toLong().coerceIn(1L, DOCUMENT_FETCH_TIMEOUT_MS)
 
@@ -613,10 +608,6 @@ private object SvgPosterRendererRuntime {
     )
     mainHandler.post {
       if (request.settled) {
-        return@post
-      }
-      if (!hasSvgPosterQueueCapacity(active != null, queue.size)) {
-        fail(request, "svg_queue_full", "SVG 海报渲染队列已满。", null)
         return@post
       }
       val timeout = Runnable { timeout(request) }

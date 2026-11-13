@@ -845,16 +845,29 @@ describe('LDC website authorization', () => {
   it('respects the proxy barrier and keeps website failures local to the LDC page', async () => {
     const fetcher = jest.fn(async () => Response.json({ current_user: { id: 7, username: 'alice' } }));
     const { view, runtime, rerender } = await renderCreditHosts(fetcher);
-    await rerender({ blockedMessage: '代理尚未就绪' });
-    await act(async () => runtime().center.linuxDoCredit.open());
-    expect(view.getByText('代理尚未就绪')).toBeTruthy();
-    expect(view.queryByTestId('login-webview')).toBeNull();
-    await rerender({});
-    const browser = view.getByTestId('login-webview');
-    await fireEvent(browser, 'error', { nativeEvent: { description: '网络不可用' } });
-    expect(view.getByText('LDC 页面加载失败：网络不可用')).toBeTruthy();
-    expect(fetcher).not.toHaveBeenCalled();
-    expect(runtime().read.accountSessionViewModels.linuxdo.currentUser?.username).toBe('alice');
+    const barrier = jest.mocked(setLinuxDoCookieResponseBarrier);
+    const defaultBarrier = barrier.getMockImplementation();
+    try {
+      await rerender({ blockedMessage: '代理尚未就绪' });
+      barrier.mockRejectedValueOnce(new Error('controlled Credit preparation failure'));
+      await act(async () => runtime().center.linuxDoCredit.open());
+      expect(view.getByText('代理尚未就绪')).toBeTruthy();
+      expect(view.queryByTestId('login-webview')).toBeNull();
+      await rerender({});
+      expect(view.getByText('LDC 页面准备失败，请刷新重试。')).toBeTruthy();
+      expect(view.queryByTestId('login-webview')).toBeNull();
+      expect(view.getByLabelText('刷新页面').props.accessibilityState.disabled).toBe(false);
+      await fireEvent.press(view.getByLabelText('刷新页面'));
+      const browser = view.getByTestId('login-webview');
+      await fireEvent(browser, 'error', { nativeEvent: { description: '网络不可用' } });
+      expect(view.getByText('LDC 页面加载失败：网络不可用')).toBeTruthy();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(runtime().read.accountSessionViewModels.linuxdo.currentUser?.username).toBe('alice');
+    } finally {
+      barrier.mockReset();
+      if (defaultBarrier) barrier.mockImplementation(defaultBarrier);
+      await view.unmount();
+    }
   });
 
   it('ignores old website events when closing and reopening in the same React batch', async () => {

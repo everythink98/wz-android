@@ -53,24 +53,34 @@ internal fun readDefaultWebViewUserAgentOnMainThread(
 }
 
 internal class DefaultWebViewUserAgentReader {
-  @Volatile private var cached: String? = null
+  private sealed interface CacheState {
+    data object Unread : CacheState
+    data class Ready(val value: String) : CacheState
+  }
+  @Volatile private var state: CacheState = CacheState.Unread
 
   fun read(
     isMainThread: Boolean,
     postToMainThread: (Runnable) -> Boolean,
     readUserAgent: () -> String
   ): String {
-    cached?.let { return it }
+    when (val current = state) {
+      is CacheState.Ready -> return current.value
+      CacheState.Unread -> Unit
+    }
     return readDefaultWebViewUserAgentOnMainThread(isMainThread, postToMainThread, readUserAgent = {
-      cached ?: run {
-        val userAgent = try {
-          readUserAgent()
-        } catch (error: AssertionError) {
-          throw IllegalStateException("默认浏览器身份读取失败", error)
-        }
-        userAgent.trim().replace(Regex("\\s+"), " ").also {
-          check(it.isNotEmpty()) { "默认浏览器身份读取失败" }
-          cached = it
+      when (val current = state) {
+        is CacheState.Ready -> current.value
+        CacheState.Unread -> {
+          val userAgent = try {
+            readUserAgent()
+          } catch (error: AssertionError) {
+            throw IllegalStateException("默认浏览器身份读取失败", error)
+          }
+          userAgent.trim().replace(Regex("\\s+"), " ").also {
+            check(it.isNotEmpty()) { "默认浏览器身份读取失败" }
+            state = CacheState.Ready(it)
+          }
         }
       }
     })
@@ -132,17 +142,22 @@ internal class SerializedWebViewProxyOperations {
 internal class InvalidatableResourceSlot<T : Any>(
   private val releaseRejected: (T) -> Unit
 ) {
+  private sealed interface State<out R> {
+    data object Vacant : State<Nothing>
+    data class Retained<R>(val resource: R) : State<R>
+    data object Invalidated : State<Nothing>
+  }
   private val lock = Any()
-  private var invalidated = false
-  private var active: T? = null
+  private var state: State<T> = State.Vacant
 
   fun register(next: T): Boolean {
     val accepted = synchronized(lock) {
-      if (invalidated) {
-        false
-      } else {
-        active = next
-        true
+      when (state) {
+        State.Invalidated -> false
+        State.Vacant, is State.Retained -> {
+          state = State.Retained(next)
+          true
+        }
       }
     }
     if (!accepted) {
@@ -153,23 +168,28 @@ internal class InvalidatableResourceSlot<T : Any>(
 
   fun clear(expected: T) {
     synchronized(lock) {
-      if (active === expected) {
-        active = null
+      val current = state
+      if (current is State.Retained && current.resource === expected) {
+        state = State.Vacant
       }
     }
   }
 
   fun invalidate(): T? = synchronized(lock) {
-    invalidated = true
-    active.also { active = null }
+    val current = state
+    state = State.Invalidated
+    if (current is State.Retained) current.resource else null
   }
 }
 
 internal class OwnedProxyServerRegistry {
+  private sealed interface Ownership {
+    data object Unowned : Ownership
+    data class Owned(val owner: Long, val server: LocalNetworkProxyServer?) : Ownership
+  }
   private val lock = Any()
   private var latestOwner = 0L
-  private var activeOwner: Long? = null
-  private var server: LocalNetworkProxyServer? = null
+  private var ownership: Ownership = Ownership.Unowned
   private var stateGeneration = 0L
 
   fun register(owner: Long) {
@@ -190,31 +210,31 @@ internal class OwnedProxyServerRegistry {
 
   fun begin(owner: Long, onBegin: () -> Unit): LocalNetworkProxyServer? = synchronized(lock) {
     check(owner == latestOwner) { "代理 bridge 已失效" }
-    val previous = server
-    activeOwner = owner
-    server = null
+    val previous = (ownership as? Ownership.Owned)?.server
+    ownership = Ownership.Owned(owner, null)
     onBegin()
     stateGeneration += 1
     previous
   }
 
   fun commit(owner: Long, next: LocalNetworkProxyServer?, onCommit: () -> Unit): Boolean = synchronized(lock) {
-    if (activeOwner != owner || latestOwner != owner) {
+    val current = ownership
+    if (current !is Ownership.Owned || current.owner != owner || latestOwner != owner) {
       return@synchronized false
     }
-    server = next
+    ownership = Ownership.Owned(owner, next)
     onCommit()
     stateGeneration += 1
     true
   }
 
   fun release(owner: Long, onRelease: () -> Unit): LocalNetworkProxyServer? = synchronized(lock) {
-    if (activeOwner != owner) {
+    val current = ownership
+    if (current !is Ownership.Owned || current.owner != owner) {
       return@synchronized null
     }
-    val previous = server
-    server = null
-    activeOwner = null
+    val previous = current.server
+    ownership = Ownership.Unowned
     onRelease()
     stateGeneration += 1
     previous
@@ -222,7 +242,8 @@ internal class OwnedProxyServerRegistry {
 
   fun requireCurrent(owner: Long) {
     synchronized(lock) {
-      check(activeOwner == owner && latestOwner == owner) { "代理 bridge 已失效" }
+      val current = ownership
+      check(current is Ownership.Owned && current.owner == owner && latestOwner == owner) { "代理 bridge 已失效" }
     }
   }
 

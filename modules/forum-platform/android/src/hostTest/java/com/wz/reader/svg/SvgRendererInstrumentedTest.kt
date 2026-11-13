@@ -39,6 +39,7 @@ class SvgRendererInstrumentedTest {
     val settled = CountDownLatch(1)
     var result: ReadableMap? = null
     var failure: AssertionError? = null
+    var code: String? = null
   }
 
   private fun enqueuePoster(svg: String, cacheKey: String): PendingPoster {
@@ -50,6 +51,7 @@ class SvgRendererInstrumentedTest {
       },
       { arguments ->
         pending.failure = AssertionError("SVG poster rejected: " + arguments.joinToString())
+        pending.code = (arguments.firstOrNull() as? ReadableMap)?.getString("code")
         pending.settled.countDown()
       }
     )
@@ -80,6 +82,44 @@ class SvgRendererInstrumentedTest {
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     instrumentation.runOnMainSync { view.draw(Canvas(bitmap)) }
     return bitmap
+  }
+
+  @Test
+  fun rendererAdmissionRejectsThe33rdRequestBeforeMainDispatchAndRecovers() {
+    val pending = mutableListOf<PendingPoster>()
+    val nonce = System.nanoTime().toString()
+    val creationsBefore = svgPosterWebViewCreationCount()
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(35)
+    var heldBeforeDispatch = 0
+    var overflowCodeBeforeDispatch: String? = null
+    try {
+      instrumentation.runOnMainSync {
+        repeat(32) { index -> pending += enqueuePoster("<not-svg/>", "admission-$nonce-$index") }
+        heldBeforeDispatch = pending.count { it.settled.count == 1L }
+        val overflow = enqueuePoster("<not-svg/>", "admission-$nonce-overflow").also { pending += it }
+        if (overflow.settled.count == 0L) overflowCodeBeforeDispatch = overflow.code
+      }
+      assertEquals(32, heldBeforeDispatch)
+      assertEquals("svg_queue_full", overflowCodeBeforeDispatch)
+      pending.forEach {
+        assertTrue("admitted SVG did not settle", it.settled.await(
+          (deadline - System.nanoTime()).coerceAtLeast(0L), TimeUnit.NANOSECONDS))
+      }
+      assertTrue(pending.take(32).all { it.code == "svg_invalid_input" })
+      val retry = enqueuePoster("<not-svg/>", "admission-$nonce-retry").also { pending += it }
+      assertTrue("released admission was not reusable", retry.settled.await(
+        (deadline - System.nanoTime()).coerceAtLeast(0L), TimeUnit.NANOSECONDS))
+      assertEquals("svg_invalid_input", retry.code)
+    } finally {
+      var drained = true
+      pending.forEach {
+        drained = it.settled.await((deadline - System.nanoTime()).coerceAtLeast(0L), TimeUnit.NANOSECONDS) && drained
+      }
+      instrumentation.waitForIdleSync()
+      assertTrue("SVG admission cleanup did not drain every submission", drained)
+      assertFalse("invalid SVG admission retained the renderer", hasRetainedRenderer())
+      assertEquals("invalid SVG admission created a WebView", creationsBefore, svgPosterWebViewCreationCount())
+    }
   }
 
   @Test

@@ -1,20 +1,22 @@
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { diagnosticUserAgentHash } from './userAgent';
 
+type UserAgentReaderState =
+  { kind: 'cold' } | { kind: 'reading'; task: Promise<string> } | { kind: 'ready'; value: string };
+
 export function createDefaultWebViewUserAgentReader(read: () => Promise<unknown>): () => Promise<string> {
-  let cached: string | undefined;
-  let pending: Promise<string> | undefined;
+  let state: UserAgentReaderState = { kind: 'cold' };
   return () => {
-    if (cached !== undefined) return Promise.resolve(cached);
-    if (pending) return pending;
+    if (state.kind === 'ready') return Promise.resolve(state.value);
+    if (state.kind === 'reading') return state.task;
     const trace = beginDiagnosticTrace('webview', 'read-user-agent', { state: 'start', userAgentSource: 'default' });
-    pending = Promise.resolve()
+    const task: Promise<string> = Promise.resolve()
       .then(read)
       .then((value) => {
         if (typeof value !== 'string') throw new Error('默认浏览器身份读取失败');
         const userAgent = value.replace(/\s+/g, ' ').trim();
         if (!userAgent) throw new Error('默认浏览器身份读取失败');
-        cached = userAgent;
+        state = { kind: 'ready', value: userAgent };
         finishDiagnosticTrace(trace, 'success', {
           state: 'ready',
           userAgentSource: 'default',
@@ -27,8 +29,10 @@ export function createDefaultWebViewUserAgentReader(read: () => Promise<unknown>
         throw error;
       })
       .finally(() => {
-        pending = undefined;
+        // Intent diagnostics may reenter, so completion clears the shared reading slot.
+        if (state.kind === 'reading') state = { kind: 'cold' };
       });
-    return pending;
+    state = { kind: 'reading', task };
+    return task;
   };
 }

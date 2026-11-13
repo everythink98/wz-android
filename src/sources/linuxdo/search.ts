@@ -23,6 +23,10 @@ import {
 
 const SEARCH_PAGE_SIZE = 50;
 
+type LinuxDoSearchScan =
+  | { kind: 'reading'; page: number; raw: (Topic | null)[]; candidateCount: number; droppedCount: number }
+  | { kind: 'ready'; raw: (Topic | null)[]; candidateCount: number; droppedCount: number; remoteHasMore: boolean };
+
 type LinuxDoSearchOptions = LinuxDoOptions & {
   limit?: number;
   page?: number;
@@ -146,35 +150,33 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   const firstSearchPage = Math.floor(start / SEARCH_PAGE_SIZE) + 1;
   const firstOffset = start % SEARCH_PAGE_SIZE;
   const needed = firstOffset + limit;
-  const collected: (Topic | null)[] = [];
-  let searchPage = firstSearchPage;
-  let searchHasMore = false;
-  let candidateCount = 0;
-  let droppedCount = 0;
-  while (collected.length < needed) {
+  let scan: LinuxDoSearchScan =
+    0 < needed
+      ? { kind: 'reading', page: firstSearchPage, raw: [], candidateCount: 0, droppedCount: 0 }
+      : { kind: 'ready', raw: [], candidateCount: 0, droppedCount: 0, remoteHasMore: false };
+  while (scan.kind === 'reading') {
     const data = await fetchLinuxDoJson<Record<string, unknown>>(
       '/search',
       {
         q: cleanQuery,
-        page: searchPage
+        page: scan.page
       },
       options,
       { referer: searchReferer, csrfToken }
     );
     const result = await topicsFromLinuxDoSearchData(data, options);
     const pageSummary = sourceDiagnosticSummary(result);
-    candidateCount += pageSummary?.candidateCount || result.items.length;
-    droppedCount += pageSummary?.droppedCount || 0;
-    searchHasMore = result.hasMore;
-    if (!result.rawItems.length) break;
-    collected.push(...result.rawItems);
-    if (!result.hasMore) {
-      break;
+    const candidateCount = scan.candidateCount + (pageSummary?.candidateCount || result.items.length);
+    const droppedCount = scan.droppedCount + (pageSummary?.droppedCount || 0);
+    scan.raw.push(...result.rawItems);
+    if (result.rawItems.length && result.hasMore && scan.raw.length < needed) {
+      scan = { kind: 'reading', page: scan.page + 1, raw: scan.raw, candidateCount, droppedCount };
+    } else {
+      scan = { kind: 'ready', raw: scan.raw, candidateCount, droppedCount, remoteHasMore: result.hasMore };
     }
-    searchPage += 1;
   }
-  const items = collected.slice(firstOffset, needed).filter((topic): topic is Topic => topic !== null);
-  const hasMore = collected.length > needed || searchHasMore;
+  const items = scan.raw.slice(firstOffset, needed).filter((topic): topic is Topic => topic !== null);
+  const hasMore = scan.raw.length > needed || scan.remoteHasMore;
   const result = {
     items,
     errors: {},
@@ -183,10 +185,10 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'discourse-search',
-    candidateCount,
+    candidateCount: scan.candidateCount,
     validCount: items.length,
-    droppedCount,
-    isExpectedEmpty: candidateCount === 0,
+    droppedCount: scan.droppedCount,
+    isExpectedEmpty: scan.candidateCount === 0,
     hasRepeatedCursor: result.nextPage === page
   });
 }

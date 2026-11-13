@@ -181,6 +181,45 @@ function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'
   return new HandledMutationError(errorMessage(error), outcome, normalizeDiagnosticReason(error));
 }
 
+function confirmNodeSeekPollAction(
+  title: string,
+  message: string,
+  confirmLabel: string,
+  submit: () => Promise<void>,
+  cancelTrace: () => void
+) {
+  let phase: 'pending' | 'consumed' = 'pending';
+  Alert.alert(
+    title,
+    message,
+    [
+      {
+        text: '取消',
+        style: 'cancel',
+        onPress: () => {
+          phase = 'consumed';
+          cancelTrace();
+        }
+      },
+      {
+        text: confirmLabel,
+        style: 'destructive',
+        onPress: () => {
+          if (phase === 'consumed') return;
+          phase = 'consumed';
+          void submit();
+        }
+      }
+    ],
+    {
+      cancelable: true,
+      onDismiss: () => {
+        if (phase === 'pending') cancelTrace();
+      }
+    }
+  );
+}
+
 function confirmNodeSeekPollReplacement(poll: PendingNodeSeekPoll) {
   return new Promise<boolean>((resolve) => {
     Alert.alert(
@@ -2799,35 +2838,8 @@ export function useTopicActionsController({
         await submit();
         return;
       }
-      let handled = false;
-      Alert.alert(
-        '确认提交投票？',
-        '提交后不可修改。',
-        [
-          {
-            text: '取消',
-            style: 'cancel',
-            onPress: () => {
-              handled = true;
-              finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
-            }
-          },
-          {
-            text: '提交',
-            style: 'destructive',
-            onPress: () => {
-              if (handled) return;
-              handled = true;
-              void submit();
-            }
-          }
-        ],
-        {
-          cancelable: true,
-          onDismiss: () => {
-            if (!handled) finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
-          }
-        }
+      confirmNodeSeekPollAction('确认提交投票？', '提交后不可修改。', '提交', submit, () =>
+        finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' })
       );
     },
     [
@@ -2926,35 +2938,8 @@ export function useTopicActionsController({
           successMessage: (result) => ((result as { refreshFailed: boolean }).refreshFailed ? '' : '投票已锁定')
         });
       };
-      let handled = false;
-      Alert.alert(
-        '锁定投票？',
-        '锁定后普通作者无法重新开启，且不能继续投票。',
-        [
-          {
-            text: '取消',
-            style: 'cancel',
-            onPress: () => {
-              handled = true;
-              finishDiagnosticTrace(trace, 'canceled', { source: 'nodeseek', reason: 'canceled' });
-            }
-          },
-          {
-            text: '锁定',
-            style: 'destructive',
-            onPress: () => {
-              if (handled) return;
-              handled = true;
-              void submit();
-            }
-          }
-        ],
-        {
-          cancelable: true,
-          onDismiss: () => {
-            if (!handled) finishDiagnosticTrace(trace, 'canceled', { source: 'nodeseek', reason: 'canceled' });
-          }
-        }
+      confirmNodeSeekPollAction('锁定投票？', '锁定后普通作者无法重新开启，且不能继续投票。', '锁定', submit, () =>
+        finishDiagnosticTrace(trace, 'canceled', { source: 'nodeseek', reason: 'canceled' })
       );
     },
     [

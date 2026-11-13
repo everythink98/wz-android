@@ -988,11 +988,9 @@ export function NotificationDetailScreen({
     setImagePreview(null);
   }, [previewScope, routeActive]);
   const conversationAutoScroll = useRef(createConversationAutoScrollController()).current;
-  const userScrolledRef = useRef(false);
   const [showLatestMessage, setShowLatestMessage] = useState(false);
   useEffect(() => {
-    conversationAutoScroll.viewportChanged(0);
-    userScrolledRef.current = false;
+    conversationAutoScroll.reset();
     setShowLatestMessage(false);
   }, [conversationAutoScroll, conversationIdentity]);
   const dockSafeAreaStyle = { paddingBottom: Math.max(9, insets.bottom + 9) };
@@ -1058,13 +1056,12 @@ export function NotificationDetailScreen({
           }}
           onScrollBeginDrag={() => {
             if (conversation) {
-              userScrolledRef.current = true;
               conversationAutoScroll.userScrolled();
             }
           }}
           scrollEventThrottle={32}
           onScroll={({ nativeEvent }) => {
-            if (!conversation || !userScrolledRef.current) return;
+            if (!conversation || !conversationAutoScroll.observesViewport()) return;
             const distance =
               nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y;
             conversationAutoScroll.viewportChanged(distance);
@@ -1146,7 +1143,6 @@ export function NotificationDetailScreen({
                     accessibilityLabel="加载更早消息"
                     disabled={historyBusy || !routeActive}
                     onPress={() => {
-                      userScrolledRef.current = true;
                       conversationAutoScroll.userScrolled();
                       onLoadEarlierMessages();
                     }}
@@ -1240,8 +1236,7 @@ export function NotificationDetailScreen({
               icon={ChevronDown}
               label="回到最新消息"
               onPress={() => {
-                conversationAutoScroll.viewportChanged(0);
-                userScrolledRef.current = false;
+                conversationAutoScroll.reset();
                 setShowLatestMessage(false);
                 scrollRef.current?.scrollToEnd({ animated: true });
               }}

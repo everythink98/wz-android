@@ -102,6 +102,25 @@ class ComposerKeyboardHostTest {
   private fun finishAnimation() { shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400)) }
   private fun drawHiddenLayout() { host.viewTreeObserver.dispatchOnPreDraw(); host.viewTreeObserver.dispatchOnPreDraw() }
 
+  @Test fun autoRequestWhileDisabledSurvivesEnableAndQueuedAttemptsConsumeOnce() {
+    host.ime.visible = false
+    host.setHostEnabled(false)
+    ComposerKeyboardHostManager().updateProperties(host, ReactStylesDiffMap(JavaOnlyMap.of("autoShowIme", true)))
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(0, host.ime.shows)
+
+    host.setHostEnabled(true)
+    host.setHostEnabled(true)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(1, host.ime.shows)
+    assertSame(input, host.findFocus())
+
+    host.setHostEnabled(true)
+    host.onWindowFocusChanged(true)
+    shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(1, host.ime.shows)
+  }
+
   @Test fun autoKeyboardWaitsForItsOwnWindowAndShowsOnlyOnce() {
     host.ime.visible = false
     host.windowFocused = false
@@ -356,6 +375,14 @@ class ComposerKeyboardHostTest {
     assertEquals(1, host.ime.requests.size)
   }
 
+  @Test fun aMismatchedBackUpDoesNotClaimOrClearTheCapturedPair() {
+    val time = down()
+    host.dispatchKeyEventPreIme(KeyEvent(time + 100, time + 101, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+    assertTrue(host.ime.requests.isEmpty())
+    up(time)
+    assertEquals(1, host.ime.requests.size)
+  }
+
   @Test fun aCommandCanObserveBackHideAndCancelItsOwnWaitWithoutCancelingBack() {
     up(down())
     host.hideKeyboard(11.0)
@@ -431,6 +458,18 @@ class ComposerKeyboardHostTest {
     assertTrue("Accepting ordinary hide does not complete its layout", host.events.isEmpty())
     host.viewTreeObserver.dispatchOnPreDraw()
     assertTrue(host.events.isEmpty())
+    val animation = WindowInsetsAnimation(WindowInsets.Type.ime(), LinearInterpolator(), 285)
+    host.dispatchWindowInsetsAnimationPrepare(animation)
+    host.dispatchWindowInsetsAnimationEnd(animation)
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertTrue("A new IME animation restarts fallback confirmation", host.events.isEmpty())
+    host.ime.visible = true
+    host.ime.height = 1
+    host.viewTreeObserver.dispatchOnPreDraw()
+    host.ime.visible = false
+    host.ime.height = 0
+    host.viewTreeObserver.dispatchOnPreDraw()
+    assertTrue("A non-hidden layout restarts fallback confirmation", host.events.isEmpty())
     host.viewTreeObserver.dispatchOnPreDraw()
     assertEquals(listOf(40.0 to true), host.events)
     assertSame(input, host.findFocus())

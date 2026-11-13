@@ -42,7 +42,11 @@ type ScopedAttendanceState = {
   state: NodeSeekCheckInState;
   serverDayId: number | null;
 };
-type AttendanceOperation = { ticket: WritableSessionTicket | null; cancellation: AbortController };
+type AttendanceOperation = {
+  phase: 'authorizing' | 'reading' | 'mutating';
+  ticket: WritableSessionTicket | null;
+  cancellation: AbortController;
+};
 const IDLE: NodeSeekCheckInState = { kind: 'idle' };
 
 class AttendanceError extends Error {
@@ -141,19 +145,24 @@ export function useNodeSeekCheckInController({
   const sessionTicketRef = useRef(currentSessionTicket);
   sessionTicketRef.current = currentSessionTicket;
   const mountedRef = useRef(true);
-  const operationRef = useRef<AttendanceOperation | null>(null);
+  const operationRef = useRef<{ phase: 'idle' } | AttendanceOperation>({ phase: 'idle' });
   const [busyOperation, setBusyOperation] = useState<AttendanceOperation | null>(null);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      operationRef.current?.cancellation.abort();
+      const operation = operationRef.current;
+      if (operation.phase !== 'idle') operation.cancellation.abort();
     };
   }, []);
   useEffect(() => {
     const operation = operationRef.current;
     const currentTicket = sessionTicketRef.current;
-    if (operation?.ticket && (!currentTicket || !sameTicket(operation.ticket, currentTicket))) {
+    if (
+      operation.phase !== 'idle' &&
+      operation.ticket &&
+      (!currentTicket || !sameTicket(operation.ticket, currentTicket))
+    ) {
       operation.cancellation.abort();
     }
   }, [currentSessionTicket?.identityKey, currentSessionTicket?.sessionEpoch]);
@@ -340,17 +349,25 @@ export function useNodeSeekCheckInController({
     },
     [isWritableSessionTicketCurrent]
   );
-  const beginOperation = useCallback(() => {
-    if (operationRef.current && isCurrentOperation(operationRef.current)) return null;
-    operationRef.current?.cancellation.abort();
-    const operation = { ticket: sessionTicketRef.current, cancellation: new AbortController() };
-    operationRef.current = operation;
-    setBusyOperation(operation);
-    return operation;
-  }, [isCurrentOperation]);
+  const beginOperation = useCallback(
+    (phase: 'authorizing' | 'reading') => {
+      if (operationRef.current.phase !== 'idle' && isCurrentOperation(operationRef.current)) return null;
+      const previous = operationRef.current;
+      if (previous.phase !== 'idle') previous.cancellation.abort();
+      const operation: AttendanceOperation = {
+        phase,
+        ticket: sessionTicketRef.current,
+        cancellation: new AbortController()
+      };
+      operationRef.current = operation;
+      setBusyOperation(operation);
+      return operation;
+    },
+    [isCurrentOperation]
+  );
   const finishOperation = useCallback((operation: AttendanceOperation) => {
     if (operationRef.current !== operation) return;
-    operationRef.current = null;
+    operationRef.current = { phase: 'idle' };
     if (mountedRef.current) setBusyOperation(null);
   }, []);
 
@@ -358,10 +375,9 @@ export function useNodeSeekCheckInController({
     async (random = false) => {
       const previous = scopedStateRef.current;
       if (previous && previous.state.kind !== 'idle' && isWritableSessionTicketCurrent(previous.ticket)) return;
-      const operation = beginOperation();
+      const operation = beginOperation('authorizing');
       if (!operation) return;
       const trace = beginDiagnosticTrace('session', 'attendance', { source: 'nodeseek' });
-      let mutationStarted = false;
       try {
         const ticket = await ensureWritableSession('nodeseek');
         if (operationRef.current !== operation) {
@@ -370,10 +386,10 @@ export function useNodeSeekCheckInController({
         }
         operation.ticket = ticket;
         setBusyOperation({ ...operation });
-        mutationStarted = true;
+        operation.phase = 'mutating';
         await mutation.mutateAsync({ random, ticket, trace, signal: operation.cancellation.signal });
       } catch (error) {
-        if (!mutationStarted) {
+        if (operation.phase !== 'mutating') {
           if (operationRef.current !== operation || !isCurrentOperation(operation)) {
             finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
             return;
@@ -417,7 +433,7 @@ export function useNodeSeekCheckInController({
   const refresh = useCallback(
     async (ticket: WritableSessionTicket) => {
       if (!isWritableSessionTicketCurrent(ticket)) return;
-      const operation = beginOperation();
+      const operation = beginOperation('reading');
       if (!operation) return;
       operation.ticket = ticket;
       setBusyOperation({ ...operation });

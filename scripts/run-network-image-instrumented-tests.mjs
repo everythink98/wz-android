@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { deviceApkSignerSha256, findDeviceApkSigner } from './device-apk-signer.mjs';
 
 const usage =
-  'Usage: node scripts/run-network-image-instrumented-tests.mjs [--platform-exports | --platform-export-ui | --platform-file-faults | --topic-share | --svg-only | --hardware-pressure]';
+  'Usage: node scripts/run-network-image-instrumented-tests.mjs [--platform-exports | --platform-export-ui | --platform-file-faults | --topic-share | --svg-only | --hardware-pressure | --registry-settlement]';
 if (process.argv.length === 3 && process.argv[2] === '--help') {
   console.log(usage);
   process.exit(0);
@@ -20,6 +20,7 @@ const platformExportUi = process.argv.includes('--platform-export-ui');
 const platformExports = platformExportUi || process.argv.includes('--platform-exports');
 const platformFileFaults = process.argv.includes('--platform-file-faults');
 const topicShare = process.argv.includes('--topic-share');
+const registrySettlement = process.argv.includes('--registry-settlement');
 const platformProof = platformExports || platformFileFaults;
 if (
   process.argv.length > 3 ||
@@ -33,7 +34,8 @@ if (
           '--platform-file-faults',
           '--topic-share',
           '--svg-only',
-          '--hardware-pressure'
+          '--hardware-pressure',
+          '--registry-settlement'
         ].includes(arg)
     )
 )
@@ -55,7 +57,8 @@ mkdirSync(scratchRoot, { recursive: true });
 const fixture = mkdtempSync(path.join(scratchRoot, 'network-image-test-'));
 const proofBuildId = randomUUID().replaceAll('-', '');
 const initScript = path.join(fixture, 'init.gradle');
-let restoreImagePermission = false;
+/** @type {'unchanged' | 'revoke-required'} */
+let imagePermissionPolicy = 'unchanged';
 /** @type {{ kind: 'none' } | { kind: 'failed', error: unknown }} */
 let businessFailure = { kind: 'none' };
 
@@ -109,6 +112,19 @@ try {
   writeFileSync(
     initScript,
     `beforeProject { p ->
+${
+  registrySettlement
+    ? `
+  p.plugins.withId('com.android.library') {
+    if (p.name == 'react-native-reanimated') {
+      p.dependencies.add('implementation', 'com.facebook.react:hermes-android')
+      p.extensions.getByName('android').defaultConfig.externalNativeBuild.cmake.arguments(
+        '-DCMAKE_PROJECT_Reanimated_INCLUDE=' + new File(p.rootDir.parentFile, 'tests/native/reanimated-settlement/registry-proof.cmake').absolutePath.replace(File.separator, '/'))
+    }
+  }
+`
+    : ''
+}
   p.plugins.withId('com.android.application') {
     def config = p.extensions.getByName('android')
     config.testBuildType = 'release'
@@ -116,9 +132,19 @@ try {
       dsl.defaultConfig.buildConfigField('String', 'DIAGNOSTIC_BUILD_ID', '"${proofBuildId}"')
     }
     def fixture = new File(p.rootDir, '${relativeFixture}')
+${
+  registrySettlement
+    ? `
+    def registry = new File(p.rootDir.parentFile, 'tests/native/reanimated-settlement')
+    config.sourceSets.getByName('release').java.srcDir(new File(registry, 'java'))
+    config.sourceSets.getByName('androidTest').java.srcDir(new File(registry, 'androidTest'))
+`
+    : `
     config.sourceSets.getByName('release').manifest.srcFile(new File(fixture, 'AndroidManifest.xml'))
     config.sourceSets.getByName('release').res.srcDir(new File(fixture, 'res'))
     p.afterEvaluate { p.extensions.getByName('react').entryFile.set(new File(p.rootDir.parentFile, '${platformProof ? 'dev/review-remediation-proof/index.tsx' : topicShare ? 'dev/topic-share-capture-proof/index.tsx' : 'dev/image-runtime-proof/index.tsx'}')) }
+`
+}
   }
 }
 `
@@ -140,7 +166,7 @@ try {
   )
     throw new Error('Proof build identity override was not applied');
   console.log(
-    `IMAGE_PROOF_APK buildId=${proofBuildId} sha256=${createHash('sha256').update(readFileSync(builtApk)).digest('hex')} mode=${topicShare ? 'topic-share' : hardwarePressure ? 'hardware-pressure' : platformFileFaults ? 'platform-file-faults' : platformExports ? 'platform-exports' : svgOnly ? 'svg' : 'network-svg'} avd=${expectedAvd}`
+    `IMAGE_PROOF_APK buildId=${proofBuildId} sha256=${createHash('sha256').update(readFileSync(builtApk)).digest('hex')} mode=${registrySettlement ? 'registry-settlement' : topicShare ? 'topic-share' : hardwarePressure ? 'hardware-pressure' : platformFileFaults ? 'platform-file-faults' : platformExports ? 'platform-exports' : svgOnly ? 'svg' : 'network-svg'} avd=${expectedAvd}`
   );
   const pkg = 'com.wz.reader';
   const installedAt = () =>
@@ -173,8 +199,10 @@ try {
     const packageState = execFileSync('adb', ['-s', serial, 'shell', 'dumpsys', 'package', 'com.wz.reader'], {
       encoding: 'utf8'
     });
-    restoreImagePermission = !/android\.permission\.READ_MEDIA_IMAGES: granted=true/.test(packageState);
-    if (restoreImagePermission)
+    imagePermissionPolicy = /android\.permission\.READ_MEDIA_IMAGES: granted=true/.test(packageState)
+      ? 'unchanged'
+      : 'revoke-required';
+    if (imagePermissionPolicy === 'revoke-required')
       execFileSync('adb', [
         '-s',
         serial,
@@ -209,7 +237,11 @@ try {
           : svgOnly
             ? 'com.wz.reader.SvgRendererInstrumentedTest'
             : 'com.wz.reader.NetworkImageRuntimeInstrumentedTest,com.wz.reader.ManagedCookieResponsesInstrumentedTest,com.wz.reader.SvgRendererInstrumentedTest';
-  const batches = [primaryClasses];
+  const batches = [
+    registrySettlement
+      ? 'com.wz.reader.AnimatedPropsRegistryInstrumentedTest#actualRegistrySettlesEvictsAndRefreshesInvalidatedProps'
+      : primaryClasses
+  ];
   // The system-export owner deliberately destroys BackupExport. Give it its own RN module registry.
   if (platformExports)
     batches.push(
@@ -241,10 +273,19 @@ try {
     process.stdout.write(result);
     if (!(hardwarePressure ? /OK \(1 test\)/u : /OK \([1-9]\d* tests?\)/u).test(result))
       throw new Error('Image instrumentation did not pass a nonzero test count.');
-    if (platformFileFaults || topicShare) {
+    if (platformFileFaults || topicShare || registrySettlement) {
       const executed = new Set();
+      let completed = 0;
+      const finalCodes = Array.from(result.matchAll(/^INSTRUMENTATION_CODE: (-?\d+)[ \t\r]*$/gmu), (m) => m[1]);
+      let registryFailure =
+        registrySettlement &&
+        (finalCodes.length !== 1 || finalCodes[0] !== '-1' || /^INSTRUMENTATION_FAILED:/mu.test(result));
       for (const status of result.matchAll(/([\s\S]*?)^INSTRUMENTATION_STATUS_CODE: (-?\d+)[ \t\r]*$/gmu)) {
-        if (status[2] !== '0') continue;
+        if (status[2] !== '0') {
+          if (registrySettlement && status[2] !== '1') registryFailure = true;
+          continue;
+        }
+        completed += 1;
         const className = /^INSTRUMENTATION_STATUS: class=(.+)$/mu.exec(status[1])?.[1].trim();
         const method = /^INSTRUMENTATION_STATUS: test=(.+)$/mu.exec(status[1])?.[1].trim();
         if (className && method) executed.add(`${className}#${method}`);
@@ -252,12 +293,13 @@ try {
       const requested = classes.split(',');
       if (
         requested.some((method) => !executed.has(method)) ||
-        Number(/OK \((\d+) tests?\)/u.exec(result)?.[1]) !== requested.length
+        Number(/OK \((\d+) tests?\)/u.exec(result)?.[1]) !== requested.length ||
+        (registrySettlement && (completed !== 1 || executed.size !== 1 || registryFailure))
       )
         throw new Error('Requested instrumentation did not complete every requested method.');
     }
   }
-  if (!platformProof && !svgOnly && !hardwarePressure && !topicShare) {
+  if (!platformProof && !svgOnly && !hardwarePressure && !topicShare && !registrySettlement) {
     for (const [stage, method] of [
       ['write', 'persistRenewalBeforeProcessExit'],
       ['read', 'restartedProcessAuthenticatesWithPersistedRenewal']
@@ -349,7 +391,7 @@ try {
   const errors = [];
   for (const cleanup of [
     () => {
-      if (restoreImagePermission)
+      if (imagePermissionPolicy === 'revoke-required')
         execFileSync('adb', [
           '-s',
           serial,

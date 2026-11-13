@@ -387,6 +387,49 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun deniedClearanceReadsStillResolveSourcesAndPropagateResolverFailures() {
+    var resolvedSource: String? = "nodeseek"
+    var resolverFailure: IOException? = null
+    var resolutions = 0
+    var cookieReads = 0
+    val sent = mutableListOf<Request>()
+    val client = OkHttpClient.Builder()
+      .addInterceptor(ForumReadRequestInterceptor())
+      .addInterceptor(ForumReadClearanceInterceptor(
+        {
+          resolutions++
+          resolverFailure?.let { throw it }
+          resolvedSource
+        },
+        { cookieReads++; "session=account; cf_clearance=fixture" }
+      ))
+      .addInterceptor { chain -> sent.add(chain.request()); responseFor(chain.request()) }
+      .build()
+    client.newCall(Request.Builder().url("https://same.test/t/1")
+      .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+      .header(FORUM_READ_COOKIE_POLICY_HEADER, "clearance-only")
+      .header("Cookie", "session=caller").build()).execute().close()
+    val bound = sent.single()
+    assertNull(bound.header(FORUM_READ_SOURCE_HEADER))
+    assertNull(bound.header(FORUM_READ_COOKIE_POLICY_HEADER))
+
+    resolvedSource = null
+    client.newCall(bound).execute().close()
+    resolvedSource = "nodeseek"
+    client.newCall(bound).execute().close()
+    val failure = IOException("source resolution failed")
+    resolverFailure = failure
+    assertSame(failure, assertThrows(IOException::class.java) { client.newCall(bound).execute().close() })
+    assertEquals(3, sent.size)
+    resolverFailure = null
+    client.newCall(bound).execute().close()
+
+    assertEquals(listOf("cf_clearance=fixture", null, null, null), sent.map { it.header("Cookie") })
+    assertEquals(5, resolutions)
+    assertEquals(1, cookieReads)
+  }
+
+  @Test
   fun staleHttp2ImagesRecoverOnNewConnectionAfterCancelAndReopen() =
     Http2ImageFaultFixture().use { it.assertRecoveryAfterReopen() }
 
@@ -696,6 +739,10 @@ class NetworkProxyRuntimeTest {
     cleanupFirstFetcher.cleanup()
     cleanupFirstFetcher.cancel()
     assertEquals(1, cleanupFirstBody.closeCount.get())
+    assertTrue("cancel after cleanup must still cancel the retained call", cleanupFirstFactory.latest.isCanceled())
+    cleanupFirstFetcher.loadData(Priority.NORMAL, RecordingGlideCallback())
+    assertTrue("a load after cleanup must cancel its newly created call", cleanupFirstFactory.latest.isCanceled())
+    assertFalse("a rejected load must not enqueue", cleanupFirstFactory.latest.isExecuted())
 
     val cancelFirstFactory = ControllableGlideCallFactory()
     val cancelFirstCallback = RecordingGlideCallback()
@@ -708,6 +755,31 @@ class NetworkProxyRuntimeTest {
     cancelFirstFetcher.cancel()
     cancelFirstFetcher.cleanup()
     assertEquals(1, cancelFirstBody.closeCount.get())
+  }
+
+  @Test
+  fun responseCallbackCanCleanupAndCancelWithoutRevivingTheFetcher() {
+    val factory = ControllableGlideCallFactory()
+    val fetcher = closeSafeGlideFetcher(factory)
+    val body = CloseCountingResponseBody("reentrant-image")
+    val ready = AtomicInteger()
+    val failed = AtomicInteger()
+    fetcher.loadData(Priority.NORMAL, object : DataFetcher.DataCallback<InputStream> {
+      override fun onDataReady(data: InputStream?) {
+        ready.incrementAndGet()
+        fetcher.cleanup()
+        fetcher.cancel()
+      }
+      override fun onLoadFailed(error: Exception) { failed.incrementAndGet() }
+    })
+    factory.latest.respond(200, body)
+    factory.latest.fail(IOException("late platform failure"))
+    fetcher.cleanup()
+    fetcher.cancel()
+    assertEquals(1, ready.get())
+    assertEquals(0, failed.get())
+    assertEquals(1, body.closeCount.get())
+    assertTrue(factory.latest.isCanceled())
   }
 
   @Test
@@ -1040,6 +1112,56 @@ class NetworkProxyRuntimeTest {
     } finally {
       server.close()
       executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun nestedMediaCookiePoliciesRestoreTheOuterGrantAfterFailure() {
+    for (downgradeOuter in listOf(false, true)) {
+      val target = java.net.URI("https://same.test/media.png")
+      var sourceReads = 0
+      val sourceForUri: (java.net.URI) -> String? = { uri ->
+        sourceReads++
+        if (uri.host == "same.test") "nodeseek" else null
+      }
+      var failNextRead = true
+      var cookieReads = 0
+      val cookieHeaders = mapOf("Cookie" to listOf("session=live"))
+      val handler = ReadOnlyWebViewCookieHandler(sourceForUri = sourceForUri) {
+        cookieReads++
+        if (failNextRead) {
+          failNextRead = false
+          throw IOException("transient cookie read")
+        }
+        "session=live"
+      }
+      val request = Request.Builder().url(target.toString()).header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek").build()
+      val innerFailure = IOException("nested media request failed")
+      val inner = OkHttpClient.Builder()
+        .addInterceptor(ForumMediaRequestInterceptor(sourceForUri, { "provider-user-agent" }))
+        .addInterceptor(Interceptor {
+          assertEquals(cookieHeaders, handler.get(target, emptyMap()))
+          throw innerFailure
+        })
+        .build()
+      val outer = OkHttpClient.Builder()
+        .addInterceptor(ForumMediaRequestInterceptor(sourceForUri, { "provider-user-agent" }))
+        .addInterceptor(Interceptor { chain ->
+          assertTrue(handler.get(target, emptyMap()).isEmpty())
+          assertEquals(cookieHeaders, handler.get(target, emptyMap()))
+          if (downgradeOuter) {
+            assertTrue(handler.get(java.net.URI("https://external.test/media.png"), emptyMap()).isEmpty())
+          }
+          assertSame(innerFailure, assertThrows(IOException::class.java) { inner.newCall(request).execute().close() })
+          val restored = handler.get(target, emptyMap())
+          if (downgradeOuter) assertTrue(restored.isEmpty()) else assertEquals(cookieHeaders, restored)
+          responseFor(chain.request())
+        })
+        .build()
+
+      outer.newCall(request).execute().use { assertEquals(200, it.code) }
+      assertEquals(if (downgradeOuter) 3 else 4, cookieReads)
+      assertEquals(if (downgradeOuter) 7 else 6, sourceReads)
     }
   }
 
@@ -1963,6 +2085,37 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun resettingTheCronetCacheRetiresItsHandleAndAllowsReplacement() {
+    NetworkProxyRuntime.setLocalProxyPort(null)
+    val expectedGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
+    val retired = mutableListOf<Pair<Long, Boolean>>()
+    fun transport(id: Long): CronetMediaTransportHandle = object : CronetMediaTransportHandle {
+      override val generation = expectedGeneration * 1_000_000L + id
+
+      override fun execute(request: Request, outerCall: Call): Response? = null
+
+      override fun activeCallsCount(): Int = 0
+
+      override fun retire(cancelActive: Boolean) {
+        retired += id to cancelActive
+      }
+    }
+    val first = transport(1)
+    val second = transport(2)
+    try {
+      assertTrue(NetworkProxyRuntime.installCronetMediaTransportForTests(expectedGeneration, first))
+      assertFalse(NetworkProxyRuntime.installCronetMediaTransportForTests(expectedGeneration, second))
+      assertTrue(retired.isEmpty())
+      NetworkProxyRuntime.setLocalProxyPort(null)
+      assertEquals(listOf(1L to true), retired)
+      assertEquals(expectedGeneration, NetworkProxyRuntime.currentReadNetworkGeneration())
+      assertTrue(NetworkProxyRuntime.installCronetMediaTransportForTests(expectedGeneration, second))
+    } finally {
+      NetworkProxyRuntime.setLocalProxyPort(null)
+    }
+  }
+
+  @Test
   fun regProxy010TreatsAnActiveCronetBodyAsOutstandingRuntimeWork() {
     val expectedGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
     val activeBodies = AtomicInteger(1)
@@ -2222,6 +2375,31 @@ class NetworkProxyRuntimeTest {
     assertNotNull("native startup must fail closed", proxy)
     assertEquals(Proxy.Type.HTTP, proxy?.type())
     assertEquals(9, (proxy?.address() as InetSocketAddress).port)
+
+    val selector = NetworkProxySelector()
+    val systemProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress.createUnresolved("system.invalid", 8080))
+    selector.setDelegate(object : java.net.ProxySelector() {
+      override fun select(uri: java.net.URI?) = mutableListOf(systemProxy)
+      override fun connectFailed(uri: java.net.URI?, address: java.net.SocketAddress?, error: IOException?) = Unit
+    })
+    val remote = java.net.URI("https://example.invalid/probe")
+    try {
+      NetworkProxyRuntime.setLocalProxyPort(null)
+      assertNull(NetworkProxyRuntime.currentLocalProxy())
+      assertSame(systemProxy, selector.select(remote).single())
+      assertSame(Proxy.NO_PROXY, NetworkProxySelector().select(remote).single())
+      selector.setDelegate(null)
+      assertSame(Proxy.NO_PROXY, selector.select(remote).single())
+      NetworkProxyRuntime.setLocalProxyPort(49152)
+      val relay = requireNotNull(NetworkProxyRuntime.currentLocalProxy())
+      assertEquals(49152, NetworkProxyRuntime.currentLocalProxyPort())
+      assertSame(relay, selector.select(remote).single())
+      NetworkProxyRuntime.blockNetworkRequests()
+      assertSame(proxy, NetworkProxyRuntime.currentLocalProxy())
+      assertEquals(9, NetworkProxyRuntime.currentLocalProxyPort())
+      assertSame(proxy, selector.select(remote).single())
+      assertSame(Proxy.NO_PROXY, selector.select(java.net.URI("http://localhost/probe")).single())
+    } finally { NetworkProxyRuntime.blockNetworkRequests() }
   }
 
   @Test
@@ -2236,6 +2414,23 @@ class NetworkProxyRuntimeTest {
     assertFalse(probes.register(late))
     assertEquals(listOf(late), released)
     assertNull(probes.invalidate())
+  }
+
+  @Test
+  fun staleProbeCompletionCannotClearItsReplacement() {
+    val released = mutableListOf<Any>()
+    val probes = InvalidatableResourceSlot<Any> { released.add(it) }
+    val previous = Any()
+    val replacement = Any()
+
+    assertTrue(probes.register(previous))
+    assertTrue(probes.register(replacement))
+    probes.clear(previous)
+    assertSame(replacement, probes.invalidate())
+    probes.clear(replacement)
+    val late = Any()
+    assertFalse(probes.register(late))
+    assertEquals(listOf(late), released)
   }
 
   @Test
@@ -2399,6 +2594,25 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun proxyOwnerCallbackFailuresPreserveMutationAndReceiptOrdering() {
+    val registry = OwnedProxyServerRegistry()
+    val failure = IllegalStateException("callback failure")
+    registry.register(1)
+
+    assertSame(failure, assertThrows(IllegalStateException::class.java) { registry.begin(1) { throw failure } })
+    registry.requireCurrent(1)
+    assertEquals(0L, registry.generation())
+    assertSame(failure, assertThrows(IllegalStateException::class.java) { registry.commit(1, null) { throw failure } })
+    registry.requireCurrent(1)
+    assertEquals(0L, registry.generation())
+
+    assertSame(failure, assertThrows(IllegalStateException::class.java) { registry.release(1) { throw failure } })
+    assertThrows(IllegalStateException::class.java) { registry.requireCurrent(1) }
+    assertEquals(0L, registry.generation())
+    assertNull(registry.release(1) { throw AssertionError("released owner must not run callbacks again") })
+  }
+
+  @Test
   fun newerBridgeRegistrationInvalidatesAnOlderCommit() {
     val registry = OwnedProxyServerRegistry()
     val oldServer = LocalNetworkProxyServer(NetworkProxyProfile("http", "127.0.0.1", 1, null, null))
@@ -2552,6 +2766,27 @@ class NetworkProxyRuntimeTest {
     } finally {
       probe.stop()
       probeExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun stoppedProxyRejectsProbeAndRestartAfterRepeatedStop() {
+    val connectorCalls = AtomicInteger()
+    val server = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
+      socketConnector = { _, _, _ ->
+        connectorCalls.incrementAndGet()
+        throw AssertionError("a stopped proxy must reject before connecting")
+      }
+    )
+    try {
+      server.stop()
+      server.stop()
+      assertThrows(SocketException::class.java) { server.test() }
+      assertEquals(0, connectorCalls.get())
+      assertThrows(java.util.concurrent.RejectedExecutionException::class.java) { server.start() }
+    } finally {
+      server.stop()
     }
   }
 
@@ -3223,6 +3458,83 @@ class NetworkProxyRuntimeTest {
       held.forEach(Socket::close)
       overflow?.close()
       server.stop()
+    }
+  }
+
+  @Test
+  fun cronetRetirementWaitsForBodiesAndClaimsShutdownBeforeReentrantSdkClose() {
+    val executor = Executors.newSingleThreadScheduledExecutor()
+    val closed = AtomicInteger()
+    val closeFinished = CountDownLatch(1)
+    val failure = IOException("synthetic delegate failure")
+    val created = mutableListOf<Call>()
+    val client = OkHttpClient.Builder().addInterceptor { chain ->
+      if (chain.request().url.encodedPath == "/fail") throw failure
+      Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200)
+        .message("OK").body("payload".toResponseBody()).build()
+    }.build()
+    val factory = Call.Factory { request -> client.newCall(request).also { created.add(it) } }
+    lateinit var transport: CronetMediaTransport
+    transport = CronetMediaTransport(17L, factory, executor) {
+      closed.incrementAndGet()
+      transport.retire(cancelActive = false)
+      closeFinished.countDown()
+    }
+    val request = Request.Builder().url("https://example.invalid/media").build()
+    val outer = client.newCall(request)
+    try {
+      assertSame(failure, assertThrows(IOException::class.java) {
+        transport.execute(request.newBuilder().url("https://example.invalid/fail").build(), outer)
+      })
+      assertTrue(created.single().isCanceled())
+      assertEquals(0, transport.activeCallsCount())
+      requireNotNull(transport.execute(request, outer)).use { first ->
+        requireNotNull(transport.execute(request, outer)).use { second ->
+          val active = created.takeLast(2)
+          assertEquals(2, transport.activeCallsCount())
+          transport.retire(cancelActive = false)
+          assertTrue(active.none { it.isCanceled() })
+          assertEquals(0, closed.get())
+          assertNull(transport.execute(request, outer))
+          assertTrue(created.last().isCanceled())
+          assertEquals("payload", first.body!!.string())
+          assertEquals(1, transport.activeCallsCount())
+          first.close()
+          assertEquals(1, transport.activeCallsCount())
+          transport.retire(cancelActive = true)
+          assertTrue(active[1].isCanceled())
+          assertEquals(0, closed.get())
+          second.close()
+          assertTrue(closeFinished.await(2, TimeUnit.SECONDS))
+          assertEquals(0, transport.activeCallsCount())
+          assertEquals(1, closed.get())
+          transport.retire(cancelActive = true)
+          assertEquals(1, closed.get())
+        }
+      }
+    } finally {
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun cronetShutdownSchedulingFailureDoesNotReopenItsConsumedClaim() {
+    val executor = Executors.newSingleThreadScheduledExecutor()
+    val closed = AtomicInteger()
+    val client = OkHttpClient()
+    val transport = CronetMediaTransport(18L, client, executor) { closed.incrementAndGet() }
+    val request = Request.Builder().url("https://example.invalid/media").build()
+    try {
+      executor.shutdown()
+      assertThrows(java.util.concurrent.RejectedExecutionException::class.java) {
+        transport.retire(cancelActive = false)
+      }
+      transport.retire(cancelActive = true)
+      assertEquals(0, closed.get())
+      assertEquals(0, transport.activeCallsCount())
+      assertNull(transport.execute(request, client.newCall(request)))
+    } finally {
+      executor.shutdownNow()
     }
   }
 }

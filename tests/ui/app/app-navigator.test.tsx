@@ -301,7 +301,7 @@ describe('App navigator UI state', () => {
       });
       await waitFor(() => expect(view.getByText('Topic A')).toBeTruthy());
 
-      expect(view.getByTestId(`main-tab-${route}`, { includeHiddenElements: true })).toBe(tab);
+      expect(Object.is(view.getByTestId(`main-tab-${route}`, { includeHiddenElements: true }), tab)).toBe(true);
       const coveredGlass = view.getByTestId('navigation-glass', { includeHiddenElements: true });
       expect({
         sameTarget: coveredGlass.props.blurTarget?.current === target,
@@ -309,8 +309,8 @@ describe('App navigator UI state', () => {
       }).toEqual({ sameTarget: true, sameGlass: true });
 
       await act(async () => navigationRef.goBack());
-      expect(view.getByTestId('navigation-glass')).toBe(glass);
-      expect(view.getByTestId('navigation-glass').props.blurTarget?.current).toBe(target);
+      expect(Object.is(view.getByTestId('navigation-glass'), glass)).toBe(true);
+      expect(Object.is(view.getByTestId('navigation-glass').props.blurTarget?.current, target)).toBe(true);
     }
   );
 
@@ -323,9 +323,9 @@ describe('App navigator UI state', () => {
       expect(glass.props.blurMethod).toBe('dimezisBlurViewSdk31Plus');
       const target: unknown = glass.props.blurTarget?.current;
       expect(target).toBeTruthy();
-      if (targets.has(route)) expect(target).toBe(targets.get(route));
+      if (targets.has(route)) expect(Object.is(target, targets.get(route))).toBe(true);
       else {
-        expect([...targets.values()]).not.toContain(target);
+        expect([...targets.values()].indexOf(target)).toBe(-1);
         targets.set(route, target);
       }
     }
@@ -477,7 +477,7 @@ describe('App navigator UI state', () => {
         expect(view.getByLabelText('搜索状态').props.value).toBe(`search-${round}`);
         await fireEvent.press(view.getByTestId('main-tab-feed'));
         expect(view.getByLabelText('首页状态').props.value).toBe(`feed-${round}`);
-        await view.unmount();
+        await cleanup();
         view = undefined;
         expect(listeners.size).toBe(0);
         expect(removeListener).toHaveBeenCalledTimes(round + 1);

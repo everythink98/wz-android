@@ -34,6 +34,60 @@ describe('keyed serial runner', () => {
     await expect(runner.run('key', async () => 'next')).resolves.toBe('next');
   });
 
+  it.each(['fulfilled', 'rejected'] as const)(
+    'dispatches queued work before follow-up observer microtasks after a %s result',
+    async (outcome) => {
+      const runner = createKeyedSerialRunner<string>();
+      const pending = Promise.withResolvers<string>();
+      const events: string[] = [];
+      const first = runner.run('key', () => {
+        events.push('first');
+        return pending.promise;
+      });
+      const second = runner.run('key', async () => {
+        events.push('second');
+      });
+      const observe = () => {
+        events.push('observer');
+        queueMicrotask(() => events.push('observer:microtask'));
+        return runner.run('key', async () => {
+          events.push('third');
+        });
+      };
+      const observed = first.then(observe, observe);
+
+      expect(events).toEqual([]);
+      if (outcome === 'fulfilled') pending.resolve('done');
+      else pending.reject(new Error('failed'));
+      await Promise.all([observed, second]);
+
+      expect(events).toEqual(['first', 'observer', 'second', 'observer:microtask', 'third']);
+    }
+  );
+
+  it('queues reentrant work and recovers after an operation throws synchronously', async () => {
+    const runner = createKeyedSerialRunner<string>();
+    const events: string[] = [];
+    const failure = new Error('failed before returning a promise');
+    let nested: Promise<void> | undefined;
+    const first = runner.run('key', () => {
+      events.push('first');
+      nested = runner.run('key', async () => {
+        events.push('nested');
+      });
+      throw failure;
+    });
+    const second = runner.run('key', async () => {
+      events.push('second');
+    });
+
+    expect(events).toEqual([]);
+    await expect(first).rejects.toBe(failure);
+    await second;
+    await nested;
+    expect(events).toEqual(['first', 'second', 'nested']);
+  });
+
   it('keeps later work behind the current owner after an older job settles', async () => {
     const runner = createKeyedSerialRunner<string>();
     const first = Promise.withResolvers<void>();

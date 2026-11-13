@@ -225,21 +225,62 @@ describe('topic draft lifecycle', () => {
 
   it('opens only one document picker for repeated attachment taps', async () => {
     const picker = deferred<DocumentPicker.DocumentPickerResult>();
+    const upload = deferred<Response>();
+    const transport = createTopicProofTransport('success');
+    const saved = storedDraft();
+    saved.attachments = [attachment(saved)];
+    let uploads = 0;
     jest.mocked(DocumentPicker.getDocumentAsync).mockClear().mockReturnValue(picker.promise);
-    const hook = await setup();
-    let first!: ReturnType<typeof hook.result.current.pickAttachments>;
-    let second!: typeof first;
-    await act(() => {
-      first = hook.result.current.pickAttachments('image');
-      second = hook.result.current.pickAttachments('image');
-    });
-    await waitFor(() => expect(DocumentPicker.getDocumentAsync).toHaveBeenCalled());
-    const calls = jest.mocked(DocumentPicker.getDocumentAsync).mock.calls.length;
-    await act(async () => {
-      picker.resolve({ canceled: true, assets: null });
-      await Promise.all([first, second]);
-    });
-    expect(calls).toBe(1);
+    const hook = await setup(
+      saved,
+      runtimeFor('123', (url, init) => {
+        if (url !== 'https://api.nodeimage.com/api/upload') return transport.fetcher(url, init);
+        prepareRequestToSend(init);
+        uploads++;
+        return upload.promise.then((value) => value.clone());
+      })
+    );
+    const actions: Promise<unknown>[] = [];
+    try {
+      await act(() => {
+        actions.push(hook.result.current.pickAttachments('image'));
+        actions.push(hook.result.current.pickAttachments('image'));
+      });
+      await waitFor(() => expect(DocumentPicker.getDocumentAsync).toHaveBeenCalledTimes(1));
+      await act(() => {
+        actions.push(hook.result.current.uploadFiles(saved.attachments, false));
+      });
+      await waitFor(() => expect(uploads).toBe(1));
+      await act(async () => {
+        picker.resolve({ canceled: true, assets: null });
+        await Promise.all(actions.slice(0, 2));
+      });
+      let duplicateResult: 'pending' | 'resolved' | 'rejected' = 'pending';
+      await act(() => {
+        actions.push(
+          hook.result.current.uploadFiles(saved.attachments, false).then(
+            () => {
+              duplicateResult = 'resolved';
+            },
+            () => {
+              duplicateResult = 'rejected';
+            }
+          )
+        );
+      });
+      await waitFor(() => expect(duplicateResult !== 'pending' || uploads > 1).toBe(true));
+      expect(uploads).toBe(1);
+      expect(duplicateResult).toBe('resolved');
+    } finally {
+      await act(async () => {
+        picker.resolve({ canceled: true, assets: null });
+        upload.resolve(response('{"url":"https://img.invalid/picker-retained.gif"}'));
+        await Promise.allSettled(actions);
+      });
+      await hook.unmount();
+    }
+    expect(DocumentPicker.getDocumentAsync).toHaveBeenCalledTimes(1);
+    expect((await loadTopicDraft(saved.source, saved.identityKey))?.attachments[0]?.status).toBe('uploaded');
   });
 
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
@@ -299,14 +340,52 @@ describe('topic draft lifecycle', () => {
     const transport = createTopicProofTransport('success');
     const saved = storedDraft();
     const hook = await setup(saved, runtimeFor('123', transport.fetcher));
-    const requestSnapshot = jest.fn(async () => snapshot(saved.body));
+    const pendingSnapshot = deferred<ComposerSnapshot>();
+    const requestSnapshot = jest.fn(() => pendingSnapshot.promise);
     hook.result.current.editorRef.current = editorHandle({ requestSnapshot });
-    await act(async () => {
-      await hook.result.current.switchSource('linuxdo');
-    });
-    await waitFor(() => expect(hook.result.current.draft?.source).toBe('linuxdo'));
-    expect(requestSnapshot).toHaveBeenCalledTimes(1);
-    expect((await loadTopicDraft('nodeseek', saved.identityKey))?.body).toBe(saved.body);
+    const actions: Promise<unknown>[] = [];
+    let switching!: Promise<void>;
+    try {
+      await act(() => {
+        switching = hook.result.current.switchSource('linuxdo');
+        actions.push(switching);
+      });
+      await waitFor(() => expect(requestSnapshot).toHaveBeenCalledTimes(1));
+      let leaveResult: boolean | 'pending' | 'rejected' = 'pending';
+      await act(() => {
+        actions.push(hook.result.current.switchSource('yaohuo'));
+        actions.push(
+          hook.result.current.leave().then(
+            (allow) => {
+              leaveResult = allow;
+            },
+            () => {
+              leaveResult = 'rejected';
+            }
+          )
+        );
+        actions.push(hook.result.current.submit());
+      });
+      await waitFor(() => expect(leaveResult !== 'pending' || requestSnapshot.mock.calls.length > 1).toBe(true));
+      expect(requestSnapshot).toHaveBeenCalledTimes(1);
+      expect(leaveResult).toBe(false);
+      expect(hook.result.current.source).toBe('nodeseek');
+      expect(hook.result.current.busy).toBe(false);
+      expect(transport.writes).toEqual([]);
+      await act(async () => {
+        pendingSnapshot.resolve(snapshot(saved.body));
+        await switching;
+      });
+      await waitFor(() => expect(hook.result.current.draft?.source).toBe('linuxdo'));
+      expect(requestSnapshot).toHaveBeenCalledTimes(1);
+      expect((await loadTopicDraft('nodeseek', saved.identityKey))?.body).toBe(saved.body);
+    } finally {
+      await act(async () => {
+        pendingSnapshot.resolve(snapshot(saved.body));
+        await Promise.allSettled(actions);
+      });
+      await hook.unmount();
+    }
   });
 
   it('retains all valid picked files and reports the invalid file by name', async () => {

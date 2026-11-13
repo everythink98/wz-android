@@ -120,9 +120,12 @@ export const FeedScreen = memo(function FeedScreen({
   const [secondaryHeaderHeight, setSecondaryHeaderHeight] = useState(46);
   const internalListRef = useRef<FlashListRef<Topic>>(null);
   const listRef = scrollRef || internalListRef;
-  const renderedSourceRef = useRef({ source: feedSource, hasList: false });
+  const renderedSourceRef = useRef<{ source: FeedSource; phase: 'waiting' | 'rendered' }>({
+    source: feedSource,
+    phase: 'waiting'
+  });
   if (renderedSourceRef.current.source !== feedSource)
-    renderedSourceRef.current = { source: feedSource, hasList: false };
+    renderedSourceRef.current = { source: feedSource, phase: 'waiting' };
   const { width: pagerWidth } = useWindowDimensions();
   const requestedFeedPageRef = useRef<{ page: number } | null>(null);
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
@@ -144,12 +147,11 @@ export const FeedScreen = memo(function FeedScreen({
     [enabledFeedSources]
   );
   const allSourcesDisabled = enabledFeedSources.length === 0;
-  const initialListLoadedRef = useRef(false);
-  const initialContentReadyReportedRef = useRef(false);
+  const initialContentPhaseRef = useRef<'awaiting-list' | 'awaiting-terminal' | 'reported'>('awaiting-list');
   const initialContentTerminal = !busy && (allSourcesDisabled || Boolean(feedOutcomeKind));
   const reportInitialContentReady = useCallback(() => {
-    if (initialContentReadyReportedRef.current) return;
-    initialContentReadyReportedRef.current = true;
+    if (initialContentPhaseRef.current === 'reported') return;
+    initialContentPhaseRef.current = 'reported';
     recordStartupPhase(
       allSourcesDisabled
         ? 'feed-empty'
@@ -162,11 +164,11 @@ export const FeedScreen = memo(function FeedScreen({
     onInitialContentReady?.();
   }, [allSourcesDisabled, feedItems.length, feedOutcomeKind, onInitialContentReady]);
   const handleInitialListLoad = useCallback(() => {
-    initialListLoadedRef.current = true;
+    if (initialContentPhaseRef.current === 'awaiting-list') initialContentPhaseRef.current = 'awaiting-terminal';
     if (initialContentTerminal) reportInitialContentReady();
   }, [initialContentTerminal, reportInitialContentReady]);
   useEffect(() => {
-    if (initialListLoadedRef.current && initialContentTerminal) reportInitialContentReady();
+    if (initialContentPhaseRef.current !== 'awaiting-list' && initialContentTerminal) reportInitialContentReady();
   }, [initialContentTerminal, reportInitialContentReady]);
   const visibleFeedItems = useMemo(() => (allSourcesDisabled ? [] : feedItems), [allSourcesDisabled, feedItems]);
   const activeFeedSourceIndex = Math.max(
@@ -437,10 +439,10 @@ export const FeedScreen = memo(function FeedScreen({
       if (!routeSource || routeSource !== feedSource) {
         return renderFeedLoadingScene();
       }
-      if (visibleFeedItems.length === 0 && busy && !renderedSourceRef.current.hasList) {
+      if (visibleFeedItems.length === 0 && busy && renderedSourceRef.current.phase === 'waiting') {
         return renderFeedLoadingScene();
       }
-      renderedSourceRef.current.hasList = true;
+      renderedSourceRef.current.phase = 'rendered';
       return (
         <View style={styles.content}>
           <FlashList

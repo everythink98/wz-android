@@ -15,7 +15,7 @@ const topic: Topic = {
 function callbacks() {
   return {
     onClose: jest.fn(),
-    onShareLink: jest.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
+    onShareLink: jest.fn<(signal: AbortSignal) => Promise<unknown>>().mockResolvedValue(undefined),
     onCopyLink: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onShareImage: jest.fn()
   };
@@ -78,11 +78,16 @@ describe('Topic share options', () => {
         await fireEvent.press(button);
       }
       expect(operation).toHaveBeenCalledTimes(1);
+      const shareSignal = actions.onShareLink.mock.calls[0]?.[0];
       expect(actions.onShareImage).not.toHaveBeenCalled();
       const [close] = view.getAllByRole('button', { name: /^关闭/ });
       expect(close).toBeEnabled();
       await fireEvent.press(close);
       expect(actions.onClose).toHaveBeenCalledTimes(1);
+      if (name === '分享链接') {
+        expect(shareSignal).toBeDefined();
+        expect(shareSignal?.aborted).toBe(true);
+      }
 
       await act(async () => {
         if (name === '分享链接') pending.reject(new Error('late sharing failure'));
@@ -92,6 +97,7 @@ describe('Topic share options', () => {
       expect(actions.onClose).toHaveBeenCalledTimes(1);
       expect(view.queryByText('链接已复制')).toBeNull();
       expect(view.queryByRole('alert')).toBeNull();
+      expect(view.getByRole('button', { name })).toBeDisabled();
     }
   );
 

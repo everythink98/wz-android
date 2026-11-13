@@ -94,6 +94,24 @@ afterEach(() => {
 });
 
 describe('NodeSeek poll journal', () => {
+  it('retries a failed initialization for the next queued read and reuses its retained connection', async () => {
+    const store = await load();
+    harness.fail = 'PRAGMA busy_timeout';
+    const failed = expect(store.readNodeSeekPollJournalEntry(identity, 'poll_missing_001')).rejects.toThrow(
+      'injected storage failure'
+    );
+    const queued = store.readNodeSeekPollJournalEntry(identity, 'poll_missing_002');
+
+    await failed;
+    await expect(queued).resolves.toBeNull();
+    expect(harness.connections).toHaveLength(1);
+    const retained = harness.connections[0];
+
+    await expect(store.readNodeSeekPollJournalEntry(identity, 'poll_missing_003')).resolves.toBeNull();
+    expect(harness.connections).toHaveLength(1);
+    expect(harness.connections[0]).toBe(retained);
+  });
+
   it('keeps the newer committed id when another connection finishes migration before a stale legacy read', async () => {
     const original = entry('poll_migration_race', null);
     const snapshot = JSON.stringify([original]);

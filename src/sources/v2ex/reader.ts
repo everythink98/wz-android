@@ -48,6 +48,8 @@ const V2EX_FEED_CURSOR_LIMIT = 200;
 const V2EX_LINKED_REPLY_PAGE_LIMIT = 100;
 const V2EX_REPLY_PAGE_SIZE = 100;
 const V2EX_HTML_TIMEZONE = '+08:00';
+type V2exFeedScan =
+  { kind: 'reading'; page: number; items: Topic[] } | { kind: 'ready'; items: Topic[]; remoteHasMore: boolean };
 
 export interface V2exOptions {
   cursor?: string | null;
@@ -79,6 +81,23 @@ type V2exHtmlDetail = {
   repliesByCommentId: Map<number, V2exHtmlReplyMeta>;
   repliesByFloor: Map<number, V2exHtmlReplyMeta>;
 };
+
+type V2exReplyRead =
+  | { kind: 'seed'; detail: V2exHtmlDetail }
+  | {
+      kind: 'target-scan';
+      page: number;
+      detail: V2exHtmlDetail;
+      known: Set<number>;
+      visited: Set<number>;
+      candidates: Reply[];
+      target: ReplyLocationTarget;
+      floorPage: number | undefined;
+    }
+  | { kind: 'tail-scan'; page: number; detail: V2exHtmlDetail; known: Set<number>; visited: Set<number> }
+  | { kind: 'ready'; page: number; detail: V2exHtmlDetail; known: Set<number> }
+  | { kind: 'fallback-failed-html' }
+  | { kind: 'fallback-insufficient-html'; detail: V2exHtmlDetail };
 
 const V2EX_REPLY_COLLECTION_ERROR = 'V2EX 回复总数已变化，无法确认完整集合';
 
@@ -693,45 +712,43 @@ async function fetchHtmlWindow(
     return null;
   }
   if (!options.category && options.seenIds?.size) {
-    let collected: Topic[] = [];
-    let htmlPage = 1;
-    let lastHasMore = false;
-    while (collected.length < options.limit) {
-      const html = await fetchText(`${BASE_URL}${path}?p=${htmlPage}`, options);
-      const pageResult = parseV2exListPage(html, htmlPage, path, options.category);
-      collected = mergeTopics(
-        collected,
+    let scan: V2exFeedScan =
+      0 < options.limit ? { kind: 'reading', page: 1, items: [] } : { kind: 'ready', items: [], remoteHasMore: false };
+    while (scan.kind === 'reading') {
+      const html = await fetchText(`${BASE_URL}${path}?p=${scan.page}`, options);
+      const pageResult = parseV2exListPage(html, scan.page, path, options.category);
+      const items: Topic[] = mergeTopics(
+        scan.items,
         pageResult.items.filter((item) => !options.seenIds?.has(item.id))
       );
-      lastHasMore = pageResult.hasMore;
-      if (!pageResult.hasMore || pageResult.items.length === 0) {
-        break;
-      }
-      htmlPage += 1;
+      scan =
+        pageResult.hasMore && pageResult.items.length > 0 && items.length < options.limit
+          ? { kind: 'reading', page: scan.page + 1, items }
+          : { kind: 'ready', items, remoteHasMore: pageResult.hasMore };
     }
-    const items = collected.slice(0, options.limit);
-    const hasMore = items.length === options.limit && (collected.length > options.limit || lastHasMore);
+    const items = scan.items.slice(0, options.limit);
+    const hasMore = items.length === options.limit && (scan.items.length > options.limit || scan.remoteHasMore);
     return { items, hasMore, nextPage: hasMore ? options.page + 1 : null };
   }
   const start = v2exHtmlWindowStart(options);
   const firstHtmlPage = Math.floor(start / HTML_LIST_PAGE_SIZE) + 1;
   const skip = start % HTML_LIST_PAGE_SIZE;
   const needed = skip + options.limit;
-  const collected: Topic[] = [];
-  let htmlPage = firstHtmlPage;
-  let lastHasMore = false;
-  while (collected.length < needed) {
-    const html = await fetchText(`${BASE_URL}${path}?p=${htmlPage}`, options);
-    const pageResult = parseV2exListPage(html, htmlPage, path, options.category);
-    collected.push(...pageResult.items);
-    lastHasMore = pageResult.hasMore;
-    if (!pageResult.hasMore || pageResult.items.length === 0) {
-      break;
-    }
-    htmlPage += 1;
+  let scan: V2exFeedScan =
+    0 < needed
+      ? { kind: 'reading', page: firstHtmlPage, items: [] }
+      : { kind: 'ready', items: [], remoteHasMore: false };
+  while (scan.kind === 'reading') {
+    const html = await fetchText(`${BASE_URL}${path}?p=${scan.page}`, options);
+    const pageResult = parseV2exListPage(html, scan.page, path, options.category);
+    scan.items.push(...pageResult.items);
+    scan =
+      pageResult.hasMore && pageResult.items.length > 0 && scan.items.length < needed
+        ? { kind: 'reading', page: scan.page + 1, items: scan.items }
+        : { kind: 'ready', items: scan.items, remoteHasMore: pageResult.hasMore };
   }
-  const items = collected.slice(skip, skip + options.limit);
-  const hasMore = items.length === options.limit && (collected.length > skip + options.limit || lastHasMore);
+  const items = scan.items.slice(skip, skip + options.limit);
+  const hasMore = items.length === options.limit && (scan.items.length > skip + options.limit || scan.remoteHasMore);
   return { items, hasMore, nextPage: hasMore ? options.page + 1 : null };
 }
 
@@ -1102,62 +1119,85 @@ export async function getV2exReplies(
     return result;
   }
 
-  let detailHtmlFailed = false;
-  let detail: V2exHtmlDetail | null = null;
+  let read: V2exReplyRead;
   try {
-    detail = await readHtmlPage(1);
+    read = { kind: 'seed', detail: await readHtmlPage(1) };
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    detailHtmlFailed = true;
+    read = { kind: 'fallback-failed-html' };
   }
   const target = position.kind === 'target' ? position.target : undefined;
-  const firstReplies = visibleV2exHtmlReplyPage(detail, 1, target);
-  const firstReplyCount = detail?.replyCountConflict ? options.replyCount : (detail?.replyCount ?? options.replyCount);
-
-  if (detail && (firstReplies.length > 0 || firstReplyCount === 0)) {
-    let currentPage = 1;
-    const knownPages = new Set([1, ...detail.linkedPages]);
-    if (position.kind === 'target') {
-      const visitedPages = new Set([1]);
-      let candidates = firstReplies;
-      const floorPage = position.target.floor ? Math.ceil(position.target.floor / V2EX_REPLY_PAGE_SIZE) : undefined;
-      while (!findReplyLocation(candidates, position.target)) {
+  const firstDetail = read.kind === 'seed' ? read.detail : null;
+  const firstReplies = visibleV2exHtmlReplyPage(firstDetail, 1, target);
+  const firstReplyCount = firstDetail?.replyCountConflict
+    ? options.replyCount
+    : (firstDetail?.replyCount ?? options.replyCount);
+  if (read.kind === 'seed') {
+    const detail = read.detail;
+    const known = new Set([1, ...detail.linkedPages]);
+    read =
+      firstReplies.length > 0 || firstReplyCount === 0
+        ? position.kind === 'target'
+          ? {
+              kind: 'target-scan',
+              page: 1,
+              detail,
+              known,
+              visited: new Set([1]),
+              candidates: firstReplies,
+              target: position.target,
+              floorPage: position.target.floor ? Math.ceil(position.target.floor / V2EX_REPLY_PAGE_SIZE) : undefined
+            }
+          : order === 'newest'
+            ? { kind: 'tail-scan', page: 1, detail, known, visited: new Set() }
+            : { kind: 'ready', page: 1, detail, known }
+        : { kind: 'fallback-insufficient-html', detail };
+  }
+  while (read.kind === 'target-scan' || read.kind === 'tail-scan') {
+    const scan: V2exReplyRead = read;
+    if (scan.kind === 'target-scan') {
+      if (findReplyLocation(scan.candidates, scan.target)) {
+        read = { kind: 'ready', page: scan.page, detail: scan.detail, known: scan.known };
+      } else {
         if (
-          candidates.some((reply) =>
-            matchesReplyLocation(reply, { ...position.target, expectedAuthorUsername: undefined })
+          scan.candidates.some((reply) =>
+            matchesReplyLocation(reply, { ...scan.target, expectedAuthorUsername: undefined })
           )
         ) {
           throw new Error('V2EX 目标楼层未找到或引用不匹配');
         }
-        const pendingPages = [...knownPages].filter((page) => !visitedPages.has(page));
-        const nextPage =
-          pendingPages.find((page) => page === position.target.pageHint) ??
-          pendingPages.find((page) => page === floorPage) ??
+        const pendingPages: number[] = [...scan.known].filter((page) => !scan.visited.has(page));
+        const nextPage: number | undefined =
+          pendingPages.find((page) => page === scan.target.pageHint) ??
+          pendingPages.find((page) => page === scan.floorPage) ??
           pendingPages.reduce((smallest, page) => Math.min(smallest, page), pendingPages[0]);
-        if (!nextPage || visitedPages.size >= V2EX_LINKED_REPLY_PAGE_LIMIT) {
+        if (!nextPage || scan.visited.size >= V2EX_LINKED_REPLY_PAGE_LIMIT) {
           throw new Error('V2EX 目标楼层未找到');
         }
-        currentPage = nextPage;
-        visitedPages.add(currentPage);
-        detail = await readHtmlPage(currentPage);
-        detail.linkedPages.forEach((page) => knownPages.add(page));
-        candidates = visibleV2exHtmlReplyPage(detail, currentPage, position.target);
+        scan.visited.add(nextPage);
+        const detail: V2exHtmlDetail = await readHtmlPage(nextPage);
+        detail.linkedPages.forEach((page) => scan.known.add(page));
+        read = { ...scan, page: nextPage, detail, candidates: visibleV2exHtmlReplyPage(detail, nextPage, scan.target) };
       }
-    } else if (order === 'newest') {
-      const visitedPages = new Set<number>();
-      while (visitedPages.size < V2EX_LINKED_REPLY_PAGE_LIMIT) {
-        visitedPages.add(currentPage);
-        let nextPage = currentPage;
-        for (const page of knownPages) nextPage = Math.max(nextPage, page);
-        if (nextPage === currentPage) break;
-        currentPage = nextPage;
-        detail = await readHtmlPage(currentPage);
-        detail.linkedPages.forEach((page) => knownPages.add(page));
+    } else {
+      scan.visited.add(scan.page);
+      let nextPage: number = scan.page;
+      for (const page of scan.known) nextPage = Math.max(nextPage, page);
+      if (nextPage === scan.page) {
+        read = { kind: 'ready', page: scan.page, detail: scan.detail, known: scan.known };
+      } else {
+        const detail: V2exHtmlDetail = await readHtmlPage(nextPage);
+        detail.linkedPages.forEach((page) => scan.known.add(page));
+        read =
+          scan.visited.size >= V2EX_LINKED_REPLY_PAGE_LIMIT
+            ? { kind: 'ready', page: nextPage, detail, known: scan.known }
+            : { ...scan, page: nextPage, detail };
       }
     }
-    return replyWindow(detail, currentPage, firstReplyCount, [...knownPages]);
   }
+  if (read.kind === 'ready') return replyWindow(read.detail, read.page, firstReplyCount, [...read.known]);
 
+  const detail = read.kind === 'fallback-insufficient-html' ? read.detail : null;
   const topicData = await fetchJson<unknown[]>(
     `${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`,
     options
@@ -1203,7 +1243,7 @@ export async function getV2exReplies(
       candidateCount: Math.max(apiRows.length, detail?.replyNodeCount || 0),
       validCount: combinedReplies.length,
       droppedCount: Math.max(0, Math.max(apiRows.length, detail?.replyNodeCount || 0) - combinedReplies.length),
-      partialErrorCount: Number(detailHtmlFailed),
+      partialErrorCount: Number(read.kind === 'fallback-failed-html'),
       isExpectedEmpty: complete && replyCount === 0
     }
   );

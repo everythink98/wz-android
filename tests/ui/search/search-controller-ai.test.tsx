@@ -1558,6 +1558,7 @@ describe('linux.do AI search controller', () => {
         await waitFor(() => expect(writes).toHaveLength(1));
         await act(async () => hook.result.current.removeRecentSearch('B'));
         expect(hook.result.current.recentSearches).toEqual(original);
+        await hook.unmount();
         await act(async () => {
           pending.resolve();
           await Promise.all(writes);
@@ -1648,12 +1649,14 @@ describe('linux.do AI search controller', () => {
     );
 
     await act(async () => {
+      await hook.result.current.runSearch({ query: 'removed before restore', source: 'linuxdo' });
+      hook.result.current.removeRecentSearch('removed before restore');
       await hook.result.current.runSearch({ query: 'new query', source: 'linuxdo' });
     });
     expect(hook.result.current.recentSearches).toEqual(['new query']);
 
     await act(async () => {
-      storedHistory.resolve(JSON.stringify(['saved query']));
+      storedHistory.resolve(JSON.stringify(['saved query', 'removed before restore']));
       await storedHistory.promise;
     });
 

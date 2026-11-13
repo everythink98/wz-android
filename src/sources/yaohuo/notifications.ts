@@ -34,6 +34,9 @@ const yaohuoNotificationCategories = [
 const absoluteChatTimePattern = /\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?/;
 
 type ParsedNotificationMessage = NotificationMessage & { contentKey: string };
+type YaohuoUnreadScan =
+  | { kind: 'reading'; cursor: number; seen: Set<number>; items: ForumNotification[]; pages: NotificationPage[] }
+  | { kind: 'complete'; items: ForumNotification[]; pages: NotificationPage[] };
 
 function messageId(href: string) {
   try {
@@ -314,34 +317,31 @@ export const yaohuoNotificationAdapter = {
   },
 
   async readUnreadSnapshot(options: NotificationAdapterAccess) {
-    let cursor = 1;
-    let hasMore = true;
-    const items: ForumNotification[] = [];
-    const pages: NotificationPage[] = [];
-    const seenCursors = new Set<number>([cursor]);
-    while (hasMore && items.length < 60) {
-      const page = await readListPage(options, cursor, true);
+    let scan: YaohuoUnreadScan = { kind: 'reading', cursor: 1, seen: new Set([1]), items: [], pages: [] };
+    while (scan.kind === 'reading') {
+      const page = await readListPage(options, scan.cursor, true);
       const qualityError = notificationPageError(page.quality);
       if (qualityError) throw qualityError;
-      if (items.length + page.items.length > 60) throw new Error('妖火未读数量尚未完整读取');
-      pages.push(page);
-      items.push(...page.items);
-      hasMore = page.hasMore;
-      if (hasMore) {
+      if (scan.items.length + page.items.length > 60) throw new Error('妖火未读数量尚未完整读取');
+      scan.pages.push(page);
+      scan.items.push(...page.items);
+      if (page.hasMore) {
         const next = Number(page.cursor);
-        if (!Number.isSafeInteger(next) || next < 1 || seenCursors.has(next)) throw new Error('妖火消息分页格式不正确');
-        seenCursors.add(next);
-        cursor = next;
+        if (!Number.isSafeInteger(next) || next < 1 || scan.seen.has(next)) throw new Error('妖火消息分页格式不正确');
+        scan.seen.add(next);
+        if (scan.items.length >= 60) throw new Error('妖火未读数量尚未完整读取');
+        scan = { ...scan, cursor: next };
+      } else {
+        scan = { kind: 'complete', items: scan.items, pages: scan.pages };
       }
     }
-    if (hasMore) throw new Error('妖火未读数量尚未完整读取');
     return mergeSourceDiagnosticSummaries(
       {
-        total: new Set(items.map((item) => item.id)).size,
+        total: new Set(scan.items.map((item) => item.id)).size,
         checkedAt: new Date().toISOString()
       },
       'yaohuo-notifications',
-      pages
+      scan.pages
     );
   },
 

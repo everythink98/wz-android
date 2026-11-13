@@ -10,6 +10,7 @@ type ContentSourceQuerySnapshot = {
   enabledSources: readonly Source[];
   enabledSourcesKey: string;
 };
+type ContentSourceQueryScope = { phase: 'uninitialized' } | { phase: 'watching'; snapshot: ContentSourceQuerySnapshot };
 
 export function cleanupContentSourceQueries(
   client: QueryClient,
@@ -43,12 +44,12 @@ export function cleanupContentSourceQueries(
 
 export function useContentSourceQueryCleanup(enabledSources: readonly Source[], enabledSourcesKey: string) {
   const client = useQueryClient();
-  const previousRef = useRef<ContentSourceQuerySnapshot | null>(null);
+  const previousRef = useRef<ContentSourceQueryScope>({ phase: 'uninitialized' });
 
   useEffect(() => {
     const next = { enabledSources, enabledSourcesKey };
     const previous = previousRef.current;
-    previousRef.current = next;
-    if (previous) cleanupContentSourceQueries(client, previous, next);
+    previousRef.current = { phase: 'watching', snapshot: next };
+    if (previous.phase === 'watching') cleanupContentSourceQueries(client, previous.snapshot, next);
   }, [client, enabledSources, enabledSourcesKey]);
 }

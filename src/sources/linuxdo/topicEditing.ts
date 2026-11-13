@@ -14,6 +14,15 @@ import { runLinuxDoAction } from './actionClient';
 import { loadLinuxDoTopicCreationContext } from './topicCreation';
 
 type Options = { fetcher: Fetcher; userAgent: string; signal?: AbortSignal };
+type TopicEditSaveState = {
+  confirmed: Partial<TopicEditableFields>;
+} & (
+  | { kind: 'preparing' }
+  | { kind: 'sent' }
+  | { kind: 'checkpointing' }
+  | { kind: 'checkpointed' }
+  | { kind: 'checkpoint-failed' }
+);
 function tags(value: unknown): TopicTag[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((tag) =>
@@ -95,24 +104,24 @@ export async function editLinuxDoTopic(
     )
   )
     return { status: 'conflict', message: '原站分类或标签已变化，请核对最新内容', latest: context.original };
-  let confirmed: Partial<TopicEditableFields> = {};
-  let checkpointFailed = false;
-  let sent = false;
+  const save: { state: TopicEditSaveState } = { state: { kind: 'preparing', confirmed: {} } };
   const request = async (path: string, payload: Record<string, unknown>) =>
     runLinuxDoAction({
       ...options,
       fetcher: (url, init) => {
-        if (init?.method === 'PUT') sent = true;
+        if (init?.method === 'PUT') save.state = { kind: 'sent', confirmed: save.state.confirmed };
         return options.fetcher(url, init);
       },
       request: { path, method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
     });
   const record = async (fields: Partial<TopicEditableFields>) => {
-    confirmed = { ...confirmed, ...fields };
+    const confirmed = { ...save.state.confirmed, ...fields };
+    save.state = { kind: 'checkpointing', confirmed };
     try {
       await checkpoint(confirmed);
+      save.state = { kind: 'checkpointed', confirmed };
     } catch (error) {
-      checkpointFailed = true;
+      save.state = { kind: 'checkpoint-failed', confirmed };
       throw error;
     }
   };
@@ -143,18 +152,21 @@ export async function editLinuxDoTopic(
       });
     }
     if (body !== undefined) {
-      sent = false;
+      save.state = { kind: 'preparing', confirmed: save.state.confirmed };
       const result = await request(`/posts/${draft.edit.postId}.json`, {
         post: { raw: body, original_text: draft.edit.original.body }
       });
       if (!isRecord(result.post) || result.post.id !== draft.edit.postId || typeof result.post.raw !== 'string')
-        return { status: 'unknown', message: 'linux.do 未确认正文的保存结果', confirmed };
+        return { status: 'unknown', message: 'linux.do 未确认正文的保存结果', confirmed: save.state.confirmed };
       await record({ body: result.post.raw });
     }
-    return { status: 'saved', message: '修改已保存', confirmed };
+    return { status: 'saved', message: '修改已保存', confirmed: save.state.confirmed };
   } catch (error) {
     const status = isRecord(error) ? Number(error.status) : 0;
-    const known = !checkpointFailed && (!sent || [400, 401, 403, 404, 409, 422, 429].includes(status));
+    const { confirmed } = save.state;
+    const known =
+      save.state.kind !== 'checkpoint-failed' &&
+      (save.state.kind === 'preparing' || [400, 401, 403, 404, 409, 422, 429].includes(status));
     const message = error instanceof Error ? error.message : '保存失败';
     return {
       status: !known ? 'unknown' : Object.keys(confirmed).length ? 'partial' : status === 409 ? 'conflict' : 'rejected',

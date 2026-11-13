@@ -31,19 +31,22 @@ compileTouchTrace(sdk, evidence);
 const remote = `/data/local/tmp/wz-reader-boundaries-${Date.now()}.jar`;
 adb('push', path.join(evidence, 'touch.jar'), remote);
 const results = [];
-let expandedAppearance = false;
+/** @type {'unchanged' | 'collapse-required'} */
+let appearanceRestorePolicy = 'unchanged';
 /** @type {{ kind: 'none' } | { kind: 'failed', error: unknown }} */
 let businessFailure = { kind: 'none' };
 try {
   for (const surface of ['more', 'rail']) {
     if (surface === 'more') {
       device('press', 'id="main-tab-more"');
-      expandedAppearance = snapshot().some((node) => node.label === '展开外观');
-      if (expandedAppearance) device('press', 'label="展开外观"');
+      appearanceRestorePolicy = snapshot().some((node) => node.label === '展开外观')
+        ? 'collapse-required'
+        : 'unchanged';
+      if (appearanceRestorePolicy === 'collapse-required') device('press', 'label="展开外观"');
     } else {
-      if (expandedAppearance) {
+      if (appearanceRestorePolicy === 'collapse-required') {
         device('press', 'label="收起外观"');
-        expandedAppearance = false;
+        appearanceRestorePolicy = 'unchanged';
       }
       device('press', 'id="main-tab-feed"');
       device('press', 'id="feed-source-v2ex"');
@@ -106,7 +109,7 @@ try {
   for (const cleanup of [
     () => adb('shell', 'rm', remote),
     () => {
-      if (expandedAppearance) device('press', 'label="收起外观"');
+      if (appearanceRestorePolicy === 'collapse-required') device('press', 'label="收起外观"');
     }
   ]) {
     try {

@@ -215,10 +215,11 @@ describe('App composition bootstrap', () => {
     expect(view.getByRole('status').props.accessibilityState).toEqual({ busy: true });
   });
 
-  it('finishes navigation after local recovery without hiding the splash twice', async () => {
+  it('finishes navigation after reentrant local recovery without hiding the splash twice', async () => {
     const phases: StartupPhase[] = [];
     setStartupTimingRecorder((phase) => phases.push(phase));
     const hook = await renderHook(() => useAppStartupRuntime(undefined, () => 'feed'));
+    jest.mocked(SplashScreen.hide).mockImplementationOnce(() => hook.result.current.onRecoveryLayout());
     await act(async () => hook.result.current.onRecoveryLayout());
     expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
     expect(phases).not.toContain('page-ready');

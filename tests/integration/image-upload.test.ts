@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { withRequestBeforeSend } from '@/platform/network/request';
+import { prepareUploadImage } from '@/platform/media/prepareUploadImage';
 
 const nativeImage = vi.hoisted(() => ({
   bytes: new Uint8Array([0xff, 0xd8, 0xff]),
@@ -136,6 +137,70 @@ describe('reply image upload helpers', () => {
     else await expect(result).rejects.toThrow('Network request failed');
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(nativeImage.delete).toHaveBeenCalledExactlyOnceWith('file:///cache/converted.webp');
+  });
+
+  it.each(['rendered-empty', 'image-release', 'context-release'] as const)(
+    'preserves resource cleanup and failure order after %s',
+    async (stage) => {
+      const mocks = [nativeImage.render, nativeImage.releaseImage, nativeImage.releaseContext, nativeImage.delete];
+      const implementations = mocks.map((mock) => mock.getMockImplementation());
+      const failure = Object.assign(new Error('release failed'), { reason: 'image_conversion_failed' });
+      const events: string[] = [];
+      nativeImage.releaseImage.mockImplementation(() => {
+        events.push('image');
+        if (stage === 'image-release') throw failure;
+      });
+      nativeImage.releaseContext.mockImplementation(() => {
+        events.push('context');
+        if (stage === 'context-release') throw failure;
+      });
+      nativeImage.delete.mockImplementation((uri) => events.push(`delete:${uri}`));
+      if (stage === 'rendered-empty') nativeImage.render.mockResolvedValueOnce(undefined);
+      const fetcher = vi.fn(async () => uploaded());
+      try {
+        const upload = uploadNodeSeekReplyImage({ apiKey: 'key', file: localImage, fetcher });
+        if (stage === 'rendered-empty') {
+          await expect(upload).rejects.toMatchObject({ reason: 'image_conversion_failed' });
+          expect(events).toEqual(['context']);
+          expect(nativeImage.save).not.toHaveBeenCalled();
+        } else {
+          await expect(upload).rejects.toBe(failure);
+          expect(events).toEqual(
+            stage === 'image-release'
+              ? ['image', 'delete:file:///cache/converted.webp']
+              : ['image', 'context', 'delete:file:///cache/converted.webp']
+          );
+        }
+        expect(fetcher).not.toHaveBeenCalled();
+      } finally {
+        mocks.forEach((mock, index) => {
+          mock.mockReset();
+          const implementation = implementations[index];
+          if (implementation) mock.mockImplementation(implementation);
+        });
+      }
+    }
+  );
+
+  it('keeps converted-file cleanup repeatable after a deletion failure', async () => {
+    const implementation = nativeImage.delete.getMockImplementation();
+    nativeImage.delete.mockImplementationOnce(() => {
+      throw new Error('delete denied');
+    });
+    try {
+      const prepared = await prepareUploadImage(localImage, 20 * 1024 * 1024);
+      expect(() => prepared.cleanup()).not.toThrow();
+      expect(() => prepared.cleanup()).not.toThrow();
+      expect(nativeImage.delete.mock.calls.map(([uri]) => uri)).toEqual([
+        'file:///cache/converted.webp',
+        'file:///cache/converted.webp'
+      ]);
+      expect(nativeImage.releaseImage).toHaveBeenCalledTimes(1);
+      expect(nativeImage.releaseContext).toHaveBeenCalledTimes(1);
+    } finally {
+      nativeImage.delete.mockReset();
+      if (implementation) nativeImage.delete.mockImplementation(implementation);
+    }
   });
 
   it('uploads a quality-100 WebP copy and releases it after server rejection', async () => {

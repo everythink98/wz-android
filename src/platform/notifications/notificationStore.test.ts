@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const storage = vi.hoisted(() => new Map<string, string>());
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -314,6 +315,130 @@ describe('notification delivery state', () => {
       deliveredIds: ['two', 'one', 'old'],
       notificationIdentifier: 'staged-b'
     });
+  });
+
+  it.each(['expected ids', 'previous identifier'] as const)(
+    'returns computed ids without compensation when the %s do not match',
+    async (mismatch) => {
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.sources.nodeseek = {
+        ...state.sources.nodeseek,
+        intentEnabled: true,
+        identityKey: 'nodeseek:7',
+        baselineReady: true,
+        deliveredIds: ['old'],
+        notificationIdentifier: 'old-id'
+      };
+      await saveNotificationState(state);
+
+      const declined = await recordNotificationDelivery(
+        'nodeseek',
+        'nodeseek:7',
+        ['new', 'old'],
+        { lastSuccessAt: '2026-08-03T00:01:00Z' },
+        {
+          expectedNewIds: mismatch === 'expected ids' ? ['other'] : ['new'],
+          previousIdentifier: mismatch === 'previous identifier' ? 'other-id' : 'old-id',
+          notificationIdentifier: 'staged-id'
+        }
+      );
+      const reads = vi.mocked(AsyncStorage.getItem).mock.calls.length;
+      const writes = vi.mocked(AsyncStorage.setItem).mock.calls.length;
+
+      expect(declined.newIds).toEqual(['new']);
+      expect(declined.committed).toBe(false);
+      expect(declined.state).toEqual(state);
+      expect(await declined.rollback()).toBe(declined.state);
+      expect(AsyncStorage.getItem).toHaveBeenCalledTimes(reads);
+      expect(AsyncStorage.setItem).toHaveBeenCalledTimes(writes);
+      expect(await loadNotificationState()).toEqual(state);
+    }
+  );
+
+  it('allows repeated compensation while the same notification identifier remains current', async () => {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.sources.nodeseek = {
+      ...state.sources.nodeseek,
+      intentEnabled: true,
+      identityKey: 'nodeseek:7',
+      baselineReady: true,
+      deliveredIds: ['old'],
+      notificationIdentifier: 'same-id'
+    };
+    await saveNotificationState(state);
+    const first = await recordNotificationDelivery(
+      'nodeseek',
+      'nodeseek:7',
+      ['one'],
+      { lastSuccessAt: '2026-08-03T00:00:00Z' },
+      { expectedNewIds: ['one'], previousIdentifier: 'same-id', notificationIdentifier: 'same-id' }
+    );
+    await first.rollback();
+    const second = await recordNotificationDelivery(
+      'nodeseek',
+      'nodeseek:7',
+      ['two'],
+      { lastSuccessAt: '2026-08-03T00:01:00Z' },
+      { expectedNewIds: ['two'], previousIdentifier: 'same-id', notificationIdentifier: 'same-id' }
+    );
+    expect((await loadNotificationState()).sources.nodeseek.deliveredIds).toEqual(['two', 'old']);
+
+    await first.rollback();
+
+    expect(first.committed).toBe(true);
+    expect(second.committed).toBe(true);
+    expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+      deliveredIds: ['old'],
+      notificationIdentifier: 'same-id'
+    });
+  });
+
+  it('commits a silent baseline without creating a compensation operation', async () => {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.sources.nodeseek = { ...state.sources.nodeseek, intentEnabled: true, identityKey: 'nodeseek:7' };
+    await saveNotificationState(state);
+
+    const recorded = await recordNotificationDelivery('nodeseek', 'nodeseek:7', ['baseline'], {
+      lastSuccessAt: '2026-08-03T00:00:00Z'
+    });
+    const writes = vi.mocked(AsyncStorage.setItem).mock.calls.length;
+
+    expect(recorded.committed).toBe(true);
+    expect(recorded.newIds).toEqual([]);
+    expect(recorded.state.sources.nodeseek).toMatchObject({ baselineReady: true, deliveredIds: ['baseline'] });
+    expect(await recorded.rollback()).toBe(recorded.state);
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(writes);
+  });
+
+  it('rejects a failed durable commit and leaves the same delivery retryable', async () => {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.sources.nodeseek = {
+      ...state.sources.nodeseek,
+      intentEnabled: true,
+      identityKey: 'nodeseek:7',
+      baselineReady: true,
+      deliveredIds: ['old']
+    };
+    await saveNotificationState(state);
+    const failure = new Error('storage unavailable');
+    vi.mocked(AsyncStorage.setItem).mockRejectedValueOnce(failure);
+    const record = () =>
+      recordNotificationDelivery(
+        'nodeseek',
+        'nodeseek:7',
+        ['new'],
+        { lastSuccessAt: '2026-08-03T00:00:00Z' },
+        { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'staged-id' }
+      );
+
+    await expect(record()).rejects.toBe(failure);
+    expect(await loadNotificationState()).toEqual(state);
+    expect(await record()).toMatchObject({ committed: true, newIds: ['new'] });
+    expect((await loadNotificationState()).sources.nodeseek.notificationIdentifier).toBe('staged-id');
   });
 
   it('restores the exact pre-commit watermark when rollback follows 200-id truncation', async () => {
