@@ -826,6 +826,7 @@ describe('Composer editor runtime codec', () => {
     });
     expect(requests()).toHaveLength(2);
     expect(host.querySelector('[aria-label="链接设置"]')).toBeNull();
+    expect(host.querySelector('[aria-label="文字格式"]')).not.toBeNull();
     await send({
       type: 'COMMAND',
       payload: { name: 'host-action-result', requestId: requests()[1].payload.requestId }
@@ -4102,7 +4103,7 @@ describe('Composer editor runtime codec', () => {
     ).toHaveLength(1);
   });
 
-  it('retries a failed LinuxDo group load without adding a lifecycle state machine', async () => {
+  it('retries a failed LinuxDo group load through the current host request', async () => {
     const { host, postMessage, send, toolbarAction } = await mountRuntime();
     await toolbarAction('poll');
     const firstRequest = postMessage.mock.calls

@@ -1,4 +1,5 @@
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
+import { composerHostMessages } from '../composerHostMessages';
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { Image, ScrollView, StyleSheet } from 'react-native';
@@ -1410,6 +1411,85 @@ describe('notification screens', () => {
     expect(yaohuoView.queryByLabelText('图片')).toBeNull();
     scrollToEnd.mockRestore();
   });
+
+  it.each(['snapshot', 'error', 'unmount'] as const)(
+    'limits a pending message close to its still mounted opening: %s',
+    async (outcome) => {
+      const onReplyClose = jest.fn();
+      const detail = {
+        notification: { ...notification, kind: 'private-message' as const },
+        title: '与 Bob 的私信',
+        messages: [],
+        reply: { format: 'markdown' as const }
+      };
+      const screen = (visible: boolean) => (
+        <NotificationDetailScreen
+          contentWidth={360}
+          detail={detail}
+          loading={false}
+          replyContent="保留私信草稿"
+          replyVisible={visible}
+          routeActive
+          onOpenTopic={jest.fn()}
+          onReplyClose={onReplyClose}
+          onRetry={jest.fn()}
+        />
+      );
+      const view = await render(screen(true));
+      const webView = view.getByTestId('structured-composer-webview');
+      await fireEvent(webView, 'loadEnd');
+      await fireEvent(webView, 'message', {
+        nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { documentEpoch: 0, revision: 0 } }) }
+      });
+      const requests = () => composerHostMessages(view).filter((entry) => entry.type === 'REQUEST_SNAPSHOT');
+      const reply = async (requestId: string, fail: boolean) =>
+        fireEvent(webView, 'message', {
+          nativeEvent: {
+            data: JSON.stringify(
+              fail
+                ? {
+                    type: 'ERROR',
+                    payload: { documentEpoch: 0, requestId, revision: 0, code: 'too-long', message: '无法取得正文' }
+                  }
+                : {
+                    type: 'SNAPSHOT',
+                    payload: {
+                      documentEpoch: 0,
+                      requestId,
+                      snapshot: {
+                        revision: 0,
+                        markdown: '保留私信草稿',
+                        mode: 'rich',
+                        isEmpty: false,
+                        validationIssues: [],
+                        pendingNodeSeekPolls: []
+                      }
+                    }
+                  }
+            )
+          }
+        });
+      await fireEvent.press(view.getByLabelText('取消'));
+      expect(requests()).toHaveLength(1);
+      const oldRequest = requests()[0]!.payload.requestId;
+      if (outcome === 'unmount') {
+        await view.unmount();
+        await act(async () => Promise.resolve());
+        expect(onReplyClose).not.toHaveBeenCalled();
+        return;
+      }
+      await view.rerender(screen(false));
+      await view.rerender(screen(true));
+      await reply(oldRequest, outcome === 'error');
+      expect(onReplyClose).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByLabelText('取消'));
+      expect(requests()).toHaveLength(2);
+      const currentRequest = requests()[1]!.payload.requestId;
+      expect(currentRequest).not.toBe(oldRequest);
+      await reply(currentRequest, false);
+      await waitFor(() => expect(onReplyClose).toHaveBeenCalledTimes(1));
+    }
+  );
 
   it('snapshots exactly once before route blur closes the structured composer', async () => {
     const onReplyClose = jest.fn();

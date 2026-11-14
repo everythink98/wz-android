@@ -51,7 +51,14 @@ type ToolbarButton = {
   text?: string;
   active?: boolean;
 };
-type Menu = { kind: MenuKind; left: number; top: number; width: number; height: number };
+type Menu = {
+  kind: MenuKind;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  anchor: { x: number; y: number; width: number; height: number };
+};
 
 function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
@@ -121,7 +128,6 @@ export function ComposerToolbar({
   const window = useWindowDimensions();
   const barRef = useRef<View>(null);
   const requestGeneration = useRef(0);
-  const menuAnchor = useRef({ x: 0, y: 0, width: 0, height: 0 });
   const [menu, setMenu] = useState<Menu | null>(null);
   const unavailable = disabled || !state;
   const rich = state?.mode === 'rich';
@@ -175,8 +181,14 @@ export function ComposerToolbar({
           if (generation !== requestGeneration.current) return;
           const height = Math.min(kind === 'heading' ? 240 : 144, availableHeight);
           if (height <= 0 || width <= 16) return;
-          menuAnchor.current = { x, y, width, height: barHeight };
-          setMenu({ kind, top: y - height, left: x + 8, width: Math.min(240, width - 16), height });
+          setMenu({
+            kind,
+            top: y - height,
+            left: x + 8,
+            width: Math.min(240, width - 16),
+            height,
+            anchor: { x, y, width, height: barHeight }
+          });
         });
       },
       () => {
@@ -304,7 +316,7 @@ export function ComposerToolbar({
         onLayout={
           menu
             ? ({ nativeEvent: { layout } }) => {
-                const previous = menuAnchor.current;
+                const previous = menu.anchor;
                 if (
                   Math.abs(layout.x - previous.x) > 1 ||
                   Math.abs(layout.y - previous.y) > 1 ||

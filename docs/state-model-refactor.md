@@ -11,7 +11,7 @@
 | B01 | 复核全部 281 项与头像请求归属修复 | 已验收 |
 | B02 | 账号恢复、认证与 Cookie 交接 | 已验收：2 项完整转换、7 项局部简化 |
 | B03 | 请求队列、代理与 Native generation | 已验收：7 项完整转换、3 项局部简化 |
-| B04 | 编辑器宿主与文档生命周期 | 待实施 |
+| B04 | 编辑器宿主与文档生命周期 | 已验收：8 项完整转换、5 项局部简化 |
 | B05 | 草稿、提交与互动写操作 | 待实施 |
 | B06 | 阅读入口、回复窗口与原生定位 | 待实施 |
 | B07 | 列表、搜索、用户与消息读取 | 待实施 |
@@ -86,3 +86,41 @@ Native 未改，不新增 Native/Replay 通过结论。真实凭据填入、所�
 构建失败记录保留：ignored observer 的 included-build 判断、私有 overlay 的 AGP 配置时机已修；Hermes 旧下载 URL 404 后，使用官方支持的源码路径，核对现有 12371 文件及既有嵌套副本均与官方 commit `3477757eb2475555cf8d8df24bfb1deb0613880d` 的 Git blob 一致，未换版本或改 SDK 源码。干净 SDK 下载及补丁重放仍归 B10，不能由本机缓存证明。
 
 真实代理故障、全部 provider 时序、Native instrumentation、物理设备、主设备数据库字节一致性和历史异常原因未验证。受控 Cookie 输入不等于真实登录全部通过。本批只本地提交，不 push、不合并、不发布。
+
+## B04
+
+编辑器宿主、DOM 文档、面板交接、私信关闭与 WebView 预热按原完整 scope 复核 29 项：**8 项完整转换、5 项局部简化、1 项重新判为保留，另 15 项原保留项维持原结论**。代码重审、最终门禁、匹配私有包的 25 项设备流程与主模拟器普通包只读复验均已通过。
+
+完整转换的 8 项为 `UI-NEW-038`、`ui.editor-doc`、`ui.editor-panel`、`ui.editor-poll-rules`、`ui.web-host-ime`、`ui.yaohuo-panel`、`ui.message-close`、`PL-PATCH-webview-visible-prewarm`。实际 NodeView、文档、面板、规则与关闭调用方都已接入负责模块，旧 ref/setter 和重复结算路径同步删除。Host 的同步认领与 React 展示快照保持职责区别；已可编辑页面在重新初始化时可保留展示，原 epoch、intentKey、revision 和请求实例仍拒绝陈旧结果。同文档迟到 READY 可以恢复初始化超时，后台暂停 watchdog；不把错误提示当作文档已经退出。
+
+完整转换仍保留必要的独立资源：模板或图片成功结果缓存、CodeMirror 实例与 source handoff、原生键盘回执、物理图片操作及窗口可见性。失效图片请求仍占有物理槽，直到它自己的 finally 释放；旧回调不能释放新请求。预热 lease 在借用硬件层之前认领恢复责任，结束时先消费 lease 再恢复原层。
+
+5 项局部收益与剩余控制点分别为：
+
+| 原项 | 本批实际收益 | 仍由原调用方负责 |
+| --- | --- | --- |
+| `ui.topic-panel` | 面板 open/pick/insert/rebase 的同步请求身份与语义命令 | 编辑器聚焦意图、工具面板展示、预览和 focusSignal |
+| `ui.toolbar-menu` | anchor 随具体 Menu 保存，删除独立 anchor ref | 测量 generation、两阶段原生测量与关闭协议 |
+| `ui.editor-templates` | 模板读取 Promise、列表与 busy 统一归属 | 共用 builderError 和模板使用计数回执 |
+| `ui.web-host-document` | 加载、初始化许可、超时恢复与 renderer 状态明确 | documentEpoch、initKey、watchdog timer 与 trace |
+| `ui.web-host-mode` | 偏好准备门禁迁入文档 owner | 初始模式选择及 content/theme/emoji 已发送协议样本 |
+
+`ui.composer-sheet-focus` 经完整调用重审保留：首次聚焦只由 visible layout effect 认领，再由实际 index=0 回执消费；访问历史、窗口资格与动画 generation 有各自消费者。增加没有独立消费者的 phase 不改善该协议。这是分类修正，不算转换收益；当前重构分类由 95 调为 94，合理保留由 182 调为 183，4 项待补证和 281 项分母不变。分类数不是未完成项计数，原 375 项 CSV 与 ledger 不修改。
+
+设备和门禁发现的两处必要缺陷另列，不额外增加原清单的完整转换数量：
+
+- Paper 按钮禁用透明度变化会使直接子层在实体 View 与折叠之间切换。真实发帖退出时，Fabric 将 SVG 58 或文字 92 重新插入另一父节点，而 Screens 的退场 transition 仍保留旧父节点，导致进程崩溃。实际原生层级与 Android transition 原语均已取证；四类共享 Paper 分支使用 `collapsableChildren=false`，既有 Paper 补丁的 source/dist 同值转发到实际 TouchableRipple。没有吞异常或强行移除旧 parent。真实 Paper→Native host 接线先 RED，再以 seed `644043` 的 93 项相关 UI 转绿；最终 25 项设备重验、Native 父子拓扑与主模拟器普通包只读复验通过。
+- User 错误消费原只比较 wall-clock 时间。两个不同 Query 已结算为 error/idle，却可能在同一毫秒被误判为同一错误，漏掉应有登录提示。原 seed `2092716656` 的 5/4 失败保留；受控时钟复现后，四个 lane 按实际 Query 实例与 errorUpdateCount 消费，惰性 WeakMap 不强留旧 Query，显式重试只重臂当前结果。原主要用例同时覆盖同 Query、同 Error 实例、同毫秒与新增错误次数，重复 render 不重放；最终 50 项通过。`ui.user-resolution` 仍属 B07 的合理保留，只更新其消费收据事实，不给本批额外转换信用。
+
+本批已运行证据：
+
+- `STATIC_PASS`：最终 typecheck 与完整 `npm run verify` 均退出 0，绑定 final-v5 的 1140 个冻结输入，SHA-256 `47ececfd43b2d8f9eab196b99001be5e0ffb901966557bf5b8c4df723eeb56b8`。lint、格式、架构、文档、unused 与版本检查通过；文档与审查数据收尾另做治理及文档检查，不冒充早先源码冻结的一部分。
+- `UNIT_PASS`：273 文件、4626 项，seed `1794645328676`。实际 DOM owner 的 190 项包含在相应测试层，不与总数重复累加。
+- `UI_PASS`：105 suites、3284 项，seed `2067285867`；原 act 告警保留。面板竞争和旧私信关闭先以 seed `-1800449909` 取得 4 个预期失败与 1 个控制通过，原 seed 修后四个主要 owner 共 237 项通过；初版设备崩溃、后续 User 门禁失败均保留。
+- Native `UNIT_PASS`：键盘、IME、WebView insets/prewarm 与 picker 共 66 项。final-v5 逐项核对原测试输入及 RNCWebView 源码 SHA 完全不变，明确继承这份结果，不冒充重跑；Paper JS 接线及真实 Native 拓扑不能由这 66 项代验。
+- SDK 干净重放：官方 npm WebView 14.0.1 与 Paper 6.0.0-alpha.0 tarball 均校验 lock integrity，完整解包后执行正向检查、真实 patch-package 与反向检查；各自 11/8 个补丁文件与安装树逐字一致。只证明这两套补丁，本轮其余补丁的最终干净树重放仍归 B10。
+- `APK_SANITY`：普通 final-v5 Release 构建 4m30s；APK SHA-256 `a108713eccbdf20ec0386ef526a36292541c6628b37a4b4ef2d13510a99a6dc9`，buildId `4da801f5bb7d4c75a1c9532fbad5a9c6`。真实 map 绑定 16 个运行模块、实际 Paper dist 模块与生成编辑器 HTML；WebView producer、编译 class、R8/DEX、Hermes、普通入口、版本和签名分别核对。私有 composer-v5 也完成同冻结输入的 source/DEX/Hermes 绑定，APK SHA-256 `b293afa07423311d22df01501aa75b887a8aebb3396909c729fcce27c799b200`，buildId `19bff4150db74b5b9f2776a34329d512`；私有入口与普通入口的证据分开。
+- `DEVICE_REPLAY_PASS`：最终匹配私有包在专用 AVD 完成原 23 项与两个既有 130% 字号场景，共 25/25；7m44s，退出 0。实际 Native 层级确认 SVG 58 的父节点保留为 60、文字 92 的父节点保留为 94，修前后返回/发布按钮的无障碍矩形逐项一致。原 58→62 与 92→96 两次崩溃均保留，不由同 APK 偶然重跑通过替代根因证据。
+- 限定的 `LIVE_PASS`：普通 final-v5 在可见主模拟器覆盖安装，UID 10214、首次安装时间 `2026-07-26 16:51:37` 与签名保持；PID 21752 对应新 buildId 的 22 条成功启动记录，真实首页有数据。安装前后刷新均确认妖火、NodeSeek 已登录，linux.do 维持「已验证」标签，身份仍未独立确认。主设备使用 WebView 156，专用设备使用 124；25 项流程属于专用设备，不外推为主设备编辑器或真实写入验收。最终返回可见首页。
+
+完整 82-case 编辑器矩阵、注入 renderer 退出与所有前后台帧交错、物理设备、真实论坛上传及写入仍为 `NOT_VERIFIED`；历史长会话黑图、妖火掉线和空回复未由本批关闭。原日志、媒体、APK 与设备回执只在 ignored 目录保存。本批保存本地验收提交，不 push、不合并、不正式发布。构建和测试进程已退出；本任务新建的专用 AVD 保留给后续 B05 连续验证，主模拟器、共享 MCP 与 ADB 保留。

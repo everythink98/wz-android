@@ -86,6 +86,31 @@ describe('Shared action and form controls', () => {
     expect(onPress).not.toHaveBeenCalled();
   });
 
+  it.each(['icon-only', 'floating', 'icon-label', 'label'] as const)(
+    'forwards native child flattening through the %s Paper action across disabled states',
+    async (kind) => {
+      const onPress = jest.fn();
+      const action = (disabled: boolean) => {
+        const props = { label: '返回', disabled, onPress };
+        if (kind === 'floating') return <FloatingIconButton {...props} icon={Search} />;
+        if (kind === 'label') return <AppButton {...props} />;
+        return <IconButton {...props} icon={Search} iconOnly={kind === 'icon-only'} />;
+      };
+      const view = await render(action(true));
+      const button = () => view.getByRole('button', { name: '返回' });
+      expect(button().props.collapsableChildren).toBe(false);
+      expect(button().props.accessibilityState).toMatchObject({ disabled: true });
+      await fireEvent.press(button());
+      expect(onPress).not.toHaveBeenCalled();
+
+      await view.rerender(action(false));
+      expect(button().props.collapsableChildren).toBe(false);
+      expect(button().props.accessibilityState).toMatchObject({ disabled: false });
+      await fireEvent.press(button());
+      expect(onPress).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('prevents repeated floating actions while loading', async () => {
     const onPress = jest.fn();
     const view = await render(<FloatingIconButton icon={Search} label="打开查询" loading onPress={onPress} />);

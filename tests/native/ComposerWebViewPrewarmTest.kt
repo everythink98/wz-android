@@ -145,18 +145,22 @@ class ComposerWebViewPrewarmTest {
 
     @Test
     fun disablingRestoresTheLayerAndOldCallbacksCannotReleaseTheNextReturn() {
+        web.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         enable()
         returnToWindow()
         assertTrue(drawCanceled())
         enable(false)
-        assertEquals(View.LAYER_TYPE_NONE, web.layerType)
+        assertEquals(View.LAYER_TYPE_SOFTWARE, web.layerType)
         assertFalse(drawCanceled())
+        web.setLayerType(View.LAYER_TYPE_NONE, null)
         enable()
         returnToWindow()
         assertTrue(drawCanceled())
         web.complete(0)
+        web.complete(0)
         assertEquals(View.LAYER_TYPE_HARDWARE, web.layerType)
         assertTrue(drawCanceled())
+        web.complete(1)
         web.complete(1)
         assertEquals(View.LAYER_TYPE_NONE, web.layerType)
         assertFalse(drawCanceled())

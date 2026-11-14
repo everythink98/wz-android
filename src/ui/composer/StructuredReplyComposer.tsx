@@ -39,6 +39,8 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import { createComposerDocumentLifecycle, type ComposerDocumentEvent } from './composerDocumentLifecycle';
+import { createComposerHandoffs, type ComposerImageHandoff } from './composerHandoffs';
 
 type TemplateSummary = { id: string; title: string; content: string };
 type EmojiUrlMap = Record<string, string>;
@@ -262,21 +264,20 @@ export const StructuredReplyComposer = forwardRef<
       >()
     );
     const [mode, setMode] = useState<ComposerMode>(initialMode ?? 'rich');
-    const [modeLoaded, setModeLoaded] = useState(false);
-    const [webLoaded, setWebLoaded] = useState(false);
-    const [ready, setReady] = useState(false);
-    const [rendererGone, setRendererGone] = useState(false);
+    const [documentLifecycle] = useState(() => createComposerDocumentLifecycle(Boolean(initialMode)));
+    const [documentView, setDocumentView] = useState(documentLifecycle.snapshot);
+    const { modeLoaded, webLoaded, ready, rendererGone } = documentView;
+    const transitionDocument = useCallback(
+      (event: ComposerDocumentEvent) => setDocumentView(documentLifecycle.apply(event)),
+      [documentLifecycle]
+    );
     const [localError, setLocalError] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const submissionRef = useRef<object | null>(null);
-    const [imageHandoffPending, setImageHandoffPending] = useState(false);
-    const [panelHandoffPending, setPanelHandoffPending] = useState(false);
-    const panelHandoffRef = useRef<object | null>(null);
-    const imageHandoffRef = useRef<{
-      uploadId: string;
-      epoch: number;
-      invalidated: boolean;
-    } | null>(null);
+    const [handoffs] = useState(createComposerHandoffs);
+    const [handoffView, setHandoffView] = useState(handoffs.snapshot);
+    const { imagePending: imageHandoffPending, panelPending: panelHandoffPending } = handoffView;
+    const publishHandoffs = useCallback(() => setHandoffView(handoffs.snapshot), [handoffs]);
     const [panelLayout, setPanelLayout] = useState<'compact' | 'form' | 'expression'>('compact');
     const expandedPanel = panelLayout === 'form';
     const expressionPanel = panelLayout === 'expression';
@@ -303,7 +304,6 @@ export const StructuredReplyComposer = forwardRef<
       reject: (error: Error) => void;
       timer: ReturnType<typeof setTimeout>;
     } | null>(null);
-    const initializingRef = useRef(Boolean(initialMode));
     const modePreferenceRef = useRef<ComposerMode>(initialMode ?? 'rich');
     const initKeyRef = useRef(initialMode ? intentKey : '');
     const sentThemeRef = useRef(editorTheme);
@@ -407,9 +407,9 @@ export const StructuredReplyComposer = forwardRef<
       pending.reject(new Error('编辑文档已变化'));
     }, []);
     const invalidateImageHandoff = useCallback(() => {
-      const handoff = imageHandoffRef.current;
+      const handoff = handoffs.image;
       if (!handoff) return;
-      handoff.invalidated = true;
+      handoffs.invalidateImage();
       const pending = uploadCommandRef.current;
       if (
         pending?.command === 'begin-image-upload' &&
@@ -417,11 +417,11 @@ export const StructuredReplyComposer = forwardRef<
         pending.epoch === handoff.epoch
       )
         cancelUploadCommand();
-    }, [cancelUploadCommand]);
+    }, [cancelUploadCommand, handoffs]);
     const invalidatePanelHandoff = useCallback(() => {
-      panelHandoffRef.current = null;
-      setPanelHandoffPending(false);
-    }, []);
+      handoffs.invalidatePanel();
+      publishHandoffs();
+    }, [handoffs, publishHandoffs]);
 
     useLayoutEffect(() => {
       if (!visible || readOnly || actionBusy) invalidateImageHandoff();
@@ -436,13 +436,15 @@ export const StructuredReplyComposer = forwardRef<
         if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
         readyTimerRef.current = null;
         const trace = initializationTraceRef.current;
-        if (!trace || !initializingRef.current || !visible || state === 'background' || state === 'inactive') return;
+        if (!trace || !documentLifecycle.initializing || !visible || state === 'background' || state === 'inactive')
+          return;
         readyTimerRef.current = setTimeout(() => {
           finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
+          transitionDocument('initialization-timeout');
           setLocalError('编辑器启动超时，可重载后继续');
         }, 1500);
       },
-      [visible]
+      [documentLifecycle, transitionDocument, visible]
     );
     const watchInitialization = useCallback(() => {
       initializationTraceRef.current = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
@@ -461,7 +463,7 @@ export const StructuredReplyComposer = forwardRef<
       submissionRef.current = null;
       setSubmitting(false);
       cancelUploadCommand();
-      initializingRef.current = true;
+      transitionDocument('initialize');
       snapshotResolversRef.current.forEach(({ reject, timer, trace }) => {
         clearTimeout(timer);
         finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
@@ -485,17 +487,27 @@ export const StructuredReplyComposer = forwardRef<
       lastConfirmedMarkdownRef.current = content;
       lastExternalSentRef.current = content;
       lastRevisionRef.current = 0;
-    }, [cancelUploadCommand, content, discourseEmoji, initPayload, intentKey, modeLoaded, send, watchInitialization]);
+    }, [
+      cancelUploadCommand,
+      content,
+      discourseEmoji,
+      initPayload,
+      intentKey,
+      modeLoaded,
+      send,
+      transitionDocument,
+      watchInitialization
+    ]);
 
     useEffect(() => {
       let current = true;
       if (initialModeRef.current) {
         modePreferenceRef.current = initialModeRef.current;
         setMode(initialModeRef.current);
-        setModeLoaded(true);
+        transitionDocument('mode-loaded');
         return;
       }
-      setModeLoaded(false);
+      transitionDocument('mode-loading');
       void AsyncStorage.getItem(modePreferenceKey(intent.site))
         .then((stored) => {
           if (!current) return;
@@ -504,18 +516,18 @@ export const StructuredReplyComposer = forwardRef<
           setMode(storedMode);
         })
         .finally(() => {
-          if (current) setModeLoaded(true);
+          if (current) transitionDocument('mode-loaded');
         });
       return () => {
         current = false;
       };
-    }, [intent.site, intentKey]);
+    }, [intent.site, intentKey, transitionDocument]);
 
     useEffect(() => {
       if (!webLoaded || !modeLoaded || ready) return;
-      if (!initializingRef.current) sendInit();
+      if (!documentLifecycle.initializing) sendInit();
       else if (!initializationTraceRef.current) watchInitialization();
-    }, [modeLoaded, ready, sendInit, watchInitialization, webLoaded]);
+    }, [documentLifecycle, modeLoaded, ready, sendInit, watchInitialization, webLoaded]);
 
     useEffect(() => {
       if (!ready || initKeyRef.current === intentKey) return;
@@ -559,7 +571,7 @@ export const StructuredReplyComposer = forwardRef<
           isReady: ready,
           revision: lastRevisionRef.current
         });
-        if (!ready || initializingRef.current) {
+        if (!ready || documentLifecycle.initializing) {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
           return Promise.reject(new Error('编辑器尚未就绪'));
         }
@@ -574,17 +586,17 @@ export const StructuredReplyComposer = forwardRef<
           send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: id, ...(submission ? { submission } : {}) } });
         });
       },
-      [intent.site, ready, send]
+      [documentLifecycle, intent.site, ready, send]
     );
 
     const insertMarkup = useCallback(
       async (markdown: string) => {
-        if (!ready || initializingRef.current) throw new Error('编辑器尚未就绪');
+        if (!ready || documentLifecycle.initializing) throw new Error('编辑器尚未就绪');
         if (readOnly) throw new Error('请先退出预览');
         send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
         await requestSnapshot();
       },
-      [readOnly, ready, requestSnapshot, send]
+      [documentLifecycle, readOnly, ready, requestSnapshot, send]
     );
 
     const sendUploadCommand = useCallback(
@@ -617,13 +629,9 @@ export const StructuredReplyComposer = forwardRef<
     );
 
     const beginImageUpload = useCallback(async () => {
-      if (!ready || initializingRef.current) throw new Error('编辑器尚未就绪');
+      if (!ready || documentLifecycle.initializing) throw new Error('编辑器尚未就绪');
       if (readOnly) throw new Error('请先退出预览');
-      if (
-        panelHandoffRef.current ||
-        imageHandoffRef.current ||
-        imageUploadRef.current?.epoch === documentEpochRef.current
-      )
+      if (handoffs.panel || handoffs.image || imageUploadRef.current?.epoch === documentEpochRef.current)
         throw new Error('请等待当前上传完成');
       const upload = { id: requestId(), epoch: documentEpochRef.current };
       imageUploadRef.current = upload;
@@ -641,7 +649,7 @@ export const StructuredReplyComposer = forwardRef<
         if (imageUploadRef.current === upload) imageUploadRef.current = null;
         throw error;
       }
-    }, [readOnly, ready, requestSnapshot, send, sendUploadCommand]);
+    }, [documentLifecycle, readOnly, ready, requestSnapshot, send, sendUploadCommand, handoffs]);
 
     const finishImageUpload = useCallback(
       async (uploadId: string, markdown?: string) => {
@@ -649,7 +657,7 @@ export const StructuredReplyComposer = forwardRef<
         if (!upload || upload.id !== uploadId || upload.epoch !== documentEpochRef.current)
           throw new Error('编辑文档已变化');
         try {
-          if (!ready || initializingRef.current) throw new Error('编辑器尚未就绪');
+          if (!ready || documentLifecycle.initializing) throw new Error('编辑器尚未就绪');
           if (markdown && readOnly) throw new Error('请先退出预览');
           await sendUploadCommand({
             name: 'finish-image-upload',
@@ -666,7 +674,7 @@ export const StructuredReplyComposer = forwardRef<
         }
         await requestSnapshot();
       },
-      [readOnly, ready, requestSnapshot, send, sendUploadCommand]
+      [documentLifecycle, readOnly, ready, requestSnapshot, send, sendUploadCommand]
     );
 
     useImperativeHandle(
@@ -817,13 +825,11 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         if (message.type === 'READY') {
-          initializingRef.current = false;
+          transitionDocument('ready');
           if (initializationTraceRef.current)
             finishDiagnosticTrace(initializationTraceRef.current, 'success', { state: 'ready' });
           if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
           readyTimerRef.current = null;
-          setReady(true);
-          setRendererGone(false);
           setLocalError('');
           return;
         }
@@ -885,7 +891,7 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         if (message.type === 'REQUEST_HOST_ACTION') {
-          let imageRequest: NonNullable<typeof imageHandoffRef.current> | undefined;
+          let imageRequest: ComposerImageHandoff | undefined;
           let panelRequest: object | undefined;
           const reply = (result?: unknown, actionError?: string) =>
             send({
@@ -906,14 +912,13 @@ export const StructuredReplyComposer = forwardRef<
               } else if (message.payload.action === 'prepare-panel') {
                 const epoch = (message.payload.data as { documentEpoch?: unknown } | undefined)?.documentEpoch;
                 if (!awaitKeyboardSettled) throw new Error('当前入口尚未准备好编辑工具');
-                if (panelHandoffRef.current || imageHandoffRef.current || submissionRef.current)
+                if (handoffs.panel || handoffs.image || submissionRef.current)
                   throw new Error('正在准备编辑操作，请稍候');
-                const request = {};
+                const request = handoffs.claimPanel();
                 panelRequest = request;
-                panelHandoffRef.current = request;
                 const assertCurrent = () => {
                   if (
-                    panelHandoffRef.current !== request ||
+                    handoffs.panel !== request ||
                     !mounted.current ||
                     !uploadAvailable.current ||
                     !ready ||
@@ -927,18 +932,15 @@ export const StructuredReplyComposer = forwardRef<
                     throw new Error('编辑文档已变化，请重新打开工具');
                 };
                 assertCurrent();
-                setPanelHandoffPending(true);
+                handoffs.waitForPanel(request);
+                publishHandoffs();
                 await awaitKeyboardSettled();
                 assertCurrent();
                 reply();
               } else if (message.payload.action === 'upload-image') {
                 if (!onUploadImage) throw new Error('当前入口不支持上传图片');
                 if (!awaitKeyboardSettled) throw new Error('当前入口尚未准备好图片选择');
-                if (
-                  panelHandoffRef.current ||
-                  imageHandoffRef.current ||
-                  imageUploadRef.current?.epoch === documentEpochRef.current
-                )
+                if (handoffs.panel || handoffs.image || imageUploadRef.current?.epoch === documentEpochRef.current)
                   throw new Error('正在准备选择，请稍候');
                 const data = message.payload.data as { uploadId?: unknown; documentEpoch?: unknown } | undefined;
                 const uploadId = data?.uploadId;
@@ -953,17 +955,12 @@ export const StructuredReplyComposer = forwardRef<
                   epoch !== documentEpochRef.current
                 )
                   throw new Error('编辑文档已变化，请重新选择');
-                const handoff = {
-                  uploadId,
-                  epoch,
-                  invalidated: false
-                };
+                const handoff = handoffs.claimImage(uploadId, epoch);
                 imageRequest = handoff;
-                imageHandoffRef.current = handoff;
-                setImageHandoffPending(true);
+                publishHandoffs();
                 const assertCurrent = () => {
                   if (
-                    handoff.invalidated ||
+                    !handoffs.ownsImage(handoff) ||
                     !mounted.current ||
                     !uploadAvailable.current ||
                     AppState.currentState === 'background' ||
@@ -1011,13 +1008,13 @@ export const StructuredReplyComposer = forwardRef<
                 });
               reply(undefined, actionError instanceof Error ? actionError.message : '操作失败');
             } finally {
-              if (panelRequest && panelHandoffRef.current === panelRequest) {
-                panelHandoffRef.current = null;
-                if (mounted.current) setPanelHandoffPending(false);
+              if (panelRequest && handoffs.panel === panelRequest) {
+                handoffs.releasePanel(panelRequest);
+                if (mounted.current) publishHandoffs();
               }
-              if (imageRequest && imageHandoffRef.current === imageRequest) {
-                imageHandoffRef.current = null;
-                if (mounted.current) setImageHandoffPending(false);
+              if (imageRequest && handoffs.image === imageRequest) {
+                handoffs.releaseImage(imageRequest);
+                if (mounted.current) publishHandoffs();
               }
             }
           })();
@@ -1064,8 +1061,11 @@ export const StructuredReplyComposer = forwardRef<
         rendererGone,
         send,
         sendUploadCommand,
+        transitionDocument,
         visible,
-        uploadAvailable
+        uploadAvailable,
+        handoffs,
+        publishHandoffs
       ]
     );
 
@@ -1081,7 +1081,7 @@ export const StructuredReplyComposer = forwardRef<
     const runToolbarAction = (action: ComposerToolbarAction) => {
       if (
         !ready ||
-        initializingRef.current ||
+        documentLifecycle.initializing ||
         !toolbarState ||
         !visible ||
         readOnly ||
@@ -1089,8 +1089,8 @@ export const StructuredReplyComposer = forwardRef<
         rendererGone ||
         actionBusy ||
         submitting ||
-        panelHandoffRef.current ||
-        imageHandoffRef.current
+        handoffs.panel ||
+        handoffs.image
       )
         return;
       recordUserInteraction();
@@ -1098,7 +1098,7 @@ export const StructuredReplyComposer = forwardRef<
     };
 
     const submit = useCallback(() => {
-      if (submissionRef.current || imageHandoffRef.current || panelHandoffRef.current || actionBusy) return;
+      if (submissionRef.current || handoffs.image || handoffs.panel || actionBusy) return;
       const submission = {};
       const documentEpoch = documentEpochRef.current;
       submissionRef.current = submission;
@@ -1106,7 +1106,7 @@ export const StructuredReplyComposer = forwardRef<
       setLocalError('');
       void requestSnapshot()
         .then((snapshot) => {
-          if (submissionRef.current !== submission || imageHandoffRef.current) return;
+          if (submissionRef.current !== submission || handoffs.image) return;
           if (snapshot.validationIssues.length) {
             setLocalError(snapshot.validationIssues[0]!.message);
             return;
@@ -1142,7 +1142,7 @@ export const StructuredReplyComposer = forwardRef<
           submissionRef.current = null;
           setSubmitting(false);
         });
-    }, [actionBusy, currentReadOnly, onSubmit, requestSnapshot, send]);
+    }, [actionBusy, currentReadOnly, onSubmit, requestSnapshot, send, handoffs]);
 
     const displayError = localError || error || disabledReason;
     const fullscreenFeedback = displayError || status;
@@ -1236,12 +1236,9 @@ export const StructuredReplyComposer = forwardRef<
                 onPress={() => {
                   const trace = beginDiagnosticTrace('webview', 'recover', { site: intent.site });
                   finishDiagnosticTrace(trace, 'success', { state: 'started' });
-                  setRendererGone(false);
-                  setReady(false);
                   setUseInitialDocument(false);
                   documentEpochRef.current += 1;
-                  initializingRef.current = false;
-                  setWebLoaded(false);
+                  transitionDocument('reload');
                   webViewRef.current?.reload();
                 }}
               />
@@ -1272,7 +1269,7 @@ export const StructuredReplyComposer = forwardRef<
               overScrollMode="never"
               textZoom={100}
               onLoadEnd={() => {
-                setWebLoaded(true);
+                transitionDocument('web-loaded');
               }}
               onMessage={handleMessage}
               onRenderProcessGone={() => {
@@ -1283,9 +1280,7 @@ export const StructuredReplyComposer = forwardRef<
                   revision: lastRevisionRef.current
                 });
                 finishDiagnosticTrace(trace, 'failure', { reason: 'renderer_gone' });
-                setReady(false);
-                initializingRef.current = false;
-                setRendererGone(true);
+                transitionDocument('renderer-gone');
                 setLocalError('编辑器进程已退出，最后确认草稿仍在');
               }}
               onShouldStartLoadWithRequest={(request: WebViewNavigation) =>

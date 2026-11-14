@@ -27,7 +27,7 @@
 2. 执行 `npm ci`，安装锁文件中的依赖。postinstall 随后自动应用源码补丁并构建 Composer。
 3. 启动 Android 前，准备 SDK 和 Java 环境，并按下文核对安装身份。
 
-运行 Composer 专项前，先启动固定隔离 AVD `WZ_ComposerInsets_0916` 或 `WZ_TopicCreation_Test_API35`，选择真实系统 IME，准备现有安装及 Java、Android SDK、Windows C++ 工具链。runner 不自动创建、卸载、清除数据或重置设备。
+运行 Composer 专项前，先选择下文未冻结且名称在 runner allowlist 中的专用隔离 AVD，选择真实系统 IME，准备现有安装及 Java、Android SDK、Windows C++ 工具链。runner 不自动创建、卸载、清除数据或重置设备。
 
 执行 `npm run test:composer:device -- --serial emulator-5556 --build --output .codex-tmp/composer-<独立运行名>`。该命令只构建开发签名的 Release Hermes 诊断入口，不执行正式发布。复用构建时把 `--build` 换为 `--apk <composer-proof.apk>`，须同时保留紧邻的 `<APK>.json` 身份文件；`--cases <逗号分隔的场景 ID>` 可定向，例如 `nodeseek-rich-sheet-shown,nodeseek-rich-fullscreen-shown`。输出目录必须全新且位于 `.codex-tmp`，包含环境、每场景 token/receipt、原生节点和截图、结果清单。
 
@@ -44,6 +44,8 @@
 agent-device 打开入口可能启用无界面的测试输入法；runner 在表情验收前恢复记录的真实系统 IME，搜索聚焦和几何检查不能在测试输入法下执行。模式切换与显式关闭后核对正文和真实 IME；贴纸选择按 `WRITE-05` 的连续点选契约核对，不等待自动关闭。截图另行人工核对。当前 App 锁定竖屏，改变系统旋转设置不能作为横屏证据；短窗口须在独立设备按下文小屏流程记录实际 viewport 并恢复显示设置。
 
 2026-10-05 两台既有 proof AVD 出现安装元数据存在但 `pm path` 为空，已冻结安装变更；本轮另建独立 `WZ_ComposerExpressions_Test_API35_20261005`，数据目录为本轮 ignored scratch，确认全新空设备后首次安装匹配 proof APK，再按同一覆盖安装与身份门禁运行。该精确 AVD 名也在 runner allowlist 中，不能借此重置旧 AVD 或主登录态设备。用户随后要求关闭全部模拟器并只重开主设备，本轮隔离矩阵因此中止；局部结果不作为完整 `DEVICE_REPLAY_PASS`，普通入口在主设备另做只读验收。
+
+2026-11-14 状态模型重构验收发现，上述 ComposerExpressions AVD 的 ini 仍在，但其数据目录已不存在；未修改或重建该历史设备。本轮新建专用 `WZ_StateModel_Composer_API35_20261114`，数据目录位于本工作区 `.codex-tmp/state-model-refactor/b04/execution/composer-device.avd`。首次启动已确认没有 App 安装、使用 API 35、1080×2400 和真实系统 IME。操作者仅可在这个已确认空白的新设备上首次安装匹配源码与签名的 proof APK，记录安装身份后再运行 runner；后续仍只能覆盖安装，不能借此放宽主设备或历史 AVD 的数据保护。
 
 长输入定向使用 `--cases stress-ime-fast,stress-ime-slow --ime-cycles 20 --ime-chars 512 --ime-timeout-minutes 20`。两种动画速度各循环 20 次，每轮交替富文本/源码，输入可区分的确定性 ASCII 块，验证完整 WebView 文档只插入一次、收起重开保稿、全屏几何和最终模拟提交全文；结果逐轮保存。
 

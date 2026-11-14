@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createMessageComposerClose } from './messageComposerClose';
 import { StyleSheet } from 'react-native';
 import type { Source } from '@/domain/forum/models';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -78,23 +79,30 @@ export function MessageReplyComposerSheet({
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const structured = format === 'markdown' && (source === 'linuxdo' || source === 'nodeseek');
   const structuredRef = useRef<StructuredReplyComposerHandle>(null);
-  const closePendingRef = useRef(false);
+  const openingKey = JSON.stringify([source, conversationId, format]);
+  const [closing] = useState(() => createMessageComposerClose(visible, openingKey));
+  const [opening, setOpening] = useState(closing.opening);
   const [presentation, setPresentation] = useState<ComposerPresentation>('sheet');
-  useEffect(() => {
-    if (visible) closePendingRef.current = false;
-  }, [visible]);
+  useLayoutEffect(() => {
+    closing.attach();
+    closing.observe(visible, openingKey);
+    setOpening(closing.opening);
+    return () => closing.detach();
+  }, [closing, openingKey, visible]);
   const handleClose = useCallback(() => {
-    if (closePendingRef.current) return;
-    closePendingRef.current = true;
+    const request = closing.claim(opening);
+    if (!request) return;
     if (!structured || !structuredRef.current) {
-      onClose();
+      if (closing.settled(request)) onClose();
       return;
     }
     void structuredRef.current
       .requestSnapshot()
       .catch(() => undefined)
-      .finally(onClose);
-  }, [onClose, structured]);
+      .finally(() => {
+        if (closing.settled(request)) onClose();
+      });
+  }, [closing, onClose, opening, structured]);
   useEffect(() => {
     if (!routeActive && visible) handleClose();
   }, [handleClose, routeActive, visible]);

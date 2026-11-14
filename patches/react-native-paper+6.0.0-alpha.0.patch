@@ -12,10 +12,10 @@ index 9806da3..0ac0113 100644
      accessibilityState: {
        busy: animating
 diff --git a/node_modules/react-native-paper/lib/module/components/Button/Button.js b/node_modules/react-native-paper/lib/module/components/Button/Button.js
-index fd9076c..bba7db2 100644
+index fd9076c..447c83b 100644
 --- a/node_modules/react-native-paper/lib/module/components/Button/Button.js
 +++ b/node_modules/react-native-paper/lib/module/components/Button/Button.js
-@@ -42,6 +42,7 @@ const Button = ({
+@@ -42,6 +42,7 @@
    accessibilityLabel,
    accessibilityHint,
    accessibilityRole = 'button',
@@ -23,7 +23,15 @@ index fd9076c..bba7db2 100644
    hitSlop,
    onPress,
    onPressIn,
-@@ -182,6 +183,7 @@ const Button = ({
+@@ -171,6 +172,7 @@
+         borderRadius: touchableStyle.borderRadius
+       }]
+     }), /*#__PURE__*/_jsx(TouchableRipple, {
++      collapsableChildren: rest.collapsableChildren,
+       borderless: true,
+       background: background,
+       onPress: onPress,
+@@ -182,6 +184,7 @@
        accessibilityHint: accessibilityHint,
        accessibilityRole: accessibilityRole,
        accessibilityState: {
@@ -140,10 +148,10 @@ index 9436979..c4e32c8 100644
        accessibilityState={{ busy: animating }}
      >
 diff --git a/node_modules/react-native-paper/src/components/Button/Button.tsx b/node_modules/react-native-paper/src/components/Button/Button.tsx
-index b2a1a21..7a50b08 100644
+index b2a1a21..d1999b0 100644
 --- a/node_modules/react-native-paper/src/components/Button/Button.tsx
 +++ b/node_modules/react-native-paper/src/components/Button/Button.tsx
-@@ -172,6 +172,7 @@ const Button = ({
+@@ -172,6 +172,7 @@
    accessibilityLabel,
    accessibilityHint,
    accessibilityRole = 'button',
@@ -151,7 +159,15 @@ index b2a1a21..7a50b08 100644
    hitSlop,
    onPress,
    onPressIn,
-@@ -355,7 +356,7 @@ const Button = ({
+@@ -345,6 +346,7 @@
+         />
+       )}
+       <TouchableRipple
++        collapsableChildren={rest.collapsableChildren}
+         borderless
+         background={background}
+         onPress={onPress}
+@@ -355,7 +357,7 @@
          accessibilityLabel={accessibilityLabel}
          accessibilityHint={accessibilityHint}
          accessibilityRole={accessibilityRole}

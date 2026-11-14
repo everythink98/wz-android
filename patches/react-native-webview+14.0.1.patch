@@ -1,8 +1,7 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-index 80c68034..d7fc092c 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-@@ -3,12 +3,16 @@ package com.reactnativecommunity.webview;
+@@ -3,12 +3,16 @@
  import android.annotation.SuppressLint;
  import android.graphics.Rect;
  import android.net.Uri;
@@ -19,7 +18,7 @@ index 80c68034..d7fc092c 100644
  import android.webkit.JavascriptInterface;
  import android.webkit.ValueCallback;
  import android.webkit.WebChromeClient;
-@@ -89,6 +93,125 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -89,6 +93,125 @@
          super(reactContext);
          mMessagingJSModule = ((ThemedReactContext) this.getContext()).getReactApplicationContext().getJSModule(RNCWebViewMessagingModule.class);
          progressChangedFilter = new ProgressChangedFilter();
@@ -30,96 +29,96 @@ index 80c68034..d7fc092c 100644
 +    private enum PrewarmWindowState { INITIAL, VISIBLE, HIDDEN, DESTROYED }
 +    // WebView's constructor may publish visibility before this constructor resumes.
 +    private PrewarmWindowState prewarmWindowState;
-+    private boolean prewarmStarted;
-+    private boolean prewarmLayerChanged;
-+    private int prewarmOriginalLayer;
++    private enum PrewarmPhase { ARMED, STARTED, LAYER_BORROWED, RELEASED }
++    private final class PrewarmLease {
++        final long epoch;
++        final int originalLayer;
++        final View root;
++        final ViewTreeObserver observer;
++        final ViewTreeObserver.OnPreDrawListener gate;
++        final Runnable deadline;
++        PrewarmPhase phase = PrewarmPhase.ARMED;
++
++        PrewarmLease(long epoch) {
++            this.epoch = epoch;
++            originalLayer = getLayerType();
++            root = getRootView();
++            observer = root.getViewTreeObserver();
++            gate = () -> drawWindowPrewarm(this);
++            deadline = () -> {
++                if (prewarmLease != this) return;
++                FLog.w("RNCWebView", "WebView return prewarm timed out");
++                releaseWindowPrewarm(this);
++            };
++        }
++    }
 +    private long prewarmEpoch;
 +    private final Handler prewarmHandler = new Handler(Looper.getMainLooper());
-+    private View prewarmRoot;
-+    private ViewTreeObserver prewarmObserver;
-+    private ViewTreeObserver.OnPreDrawListener prewarmGate;
-+    private Runnable prewarmDeadline;
++    private PrewarmLease prewarmLease;
 +
 +    public void setAndroidPrewarmOnWindowVisible(boolean enabled) {
 +        androidPrewarmOnWindowVisible = enabled;
-+        if (!enabled) releaseWindowPrewarm(prewarmEpoch);
++        if (!enabled) releaseWindowPrewarm(prewarmLease);
 +    }
 +
-+    private void releaseWindowPrewarm(long epoch) {
-+        if (epoch != prewarmEpoch || prewarmGate == null) return;
-+        if (prewarmDeadline != null) {
-+            prewarmHandler.removeCallbacks(prewarmDeadline);
-+            prewarmDeadline = null;
-+        }
-+        if (prewarmObserver != null && prewarmObserver.isAlive()) {
-+            prewarmObserver.removeOnPreDrawListener(prewarmGate);
-+        }
-+        final View root = prewarmRoot;
-+        prewarmGate = null;
-+        prewarmObserver = null;
-+        prewarmRoot = null;
++    private void releaseWindowPrewarm(PrewarmLease lease) {
++        if (lease == null || prewarmLease != lease || lease.phase == PrewarmPhase.RELEASED) return;
++        final boolean restoreLayer = lease.phase == PrewarmPhase.LAYER_BORROWED;
++        lease.phase = PrewarmPhase.RELEASED;
++        prewarmLease = null;
++        prewarmHandler.removeCallbacks(lease.deadline);
++        if (lease.observer.isAlive()) lease.observer.removeOnPreDrawListener(lease.gate);
 +        try {
-+            if (prewarmLayerChanged) {
-+                prewarmLayerChanged = false;
-+                setLayerType(prewarmOriginalLayer, null);
-+            }
++            if (restoreLayer) setLayerType(lease.originalLayer, null);
 +        } catch (RuntimeException error) {
 +            FLog.w("RNCWebView", "Could not restore WebView layer after prewarm", error);
 +        } finally {
 +            invalidate();
-+            if (root != null) root.invalidate();
++            lease.root.invalidate();
 +        }
 +    }
 +
-+    private void prewarmReturningWindow() {
-+        releaseWindowPrewarm(prewarmEpoch);
-+        final long epoch = ++prewarmEpoch;
-+        prewarmStarted = false;
-+        prewarmOriginalLayer = getLayerType();
-+        prewarmRoot = getRootView();
-+        prewarmObserver = prewarmRoot.getViewTreeObserver();
-+        prewarmGate = () -> {
-+            if (epoch != prewarmEpoch || prewarmGate == null) return true;
-+            if (prewarmStarted) return false;
-+            prewarmStarted = true;
-+            try {
-+                if (prewarmWindowState == PrewarmWindowState.DESTROYED || !isAttachedToWindow() ||
++    private boolean drawWindowPrewarm(PrewarmLease lease) {
++        if (prewarmLease != lease || lease.phase == PrewarmPhase.RELEASED) return true;
++        if (lease.phase != PrewarmPhase.ARMED) return false;
++        lease.phase = PrewarmPhase.STARTED;
++        try {
++            if (prewarmWindowState == PrewarmWindowState.DESTROYED || !isAttachedToWindow() ||
 +                    getWindowVisibility() != View.VISIBLE || getWidth() <= 0 || getHeight() <= 0 ||
 +                    !isHardwareAccelerated() || !isShown() || !getGlobalVisibleRect(new Rect())) {
-+                    releaseWindowPrewarm(epoch);
-+                    return true;
-+                }
-+                // A hidden WebView can lose its hardware functor. Rebuild it after the root
-+                // renderer initializes, before requesting the visual state of the returning page.
-+                prewarmLayerChanged = true;
-+                setLayerType(View.LAYER_TYPE_HARDWARE, null);
-+                buildLayer();
-+                postVisualStateCallback(epoch, new WebView.VisualStateCallback() {
-+                    @Override
-+                    public void onComplete(long id) {
-+                        releaseWindowPrewarm(id);
-+                    }
-+                });
-+            } catch (RuntimeException error) {
-+                FLog.w("RNCWebView", "WebView return prewarm failed", error);
-+                releaseWindowPrewarm(epoch);
++                releaseWindowPrewarm(lease);
++                return true;
 +            }
-+            return prewarmGate == null;
-+        };
++            // Rebuild the returning page's hardware functor after the root renderer initializes.
++            lease.phase = PrewarmPhase.LAYER_BORROWED;
++            setLayerType(View.LAYER_TYPE_HARDWARE, null);
++            buildLayer();
++            postVisualStateCallback(lease.epoch, new WebView.VisualStateCallback() {
++                @Override
++                public void onComplete(long id) {
++                    if (id == lease.epoch) releaseWindowPrewarm(lease);
++                }
++            });
++        } catch (RuntimeException error) {
++            FLog.w("RNCWebView", "WebView return prewarm failed", error);
++            releaseWindowPrewarm(lease);
++        }
++        return prewarmLease != lease;
++    }
++
++    private void prewarmReturningWindow() {
++        releaseWindowPrewarm(prewarmLease);
++        final PrewarmLease lease = new PrewarmLease(++prewarmEpoch);
++        prewarmLease = lease;
 +        try {
-+            prewarmObserver.addOnPreDrawListener(prewarmGate);
++            lease.observer.addOnPreDrawListener(lease.gate);
 +            // Failure recovery only; successful returns release on the visual callback.
-+            prewarmDeadline = () -> {
-+                if (epoch != prewarmEpoch || prewarmGate == null) return;
-+                FLog.w("RNCWebView", "WebView return prewarm timed out");
-+                releaseWindowPrewarm(epoch);
-+            };
-+            prewarmHandler.postDelayed(prewarmDeadline, 2000);
++            prewarmHandler.postDelayed(lease.deadline, 2000);
 +            invalidate();
-+            prewarmRoot.invalidate();
++            lease.root.invalidate();
 +        } catch (RuntimeException error) {
 +            FLog.w("RNCWebView", "Could not prepare returning WebView", error);
-+            releaseWindowPrewarm(epoch);
++            releaseWindowPrewarm(lease);
 +        }
 +    }
 +
@@ -130,7 +129,7 @@ index 80c68034..d7fc092c 100644
 +            if (visibility == View.VISIBLE) prewarmWindowState = PrewarmWindowState.VISIBLE;
 +            else if (prewarmWindowState == PrewarmWindowState.VISIBLE) prewarmWindowState = PrewarmWindowState.HIDDEN;
 +        }
-+        if (visibility != View.VISIBLE) releaseWindowPrewarm(prewarmEpoch);
++        if (visibility != View.VISIBLE) releaseWindowPrewarm(prewarmLease);
 +        super.onWindowVisibilityChanged(visibility);
 +        if (returning && androidPrewarmOnWindowVisible && prewarmWindowState != PrewarmWindowState.DESTROYED && isAttachedToWindow()) {
 +            prewarmReturningWindow();
@@ -139,18 +138,18 @@ index 80c68034..d7fc092c 100644
 +
 +    @Override
 +    protected void onDetachedFromWindow() {
-+        releaseWindowPrewarm(prewarmEpoch);
++        releaseWindowPrewarm(prewarmLease);
 +        if (prewarmWindowState != PrewarmWindowState.DESTROYED) prewarmWindowState = PrewarmWindowState.INITIAL;
 +        super.onDetachedFromWindow();
      }
  
      public void setBasicAuthCredential(RNCBasicAuthCredential credential) {
-@@ -416,10 +539,19 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -416,10 +539,19 @@
  
      @Override
      public void destroy() {
 +        prewarmWindowState = PrewarmWindowState.DESTROYED;
-+        releaseWindowPrewarm(prewarmEpoch);
++        releaseWindowPrewarm(prewarmLease);
          if (mWebChromeClient != null) {
              mWebChromeClient.onHideCustomView();
          }
@@ -165,7 +164,7 @@ index 80c68034..d7fc092c 100644
      }
  
    public ThemedReactContext getThemedReactContext() {
-@@ -465,4 +597,4 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -465,4 +597,4 @@
              return waitingForCommandLoadUrl;
          }
      }

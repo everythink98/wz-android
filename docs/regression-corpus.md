@@ -2,6 +2,18 @@
 
 本文记录已确认事故的历史症状、根因、当前状态、修复证据和验收边界。按 REG 编号或能力 ID 查找条目，先读状态与当前结论，再核对证据适用的源码、构建、设备和来源。历史通过结果不能直接作为当前版本的验证结论。
 
+
+## `REG-NAV-022` Paper 按钮禁用变化与原生退场交错导致重复挂载崩溃
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-01`、`WRITE-01/02/05/07`、`NOTIFY-02`，共享 Paper 按钮 |
+| 历史症状与根因 | 2026-11-14 B04 专用设备的 linux.do 发帖隔离场景已收到成功 notice，随后进程退出到 Launcher，runner 20 秒 receipt 等待超时。真实 AndroidRuntime/Fabric 日志先后记录 SVG 58、文字 92 已有旧 parent，向新 parent addViewAt 时崩溃。实际 Native bounds/图标路径匹配返回按钮；Paper 内层 opacity 从禁用值恢复为 1 时允许 Fabric 折叠该层，而 Screens 退场对后代 startViewTransition 保留旧父节点，导致重挂失败。原成功 notice 与陈旧采样 receipt 不当作设备通过。 |
+| 当前 owner | `tests/ui/shared/button-and-input-controls.test.tsx` 真实 Paper→Native host 接线；`scripts/run-composer-device-proof.mjs` 原设备 case 与 130% 字号 case；实际 Native 层级和 transition 原语证据分开报告。 |
+| 修复与自动证据 | 四类共享 Paper 分支传入 collapsableChildren=false，既有 Paper Button source/dist 将该公共属性同值转发到实际 TouchableRipple；保留禁用、无障碍、点击和视觉。没有吞 Native 异常、强行 remove parent 或增加延时。旧接线真实 RED 后相关 UI seed644043 的 93/93 通过；最终完整 UI 3284/3284、Vitest4626/4626 与普通 final-v5 APK sanity 通过。 |
+| 当前验收边界 | 已修复的具体路径：匹配私有包 buildId19bff4150db74b5b9f2776a34329d512 的 25/25 设备流程及实际 Native 层级通过，SVG58/文字92分别保留父节点60/94，返回与发布按钮矩形逐项不变；这不扩大为所有设备或长期稳定性证明。普通包 buildId4da801f5bb7d4c75a1c9532fbad5a9c6 已在保留登录态的主模拟器同签名覆盖启动，UID 与首次安装时间不变，22 条当前启动记录和首页只读通过。主设备的真实发帖、编辑器全流程及物理设备仍未验证；此结案只覆盖已复现的按钮 opacity 重挂路径，不宣称修复所有 Fabric 挂载异常。原两次崩溃、诊断和构建回执保留于 ignored state-model-refactor/b04。 |
+
 ## `REG-TOPIC-221` Lightbox 前自动闭合的空段落增加图片上方间距
 
 | 字段 | 内容 |
@@ -920,6 +932,8 @@
 | 普通包验收 | 未登录隔离 AVD 的同源码普通 Release/Hermes APK 中，首次自动打开后关闭，账号核对结算和前后台往返均不重开；点击重试才重新打开，第二次关闭仍保持关闭。随后 NodeSeek 公开主题正常打开，无妖火迟到弹窗。普通包 buildId `403315a7cb25400686a02a27cf874b19`，两次关闭节点与回执位于 `.codex-tmp/native-body-selection-20261011/`。 |
 | 主设备复验与门禁 | 同一普通包在保留三站登录态的主 AVD 覆盖安装，卡住的模拟器按用户要求关闭后单独冷启动；包哈希、签名、UID、firstInstallTime 与通知权限复核不变。妖火版规、NodeSeek 主题的正文、原生长按及所选文字实际复制粘贴通过，账号前后均显示已登录 3/3。`STATIC_PASS`：完整 verify/typecheck；`UNIT_PASS`：247 文件、3,782 项，seed `1791707840991`；`UI_PASS`：97 suites、2,446 项，seed `-1220895914`。首轮 checkpoint 测试因设备取证占用同一 OS lease 报 EADDRINUSE，释放后原 seed 的 17/17 与完整门禁通过，失败日志保留。 |
 | 验收边界 | Topic 关闭与显式重试为隔离设备 `LIVE_PASS`，主设备真实正文与文字复制为独立 `LIVE_PASS`；User 的同根因边界为 `UI_PASS`。没有输入账号、清除 Cookie、清数据或卸载；已登录主设备不用于证明未登录关闭反例。当前仅主 AVD 可见运行。 |
+| B04 同毫秒消费补验（2026-11-14） | 原关闭后不自动重开的历史结论保持。本次发现 User 不同 Query 的 errorUpdatedAt 可在同一毫秒相等，导致应有的下一提示反而被吞；两次真实 Query 均为 error/idle。受控 clock 在原 seed2092716656 确定性复现 5/4，改为四 lane 惰性 WeakMap 按实际 Query 实例+errorUpdateCount 消费、显式 retry 只删除当前收据；同 Query、同 Error、同毫秒的新失败及重复 render 均在原主要用例补强，修后 50/50。最终完整 UI105/3284 seed2067285867 通过；这不是新增原站登录失效 LIVE_PASS，不据此扩大原设备验收范围或关闭其他账号事故。 |
+
 
 ## `REG-TOPIC-194` 回复整条复制重新解码跨标签实体
 

@@ -87,6 +87,7 @@ export function FloatingIconButton({
   const color = backdrop ? (theme.dark ? theme.primary : theme.primaryStrong) : theme.onPrimary;
   const button = (
     <PaperIconButton
+      collapsableChildren={false}
       accessibilityLabel={label}
       accessibilityState={{ disabled: disabled || loading, busy: loading }}
       disabled={disabled || loading}
@@ -156,6 +157,7 @@ export function IconButton({
     return (
       <PaperIconButton
         testID={testID}
+        collapsableChildren={false}
         accessibilityLabel={label}
         accessibilityState={state}
         disabled={state.disabled}
@@ -171,6 +173,7 @@ export function IconButton({
   return (
     <Button
       testID={testID}
+      collapsableChildren={false}
       accessibilityLabel={label}
       accessibilityState={state}
       disabled={state.disabled}
@@ -234,6 +237,7 @@ export function AppButton({
   const button = (
     <Button
       testID={testID}
+      collapsableChildren={false}
       accessibilityLabel={accessibilityLabel || label}
       accessibilityState={{ disabled }}
       disabled={disabled}

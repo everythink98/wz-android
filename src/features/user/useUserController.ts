@@ -1,11 +1,12 @@
 import { hasNextPageCursor } from '@/domain/forum/pagination';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   hashKey,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
   type InfiniteData,
+  type Query,
   type QueryKey
 } from '@tanstack/react-query';
 import { mergeTopics } from '@/domain/forum/feed';
@@ -33,6 +34,7 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
 type UserLane = 'topics' | 'replies';
+type UserErrorLane = 'resolution' | 'profile' | UserLane;
 type UserActivityPage = Partial<UserTopicsPage & UserRepliesPage>;
 
 function mergeUserReplies(incoming: UserReplyActivity[]) {
@@ -98,12 +100,30 @@ export function useUserController({
 }) {
   const queryClient = useQueryClient();
   const activeRef = useCommittedRef(active);
-  const handledUserErrorAtRef = useRef<Record<'resolution' | 'profile' | UserLane, number>>({
-    profile: 0,
-    resolution: 0,
-    replies: 0,
-    topics: 0
-  });
+  const [handledUserErrors] = useState<Record<UserErrorLane, WeakMap<Query, number>>>(() => ({
+    profile: new WeakMap(),
+    resolution: new WeakMap(),
+    replies: new WeakMap(),
+    topics: new WeakMap()
+  }));
+  const claimUserError = useCallback(
+    (lane: UserErrorLane, queryKey: QueryKey, error: unknown) => {
+      const query = queryClient.getQueryCache().find({ queryKey, exact: true });
+      if (!query || !error || query.state.error !== error) return false;
+      const handled = handledUserErrors[lane];
+      if (handled.get(query) === query.state.errorUpdateCount) return false;
+      handled.set(query, query.state.errorUpdateCount);
+      return true;
+    },
+    [handledUserErrors, queryClient]
+  );
+  const rearmUserError = useCallback(
+    (lane: UserErrorLane, queryKey: QueryKey) => {
+      const query = queryClient.getQueryCache().find({ queryKey, exact: true });
+      if (query) handledUserErrors[lane].delete(query);
+    },
+    [handledUserErrors, queryClient]
+  );
   const selectedUser = useMemo(
     () => normalizeUserReference(user),
     [user.avatar, user.displayName, user.id, user.source, user.url, user.username]
@@ -255,6 +275,10 @@ export function useUserController({
   });
   const topicsQuery = useInfiniteQuery(createLaneQuery('topics', topicKey));
   const repliesQuery = useInfiniteQuery(createLaneQuery('replies', replyKey));
+  const resolutionErrorCount = queryClient.getQueryState(resolutionKey)?.errorUpdateCount ?? 0;
+  const profileErrorCount = queryClient.getQueryState(profileKey)?.errorUpdateCount ?? 0;
+  const topicsErrorCount = queryClient.getQueryState(topicKey)?.errorUpdateCount ?? 0;
+  const repliesErrorCount = queryClient.getQueryState(replyKey)?.errorUpdateCount ?? 0;
   const topicPages = topicsQuery.data?.pages;
   const replyPages = repliesQuery.data?.pages;
   const profile = profileQuery.data;
@@ -308,11 +332,7 @@ export function useUserController({
     [activeRef, loginReadKey, loginReadKeyRef, showYaohuoLogin]
   );
   const handleError = useCallback(
-    (
-      error: unknown,
-      lane: 'resolution' | 'profile' | UserLane,
-      resume: () => Promise<{ error: unknown; errorUpdatedAt: number; isError: boolean }>
-    ) => {
+    (error: unknown, lane: UserErrorLane, resume: () => Promise<{ error: unknown; isError: boolean }>) => {
       if (!active || !selectedUser || (lane === 'resolution' && !selectedNeedsResolution)) return;
       const sourceError = sourceErrorFromUnknown(selectedUser.source, error);
       const target = userSourceRecoveryTarget(selectedUser.source, sourceError);
@@ -334,7 +354,7 @@ export function useUserController({
             if (!isCurrent()) return 'stale';
             const result = await resume();
             if (!isCurrent()) return 'stale';
-            handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
+            claimUserError(lane, queryKey, result.error);
             return result.isError ? sourceReadRecoveryOutcome('linuxdo', result.error) : 'completed';
           }
         };
@@ -355,7 +375,7 @@ export function useUserController({
             if (!isCurrent()) return 'stale';
             const result = await resume();
             if (!isCurrent()) return 'stale';
-            handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
+            claimUserError(lane, queryKey, result.error);
             return result.isError ? sourceReadRecoveryOutcome('nodeseek', result.error) : 'completed';
           }
         };
@@ -370,6 +390,7 @@ export function useUserController({
     },
     [
       active,
+      claimUserError,
       notify,
       profileKey,
       replyKey,
@@ -385,50 +406,60 @@ export function useUserController({
   );
 
   useEffect(() => {
-    if (resolutionError && handledUserErrorAtRef.current.resolution !== resolutionQuery.errorUpdatedAt) {
-      handledUserErrorAtRef.current.resolution = resolutionQuery.errorUpdatedAt;
+    if (resolutionError && claimUserError('resolution', resolutionKey, resolutionError)) {
       handleError(resolutionError, 'resolution', () => resolutionQuery.refetch({ cancelRefetch: false }));
     }
-  }, [handleError, resolutionError, resolutionQuery.errorUpdatedAt, resolutionQuery.refetch, selectedUsername]);
+  }, [
+    claimUserError,
+    handleError,
+    resolutionError,
+    resolutionErrorCount,
+    resolutionKey,
+    resolutionQuery.refetch,
+    selectedUsername
+  ]);
 
   useEffect(() => {
-    if (profileQuery.error && handledUserErrorAtRef.current.profile !== profileQuery.errorUpdatedAt) {
-      handledUserErrorAtRef.current.profile = profileQuery.errorUpdatedAt;
+    if (profileQuery.error && claimUserError('profile', profileKey, profileQuery.error)) {
       handleError(profileQuery.error, 'profile', () => profileQuery.refetch({ cancelRefetch: false }));
     }
   }, [
+    claimUserError,
     handleError,
     identity,
+    profileErrorCount,
+    profileKey,
     profileQuery.error,
-    profileQuery.errorUpdatedAt,
     profileQuery.refetch,
     selectedUser?.source
   ]);
   useEffect(() => {
-    if (topicsQuery.error && handledUserErrorAtRef.current.topics !== topicsQuery.errorUpdatedAt) {
-      handledUserErrorAtRef.current.topics = topicsQuery.errorUpdatedAt;
+    if (topicsQuery.error && claimUserError('topics', topicKey, topicsQuery.error)) {
       handleError(topicsQuery.error, 'topics', () => topicsQuery.fetchNextPage({ cancelRefetch: false }));
     }
   }, [
+    claimUserError,
     handleError,
     identity,
     selectedUser?.source,
+    topicKey,
     topicsQuery.data?.pageParams,
     topicsQuery.error,
-    topicsQuery.errorUpdatedAt,
+    topicsErrorCount,
     topicsQuery.fetchNextPage
   ]);
   useEffect(() => {
-    if (repliesQuery.error && handledUserErrorAtRef.current.replies !== repliesQuery.errorUpdatedAt) {
-      handledUserErrorAtRef.current.replies = repliesQuery.errorUpdatedAt;
+    if (repliesQuery.error && claimUserError('replies', replyKey, repliesQuery.error)) {
       handleError(repliesQuery.error, 'replies', () => repliesQuery.fetchNextPage({ cancelRefetch: false }));
     }
   }, [
+    claimUserError,
     handleError,
     identity,
+    replyKey,
     repliesQuery.data?.pageParams,
     repliesQuery.error,
-    repliesQuery.errorUpdatedAt,
+    repliesErrorCount,
     repliesQuery.fetchNextPage,
     selectedUser?.source
   ]);
@@ -437,9 +468,9 @@ export function useUserController({
     if (!active || !selectedUser) return 'stale';
     if (selectedUser.source === 'yaohuo') {
       handledYaohuoLoginReadKeyRef.current = null;
-      handledUserErrorAtRef.current.profile = 0;
-      handledUserErrorAtRef.current.topics = 0;
-      handledUserErrorAtRef.current.replies = 0;
+      rearmUserError('profile', profileKey);
+      rearmUserError('topics', topicKey);
+      rearmUserError('replies', replyKey);
     }
     const blockedPlan = selectedNeedsResolution ? resolutionReadPlan : profileReadPlan;
     if (blockedPlan.state === 'blocked') {
@@ -495,6 +526,7 @@ export function useUserController({
     profileKeyHashRef,
     profileReadPlan,
     queryClient,
+    rearmUserError,
     replyKey,
     resolutionQuery.data,
     resolutionQuery.refetch,
@@ -593,21 +625,21 @@ export function useUserController({
     retryUserTopics: () => {
       if (selectedSource === 'yaohuo' && activeRef.current) {
         handledYaohuoLoginReadKeyRef.current = null;
-        handledUserErrorAtRef.current.topics = 0;
+        rearmUserError('topics', topicKey);
       }
       return topicsQuery.refetch({ cancelRefetch: false });
     },
     retryUserReplies: () => {
       if (selectedSource === 'yaohuo' && activeRef.current) {
         handledYaohuoLoginReadKeyRef.current = null;
-        handledUserErrorAtRef.current.replies = 0;
+        rearmUserError('replies', replyKey);
       }
       return repliesQuery.refetch({ cancelRefetch: false });
     },
     retryUserProfile: () => {
       if (selectedSource === 'yaohuo' && activeRef.current) {
         handledYaohuoLoginReadKeyRef.current = null;
-        handledUserErrorAtRef.current.profile = 0;
+        rearmUserError('profile', profileKey);
       }
       return profileQuery.refetch({ cancelRefetch: false });
     },

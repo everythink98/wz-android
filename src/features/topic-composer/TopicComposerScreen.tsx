@@ -52,6 +52,7 @@ import type {
   YaohuoTopicKind
 } from '@/domain/forum/topicComposer';
 import { validateTopicDraft, validateTopicEdit } from '@/domain/forum/topicComposer';
+import { createTopicComposerPanels, type TopicComposerPanel, type TopicPanelRequest } from './topicComposerPanels';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
@@ -478,9 +479,17 @@ export function TopicComposerScreen({
     paddingBottom: Math.max(0, (keyboard?.height.value ?? 0) - insets.bottom)
   }));
   const metadataCollapsed = !titleEditing && (keyboardShown || editorPanelOpen || editorFocusPending);
-  const [panel, setPanel] = useState<
-    'sites' | 'more' | 'options' | 'categories' | 'tags' | 'attachments' | 'images' | 'latest' | null
-  >(null);
+  const [panelFlow] = useState(createTopicComposerPanels);
+  const [panel, setPanelView] = useState(panelFlow.panel);
+  const publishPanels = useCallback(() => setPanelView(panelFlow.panel), [panelFlow]);
+  const presentPanel = useCallback(
+    (next: TopicComposerPanel) => {
+      panelFlow.show(next);
+      publishPanels();
+    },
+    [panelFlow, publishPanels]
+  );
+  useEffect(() => () => panelFlow.cancel(), [panelFlow]);
   const panelOwner = useCommittedRef({ active, panel, busy: c.busy, draftId: c.draft?.id });
   const settleKeyboard = useKeyboardHandoff(pickerReady, active && panel === null, keyboardHost);
   const awaitModalKeyboardSettled = useKeyboardHandoff(modalPickerReady, active && panel !== null, modalKeyboardHost);
@@ -598,90 +607,99 @@ export function TopicComposerScreen({
                 : '普通帖'
           : '';
   const unresolved = c.attempt?.status === 'sending' || c.attempt?.status === 'unknown';
-  const openPanel = async (next: typeof panel) => {
+  const currentPanelRequest = (request: TopicPanelRequest) =>
+    panelFlow.owns(request) && panelOwner.current.draftId === request.draftId;
+  const currentPanelAccess = (request: TopicPanelRequest) =>
+    currentPanelRequest(request) &&
+    panelOwner.current.active &&
+    !panelOwner.current.busy &&
+    panelOwner.current.panel === request.from;
+  const openPanel = async (next: TopicComposerPanel) => {
     if (c.busy) return;
-    const draftId = c.draft?.id;
+    const request = panelFlow.opening(panel, c.draft?.id, next);
+    if (!request) return;
     setInsertionError('');
     try {
       await (panel === null ? awaitKeyboardSettled() : awaitModalKeyboardSettled());
-      if (
-        !panelOwner.current.active ||
-        panelOwner.current.panel !== panel ||
-        panelOwner.current.draftId !== draftId ||
-        panelOwner.current.busy
-      )
-        return;
+      if (!currentPanelAccess(request)) return;
       if (next === 'attachments' || next === 'images') setPreview(false);
       if (next === 'categories') setCategoryQuery('');
-      setPanel(next);
+      if (panelFlow.opened(request)) publishPanels();
     } catch (cause) {
-      if (
-        panelOwner.current.active &&
-        !panelOwner.current.busy &&
-        panelOwner.current.panel === panel &&
-        panelOwner.current.draftId === draftId
-      )
+      if (currentPanelAccess(request))
         setInsertionError(cause instanceof Error ? cause.message : '键盘尚未收起，请重试');
+    } finally {
+      panelFlow.finished(request);
     }
   };
   const pickPanelAttachment = async (kind: 'attachment' | 'yaohuo-file') => {
-    const draftId = c.draft?.id;
+    const request = panelFlow.working('pick', panel, c.draft?.id);
+    if (!request) return;
     setInsertionError('');
     try {
       await awaitModalKeyboardSettled();
-      if (
-        !panelOwner.current.active ||
-        panelOwner.current.panel !== panel ||
-        panelOwner.current.draftId !== draftId ||
-        panelOwner.current.busy
-      )
-        return;
+      if (!currentPanelAccess(request)) return;
       await c.pickAttachments(kind);
     } catch (cause) {
-      if (
-        panelOwner.current.active &&
-        !panelOwner.current.busy &&
-        panelOwner.current.panel === panel &&
-        panelOwner.current.draftId === draftId
-      )
+      if (currentPanelAccess(request))
         setInsertionError(cause instanceof Error ? cause.message : '选择附件失败，请重试');
+    } finally {
+      panelFlow.finished(request);
     }
   };
+
   const updateYaohuo = (update: (value: Extract<TopicDraft, { source: 'yaohuo' }>) => TopicDraft) =>
     c.change((value) => (value.source === 'yaohuo' ? update(value) : value));
   const giftKind = draft?.source === 'yaohuo' && draft.kind === 'gift' ? 'gift' : 'poll';
   useEffect(() => {
     setPreview(false);
-    setPanel(null);
+    presentPanel(null);
     setTagQuery('');
     setInsertionError('');
     setDescriptionFileId(null);
     setEditorPanelOpen(false);
     setEditorFocusPending(false);
-  }, [draft?.id]);
+  }, [draft?.id, presentPanel]);
   useEffect(() => {
-    if (c.uploading) setPanel((current) => (current === 'attachments' || current === 'images' ? null : current));
-  }, [c.uploading]);
+    if (c.uploading) {
+      panelFlow.uploadStarted();
+      publishPanels();
+    }
+  }, [c.uploading, panelFlow, publishPanels]);
   useEffect(() => {
     if (editorObscured) return;
     if (c.errors.title) titleRef.current?.focus();
-    else if (c.errors.categoryId) setPanel('categories');
-    else if (c.errors.tags) setPanel('tags');
-    else if (c.errors.attachments) setPanel(attachmentErrorPanel.current);
+    else if (c.errors.categoryId) presentPanel('categories');
+    else if (c.errors.tags) presentPanel('tags');
+    else if (c.errors.attachments) presentPanel(attachmentErrorPanel.current);
     else if (c.errors.body || (draft?.source === 'nodeseek' && c.errors.poll)) {
       setPreview(false);
       setBodyFocusSignal((value) => value + 1);
     } else if (c.errors.rank || c.errors.reward || c.errors.gift || c.errors.poll || c.errors.resources)
-      setPanel('options');
-  }, [attachmentErrorPanel, c.errors, draft?.source, editorObscured]);
+      presentPanel('options');
+  }, [attachmentErrorPanel, c.errors, draft?.source, editorObscured, presentPanel]);
   const insertAndClose = async (markup: string) => {
     if (c.busy || preview) return;
+    const request = panelFlow.working('insert', panel, c.draft?.id);
+    if (!request) return;
     setInsertionError('');
     try {
       await c.insertMarkup(markup);
-      setPanel(null);
+      if (currentPanelRequest(request) && panelFlow.closed(request)) publishPanels();
     } catch (error) {
-      setInsertionError(error instanceof Error ? error.message : '插入失败，请重试');
+      if (currentPanelRequest(request)) setInsertionError(error instanceof Error ? error.message : '插入失败，请重试');
+    } finally {
+      panelFlow.finished(request);
+    }
+  };
+  const rebaseAndClose = async () => {
+    const request = panelFlow.working('rebase', panel, c.draft?.id);
+    if (!request) return;
+    try {
+      await c.rebaseEdit();
+      if (currentPanelRequest(request) && panelFlow.closed(request)) publishPanels();
+    } finally {
+      panelFlow.finished(request);
     }
   };
   const panelTitle = {
@@ -1182,12 +1200,12 @@ export function TopicComposerScreen({
               keyboardHostRef={modalKeyboardHost}
               visible={Boolean(panel) && (!editorObscured || panel === 'sites')}
               backdropLabel="收起发帖面板"
-              onRequestClose={() => setPanel(null)}
+              onRequestClose={() => presentPanel(null)}
             >
               <ModalSheetHeader
                 title={panel ? panelTitle[panel] : ''}
                 closeLabel="关闭发帖选项"
-                onClose={() => setPanel(null)}
+                onClose={() => presentPanel(null)}
               />
               {c.error ? (
                 <Text accessibilityRole="alert" style={styles.error}>
@@ -1204,7 +1222,7 @@ export function TopicComposerScreen({
                   hint={panel === 'tags' ? tagsHint : undefined}
                   tagSearch={tagSearch}
                   onSelectCategory={() => openPanel('categories')}
-                  onClose={() => setPanel(null)}
+                  onClose={() => presentPanel(null)}
                 />
               ) : (
                 <ScrollView
@@ -1235,7 +1253,7 @@ export function TopicComposerScreen({
                         label="保留本机修改继续"
                         disabled={unresolved || c.busy}
                         onPress={() => {
-                          void c.rebaseEdit().then(() => setPanel(null));
+                          void rebaseAndClose();
                         }}
                       />
                     </View>
@@ -1260,7 +1278,7 @@ export function TopicComposerScreen({
                           disabled={c.busy}
                           style={[styles.option, styles.optionRow, site === c.source && styles.selected]}
                           onPress={() => {
-                            setPanel(null);
+                            presentPanel(null);
                             void c.switchSource(site);
                           }}
                         >
@@ -1328,7 +1346,7 @@ export function TopicComposerScreen({
                         disabled={c.busy || c.uploading}
                         style={[styles.option, styles.optionRow]}
                         onPress={() => {
-                          setPanel(null);
+                          presentPanel(null);
                           void c.discard();
                         }}
                       >
@@ -1518,7 +1536,7 @@ export function TopicComposerScreen({
                             <AppButton
                               label="管理文件"
                               disabled={c.busy || c.uploading}
-                              onPress={() => setPanel('attachments')}
+                              onPress={() => presentPanel('attachments')}
                             />
                           </>
                         ) : null}

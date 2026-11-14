@@ -381,13 +381,59 @@ describe('user query controller', () => {
       clock.mockRestore();
     }
     await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(3));
-    for (const [id, count] of [
-      ['8', 4],
-      ['7', 5]
-    ] as const) {
-      requested = { ...requested, id };
+    const loginFailure = Object.assign(new Error('login-required'), {
+      kind: 'login-required',
+      reason: 'login-required',
+      source: 'yaohuo'
+    });
+    getUserProfile.mockImplementation(async () => {
+      throw loginFailure;
+    });
+    const sharedErrorAt = Date.now();
+    const sharedClock = jest.spyOn(Date, 'now').mockReturnValue(sharedErrorAt);
+    try {
+      for (const [id, count] of [
+        ['8', 4],
+        ['7', 5]
+      ] as const) {
+        const queryKey = forumQueryKeys.user({
+          source: 'yaohuo',
+          userId: id,
+          scope: sessionEpochs,
+          readPlanScope: 'blocked:login-required'
+        });
+        const previousErrors = appQueryClient.getQueryState(queryKey)?.errorUpdateCount || 0;
+        requested = { ...requested, id };
+        await act(async () => hook.rerender(undefined));
+        await waitFor(() => {
+          const state = appQueryClient.getQueryState(queryKey);
+          expect(state?.status).toBe('error');
+          expect(state?.fetchStatus).toBe('idle');
+          expect(state?.error).toBe(loginFailure);
+          expect(state?.errorUpdateCount).toBeGreaterThan(previousErrors);
+          expect(state?.errorUpdatedAt).toBe(sharedErrorAt);
+        });
+        await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(count));
+      }
       await act(async () => hook.rerender(undefined));
-      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(count));
+      expect(showYaohuoLogin).toHaveBeenCalledTimes(5);
+      const retryKey = forumQueryKeys.user({
+        source: 'yaohuo',
+        userId: '7',
+        scope: sessionEpochs,
+        readPlanScope: 'blocked:login-required'
+      });
+      const previousRetryErrors = appQueryClient.getQueryState(retryKey)?.errorUpdateCount || 0;
+      await act(async () => {
+        await hook.result.current.retryUserProfile();
+      });
+      await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(6));
+      const retried = appQueryClient.getQueryState(retryKey);
+      expect(retried?.error).toBe(loginFailure);
+      expect(retried?.errorUpdatedAt).toBe(sharedErrorAt);
+      expect(retried?.errorUpdateCount).toBeGreaterThan(previousRetryErrors);
+    } finally {
+      sharedClock.mockRestore();
     }
   });
 

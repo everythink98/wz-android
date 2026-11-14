@@ -187,7 +187,13 @@ describe('Yaohuo reply composer', () => {
   );
   it('keeps one panel handoff for repeated and competing toolbar presses', async () => {
     const hidden = Promise.withResolvers<void>();
-    const awaitKeyboardSettled = jest.fn(() => hidden.promise);
+    const formatHidden = Promise.withResolvers<void>();
+    const faceHidden = Promise.withResolvers<void>();
+    const awaitKeyboardSettled = jest
+      .fn<() => Promise<void>>()
+      .mockReturnValueOnce(hidden.promise)
+      .mockReturnValueOnce(formatHidden.promise)
+      .mockReturnValueOnce(faceHidden.promise);
     const view = await render(
       <YaohuoReplyComposer
         actionBusy={false}
@@ -208,10 +214,16 @@ describe('Yaohuo reply composer', () => {
     expect(mockInputHandle.blur).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByLabelText('文字格式'));
     expect(awaitKeyboardSettled).toHaveBeenCalledTimes(2);
+    expect(view.getByLabelText('无表情')).toBeTruthy();
+    expect(view.queryByLabelText('粗体')).toBeNull();
+    await act(() => formatHidden.resolve());
     expect(view.queryByLabelText('无表情')).toBeNull();
     expect(view.getByLabelText('粗体')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('表情'));
     expect(awaitKeyboardSettled).toHaveBeenCalledTimes(3);
+    expect(view.getByLabelText('粗体')).toBeTruthy();
+    expect(view.queryByLabelText('无表情')).toBeNull();
+    await act(() => faceHidden.resolve());
     expect(view.queryByLabelText('粗体')).toBeNull();
     expect(view.getByLabelText('无表情')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('表情'));

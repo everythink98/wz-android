@@ -20,7 +20,8 @@ const pkg = 'com.wz.reader';
 const allowedProofAvds = [
   'WZ_ComposerInsets_0916',
   'WZ_TopicCreation_Test_API35',
-  'WZ_ComposerExpressions_Test_API35_20261005'
+  'WZ_ComposerExpressions_Test_API35_20261005',
+  'WZ_StateModel_Composer_API35_20261114'
 ];
 export function openComposerFixture(agent, launcher) {
   agent(['open', pkg]);

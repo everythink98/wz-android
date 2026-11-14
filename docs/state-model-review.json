@@ -1902,7 +1902,16 @@
         "tests/ui/topic/structured-reply-composer.test.tsx"
       ],
       "evidenceGap": "OEM visual callback、Photos/Browse长停留与真实键盘矩阵需匹配APK。",
-      "targetModel": "RNCWebView 内以 epoch-keyed PrewarmLease 收拢 gate/observer/root/deadline/original-layer，窗口状态独立保留。"
+      "targetModel": "RNCWebView 内以 epoch-keyed PrewarmLease 收拢 gate/observer/root/deadline/original-layer，窗口状态独立保留。",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "安装源与tracked patch将started/layer/root/observer/gate/deadline收敛为PrewarmLease；实际preDraw/visual/deadline/disable/hide/detach/destroy只释放原lease，借层前先认领恢复责任。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "Opt-in and INITIAL/VISIBLE/HIDDEN/DESTROYED are separate configuration/window facts. Real OEM visual completion and long-session black-image behavior still require Root's matching Native/APK/device validation."
+      }
     },
     {
       "id": "PL-X-android-foreground-session",
@@ -2584,7 +2593,16 @@
       "consumer": "scripts/build-composer-editor.mjs :: entryPoints: ['src/ui/composer/editorRuntime.tsx'] ; src/ui/composer/StructuredReplyComposer.tsx :: message.payload.action === 'resolve-linuxdo-upload'",
       "cannotDerive": "currentImage资源identity、resolvedSrc缓存和retry资格是三种事实；不能用DOM.hidden/ARIA文字反推权威状态。",
       "tests": ["src/ui/composer/editorRuntime.test.ts", "tests/integration/composer-upload-preview.test.ts"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "实际ComposerImage NodeView按empty/loading/loaded/failed/disposed拥有具体HTMLImageElement；load/error/Host结果必须仍属于该元素，retry/destroy清理当前监听。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "resolvedSrc is an independent successful URL cache, intentionally retained. DOM ARIA/hidden/disabled are projections; no parallel DOM-derived workflow writer was added."
+      }
     },
     {
       "id": "UI-NEW-041",
@@ -2691,15 +2709,23 @@
     },
     {
       "id": "ui.composer-sheet-focus",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 4,
       "owner": "src/ui/sheets/ComposerBottomSheet.tsx",
       "invariant": "sheet首次展示和每次可见打开只在本次实际index=0到位后发一次焦点请求。",
       "consumer": "src/features/notifications/MessageReplyComposerSheet.tsx :: <ComposerBottomSheet ; src/features/topic/components/LinuxDoPostInteractions.tsx :: <ComposerBottomSheet",
       "cannotDerive": "hasPresented是访问历史，initialFocusPending是等待回执的意图，keyboardActive是窗口资格，不能互相派生。",
       "tests": ["tests/ui/topic/composer-keyboard-viewport.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "keep",
+        "delivered": "复核保留：visible layout effect唯一认领首次聚焦，实际index=0消费；hasPresented保留隐藏树，keyboardActive只在守卫后的原生关闭时释放，FixedComposerPanel已有generation隔离迟到动画。未新增phase或实施信用。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.copy-gesture",
@@ -2805,7 +2831,16 @@
         "tests/integration/composer-upload-preview.test.ts",
         "tests/integration/performance/editor-stress.test.ts"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "editorRuntimeDocument接管installing/ready/destroyed配置与文档generation，INIT/DESTROY/readonly/emoji实际调用语义入口；原configRef/initializedRef/documentGenerationRef写入删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "sourceViewRef and sourceStateHandoffRef remain concrete CodeMirror instance and state resources. revision/submission/serialization caches keep their separately justified owners."
+      }
     },
     {
       "id": "ui.editor-expression-image",
@@ -2854,7 +2889,16 @@
         "tests/integration/composer-upload-preview.test.ts",
         "tests/integration/performance/editor-stress.test.ts"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "runtimePanels独立拥有已呈现builder与pending(target,generation,request)，实际show/close/mode切换/取消都核对当前请求；原builder/pending setter和请求ref删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "A previously presented builder deliberately stays visible while another handoff waits; document generation comes from its document owner rather than a second panel clock."
+      }
     },
     {
       "id": "ui.editor-poll-draft",
@@ -2887,7 +2931,16 @@
         "tests/integration/composer-upload-preview.test.ts",
         "tests/integration/performance/editor-stress.test.ts"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "pollCapabilities拥有实际Promise认领及loaded/failed结果，快照统一发布value/busy/error；实际Host回调先核请求归属，原三组并行writer删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "retired retains the old published busy notice while withdrawing Promise observation, preserving source-view reconstruction behavior. Poll draft input/defaultPublic remains separate data."
+      }
     },
     {
       "id": "ui.editor-submit-lock",
@@ -2919,7 +2972,17 @@
         "tests/integration/composer-upload-preview.test.ts",
         "tests/integration/performance/editor-stress.test.ts"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "partial",
+        "delivered": "templateCatalog接管当前模板读取Promise、列表与busy投影，真实received/settled/retire/reset替代旧request ref及list/busy setters。",
+        "residualControlAuthority": [
+          "The original full scope also includes builderError and template usage-count receipts. These still use shared builder error state and runtimeDocument.generation in useTemplate rather than a single template-operation owner."
+        ],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.editor-upload-range",
@@ -3127,7 +3190,16 @@
       "consumer": "src/features/notifications/NotificationScreens.tsx :: <MessageReplyComposerSheet",
       "cannotDerive": "closePendingRef是同步claim，presentation是独立显示选择，structuredRef是实际快照能力；visible尚未提交时不能代替claim。",
       "tests": ["tests/ui/notifications/notifications-screen.test.tsx"],
-      "evidenceGap": "原canonical为空；补充notifications-screen的snapshots exactly once before route blur closes the structured composer是真实宿主证明，但迟到旧opening跨重开分支尚需覆盖。"
+      "evidenceGap": "原canonical为空；补充notifications-screen的snapshots exactly once before route blur closes the structured composer是真实宿主证明，但迟到旧opening跨重开分支尚需覆盖。",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "messageComposerClose为source+conversation+format及每次可见打开拥有idle/snapshotting/closed；真实关闭先同步认领，snapshot结算只可关闭仍附着的原打开实例。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "presentation remains an independent display choice and structuredRef a concrete snapshot capability. Same-opening snapshot failure still closes; reopening creates a distinct owner."
+      }
     },
     {
       "id": "ui.modal-ime",
@@ -3805,7 +3877,17 @@
       "consumer": "src/ui/composer/StructuredReplyComposer.tsx :: <ComposerToolbar",
       "cannotDerive": "menuAnchor是Native几何样本，requestGeneration是当前意图，menu是已经发布的选择；目标kind不能证明坐标属于本次。",
       "tests": ["tests/ui/topic/composer-toolbar.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "partial",
+        "delivered": "测量anchor随实际Menu保存，onLayout只读该菜单的anchor；原独立可写menuAnchor ref删除。",
+        "residualControlAuthority": [
+          "requestGeneration, two-stage Native measure admission and closeMenu remain the existing control authority. This is a geometry ownership simplification, not a complete menu-flow conversion."
+        ],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.topic-back",
@@ -3882,7 +3964,17 @@
       "consumer": "src/features/topic-composer/TopicComposerRoute.tsx :: <TopicComposerScreen",
       "cannotDerive": "Native键盘、Web工具栏与用户希望打开的panel是独立时钟；不能用panel是否为空推断键盘事实。",
       "tests": ["tests/ui/topic-composer/create-topic-screen.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "partial",
+        "delivered": "topicComposerPanels实际接管open/pick/insert/rebase同步认领、来源面板与draftId；调用方改用语义命令，旧setPanel写入路径删除。",
+        "residualControlAuthority": [
+          "editorFocusPending/editorPanelOpen/preview/bodyFocusSignal still have their original screen-level transition writers. Native keyboard readiness and preview are independent, but the original five-field scope is not wholly remodeled."
+        ],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.topic-preview-route",
@@ -3948,7 +4040,7 @@
       "owner": "src/features/user/useUserController.ts",
       "invariant": "用户名解析只采纳当前resolution scope；妖火登录错误按当前read key与显式意图区分，旧错误不重新弹窗。",
       "consumer": "src/features/user/UserRoute.tsx :: const controller = useUserController({ ; dev/review-remediation-proof/index.tsx :: return useUserController(userOptions(source, gateway));",
-      "cannotDerive": "当前实现用一个nullable resolutionScope和受控key；错误时间戳/已处置意图是消费回执，Query.data不能表达已弹过的交互。",
+      "cannotDerive": "nullable resolutionScope限定解析归属；各lane惰性WeakMap按实际Query实例+errorUpdateCount消费错误，独立login read key限定已处置的用户交互；Query.data不能表达已提示或显式重臂。",
       "tests": [
         "tests/ui/user/user-controller-session.test.tsx",
         "tests/ui/app/content-source-route-gates.test.tsx",
@@ -4010,7 +4102,17 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/create-topic-screen.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "partial",
+        "delivered": "DocumentLifecycle实际接管加载、偏好准备、继承或新初始化许可、可恢复超时及renderer状态；被替代标志只经transitionDocument发布，同epoch迟到READY可恢复超时。",
+        "residualControlAuthority": [
+          "documentEpochRef, initKeyRef, watchdog timer and initializationTrace still govern the original lifecycle outside the model. sendInit/reload/epoch matching remain host-level authority, so the original seven-field scope is only partially converted."
+        ],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.web-host-ime",
@@ -4026,7 +4128,16 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/create-topic-screen.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "composerHandoffs接管panel claimed/waiting和image current/invalidated，Host真实调用claim/wait/owns/release并统一发布；原四组ref/boolean writer删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "Invalidated image deliberately remains pending until that physical operation's finally, while ownsImage rejects use. submission, Native keyboard input and upload ACK owners stay independent."
+      }
     },
     {
       "id": "ui.web-host-mode",
@@ -4042,7 +4153,17 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/create-topic-screen.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "partial",
+        "delivered": "modeLoaded改由DocumentLifecycle偏好事件发布；真实异步偏好读取仍拒绝退休intent，旧modeLoaded setter删除。",
+        "residualControlAuthority": [
+          "modePreferenceRef, initial-mode/init-key decisions and the last-content/last-sent/theme/emoji protocol samples keep their original independent comparison/update paths. One migrated gate does not close the original complete scope."
+        ],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.web-host-snapshot",
@@ -4104,7 +4225,16 @@
       "consumer": "src/features/notifications/MessageReplyComposerSheet.tsx :: <YaohuoReplyComposer ; src/features/topic-composer/TopicComposerScreen.tsx :: <YaohuoReplyComposer",
       "cannotDerive": "panel已是face/format/null，但panelRequest同步identity与pending展示仍共同负责异步交接；不能只看panel是否为空。",
       "tests": ["tests/ui/topic/yaohuo-reply-composer.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B04",
+        "outcome": "whole",
+        "delivered": "yaohuoComposerPanels分别拥有face/format展示与当前目标请求，唯一快照派生pending；toggle/cancel/close/focus/format实际迁移并删除旧并行writer。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b04",
+        "acceptance": "ACCEPTED_B04_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": "Image request/content-version/IME selection are physical or editing facts outside this panel flow. An existing panel stays presented through the next handoff as before."
+      }
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { postedMessages } from '../composerHostMessages';
+import { composerHostMessages, postedMessages } from '../composerHostMessages';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createRef, useState } from 'react';
@@ -20,6 +20,67 @@ function message(type: string, payload: unknown) {
 afterEach(() => setDiagnosticWriter(null));
 
 describe('StructuredReplyComposer', () => {
+  it('keeps ready feedback while a replacement document waits for its own READY', async () => {
+    jest.useFakeTimers();
+    const ref = createRef<StructuredReplyComposerHandle>();
+    const props = {
+      actionBusy: false,
+      content: '原正文',
+      initialMode: 'rich' as const,
+      intent: { kind: 'reply' as const, site: 'nodeseek' as const, topicId: 'retained-old' },
+      pendingNodeSeekPolls: [],
+      presentation: 'sheet' as const,
+      visible: true,
+      onSnapshot: jest.fn()
+    };
+    try {
+      const view = await render(<StructuredReplyComposer {...props} ref={ref} />);
+      const webView = view.getByTestId('structured-composer-webview');
+      await fireEvent(webView, 'loadEnd');
+      await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+      await view.rerender(
+        <StructuredReplyComposer
+          {...props}
+          ref={ref}
+          content="新正文"
+          intent={{ ...props.intent, topicId: 'retained-new' }}
+        />
+      );
+      const epoch = composerHostMessages(view).findLast((entry) => entry.type === 'INIT')!.payload.documentEpoch;
+      expect(epoch).toBeGreaterThan(0);
+      expect(view.queryByText('编辑器初始化中')).toBeNull();
+      await expect(ref.current!.requestSnapshot()).rejects.toThrow('尚未就绪');
+      await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+      await expect(ref.current!.requestSnapshot()).rejects.toThrow('尚未就绪');
+      await act(() => jest.advanceTimersByTime(1501));
+      expect(view.getByText('编辑器启动超时，可重载后继续')).toBeTruthy();
+      expect(view.queryByText('编辑器初始化中')).toBeNull();
+      await fireEvent(webView, 'message', message('READY', { documentEpoch: epoch, revision: 0 }));
+      expect(view.queryByText('编辑器启动超时，可重载后继续')).toBeNull();
+      const snapshot = ref.current!.requestSnapshot();
+      const request = composerHostMessages(view).findLast((entry) => entry.type === 'REQUEST_SNAPSHOT')!;
+      await fireEvent(
+        webView,
+        'message',
+        message('SNAPSHOT', {
+          documentEpoch: epoch,
+          requestId: request.payload.requestId,
+          snapshot: {
+            revision: 0,
+            markdown: '新正文',
+            mode: 'rich',
+            isEmpty: false,
+            validationIssues: [],
+            pendingNodeSeekPolls: []
+          }
+        })
+      );
+      await expect(snapshot).resolves.toMatchObject({ markdown: '新正文' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it.each(['background', 'inactive', 'hidden'] as const)(
     'preserves pending initialization through %s and keeps a foreground timeout',
     async (interruption) => {

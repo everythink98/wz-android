@@ -445,7 +445,12 @@ describe('composer device evidence', () => {
     expect(saved[1]).toEqual(result);
   });
   it('passes the exact allowlisted device into replay context variables', () => {
-    for (const avd of ['WZ_ComposerInsets_0916', 'WZ_TopicCreation_Test_API35']) {
+    for (const avd of [
+      'WZ_ComposerInsets_0916',
+      'WZ_TopicCreation_Test_API35',
+      'WZ_ComposerExpressions_Test_API35_20261005',
+      'WZ_StateModel_Composer_API35_20261114'
+    ]) {
       const args = composerReplayArgs({ name: 'submit', avd, submitLabel: '发送回复' });
       expect(args).toContain(`PROOF_DEVICE=${avd}`);
       expect(args.slice(0, 2)).toEqual(['replay', 'dev/composer-proof/submit.ad']);
@@ -471,8 +476,13 @@ describe('composer device evidence', () => {
     for (const label of ['正在初始化编辑器…', '编辑器初始化中', '正在恢复草稿…', '正在读取原站发帖规则…'])
       expect(isTopicCreationViewReady([title, toolbar, { label }], 'nodeseek')).toBe(false);
   });
-  it('accepts only the two exact isolated proof AVD names', () => {
-    for (const name of ['WZ_ComposerInsets_0916', 'WZ_TopicCreation_Test_API35'])
+  it('accepts only the exact isolated proof AVD names', () => {
+    for (const name of [
+      'WZ_ComposerInsets_0916',
+      'WZ_TopicCreation_Test_API35',
+      'WZ_ComposerExpressions_Test_API35_20261005',
+      'WZ_StateModel_Composer_API35_20261114'
+    ])
       expect(() => assertComposerProofAvd(name)).not.toThrow();
     for (const name of [
       '',
@@ -481,7 +491,10 @@ describe('composer device evidence', () => {
       'WZ_TopicCreation_Test_API35_copy',
       'WZ_TopicCreation_Test_API35 ',
       'wz_topiccreation_test_api35',
-      'WZ_ComposerInsets_0916_backup'
+      'WZ_ComposerInsets_0916_backup',
+      'WZ_StateModel_Composer_API35_20261114_copy',
+      'WZ_StateModel_Composer_API35_20261114 ',
+      'wz_statemodel_composer_api35_20261114'
     ])
       expect(() => assertComposerProofAvd(name)).toThrow('Refusing non-proof device');
   });

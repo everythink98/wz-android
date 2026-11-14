@@ -484,6 +484,16 @@ describe('Create topic screen', () => {
     });
     expect(mockKeyboardStreams.size).toBe(1);
     expect(view.queryByLabelText('关闭发帖选项')).toBeNull();
+    await act(() => {
+      void fireEvent.press(view.getByLabelText('切换发帖网站'));
+    });
+    expect(view.queryByText('正在准备选择，请稍候')).toBeNull();
+    expect(
+      jest
+        .mocked(ReactNative.UIManager.dispatchViewManagerCommand)
+        .mock.calls.slice(firstCommand)
+        .filter(([, command]) => command === 'hideKeyboard')
+    ).toHaveLength(1);
     expect(messages()).not.toContainEqual({ type: 'COMMAND', payload: { name: 'blur' } });
     await keyboardFrame(0);
     await act(() => acknowledgeKeyboardHidesSince(firstCommand));

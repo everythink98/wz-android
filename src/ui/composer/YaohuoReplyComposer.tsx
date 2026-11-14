@@ -30,6 +30,7 @@ import {
   type ReaderTheme
 } from '@/ui/theme/tokens';
 import { YAOHUO_FACE_ITEMS, yaohuoFaceImageUrl } from './expressionCatalogs';
+import { createYaohuoComposerPanels } from './yaohuoComposerPanels';
 
 type FormatAction = 'bold' | 'italic' | 'link' | 'image' | 'quote' | 'code' | 'list';
 type Selection = { start: number; end: number };
@@ -267,17 +268,18 @@ export function YaohuoReplyComposer({
   const contentRef = useCommittedRef(inputContent);
   // Let the IME own selection while composing; only toolbar actions move it.
   const selectionRef = useRef<Selection>({ start: content.length, end: content.length });
-  const [panel, setPanel] = useState<'face' | 'format' | null>(null);
-  const [panelPending, setPanelPending] = useState(false);
-  const panelRequestRef = useRef<object | null>(null);
+  const [panels] = useState(createYaohuoComposerPanels);
+  const [panelView, setPanelView] = useState(panels.snapshot);
+  const { panel, pending: panelPending } = panelView;
+  const publishPanels = useCallback(() => setPanelView(panels.snapshot), [panels]);
   const cancelPanelRequest = useCallback(() => {
-    panelRequestRef.current = null;
-    setPanelPending(false);
-  }, []);
+    panels.cancelPending();
+    publishPanels();
+  }, [panels, publishPanels]);
   const closePanels = useCallback(() => {
-    cancelPanelRequest();
-    setPanel(null);
-  }, [cancelPanelRequest]);
+    panels.close();
+    publishPanels();
+  }, [panels, publishPanels]);
   useLayoutEffect(() => {
     if (actionBusy || disabledReason || dismissPanels) cancelPanelRequest();
   }, [actionBusy, cancelPanelRequest, disabledReason, dismissPanels]);
@@ -305,9 +307,9 @@ export function YaohuoReplyComposer({
   useLayoutEffect(
     () => () => {
       imageRequestRef.current = null;
-      panelRequestRef.current = null;
+      panels.cancelPending();
     },
-    []
+    [panels]
   );
   const inputBusy = actionBusy || Boolean(imagePending);
   const displayError = error || imageError;
@@ -336,7 +338,7 @@ export function YaohuoReplyComposer({
     [contentRef, onContentChange]
   );
   const uploadAtSelection = async () => {
-    if (!onUploadImage || actionBusy || disabledReason || imageRequestRef.current || panelRequestRef.current) return;
+    if (!onUploadImage || actionBusy || disabledReason || imageRequestRef.current || panels.pending) return;
     const request = { version: contentVersionRef.current };
     const original = contentRef.current;
     const selection = { ...selectionRef.current };
@@ -372,31 +374,32 @@ export function YaohuoReplyComposer({
     }
   };
   const togglePanel = async (nextPanel: 'face' | 'format') => {
-    if (actionBusy || disabledReason || imageRequestRef.current || panelRequestRef.current) return;
+    if (actionBusy || disabledReason || imageRequestRef.current || panels.pending) return;
     if (panel === nextPanel) {
       closePanels();
       return;
     }
-    const request = {};
-    panelRequestRef.current = request;
-    setPanelPending(true);
+    const request = panels.begin(nextPanel);
+    if (!request) return;
+    publishPanels();
     setImageError('');
     try {
       if (!awaitKeyboardSettled) throw new Error('当前入口尚未准备好面板切换');
       await awaitKeyboardSettled();
-      if (panelRequestRef.current !== request || !uploadAllowed.current) return;
+      if (!panels.owns(request) || !uploadAllowed.current) return;
       inputRef.current?.blur();
-      setPanel(nextPanel);
+      panels.opened(request);
+      publishPanels();
     } catch (cause) {
-      if (panelRequestRef.current === request)
-        setImageError(cause instanceof Error ? cause.message : '键盘尚未收起，请重试');
+      if (panels.owns(request)) setImageError(cause instanceof Error ? cause.message : '键盘尚未收起，请重试');
     } finally {
-      if (panelRequestRef.current === request) cancelPanelRequest();
+      if (panels.owns(request)) cancelPanelRequest();
     }
   };
   const applyFormat = (action: FormatAction) => {
-    if (imageRequestRef.current || panelRequestRef.current) return;
-    setPanel((current) => (current === 'face' ? null : current));
+    if (imageRequestRef.current || panels.pending) return;
+    panels.dismissFaces();
+    publishPanels();
     if (action === 'image' && onUploadImage) {
       void uploadAtSelection();
       return;
