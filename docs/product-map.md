@@ -217,6 +217,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `FEED-02/04`、`SEARCH-02/04` 与共享 `ACCOUNT-01/02`：未登录妖火对每次显式首页来源/分类/刷新或单站搜索/重试意图最多自动打开一次登录页；用户关闭后，auth surface barrier、账号核对、ReadPlan scope 恢复及 Query 自动 refetch 都不得重开。已有已提交关键词时切换搜索来源会立即读取，登录页可能在再次点击「搜索」前打开。新的显式意图或一次真实成功读取后，后续登录失败仍可再打开一次。
 
+`FEED-01/USER-01` 的共享 Avatar 在 NodeSeek 头像返回 SVG 时复用同一会话和 URL 的进行中请求。容量逐出后的旧请求失败，不得删除同键的新请求归属或引发额外读取；HTTP 临时失败和网络异常均由 `src/platform/media/avatarImages.test.ts` 的真实缓存 owner 验证。普通 bitmap、请求头、超时与带 signal 的取消路径保持原行为。
+
 ### SEARCH：搜索
 
 `SEARCH-02/03` 的 limit 控制上游请求批量，不因排除词擅自放大；共享过滤与聚合必须交付已消费页中的全部合法命中，不能再截断后沿下一页跳过剩余结果。概览仍由展示层只显示两条，单站分页追加全部合法结果并保持已加载前缀。Canonical owner 为 `src/sources/searchRead.test.ts` 与 `tests/ui/search/search-controller-ai.test.tsx`。

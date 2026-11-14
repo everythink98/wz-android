@@ -51,13 +51,13 @@ export async function loadRemoteAvatarSvgText(
     .then(() => loadRemoteAvatarSvgTextUncached(clean, fetcher, options))
     .then((result) => {
       if (result === RETRY_LATER_AVATAR_RESULT) {
-        avatarSvgTextCache.delete(cacheKey);
+        if (avatarSvgTextCache.get(cacheKey) === request) avatarSvgTextCache.delete(cacheKey);
         return null;
       }
       return result;
     })
     .catch(() => {
-      avatarSvgTextCache.delete(cacheKey);
+      if (avatarSvgTextCache.get(cacheKey) === request) avatarSvgTextCache.delete(cacheKey);
       return null;
     });
   rememberAvatarSvgTextRequest(cacheKey, request);

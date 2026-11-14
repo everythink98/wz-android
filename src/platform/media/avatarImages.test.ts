@@ -98,6 +98,38 @@ describe('Android remote avatar images', () => {
     expect(fetcher.mock.calls.filter((call) => call[1]?.method === 'HEAD')).toHaveLength(1);
   });
 
+  it.each(['http', 'network'] as const)(
+    'retains a replacement avatar request after an evicted request fails (%s)',
+    async (failure) => {
+      const pending: { resolve: (response: Response) => void; reject: (error: Error) => void }[] = [];
+      const url = 'https://www.nodeseek.com/avatar/910001.png';
+      const options = { mediaContext: { ...nodeSeekMediaContext, sessionIdentity: `avatar-ownership-${failure}` } };
+      const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+        if (init?.method !== 'HEAD')
+          return new Response('<svg></svg>', { headers: { 'content-type': 'image/svg+xml' } });
+        if (input !== url) return new Response(null, { headers: { 'content-type': 'image/png' } });
+        if (pending.length >= 2) return new Response(null, { headers: { 'content-type': 'image/svg+xml' } });
+        return new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }));
+      });
+      const retired = loadRemoteAvatarSvgText(url, fetcher, options);
+      await Promise.all(
+        Array.from({ length: 200 }, (_, index) =>
+          loadRemoteAvatarSvgText(`https://www.nodeseek.com/avatar/${920000 + index}.png`, fetcher, options)
+        )
+      );
+      const replacement = loadRemoteAvatarSvgText(url, fetcher, options);
+      await vi.waitFor(() => expect(pending).toHaveLength(2));
+      if (failure === 'http') pending[0].resolve(new Response(null, { status: 503 }));
+      else pending[0].reject(new Error('Retired request failed'));
+      await expect(retired).resolves.toBeNull();
+      const joined = loadRemoteAvatarSvgText(url, fetcher, options);
+      pending[1].resolve(new Response(null, { headers: { 'content-type': 'image/svg+xml' } }));
+      await expect(Promise.all([replacement, joined])).resolves.toEqual(['<svg></svg>', '<svg></svg>']);
+      expect(fetcher.mock.calls.filter(([input, init]) => input === url && init?.method === 'HEAD')).toHaveLength(2);
+      expect(fetcher.mock.calls.filter(([input, init]) => input === url && init?.method !== 'HEAD')).toHaveLength(1);
+    }
+  );
+
   it('keeps regular bitmap avatars on the native Image path', async () => {
     const fetcher = vi.fn(
       async () =>

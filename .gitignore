@@ -23,6 +23,8 @@ docs/*
 !docs/review-remediation.md
 !docs/state-machine-batches.md
 !docs/state-machine-batches.csv
+!docs/state-model-refactor.md
+!docs/state-model-review.json
 !docs/performance/
 docs/performance/*
 !docs/performance/*.md
