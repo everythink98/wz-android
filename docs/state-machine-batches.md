@@ -263,3 +263,35 @@ P09 已审查全部 **27 项、11 个 owner、87 个原始转换：1 项局部�
 累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 **9 批、248 项的批末审查**，其中 3 项完整转换、36 项局部简化、209 项保留；P10 的 **36 项尚未批末验收**。pending 281 包含已审查但保留或局部处理的 245 项，不是 281 个产品 Bug。最后一批的只读预审不计完成。
 
 逐项决策：`.codex-tmp/state-machine-elimination/p09/decision-final.json`，SHA-256 `7c9f7a671333e3b1b76b83273e450dcfc76477ff656878e22c1ef87634fb4cc9`；最终验收：`.codex-tmp/state-machine-elimination/p09/validation-final.json`，SHA-256 `b649b30292e43e2f3797273982f6ad2b79cfda1b5a938fb78ba5c10778b7c5e2`。本批只保存一个本地提交，不 push、不合并、不发布；数字基线、指定负控失败及最终实际运行均可回查。
+
+## P10 执行结果
+
+P10 已审查全部 **36 项、29 个 owner、84 个原始转换：36 项保留，新增局部简化及完整转换均为 0**。逐项检查仓库引用、实际入口和测试，保留原始 scope 与 canonical 数组；8 项原 canonical 为空，不以补充材料改写基线。工具、独立 proof、fixture、CLI、发布和安装入口没有普通产品 import，不代表不可达：实际入口还包括命令、deep link、Gradle `ENTRY_FILE` 和独立宿主。动态调用、公开接口、后台任务、服务端信号及资源生命周期边界未充分证明无用，继续保留。
+
+唯一偏离原 CSV owner 哈希的 `UI-NEW-034` 来自已验收的 P01 更新 fixture 迁移。完整 owner 与 Proxy 场景的文本、AST、可见性、关闭回调和原转换已重新绑定；Proxy 本身未变。P01 比较父版本为 `e9f3d916`，十批回退检查点为 `edd9c04d`，两者对应的原文件内容一致；这不是 P10 新修改或新增消除。固定 CSV 不变，其余 35 项的 28 个 owner 与原 CSV 完全一致。
+
+本批**生产源码、测试、依赖、版本及原生配置改动均为 0，整文件删除 0**，只记录审查结论和验收文档。115 个冻结输入在验收前一致；验收后只有 ledger 的 36 项证据元数据更新，模型状态和 scope 不变。没有为凑删除量改写正常工作代码。
+
+实际验证结果：
+
+- `STATIC_PASS`：类型检查、完整 `npm run verify` 均退出 0。
+- `UNIT_PASS`：Vitest **270 文件、4610 项**，seed `1794618993704`；`UI_PASS` 为 **105 suites、3269 项**，seed `724089980`，既有 act 与 Reanimated mock 告警保留。
+- `APK_SANITY`：普通 Release 构建 **3m38s**，APK SHA-256 `7d8432a356e0bb8f13540fb86638c6dd5b07f7a804d778dc0c04287023180177`。普通 `index.ts`、Hermes、非 debug、签名与版本均核对；新 buildId `f66d55d00c634df7855a9f0acbcbae7c` 与实际 DEX、当前进程启动记录一致。
+- Native 证据继承有实际产物绑定：63 份 P09 运行/API/配置/测试/依赖输入、44 份 Release class、实际 Hermes 资产、provider、sourcemap 和 R8 mapping 内容相同。Native producer 本轮实际执行，class 输出仍逐字相同。沿用 P09 已执行的 JVM 28 项、仪器 51 项及同值请求负控证据；**没有新跑 P10 Native 或 Replay，不重复记通过数**。
+- 限定的 `LIVE_PASS`：主模拟器同签名覆盖安装普通包，UID `10214`、首次安装时间 `2026-07-26 16:51:37` 保持，22 条匹配新 buildId 的成功启动记录及真实 Feed 成立。北京时间 **2026-11-14 09:30** 左右实际刷新后，妖火与 NodeSeek 仍显示已登录；linux.do 状态未独立确认。未读取凭据、重新登录或执行真实业务写入。主模拟器保持可见首页，本任务的构建与测试进程已结束，共享 agent-device、ADB 与主模拟器保留。
+
+`NOT_VERIFIED`：全部独立 proof/CLI/发布/原生安装器、OS 后台及真实服务端信号矩阵，完整站点和 RNRH/Fabric/FlashList 流程，物理设备、PSS、真实业务写入、linux.do 身份及私有数据库字节一致性。P07 长会话黑图、妖火旧掉线和此前空回复原因仍开放；保留项中的证据缺口不冒充已确认 Bug，也不为验证清除用户状态。
+
+逐项决策：`.codex-tmp/state-machine-elimination/p10/decision-final.json`，SHA-256 `b48399f1efe328f1cd0e84756d53a10562202728687d8314a51486a41b2ed10f`；最终验收：`.codex-tmp/state-machine-elimination/p10/validation-final.json`，SHA-256 `e587d6351c5f3b534247b21b69db81f05553fd82aad5ce49b111261afd720d7c`。本批只保存一个本地提交，不 push、不合并、不发布。
+
+## 十批最终结算
+
+固定的 **284 项已全部审查并完成批末验收，未审查 0 项：3 项完整转换、36 项局部简化、245 项保留**。完整转换的是 P01 的 Picker job 结算、更新下载产物恢复，以及 P03 的账号详情生命周期；它们改为明确状态表达，不表示业务状态或功能被删除。局部简化与保留的 281 项仍有必要职责或未消除的动态、公开和生命周期边界，不继续强行改写。
+
+原 375 项台账现为 **已验收 90、pending 281、排除 4**；本轮从原已验收 87 项增加 3 项，没有缩小分母。pending 是原「完整转换」口径，**不是待审查数，也不是 281 个未修复 Bug**。245 项 KEEP 的理由、36 项 PARTIAL 的剩余 authority 和每项入口/测试证据均保留；另有 10 项显式逐项不确定标记，分组边界和未安全平铺的材料继续指向原报告，不把该标记数当作全部未知风险数。
+
+最终逐项索引为 `.codex-tmp/state-machine-elimination/p10/plan-coverage-and-retained-final.json`，SHA-256 `3d11e495ee82d9fe3560f1740bd2af143485958188eab8264c2041d053038a92`；不确定项单列为 `.codex-tmp/state-machine-elimination/p10/uncertainty-kept-index.json`，SHA-256 `026eeee507979f8881a4f53bc7d0e3a407c39e43c451cd18dfdff7606ec01ea4`。两者包含各批最终决策及验收指针，原始搜索、入口、测试和历史失败留在对应 ignored 证据目录，没有提交日志、截图或 APK。
+
+以回退检查点 `edd9c04dd960300947c2c2da8b1f37b562699d28` 到十批最终提交的 Git 合并差异统计，整文件删除 **0**；tracked 生产源码 **29 文件、+279/−332 行，净减 53 行**。测试 20 文件净增 485 行，patch 传输文本 5 文件净增 175 行，文档另计；因此仓库总体新增行数仍多于删除行数。此口径不包含检查点已有改动、用户未提交文档、ignored 证据或展开到 node_modules 的 SDK 镜像，不将 patch 与运行实现重复计算，也不宣称 APK 体积或性能改善。
+
+十批实际修正了冗余 authority、重复快照和过期回调归属，并用行为断言及负控约束关键时序；已确认有用途的状态继续保留。最终普通 APK 已在用户可见的主模拟器完成上述限定验收。各批完整检查、失败与恢复均按本文件保留，当前结论不覆盖先前未解决的产品现象或未验证范围。所有提交仅保存在 `codex/integrated-state-cleanups`，不 push、不合并、不发布。
