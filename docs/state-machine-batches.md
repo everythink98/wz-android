@@ -242,3 +242,24 @@ P08 已审查全部 **25 项、14 个 owner、78 个原始转换：1 项局部�
 累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 **8 批、221 项的批末审查**，其中 3 项完整转换、35 项局部简化、183 项保留；P09～P10 的 **63 项尚未实施及批末验收**。pending 281 包含已审查但保留或局部处理的 218 项，并非 281 个产品 Bug；后续只读预审不计实施或消除。
 
 逐项决策：`.codex-tmp/state-machine-elimination/p08/decision-final.json`，SHA-256 `04a06eeee3a34dd398b167f5b5bcd52df9b5ba1c7e44ee6a3619de8d627ee7cd`；最终验收：`.codex-tmp/state-machine-elimination/p08/validation-final.json`，SHA-256 `af8dcec8a2372929528eed3f82545370962697f33429dfb40853bd9872684445`。本批只保存一个本地提交，不 push、不合并、不发布；首次构建失败和测试迁移修复均可追溯。
+
+## P09 执行结果
+
+P09 已审查全部 **27 项、11 个 owner、87 个原始转换：1 项局部简化、26 项保留，新增完整转换计数 0**。Native 选择菜单改用现有不可变请求对象识别过期回调，删除并行的 `systemActionGeneration`；外层按值去重继续避免重复加载，内层按请求实例拒绝旧回调，mode、range、text、attach 校验及 Future 取消顺序保留。原菜单及生命周期模型继续 pending。通知、消息、提交结算、独立时钟和几何状态有实际用途，保留；`ui.message-close` 原 canonical 空数组不改，另找出的真实宿主测试单列。
+
+生产源码 **+2/−5 行、净减 3 行、减少 159 字节**。只扩展一个既有仪器测试，另为 **+68/−26 行、净增 42 行、增加 2266 字节**，没有新增或删除测试方法、测试接口、依赖、SDK patch 或版本。两个代码文件合计净增 39 行、2107 字节；整文件删除 0。新增断言验证真实手柄事件造成同值请求重建后的旧回调与新动作，未添加测试框架；证据文档及 ignored 观察材料分别统计，不宣称体积或性能收益。
+
+实际验证结果：
+
+- `STATIC_PASS`：类型检查、完整 `npm run verify` 均退出 0。Vitest **270 文件、4610 项**，seed `1794615879305`；`UI_PASS` 为 **105 suites、3269 项**，seed `-385862912`，既有 act 与 Reanimated mock 告警保留。
+- `UNIT_PASS`：Native **5 类、28 项**通过；独立 verification AVD 的 **5 类、51 个原仪器方法**全部通过，无失败、错误或跳过。NativeDigest 未改部分没有另行设备执行，不扩大该边界。
+- 限定的 `DEVICE_REPLAY_PASS`：原计数器实现先通过同值请求测试；删除计数器且只按值比较的故意错误版本，精确失败于唯一的「旧请求不得发布动作」断言。最后请求身份方案通过完整 51 项，包括该用例的新动作正控。没有改 text、range、ActionMode 或 attached 条件来掩盖旧回调，也没有把 setup 失败当负控。测试仅运行在 `WZ_ForumSelection_Test_API35` 的自有 harness，那里没有业务 App；没有在主模拟器执行 connected tests。
+- 最终 JVM 与完整仪器测试的实际 Gradle 均退出 0；ignored 汇总器先后漏识别 Kotlin 反引号及 `@Suppress` 后的方法，导致两份原汇总误判。依据同一轮封存 XML、原方法集合及修正后的自检只读校正，**没有重跑 JVM 或设备测试**，原误判报告保留。修复不涉及生产或测试代码。
+- `APK_SANITY`：普通 Release 构建 **4m54s**，APK SHA-256 `56741d5ebb6a398b53cade7979eb40e16aec1870e7d811d457c88bde9d4d2c3c`。真实 Release Kotlin 编译输入、44 份 class、同批 R8 map 与实际 DEX 对齐，generation 字段和两处捕获 long 参数已无；基线本来没有 generation accessor，不记 accessor 删除。实际请求捕获链一直追到读取当前请求并与 Request 实参作引用比较的专用分支，外层 Object.equals 去重及其余校验保留；未用无关 mode 比较或 load 函数引用冒充证明。
+- 限定的 `LIVE_PASS`：主模拟器同签名覆盖安装普通 `index.ts`/Hermes 包，UID、首次安装时间与版本保持，**22 条匹配新 buildId 的成功启动记录**及正常 Feed 成立。北京时间 **2026-11-14 08:49** 实际刷新后，妖火与 NodeSeek 仍显示已登录，未读取凭据或重新登录；linux.do 状态未独立确认。仅关闭本任务的独立验证模拟器，主模拟器保持可见首页。
+
+`NOT_VERIFIED`：真实 OS 文本分类外部提供者、完整 RNRH/Fabric/FlashList/站点矩阵、物理触感、PSS、真实通知消息写入及 NativeDigest 全部动态边界、私有数据库字节一致性。P07 长会话黑图、妖火旧掉线与此前空回复原因仍开放；本批 Native 选择证据不关闭这些问题。动态公开接口及测试证据缺口按原 ID 保留。
+
+累计仍为 **已验收 90、pending 281、排除 4，共 375 项**。十批计划已完成 **9 批、248 项的批末审查**，其中 3 项完整转换、36 项局部简化、209 项保留；P10 的 **36 项尚未批末验收**。pending 281 包含已审查但保留或局部处理的 245 项，不是 281 个产品 Bug。最后一批的只读预审不计完成。
+
+逐项决策：`.codex-tmp/state-machine-elimination/p09/decision-final.json`，SHA-256 `7c9f7a671333e3b1b76b83273e450dcfc76477ff656878e22c1ef87634fb4cc9`；最终验收：`.codex-tmp/state-machine-elimination/p09/validation-final.json`，SHA-256 `b649b30292e43e2f3797273982f6ad2b79cfda1b5a938fb78ba5c10778b7c5e2`。本批只保存一个本地提交，不 push、不合并、不发布；数字基线、指定负控失败及最终实际运行均可回查。

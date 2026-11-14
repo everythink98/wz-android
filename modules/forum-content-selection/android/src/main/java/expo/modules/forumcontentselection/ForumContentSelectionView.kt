@@ -102,7 +102,6 @@ class ForumContentSelectionView(
   private var activeSelectionRevision = ""
   private var actionMode: ActionMode? = null
   private var systemActionRequest: ForumSelectionSystemActionRequest? = null
-  private var systemActionGeneration = 0L
   private var systemActions = emptyList<ForumSelectionSystemAction>()
   private var systemActionMenuDirty = false
   private val systemActionsByMenuId = mutableMapOf<Int, BoundForumSelectionSystemAction>()
@@ -1213,12 +1212,11 @@ class ForumContentSelectionView(
     if (systemActionRequest != request) {
       clearSystemActionRequest()
       systemActionRequest = request
-      val generation = systemActionGeneration
       var immediateActions = emptyList<ForumSelectionSystemAction>()
       val publishSmartActions: (List<ForumSelectionSystemAction>) -> Unit = { smartActions ->
         val applyActions = Runnable {
-          if (actionMode !== mode || systemActionGeneration != generation ||
-            systemActionRequest != request || selectionDocument.selection() != request.range ||
+          if (actionMode !== mode || systemActionRequest !== request ||
+            selectionDocument.selection() != request.range ||
             selectionDocument.copySelection() != request.text || !isAttachedToWindow) {
             return@Runnable
           }
@@ -1278,7 +1276,6 @@ class ForumContentSelectionView(
 
   private fun clearSystemActionRequest() {
     platformSystemActions.cancelPendingClassification()
-    systemActionGeneration += 1
     systemActionRequest = null
     systemActions = emptyList()
     systemActionsByMenuId.clear()

@@ -860,46 +860,88 @@ class ForumContentSelectionViewTest {
     ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
       lateinit var fixture: SurfaceFixture
       lateinit var target: Pair<Float, Float>
-      lateinit var publishDelayedActions: (List<ForumSelectionSystemAction>) -> Unit
+      lateinit var selectedRange: ForumSelectionRange
+      lateinit var selectedMode: ActionMode
       var selectedText = ""
+      val publications = mutableListOf<Pair<String, (List<ForumSelectionSystemAction>) -> Unit>>()
       val invocations = mutableListOf<String>()
       scenario.onActivity { activity ->
         fixture = SurfaceFixture(activity)
         fixture.surface.systemActionLoaderForTest = { text, publish ->
           selectedText = text
-          publishDelayedActions = publish
+          publications += text to publish
           listOf(recordingSystemAction("process", "Test Process", text, invocations))
         }
       }
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-      scenario.onActivity {
-        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
-        fixture.gestureDownTime = SystemClock.uptimeMillis()
-        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
-      }
-      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      try {
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        scenario.onActivity {
+          target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+          fixture.gestureDownTime = SystemClock.uptimeMillis()
+          fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+        }
+        Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
 
-      scenario.onActivity {
-        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
-        assertEquals("one", selectedText)
-        assertEquals(
-          listOf("Test Process"),
-          fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
+        scenario.onActivity {
+          fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+          assertEquals("one", selectedText)
+          assertEquals(
+            listOf("Test Process"),
+            fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
+          )
+          fixture.surface.onPreDraw()
+          selectedRange = requireNotNull(fixture.surface.selectionSnapshotForTest())
+          selectedMode = actionModeForTest(fixture.surface)
+          assertTrue(fixture.surface.isAttachedToWindow)
+          assertEquals(1, publications.size)
+          val end = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+          val downTime = SystemClock.uptimeMillis()
+          fixture.send(MotionEvent.ACTION_DOWN, end.x, end.y, downTime)
+          assertTrue(fixture.surface.interactionStateForTest().ownsGesture)
+          fixture.send(MotionEvent.ACTION_UP, end.x, end.y, downTime)
+          assertEquals(selectedRange, fixture.surface.selectionSnapshotForTest())
+          assertTrue(selectedMode === actionModeForTest(fixture.surface))
+        }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        assertEquals(2, publications.size)
+        assertEquals("one", publications.first().first)
+        assertEquals(publications.first().first, publications.last().first)
+
+        publications.first().second(
+          listOf(recordingSystemAction("stale", "Test Stale", "one", invocations))
         )
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        scenario.onActivity {
+          assertTrue(fixture.surface.isAttachedToWindow)
+          assertTrue(selectedMode === actionModeForTest(fixture.surface))
+          assertEquals(selectedRange, fixture.surface.selectionSnapshotForTest())
+          assertFalse(
+            "retired same-value request must not publish actions",
+            fixture.surface.actionModeMenuTitlesForTest().contains("Test Stale")
+          )
+          assertFalse(fixture.surface.clickActionModeItemWithTitleForTest("Test Stale"))
+          assertEquals(
+            listOf("Test Process"),
+            fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
+          )
+        }
 
-        publishDelayedActions(
+        publications.last().second(
           listOf(recordingSystemAction("remote", "Test Remote", selectedText, invocations))
         )
-
-        assertEquals(
-          listOf("Test Process", "Test Remote"),
-          fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
-        )
-        assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Process"))
-        assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Remote"))
-        assertEquals(listOf("process:one", "remote:one"), invocations)
-        fixture.close()
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        scenario.onActivity {
+          assertEquals(
+            listOf("Test Process", "Test Remote"),
+            fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
+          )
+          assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Process"))
+          assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Remote"))
+          assertEquals(listOf("process:one", "remote:one"), invocations)
+        }
+      } finally {
+        scenario.onActivity { fixture.close() }
       }
     }
   }
