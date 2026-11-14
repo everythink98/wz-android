@@ -870,14 +870,34 @@ internal data class ReadNetworkGenerationLease(
   val generation: Long
 )
 
-private data class PendingReadRuntimeFinish(
+private class PendingReadRuntimeFinish(
   val traceIdentity: String,
   val source: String,
   val retiredGeneration: Long,
   val publishedGeneration: Long,
-  var applied: Boolean,
-  var drained: Boolean = false
-)
+  applied: Boolean
+) {
+  private enum class Completion { WAITING_BOTH, WAITING_APPLY, WAITING_DRAIN, COMPLETED }
+  private var completion = if (applied) Completion.WAITING_DRAIN else Completion.WAITING_BOTH
+
+  fun applied(): Boolean {
+    completion = when (completion) {
+      Completion.WAITING_BOTH -> Completion.WAITING_DRAIN
+      Completion.WAITING_APPLY -> Completion.COMPLETED
+      Completion.WAITING_DRAIN, Completion.COMPLETED -> completion
+    }
+    return completion == Completion.COMPLETED
+  }
+
+  fun drained(): Boolean {
+    completion = when (completion) {
+      Completion.WAITING_BOTH -> Completion.WAITING_APPLY
+      Completion.WAITING_DRAIN -> Completion.COMPLETED
+      Completion.WAITING_APPLY, Completion.COMPLETED -> completion
+    }
+    return completion == Completion.COMPLETED
+  }
+}
 
 internal fun forumReadChannelHostSuffix(source: String): String = when (source) {
   "nodeseek" -> "nodeseek.com"
@@ -1628,18 +1648,28 @@ object NetworkProxyRuntime {
     private val originalRequest: Request,
     private val imageLane: Boolean
   ) : Call {
-    private val executed = AtomicBoolean(false)
+    private sealed interface Execution {
+      data object Created : Execution
+      data object Claimed : Execution
+      data class Starting(val generation: Long) : Execution
+      data class Started(val generation: Long, val call: Call) : Execution
+      data class Released(val generation: Long, val call: Call) : Execution
+    }
+    private val execution = AtomicReference<Execution>(Execution.Created)
     private val canceled = AtomicBoolean(false)
     private val failureRecorded = AtomicBoolean(false)
-    private var startedGeneration = -1L
-    @Volatile private var delegate: Call? = null
+    private val delegate: Call? get() = when (val current = execution.get()) {
+      Execution.Created, Execution.Claimed, is Execution.Starting -> null
+      is Execution.Started -> current.call
+      is Execution.Released -> current.call
+    }
     private val callTimeout = ForwardingTimeout(Timeout().timeout(
       (if (imageLane) currentGeneration.imageClient else currentGeneration.mediaClient).callTimeoutMillis.toLong(),
       TimeUnit.MILLISECONDS
     ))
 
     override fun request(): Request = originalRequest
-    override fun isExecuted(): Boolean = executed.get()
+    override fun isExecuted(): Boolean = execution.get() != Execution.Created
     override fun isCanceled(): Boolean = canceled.get() || delegate?.isCanceled() == true
     override fun timeout(): Timeout = callTimeout
     override fun clone(): Call = RuntimeImageCall(originalRequest, imageLane)
@@ -1649,10 +1679,10 @@ object NetworkProxyRuntime {
     }
 
     private fun start(): Call {
-      check(executed.compareAndSet(false, true)) { "Already Executed" }
+      check(execution.compareAndSet(Execution.Created, Execution.Claimed)) { "Already Executed" }
       val call = synchronized(lock) {
         val runtime = currentGeneration
-        startedGeneration = runtime.generation
+        execution.set(Execution.Starting(runtime.generation))
         val client = if (imageLane) runtime.imageClient else runtime.mediaClient
         client.newCall(imageDiagnosticRequest(originalRequest, imageLane)).also { call ->
           val timeout = call.timeout()
@@ -1661,21 +1691,24 @@ object NetworkProxyRuntime {
           callTimeout.setDelegate(timeout)
           runtime.retainExternalLease()
           imageCalls[call] = runtime
-          delegate = call
+          execution.set(Execution.Started(runtime.generation, call))
         }
       }
       return call
     }
 
     private fun release() {
-      val runtime = synchronized(lock) {
-        imageCalls.remove(delegate)?.also { it.releaseExternalLease() }
+      val released = synchronized(lock) {
+        val current = execution.get() as? Execution.Started ?: return
+        execution.set(Execution.Released(current.generation, current.call))
+        imageCalls.remove(current.call)?.also { it.releaseExternalLease() }?.let { it to current.call }
       } ?: return
+      val (runtime, call) = released
       ReadNetworkDiagnostics.record(buildMap {
         put("operation", "request"); put("phase", "image-lease-released")
-        put("generation", runtime.generation); put("callId", opaqueNetworkIdentity(delegate!!))
+        put("generation", runtime.generation); put("callId", opaqueNetworkIdentity(call))
         put("dispatcherId", opaqueNetworkIdentity(runtime.dispatcher))
-        delegate?.request()?.tag(ImageDiagnosticTag::class.java)?.let { putAll(it.fields()) }
+        call.request().tag(ImageDiagnosticTag::class.java)?.let { putAll(it.fields()) }
       })
       if (retiredGenerations[runtime.generation] === runtime) scheduleDrain(runtime)
     }
@@ -1685,7 +1718,12 @@ object NetworkProxyRuntime {
       ReadNetworkDiagnostics.record(buildMap {
         put("operation", "request"); put("phase", "image-call-failed"); put("outcome", "failure")
         put("imageFailure", imageNetworkFailure(error, isCanceled()))
-        if (startedGeneration >= 0) put("generation", startedGeneration)
+        when (val current = execution.get()) {
+          Execution.Created, Execution.Claimed -> Unit
+          is Execution.Starting -> put("generation", current.generation)
+          is Execution.Started -> put("generation", current.generation)
+          is Execution.Released -> put("generation", current.generation)
+        }
         put("callId", opaqueNetworkIdentity(delegate ?: this@RuntimeImageCall))
         delegate?.request()?.tag(ImageDiagnosticTag::class.java)?.let { putAll(it.fields()) }
       })
@@ -2012,8 +2050,7 @@ object NetworkProxyRuntime {
         pending.retiredGeneration != previousGeneration ||
         pending.publishedGeneration != generation
       ) return false
-      pending.applied = true
-      if (!pending.drained) null else {
+      if (!pending.applied()) null else {
         pendingRotationFinishes.remove(traceIdentity)
         pending
       }
@@ -2104,8 +2141,7 @@ object NetworkProxyRuntime {
     val finish = synchronized(lock) {
       val pending = pendingRotationFinishes[traceIdentity] ?: return
       if (pending.retiredGeneration != generation || pending.source != source) return
-      pending.drained = true
-      if (!pending.applied) null else {
+      if (!pending.drained()) null else {
         pendingRotationFinishes.remove(traceIdentity)
         pending
       }

@@ -31,6 +31,10 @@ type Sample = {
   family?: 'ipv4' | 'ipv6';
 };
 
+type ProbeCollection =
+  | { phase: 'collecting'; native?: Sample; webView?: Sample; cancelReason?: ProbeCancelReason }
+  | { phase: 'completed'; at: number; fields: DiagnosticFields };
+
 function address(value: unknown): Pick<Sample, 'ip' | 'family'> | null {
   if (typeof value !== 'string' || value.length > 45) return null;
   if (
@@ -136,41 +140,42 @@ export function startCloudflareEgressProbe({
 }) {
   const trace = beginDiagnosticTrace('network', 'egress-probe', { source: 'linuxdo', parentTraceId });
   const controller = new AbortController();
-  let native: Sample | undefined;
-  let webView: Sample | undefined;
-  let completion: { at: number; fields: DiagnosticFields } | undefined;
-  let cancelReason: ProbeCancelReason | undefined;
+  let collection: ProbeCollection = { phase: 'collecting' };
   let resolveSettled!: () => void;
   const settled = new Promise<void>((resolve) => {
     resolveSettled = resolve;
   });
   const elapsed = () => Math.max(0, Math.min(1_000_000_000, Date.now() - trace.startedAt));
-  const fields = (): DiagnosticFields => ({
-    ...(native
-      ? {
-          probeNativeResult: native.result,
-          probeNativeFailure: native.failure,
-          probeNativeDurationMs: native.durationMs,
-          probeNativeProtocol: native.protocol || 'unknown',
-          probeNativeAddressFamily: native.family || 'unknown',
-          ...(native.status === undefined ? {} : { probeNativeStatus: native.status })
-        }
-      : {}),
-    ...(webView
-      ? {
-          probeWebViewResult: webView.result,
-          probeWebViewFailure: webView.failure,
-          probeWebViewDurationMs: webView.durationMs,
-          probeWebViewProtocol: webView.protocol || 'unknown',
-          probeWebViewAddressFamily: webView.family || 'unknown',
-          ...(webView.status === undefined ? {} : { probeWebViewStatus: webView.status })
-        }
-      : {}),
-    ...(native?.result === 'success' && webView?.result === 'success'
-      ? { isSameEgress: native.ip === webView.ip }
-      : {}),
-    ...(cancelReason ? { probeCancelReason: cancelReason } : {})
-  });
+  const fields = (): DiagnosticFields => {
+    if (collection.phase === 'completed') return collection.fields;
+    const { native, webView, cancelReason } = collection;
+    return {
+      ...(native
+        ? {
+            probeNativeResult: native.result,
+            probeNativeFailure: native.failure,
+            probeNativeDurationMs: native.durationMs,
+            probeNativeProtocol: native.protocol || 'unknown',
+            probeNativeAddressFamily: native.family || 'unknown',
+            ...(native.status === undefined ? {} : { probeNativeStatus: native.status })
+          }
+        : {}),
+      ...(webView
+        ? {
+            probeWebViewResult: webView.result,
+            probeWebViewFailure: webView.failure,
+            probeWebViewDurationMs: webView.durationMs,
+            probeWebViewProtocol: webView.protocol || 'unknown',
+            probeWebViewAddressFamily: webView.family || 'unknown',
+            ...(webView.status === undefined ? {} : { probeWebViewStatus: webView.status })
+          }
+        : {}),
+      ...(native?.result === 'success' && webView?.result === 'success'
+        ? { isSameEgress: native.ip === webView.ip }
+        : {}),
+      ...(cancelReason ? { probeCancelReason: cancelReason } : {})
+    };
+  };
   const cancelWebView = () => {
     try {
       injectJavaScript(
@@ -181,9 +186,10 @@ export function startCloudflareEgressProbe({
     }
   };
   const finish = () => {
-    if (completion || !native || !webView) return;
+    if (collection.phase !== 'collecting' || !collection.native || !collection.webView) return;
+    const { native, webView } = collection;
     clearTimeout(timer);
-    completion = { at: Date.now(), fields: fields() };
+    collection = { phase: 'completed', at: Date.now(), fields: fields() };
     resolveSettled();
     finishDiagnosticTrace(
       trace,
@@ -195,16 +201,14 @@ export function startCloudflareEgressProbe({
       {
         source: 'linuxdo',
         parentTraceId,
-        ...completion.fields
+        ...collection.fields
       }
     );
-    native = undefined;
-    webView = undefined;
   };
   const timer = setTimeout(() => {
-    if (completion) return;
-    native ||= { result: 'timeout', failure: 'deadline', durationMs: elapsed() };
-    webView ||= { result: 'timeout', failure: 'deadline', durationMs: elapsed() };
+    if (collection.phase !== 'collecting') return;
+    collection.native ||= { result: 'timeout', failure: 'deadline', durationMs: elapsed() };
+    collection.webView ||= { result: 'timeout', failure: 'deadline', durationMs: elapsed() };
     controller.abort();
     cancelWebView();
     finish();
@@ -233,14 +237,14 @@ export function startCloudflareEgressProbe({
     })
     .catch((): Sample => ({ result: 'network-error', failure: 'transport' }))
     .then((sample) => {
-      if (completion || native) return;
-      native = { ...sample, durationMs: elapsed() };
+      if (collection.phase !== 'collecting' || collection.native) return;
+      collection.native = { ...sample, durationMs: elapsed() };
       finish();
     });
   try {
     injectJavaScript(probeScript(probeId, documentKey));
   } catch {
-    webView = { result: 'network-error', failure: 'bridge-unavailable', durationMs: elapsed() };
+    collection.webView = { result: 'network-error', failure: 'bridge-unavailable', durationMs: elapsed() };
   }
   return {
     settled,
@@ -248,22 +252,22 @@ export function startCloudflareEgressProbe({
       return {
         traceId: trace.traceId,
         startedAt: trace.startedAt,
-        ...(completion ? { completedAt: completion.at } : {}),
-        fields: { ...(completion?.fields || fields()) }
+        ...(collection.phase === 'completed' ? { completedAt: collection.at } : {}),
+        fields: { ...fields() }
       };
     },
     receive(data: unknown) {
       if (!data || typeof data !== 'object') return false;
       const input = data as Record<string, unknown>;
       if (input.type !== MESSAGE_TYPE || input.id !== probeId || input.documentKey !== documentKey) return false;
-      if (completion || webView) return true;
+      if (collection.phase !== 'collecting' || collection.webView) return true;
       const status =
         typeof input.status === 'number' && Number.isInteger(input.status) && input.status >= 100 && input.status <= 599
           ? input.status
           : undefined;
       const parsedAddress = address(input.ip);
       const parsedProtocol = protocol(input.protocol);
-      webView =
+      collection.webView =
         input.result === 'success' &&
         status !== undefined &&
         status >= 200 &&
@@ -288,15 +292,15 @@ export function startCloudflareEgressProbe({
                         ? input.failure
                         : 'trace-format'
                   };
-      webView.durationMs = elapsed();
+      collection.webView.durationMs = elapsed();
       finish();
       return true;
     },
     cancel(reason?: ProbeCancelReason) {
-      if (completion) return;
-      cancelReason = reason;
-      native ||= { result: 'canceled', failure: 'canceled', durationMs: elapsed() };
-      webView ||= { result: 'canceled', failure: 'canceled', durationMs: elapsed() };
+      if (collection.phase !== 'collecting') return;
+      collection.cancelReason = reason;
+      collection.native ||= { result: 'canceled', failure: 'canceled', durationMs: elapsed() };
+      collection.webView ||= { result: 'canceled', failure: 'canceled', durationMs: elapsed() };
       controller.abort();
       cancelWebView();
       finish();

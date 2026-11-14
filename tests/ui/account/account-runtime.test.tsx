@@ -34,6 +34,10 @@ import type { Source } from '@/domain/forum/models';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { fireEvent, render } from '../render';
+import {
+  verificationRecoveryProofModes,
+  verifyRecoveryProof
+} from '../../../dev/review-remediation-proof/verificationRecoveryProof';
 
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
@@ -3394,6 +3398,55 @@ it('suppresses canceled query notifications until a new explicit request produce
     jest.useRealTimers();
   }
 });
+
+it.each(verificationRecoveryProofModes)(
+  'initializes the device recovery proof before %s',
+  async (mode) => {
+    const initialization = jest.mocked(waitForLinuxDoLoginInitialization);
+    const previousInitialization = initialization.getMockImplementation()!;
+    const nativeCookies = jest.mocked(readManagedCookieHeader);
+    const previousCookieRead = nativeCookies.getMockImplementation()!;
+    const existingCookieRead = jest.fn(async () => {
+      throw new Error('The proof must not read existing device cookies');
+    });
+    NativeModules.NetworkProxyModule = {
+      ...NativeModules.NetworkProxyModule,
+      readManagedCookieHeader: existingCookieRead
+    };
+    let unmount: (() => Promise<void>) | undefined;
+    try {
+      initialization.mockImplementation(
+        jest.requireActual<typeof import('@/platform/network/linuxDoLoginInitialization')>(
+          '@/platform/network/linuxDoLoginInitialization'
+        ).waitForLinuxDoLoginInitialization
+      );
+      nativeCookies.mockImplementation(
+        jest.requireActual<typeof import('@/platform/network/managedCookies')>('@/platform/network/managedCookies')
+          .readManagedCookieHeader
+      );
+      await verifyRecoveryProof(mode, {
+        hook: async (useValue) => {
+          const view = await renderHook(useValue);
+          unmount = () => view.unmount();
+          return () => view.result.current;
+        },
+        unmount: async () => {
+          const cleanup = unmount;
+          unmount = undefined;
+          await cleanup?.();
+        },
+        until: (test) => waitFor(() => expect(test()).toBeTruthy(), { timeout: 20_000 })
+      });
+      expect(existingCookieRead).not.toHaveBeenCalled();
+      expect(NativeModules.NetworkProxyModule.readManagedCookieHeader).toBe(existingCookieRead);
+    } finally {
+      await unmount?.();
+      initialization.mockImplementation(previousInitialization);
+      nativeCookies.mockImplementation(previousCookieRead);
+    }
+  },
+  45_000
+);
 
 it('accepts an explicitly current read recovery without an active Query observer', async () => {
   const hook = await renderRuntime(async () => new Response('{}'));

@@ -42,6 +42,11 @@ type Draft = {
   password: string;
 };
 
+type ProxyDraftState =
+  | { mode: 'closed' }
+  | { mode: 'create'; draft: Draft; submitted: boolean }
+  | { mode: 'edit'; draft: ReturnType<typeof draftFromProfile>; submitted: boolean };
+
 const emptyDraft: Draft = {
   name: '',
   protocol: 'socks5',
@@ -110,9 +115,10 @@ export function NetworkProxyModal({
 }) {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const [draft, setDraft] = useState<Draft>(emptyDraft);
-  const [draftMode, setDraftMode] = useState<'create' | 'edit' | null>(null);
-  const [submitted, setSubmitted] = useState(false);
+  const [draftState, setDraftState] = useState<ProxyDraftState>({ mode: 'closed' });
+  const draft = draftState.mode === 'closed' ? emptyDraft : draftState.draft;
+  const draftMode = draftState.mode === 'closed' ? null : draftState.mode;
+  const submitted = draftState.mode !== 'closed' && draftState.submitted;
   const [busy, setBusy] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, string>>({});
@@ -133,6 +139,15 @@ export function NetworkProxyModal({
   const accentBorderColor = theme.line;
   const cardColor = theme.surface;
   const pageColor = theme.background;
+  const updateDraft = (patch: Partial<Omit<Draft, 'id'>>) => {
+    setDraftState((current) => {
+      if (current.mode === 'closed') return current;
+      const draft = { ...current.draft, ...patch };
+      return current.mode === 'edit'
+        ? { ...current, draft: { ...draft, id: current.draft.id } }
+        : { ...current, draft };
+    });
+  };
 
   useLayoutEffect(() => {
     activeOpening.current = opening ? { phase: 'ready', opening } : { phase: 'closed' };
@@ -143,9 +158,7 @@ export function NetworkProxyModal({
 
   useEffect(() => {
     if (!visible) {
-      setDraft(emptyDraft);
-      setDraftMode(null);
-      setSubmitted(false);
+      setDraftState({ mode: 'closed' });
       setBusy(false);
       setTestingId(null);
       setPendingEnabled(null);
@@ -210,14 +223,12 @@ export function NetworkProxyModal({
       return;
     }
     Keyboard.dismiss();
-    setDraft(emptyDraft);
-    setDraftMode(null);
-    setSubmitted(false);
+    setDraftState({ mode: 'closed' });
     setDraftKeyboardInset(0);
   };
 
   const saveDraft = async () => {
-    setSubmitted(true);
+    setDraftState((current) => (current.mode === 'closed' ? current : { ...current, submitted: true }));
     if (Object.keys(errors).length) {
       return;
     }
@@ -230,22 +241,16 @@ export function NetworkProxyModal({
       return rest;
     });
     Keyboard.dismiss();
-    setDraft(emptyDraft);
-    setDraftMode(null);
-    setSubmitted(false);
+    setDraftState({ mode: 'closed' });
     setDraftKeyboardInset(0);
   };
 
   const openCreate = () => {
-    setDraft(emptyDraft);
-    setSubmitted(false);
-    setDraftMode('create');
+    setDraftState({ mode: 'create', draft: emptyDraft, submitted: false });
   };
 
   const openEdit = (profile: NetworkProxyProfile) => {
-    setDraft(draftFromProfile(profile));
-    setSubmitted(false);
-    setDraftMode('edit');
+    setDraftState({ mode: 'edit', draft: draftFromProfile(profile), submitted: false });
   };
 
   const toggleSelected = (id: string) => {
@@ -534,7 +539,7 @@ export function NetworkProxyModal({
                 { value: 'socks5', label: 'SOCKS5' }
               ]}
               value={draft.protocol}
-              onChange={(value) => setDraft((current) => ({ ...current, protocol: value as NetworkProxyProtocol }))}
+              onChange={(value) => updateDraft({ protocol: value as NetworkProxyProtocol })}
             />
             <ProxyInput
               label="名称"
@@ -542,7 +547,7 @@ export function NetworkProxyModal({
               error={visibleErrors.name}
               styles={styles}
               theme={theme}
-              onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
+              onChangeText={(name) => updateDraft({ name })}
             />
             <View style={proxyStyles.fieldRow}>
               <ProxyInput
@@ -553,7 +558,7 @@ export function NetworkProxyModal({
                 theme={theme}
                 autoCapitalize="none"
                 style={proxyStyles.fieldMain}
-                onChangeText={(host) => setDraft((current) => ({ ...current, host }))}
+                onChangeText={(host) => updateDraft({ host })}
               />
               <ProxyInput
                 label="端口"
@@ -563,7 +568,7 @@ export function NetworkProxyModal({
                 theme={theme}
                 keyboardType="number-pad"
                 style={proxyStyles.portField}
-                onChangeText={(port) => setDraft((current) => ({ ...current, port }))}
+                onChangeText={(port) => updateDraft({ port })}
               />
             </View>
             <View style={proxyStyles.fieldRow}>
@@ -576,7 +581,7 @@ export function NetworkProxyModal({
                 autoCapitalize="none"
                 placeholder="可空"
                 style={proxyStyles.fieldMain}
-                onChangeText={(username) => setDraft((current) => ({ ...current, username }))}
+                onChangeText={(username) => updateDraft({ username })}
               />
               <ProxyInput
                 label="密码"
@@ -588,7 +593,7 @@ export function NetworkProxyModal({
                 placeholder="可空"
                 secureTextEntry
                 style={proxyStyles.fieldMain}
-                onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
+                onChangeText={(password) => updateDraft({ password })}
               />
             </View>
           </ScrollView>

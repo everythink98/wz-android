@@ -1,21 +1,13 @@
 import type { BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 
-type BrowserFetchRequestCleanupTarget = {
-  timeout?: ReturnType<typeof setTimeout>;
-  abortSignal?: AbortSignal;
-  abortHandler?: () => void;
-  settled?: boolean;
-};
-
-type MutableRef<T> = { current: T };
-type WebViewStopRef = { current: { stopLoading: () => void } | null };
-
-export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
+export type BrowserFetchQueueRequest = {
   id: number;
   url: string;
   userAgent?: string;
   browserFetchIntent?: BrowserFetchIntent;
   beforeSend?: () => void;
+  abortSignal?: AbortSignal;
+  httpErrorStatus?: number;
   reject: (error: Error) => void;
 };
 
@@ -142,16 +134,6 @@ function isLikelyBrowserDocumentUrl(url: string) {
   }
 }
 
-export function settleBrowserFetchRequestOnce(request: BrowserFetchRequestCleanupTarget, settle: () => void) {
-  if (request.settled) {
-    return false;
-  }
-  request.settled = true;
-  cleanupBrowserFetchRequest(request);
-  settle();
-  return true;
-}
-
 function browserFetchRequestView(request: BrowserFetchQueueRequest): BrowserFetchRequestView {
   return {
     id: request.id,
@@ -161,159 +143,178 @@ function browserFetchRequestView(request: BrowserFetchQueueRequest): BrowserFetc
   };
 }
 
-export function startNextBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
-  canStart,
-  currentRef,
-  queueRef,
-  setActiveRequest,
-  timeoutMs,
-  timeoutMessage,
-  rejectCurrent
-}: {
-  canStart?: (request: T) => boolean;
-  currentRef: MutableRef<T | null>;
-  queueRef: MutableRef<T[]>;
-  setActiveRequest: (request: BrowserFetchRequestView | null) => void;
-  timeoutMs: number;
-  timeoutMessage: string;
-  rejectCurrent: (request: T, message: string) => void;
-}) {
-  if (currentRef.current) {
-    return;
-  }
-  let next: T | null = null;
-  while (queueRef.current.length) {
-    const candidate = queueRef.current.shift() || null;
-    if (!candidate) {
-      continue;
-    }
-    if (candidate.abortSignal?.aborted) {
-      settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
-      continue;
-    }
-    if (canStart && !canStart(candidate)) {
-      settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
-      continue;
-    }
-    try {
-      candidate.beforeSend?.();
-    } catch (error) {
-      settleBrowserFetchRequestOnce(candidate, () =>
-        candidate.reject(error instanceof Error ? error : new Error(String(error)))
-      );
-      continue;
-    }
-    next = candidate;
-    break;
-  }
-  if (next) {
-    next.timeout = setTimeout(() => {
-      rejectCurrent(next, timeoutMessage);
-    }, timeoutMs);
-  }
-  currentRef.current = next;
-  setActiveRequest(next ? browserFetchRequestView(next) : null);
-}
-
-export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
-  request,
-  message,
-  currentRef,
-  queueRef,
-  setActiveRequest,
-  startNext,
-  webViewRef,
-  skipStopLoading = false
-}: {
-  request: T;
-  message: string | Error;
-  currentRef: MutableRef<T | null>;
-  queueRef: MutableRef<T[]>;
-  setActiveRequest: (request: BrowserFetchRequestView | null) => void;
-  startNext: () => void;
-  webViewRef?: WebViewStopRef;
-  skipStopLoading?: boolean;
-}) {
-  if (request.settled) {
-    return;
-  }
-  const queuedIndex = queueRef.current.findIndex((item) => item.id === request.id);
-  if (queuedIndex >= 0) {
-    queueRef.current.splice(queuedIndex, 1);
-  }
-  if (currentRef.current?.id === request.id) {
-    if (!skipStopLoading) {
-      webViewRef?.current?.stopLoading();
-    }
-    currentRef.current = null;
-    setActiveRequest(null);
-  }
-  const settled = settleBrowserFetchRequestOnce(request, () =>
-    request.reject(message instanceof Error ? message : new Error(message))
-  );
-  if (!settled) {
-    return;
-  }
-  startNext();
-}
-
-export function retireBrowserFetchRequests<T extends BrowserFetchQueueRequest>({
-  currentRef,
-  queueRef,
-  webViewRef
-}: {
-  currentRef: MutableRef<T | null>;
-  queueRef: MutableRef<T[]>;
-  webViewRef: WebViewStopRef;
-}) {
-  const current = currentRef.current;
-  const requests = current ? [current, ...queueRef.current] : queueRef.current;
-  currentRef.current = null;
-  queueRef.current = [];
-  try {
-    if (current) webViewRef.current?.stopLoading();
-  } finally {
-    for (const request of requests) {
-      settleBrowserFetchRequestOnce(request, () => request.reject(new Error('请求已取消')));
-    }
-  }
-}
-
 function browserFetchPriorityRank(intent: BrowserFetchIntent | undefined) {
-  if (intent?.priority === 'write') {
-    return 3;
-  }
-  if (intent?.priority === 'foreground') {
-    return 2;
-  }
+  if (intent?.priority === 'write') return 3;
+  if (intent?.priority === 'foreground') return 2;
   return 1;
 }
 
-export function enqueueBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
-  queueRef,
-  request
-}: {
-  queueRef: MutableRef<T[]>;
+type QueueEntry<T> = {
   request: T;
-}) {
-  const requestPriority = browserFetchPriorityRank(request.browserFetchIntent);
-  const insertionIndex = queueRef.current.findIndex(
-    (queued) => browserFetchPriorityRank(queued.browserFetchIntent) < requestPriority
-  );
-  if (insertionIndex < 0) {
-    queueRef.current.push(request);
-    return;
-  }
-  queueRef.current.splice(insertionIndex, 0, request);
-}
+  timeout?: ReturnType<typeof setTimeout>;
+  abortHandler?: () => void;
+};
 
-function cleanupBrowserFetchRequest(request: BrowserFetchRequestCleanupTarget) {
-  if (request.timeout) {
-    clearTimeout(request.timeout);
-    request.timeout = undefined;
-  }
-  if (request.abortSignal && request.abortHandler) {
-    request.abortSignal.removeEventListener('abort', request.abortHandler);
-    request.abortHandler = undefined;
-  }
+type QueueSlot<T> =
+  | { phase: 'idle' }
+  | { phase: 'starting' | 'active'; entry: QueueEntry<T> }
+  | { phase: 'settling' }
+  | { phase: 'disposed' };
+
+export function createBrowserFetchQueue<T extends BrowserFetchQueueRequest>({
+  canStart,
+  onActiveRequest,
+  onQueued,
+  onStarted,
+  stopLoading,
+  timeoutMs,
+  timeoutMessage
+}: {
+  canStart: (request: Readonly<T>) => boolean;
+  onActiveRequest: (request: BrowserFetchRequestView | null) => void;
+  onQueued?: (request: Readonly<T>, queuedCount: number) => void;
+  onStarted?: (request: Readonly<T>, queuedCount: number) => void;
+  stopLoading: () => void;
+  timeoutMs: number;
+  timeoutMessage: string;
+}) {
+  let slot: QueueSlot<T> = { phase: 'idle' };
+  let queued: QueueEntry<T>[] = [];
+  const cleanup = (entry: QueueEntry<T>) => {
+    if (entry.timeout !== undefined) clearTimeout(entry.timeout);
+    if (entry.abortHandler) entry.request.abortSignal?.removeEventListener('abort', entry.abortHandler);
+  };
+  const startNext = (): void => {
+    while (slot.phase === 'idle' && queued.length) {
+      const entry = queued.shift();
+      if (!entry) continue;
+      const { request } = entry;
+      const starting: QueueSlot<T> = { phase: 'starting', entry };
+      slot = starting;
+      try {
+        if (request.abortSignal?.aborted || !canStart(request)) throw new Error('请求已取消');
+        request.beforeSend?.();
+      } catch (error) {
+        if (slot === starting) {
+          slot = { phase: 'idle' };
+          cleanup(entry);
+          request.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+        continue;
+      }
+      if (slot !== starting) continue;
+      if (request.abortSignal?.aborted || !canStart(request)) {
+        slot = { phase: 'idle' };
+        cleanup(entry);
+        request.reject(new Error('请求已取消'));
+        continue;
+      }
+      slot = { phase: 'active', entry };
+      entry.timeout = setTimeout(() => cancel(request.id, timeoutMessage), timeoutMs);
+      onStarted?.(request, queued.length);
+      if (slot.phase === 'active' && slot.entry === entry) onActiveRequest(browserFetchRequestView(request));
+    }
+  };
+  const finish = (entry: QueueEntry<T>, settle: () => void, skipStopLoading: boolean): boolean => {
+    if ((slot.phase === 'active' || slot.phase === 'starting') && slot.entry === entry) {
+      const wasActive = slot.phase === 'active';
+      // Native callbacks may reenter; hold the slot until the old renderer has stopped.
+      const settling: QueueSlot<T> = { phase: 'settling' };
+      slot = settling;
+      cleanup(entry);
+      try {
+        if (wasActive && !skipStopLoading) stopLoading();
+      } finally {
+        try {
+          if (wasActive && slot === settling) onActiveRequest(null);
+        } finally {
+          try {
+            settle();
+          } finally {
+            if (slot === settling) {
+              slot = { phase: 'idle' };
+              startNext();
+            }
+          }
+        }
+      }
+      return true;
+    }
+    const index = queued.indexOf(entry);
+    if (index < 0) return false;
+    queued.splice(index, 1);
+    cleanup(entry);
+    settle();
+    startNext();
+    return true;
+  };
+  const cancel = (id: number, message: string | Error, options: { skipStopLoading?: boolean } = {}): boolean => {
+    const entry =
+      (slot.phase === 'active' || slot.phase === 'starting') && slot.entry.request.id === id
+        ? slot.entry
+        : queued.find(({ request }) => request.id === id);
+    if (!entry) return false;
+    return finish(
+      entry,
+      () => entry.request.reject(message instanceof Error ? message : new Error(message)),
+      options.skipStopLoading === true
+    );
+  };
+
+  return {
+    get active(): Readonly<BrowserFetchRequestView> | null {
+      return slot.phase === 'active' ? browserFetchRequestView(slot.entry.request) : null;
+    },
+    enqueue(request: T) {
+      if (slot.phase === 'disposed' || request.abortSignal?.aborted) {
+        request.reject(new Error('请求已取消'));
+        return;
+      }
+      const entry: QueueEntry<T> = { request };
+      entry.abortHandler = () => cancel(request.id, '请求已取消');
+      request.abortSignal?.addEventListener('abort', entry.abortHandler, { once: true });
+      const rank = browserFetchPriorityRank(request.browserFetchIntent);
+      const index = queued.findIndex(({ request: other }) => browserFetchPriorityRank(other.browserFetchIntent) < rank);
+      if (index < 0) queued.push(entry);
+      else queued.splice(index, 0, entry);
+      onQueued?.(request, queued.length);
+      startNext();
+    },
+    cancel,
+    complete(id: number | undefined, settle: (request: Readonly<T>) => void) {
+      if (slot.phase !== 'active' || slot.entry.request.id !== id) return false;
+      const entry = slot.entry;
+      return finish(
+        entry,
+        () => {
+          try {
+            settle(entry.request);
+          } catch (error) {
+            entry.request.reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        },
+        false
+      );
+    },
+    markHttpError(id: number, status?: number) {
+      if (slot.phase !== 'active' || slot.entry.request.id !== id) return;
+      if (status === undefined) delete slot.entry.request.httpErrorStatus;
+      else slot.entry.request.httpErrorStatus = status;
+    },
+    dispose() {
+      const wasActive = slot.phase === 'active';
+      const current = slot.phase === 'active' || slot.phase === 'starting' ? slot.entry : null;
+      const entries = current ? [current, ...queued] : queued;
+      slot = { phase: 'disposed' };
+      queued = [];
+      try {
+        if (wasActive) stopLoading();
+      } finally {
+        for (const entry of entries) {
+          cleanup(entry);
+          entry.request.reject(new Error('请求已取消'));
+        }
+      }
+    }
+  };
 }

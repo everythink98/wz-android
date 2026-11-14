@@ -1714,6 +1714,34 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun imageExecutionIsClaimedBeforeWaitingForTheRuntimeLock() {
+    val field = NetworkProxyRuntime::class.java.getDeclaredField("lock").apply { isAccessible = true }
+    val runtimeLock = field.get(NetworkProxyRuntime)
+    for (factory in listOf(NetworkProxyRuntime.imageCallFactory, NetworkProxyRuntime.frescoCallFactory)) {
+      val call = factory.newCall(Request.Builder().url("https://images.example.test/canceled").build())
+      call.cancel()
+      val failure = AtomicReference<Throwable>()
+      val worker = Thread {
+        try { call.execute().close() } catch (error: Throwable) { failure.set(error) }
+      }
+      try {
+        synchronized(runtimeLock) {
+          worker.start()
+          val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+          while (worker.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield()
+          assertEquals(Thread.State.BLOCKED, worker.state)
+          assertTrue(worker.stackTrace.any {
+            it.className == "com.wz.reader.NetworkProxyRuntime\$RuntimeImageCall" && it.methodName == "start"
+          })
+          assertTrue("execute must claim this Call before waiting for a different runtime operation", call.isExecuted())
+        }
+      } finally { worker.join(2_000) }
+      assertFalse(worker.isAlive)
+      assertTrue(failure.get() is IOException)
+    }
+  }
+
+  @Test
   fun preparedImageCallsExecuteOnCurrentRuntimeAndClonesExecuteIndependently() = withImageServer { url ->
     for (factory in listOf(NetworkProxyRuntime.imageCallFactory, NetworkProxyRuntime.frescoCallFactory)) {
       val before = NetworkProxyRuntime.imageClientForTests()
@@ -1724,6 +1752,8 @@ class NetworkProxyRuntimeTest {
       call.execute().use { assertEquals("image", it.body!!.string()) }
       assertTrue(call.isExecuted())
       assertThrows(IllegalStateException::class.java) { call.execute() }
+      call.cancel()
+      assertTrue("closing the response must not discard later cancellation", call.isCanceled())
       call.clone().execute().use { assertEquals("image", it.body!!.string()) }
     }
   }
@@ -2228,6 +2258,9 @@ class NetworkProxyRuntimeTest {
     }
     assertEquals(1, terminal.size)
     assertEquals("retired", terminal.single().fields["outcome"])
+    assertFalse(NetworkProxyRuntime.acknowledgeReadNetworkRuntimeApply(
+      traceIdentity, recovery.previousGeneration, recovery.generation
+    ))
   }
 
   @Test

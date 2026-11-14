@@ -62,7 +62,7 @@ function runLinuxDoBrowserFetchScript(url: string, html: string, innerText?: str
   const script = LINUXDO_BROWSER_FETCH_SCRIPT.replace('__LINUXDO_BROWSER_FETCH_ID__', '9');
   window.eval(script);
 
-  return { postMessage };
+  return { postMessage, evaluateAgain: () => window.eval(script) };
 }
 
 function runLinuxDoBrowserFetchJson(url: string, body: string) {
@@ -70,6 +70,29 @@ function runLinuxDoBrowserFetchJson(url: string, body: string) {
 }
 
 describe('hidden browser fetch scripts', () => {
+  it.each([
+    { site: 'nodeseek', deadline: 15_000 },
+    { site: 'linuxdo', deadline: 8_000 }
+  ] as const)('settles one $site document at its original deadline after reinjection', ({ site, deadline }) => {
+    vi.useFakeTimers();
+    try {
+      const browser =
+        site === 'nodeseek'
+          ? runNodeSeekBrowserFetchScript('/', '<main>Loading</main>', 'account-overview')
+          : runLinuxDoBrowserFetchScript('/latest.json', '<main>Loading</main>');
+      vi.advanceTimersByTime(4_000);
+      browser.evaluateAgain();
+      vi.advanceTimersByTime(deadline - 4_000);
+      expect(browser.postMessage).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(deadline);
+      expect(browser.postMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['Just a moment...', '  Just a moment...  ', '\t请完成验证…\n', '  checking your browser!  '])(
     'recognizes a challenge title in both generated scripts: %j',
     (title) => {
@@ -91,6 +114,8 @@ describe('hidden browser fetch scripts', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
+    Reflect.deleteProperty(window, '__wzNodeSeekBrowserFetchDocument');
+    Reflect.deleteProperty(window, '__wzLinuxDoBrowserFetchDocument');
     delete (window as typeof window & { __config__?: unknown }).__config__;
     delete (
       window as typeof window & {

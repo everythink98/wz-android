@@ -1,18 +1,23 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  enqueueBrowserFetchRequest,
+  createBrowserFetchQueue,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
-  rejectBrowserFetchRequest,
-  retireBrowserFetchRequests,
   requestHeaderValue,
-  settleBrowserFetchRequestOnce,
   shouldHandleBrowserHttpError,
-  startNextBrowserFetchRequest,
   type BrowserFetchQueueRequest
 } from './browserFetchQueue';
 
-const ref = <T>(current: T) => ({ current });
+function createQueue(overrides: Partial<Parameters<typeof createBrowserFetchQueue<BrowserFetchQueueRequest>>[0]> = {}) {
+  return createBrowserFetchQueue<BrowserFetchQueueRequest>({
+    canStart: () => true,
+    onActiveRequest: vi.fn(),
+    stopLoading: vi.fn(),
+    timeoutMs: 15_000,
+    timeoutMessage: 'timeout',
+    ...overrides
+  });
+}
 
 function createRequest(id: number, overrides: Partial<BrowserFetchQueueRequest> = {}): BrowserFetchQueueRequest {
   return {
@@ -28,6 +33,7 @@ afterEach(() => {
 });
 
 describe('browser fetch queue', () => {
+  beforeEach(() => vi.useFakeTimers());
   it('reads request headers case-insensitively across supported shapes', () => {
     expect(requestHeaderValue({ Cookie: 'a=1' }, 'cookie')).toBe('a=1');
     expect(requestHeaderValue([['USER-AGENT', 'agent']], 'user-agent')).toBe('agent');
@@ -71,298 +77,219 @@ describe('browser fetch queue', () => {
     expect(shouldHandleBrowserHttpError('https://linux.do/t/42', 'https://cdn.example/app.js', allowed)).toBe(false);
   });
 
-  it('settles a request once and removes its timer and abort listener', () => {
-    vi.useFakeTimers();
-    const controller = new AbortController();
-    const abortHandler = vi.fn();
-    controller.signal.addEventListener('abort', abortHandler);
-    const request = {
-      timeout: setTimeout(() => undefined, 1000),
-      abortSignal: controller.signal,
-      abortHandler
-    };
+  it('settles once and removes the active timer and abort listener', () => {
+    const signal = new AbortController();
+    const remove = vi.spyOn(signal.signal, 'removeEventListener');
+    const request = createRequest(1, { abortSignal: signal.signal });
+    const queue = createQueue();
     const settle = vi.fn();
+    queue.enqueue(request);
 
-    expect(settleBrowserFetchRequestOnce(request, settle)).toBe(true);
-    expect(settleBrowserFetchRequestOnce(request, settle)).toBe(false);
-    controller.abort();
+    expect(queue.complete(1, settle)).toBe(true);
+    expect(queue.complete(1, settle)).toBe(false);
+    signal.abort();
+    vi.advanceTimersByTime(15_000);
 
-    expect(settle).toHaveBeenCalledTimes(1);
-    expect(abortHandler).not.toHaveBeenCalled();
-    expect(request.timeout).toBeUndefined();
-    expect(request.abortHandler).toBeUndefined();
+    expect(settle).toHaveBeenCalledExactlyOnceWith(request);
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+    expect(request.reject).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('orders queued browser work by priority and FIFO within a priority', () => {
-    const queueRef = ref<BrowserFetchQueueRequest[]>([]);
-    const background = createRequest(1, {
-      browserFetchIntent: { owner: 'feed', priority: 'background' }
-    });
-    const foregroundA = createRequest(2, {
-      browserFetchIntent: { owner: 'topic', priority: 'foreground' }
-    });
-    const foregroundB = createRequest(3, {
-      browserFetchIntent: { owner: 'search', priority: 'foreground' }
-    });
-    const write = createRequest(4, {
-      browserFetchIntent: { owner: 'write', priority: 'write' }
-    });
+    const onActiveRequest = vi.fn();
+    const queue = createQueue({ onActiveRequest });
+    queue.enqueue(createRequest(0));
+    queue.enqueue(createRequest(1, { browserFetchIntent: { owner: 'feed', priority: 'background' } }));
+    queue.enqueue(createRequest(2, { browserFetchIntent: { owner: 'topic', priority: 'foreground' } }));
+    queue.enqueue(createRequest(3, { browserFetchIntent: { owner: 'search', priority: 'foreground' } }));
+    queue.enqueue(createRequest(4, { browserFetchIntent: { owner: 'write', priority: 'write' } }));
 
-    enqueueBrowserFetchRequest({ queueRef, request: background });
-    enqueueBrowserFetchRequest({ queueRef, request: foregroundA });
-    enqueueBrowserFetchRequest({ queueRef, request: foregroundB });
-    enqueueBrowserFetchRequest({ queueRef, request: write });
-
-    expect(queueRef.current.map(({ id }) => id)).toEqual([4, 2, 3, 1]);
+    for (const id of [0, 4, 2, 3, 1]) {
+      expect(queue.active?.id).toBe(id);
+      queue.complete(id, () => undefined);
+    }
+    expect(onActiveRequest.mock.calls.flatMap(([request]) => (request ? [request.id] : []))).toEqual([0, 4, 2, 3, 1]);
   });
 
-  it('exposes the active browser request owner without leaking queue internals', () => {
-    vi.useFakeTimers();
-    const request = createRequest(1, {
-      browserFetchIntent: { owner: 'account', priority: 'background' }
-    });
-    const setActiveRequest = vi.fn();
-
-    startNextBrowserFetchRequest({
-      currentRef: ref<BrowserFetchQueueRequest | null>(null),
-      queueRef: ref([request]),
-      setActiveRequest,
-      timeoutMs: 1000,
-      timeoutMessage: 'timeout',
-      rejectCurrent: vi.fn()
-    });
-
-    expect(setActiveRequest).toHaveBeenCalledWith({
-      id: 1,
-      url: request.url,
-      userAgent: undefined,
-      owner: 'account'
-    });
-    expect(setActiveRequest.mock.calls[0][0]).not.toHaveProperty('browserFetchIntent');
+  it('exposes the active browser owner without leaking queue internals', () => {
+    const request = createRequest(1, { browserFetchIntent: { owner: 'account', priority: 'background' } });
+    const queue = createQueue();
+    queue.enqueue(request);
+    expect(queue.active).toEqual({ id: 1, url: request.url, userAgent: undefined, owner: 'account' });
+    expect(queue.active).not.toHaveProperty('browserFetchIntent');
+    expect(queue.active).not.toHaveProperty('reject');
   });
 
   it('never preempts an active browser request when higher priority work arrives', () => {
-    vi.useFakeTimers();
-    const active = createRequest(1);
-    const currentRef = ref<BrowserFetchQueueRequest | null>(active);
-    const queueRef = ref<BrowserFetchQueueRequest[]>([
-      createRequest(2, {
-        browserFetchIntent: { owner: 'write', priority: 'write' }
-      })
-    ]);
-    const setActiveRequest = vi.fn();
-
-    startNextBrowserFetchRequest({
-      currentRef,
-      queueRef,
-      setActiveRequest,
-      timeoutMs: 1000,
-      timeoutMessage: 'timeout',
-      rejectCurrent: vi.fn()
-    });
-
-    expect(currentRef.current).toBe(active);
-    expect(queueRef.current).toHaveLength(1);
-    expect(setActiveRequest).not.toHaveBeenCalled();
+    const onActiveRequest = vi.fn();
+    const queue = createQueue({ onActiveRequest });
+    queue.enqueue(createRequest(1));
+    queue.enqueue(createRequest(2, { browserFetchIntent: { owner: 'write', priority: 'write' } }));
+    expect(queue.active?.id).toBe(1);
+    expect(onActiveRequest).toHaveBeenCalledTimes(1);
+    queue.complete(1, () => undefined);
+    expect(queue.active?.id).toBe(2);
   });
 
   it('starts timeout only after a queued request becomes active', () => {
-    vi.useFakeTimers();
     const first = createRequest(1);
     const second = createRequest(2);
-    const currentRef = ref<BrowserFetchQueueRequest | null>(null);
-    const queueRef = ref([first, second]);
-    const rejectCurrent = vi.fn();
-    const startNext = () =>
-      startNextBrowserFetchRequest({
-        currentRef,
-        queueRef,
-        setActiveRequest: vi.fn(),
-        timeoutMs: 15_000,
-        timeoutMessage: 'timeout',
-        rejectCurrent
-      });
-
-    startNext();
+    const queue = createQueue();
+    queue.enqueue(first);
+    queue.enqueue(second);
     vi.advanceTimersByTime(14_000);
-    expect(rejectCurrent).not.toHaveBeenCalled();
+    expect(first.reject).not.toHaveBeenCalled();
+    expect(second.reject).not.toHaveBeenCalled();
 
-    currentRef.current = null;
-    settleBrowserFetchRequestOnce(first, () => undefined);
-    startNext();
+    queue.complete(1, () => undefined);
     vi.advanceTimersByTime(14_999);
-    expect(rejectCurrent).not.toHaveBeenCalled();
+    expect(second.reject).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
-    expect(rejectCurrent).toHaveBeenCalledWith(second, 'timeout');
+    expect(second.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'timeout' }));
+    expect(queue.active).toBeNull();
   });
 
   it('skips an aborted queued request and starts the next eligible one', () => {
-    vi.useFakeTimers();
-    const aborted = new AbortController();
-    aborted.abort();
-    const first = createRequest(1, { abortSignal: aborted.signal });
-    const second = createRequest(2);
-    const currentRef = ref<BrowserFetchQueueRequest | null>(null);
-    const queueRef = ref([first, second]);
-    const setActiveRequest = vi.fn();
-
-    startNextBrowserFetchRequest({
-      currentRef,
-      queueRef,
-      setActiveRequest,
-      timeoutMs: 1000,
-      timeoutMessage: 'timeout',
-      rejectCurrent: vi.fn()
-    });
-
-    expect(first.reject).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: '请求已取消'
-      })
-    );
-    expect(currentRef.current).toBe(second);
-    expect(setActiveRequest).toHaveBeenCalledWith({
-      id: 2,
-      url: second.url,
-      userAgent: undefined
-    });
+    const signal = new AbortController();
+    const canceled = createRequest(2, { abortSignal: signal.signal });
+    const queue = createQueue();
+    queue.enqueue(createRequest(1));
+    queue.enqueue(canceled);
+    queue.enqueue(createRequest(3));
+    signal.abort();
+    expect(queue.active?.id).toBe(1);
+    queue.complete(1, () => undefined);
+    expect(canceled.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
+    expect(queue.active?.id).toBe(3);
   });
 
   it('does not expose legacy Cookie headers to the mounted hidden WebView', () => {
-    vi.useFakeTimers();
-    const request = {
-      ...createRequest(1),
-      cookie: 'PRIVATE_COOKIE_HEADER'
-    };
-    const currentRef = ref<BrowserFetchQueueRequest | null>(null);
-    const queueRef = ref([request]);
-    const setActiveRequest = vi.fn();
-
-    startNextBrowserFetchRequest({
-      currentRef,
-      queueRef,
-      setActiveRequest,
-      timeoutMs: 1000,
-      timeoutMessage: 'timeout',
-      rejectCurrent: vi.fn()
-    });
-
-    expect(setActiveRequest).toHaveBeenCalledWith({
-      id: 1,
-      url: request.url,
-      userAgent: undefined
-    });
-    expect(setActiveRequest.mock.calls[0][0]).not.toHaveProperty('cookie');
+    const request = { ...createRequest(1), cookie: 'PRIVATE_COOKIE_HEADER' };
+    const queue = createQueue();
+    queue.enqueue(request);
+    expect(queue.active).toEqual({ id: 1, url: request.url, userAgent: undefined });
+    expect(queue.active).not.toHaveProperty('cookie');
   });
 
   it('rejects queued work without stopping the active renderer', () => {
     const active = createRequest(1);
     const queued = createRequest(2);
-    const currentRef = ref<BrowserFetchQueueRequest | null>(active);
-    const queueRef = ref([queued]);
     const stopLoading = vi.fn();
-    const startNext = vi.fn();
-
-    rejectBrowserFetchRequest({
-      request: queued,
-      message: 'canceled',
-      currentRef,
-      queueRef,
-      setActiveRequest: vi.fn(),
-      startNext,
-      webViewRef: ref({ stopLoading })
-    });
-
-    expect(currentRef.current).toBe(active);
+    const queue = createQueue({ stopLoading });
+    queue.enqueue(active);
+    queue.enqueue(queued);
+    expect(queue.cancel(2, 'canceled')).toBe(true);
+    expect(queue.cancel(2, 'canceled')).toBe(false);
+    expect(queue.active?.id).toBe(1);
     expect(stopLoading).not.toHaveBeenCalled();
-    expect(queued.reject).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'canceled'
-      })
-    );
-    expect(startNext).toHaveBeenCalledTimes(1);
+    expect(queued.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'canceled' }));
   });
 
   it('releases the renderer and starts the next request after active failure', () => {
     const active = createRequest(1);
-    const currentRef = ref<BrowserFetchQueueRequest | null>(active);
-    const queueRef = ref<BrowserFetchQueueRequest[]>([]);
     const stopLoading = vi.fn();
-    const setActiveRequest = vi.fn();
-    const startNext = vi.fn();
-
-    rejectBrowserFetchRequest({
-      request: active,
-      message: new Error('renderer gone'),
-      currentRef,
-      queueRef,
-      setActiveRequest,
-      startNext,
-      webViewRef: ref({ stopLoading })
-    });
-
+    const queue = createQueue({ stopLoading });
+    queue.enqueue(active);
+    queue.enqueue(createRequest(2));
+    queue.cancel(1, new Error('renderer gone'));
     expect(stopLoading).toHaveBeenCalledTimes(1);
-    expect(currentRef.current).toBeNull();
-    expect(setActiveRequest).toHaveBeenCalledWith(null);
-    expect(startNext).toHaveBeenCalledTimes(1);
+    expect(active.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'renderer gone' }));
+    expect(queue.active?.id).toBe(2);
+  });
+
+  it('settles a failed cancel and starts the next request even when stopLoading throws', () => {
+    const signal = new AbortController();
+    const active = createRequest(1, { abortSignal: signal.signal });
+    const queued = createRequest(2);
+    const failure = new Error('renderer command failed');
+    const stopLoading = vi.fn().mockImplementationOnce(() => {
+      throw failure;
+    });
+    const queue = createQueue({ stopLoading });
+    queue.enqueue(active);
+    queue.enqueue(queued);
+
+    expect(() => queue.cancel(1, 'canceled')).toThrow(failure);
+    signal.abort();
+    expect(active.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'canceled' }));
+    expect(queued.reject).not.toHaveBeenCalled();
+    expect(queue.active?.id).toBe(2);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(stopLoading).toHaveBeenCalledTimes(1);
+    expect(queue.cancel(1, 'canceled')).toBe(false);
   });
 
   it('detaches and settles all retired work without starting another renderer', () => {
-    vi.useFakeTimers();
     const controllers = [new AbortController(), new AbortController()];
-    const requests = controllers.map((controller, index) => {
-      const abortHandler = vi.fn();
-      controller.signal.addEventListener('abort', abortHandler);
-      return createRequest(index + 1, {
-        abortSignal: controller.signal,
-        abortHandler,
-        ...(index === 0 ? { timeout: setTimeout(() => undefined, 15_000) } : {})
-      });
-    });
-    const currentRef = ref<BrowserFetchQueueRequest | null>(requests[0]!);
-    const queueRef = ref([requests[1]!]);
+    const requests = controllers.map((signal, index) => createRequest(index + 1, { abortSignal: signal.signal }));
     const stopLoading = vi.fn();
-    for (const request of requests) {
-      vi.mocked(request.reject).mockImplementation(() => {
-        expect(currentRef.current).toBeNull();
-        expect(queueRef.current).toEqual([]);
-      });
-    }
+    const queue = createQueue({ stopLoading });
+    requests.forEach((request) => queue.enqueue(request));
+    for (const request of requests) vi.mocked(request.reject).mockImplementation(() => expect(queue.active).toBeNull());
 
-    retireBrowserFetchRequests({ currentRef, queueRef, webViewRef: ref({ stopLoading }) });
-    retireBrowserFetchRequests({ currentRef, queueRef, webViewRef: ref({ stopLoading }) });
+    queue.dispose();
+    queue.dispose();
     controllers.forEach((controller) => controller.abort());
-
     expect(stopLoading).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
-    for (const request of requests) {
+    for (const request of requests)
       expect(request.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
-      expect(request.abortHandler).toBeUndefined();
-    }
+    const late = createRequest(3);
+    queue.enqueue(late);
+    expect(late.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
+    expect(queue.active).toBeNull();
   });
 
   it('settles detached requests even when stopping the renderer throws', () => {
-    vi.useFakeTimers();
-    const active = createRequest(1, { timeout: setTimeout(() => undefined, 15_000) });
+    const active = createRequest(1);
     const queued = createRequest(2);
-    const currentRef = ref<BrowserFetchQueueRequest | null>(active);
-    const queueRef = ref([queued]);
     const failure = new Error('renderer command failed');
-
-    expect(() =>
-      retireBrowserFetchRequests({
-        currentRef,
-        queueRef,
-        webViewRef: ref({
-          stopLoading: () => {
-            throw failure;
-          }
-        })
-      })
-    ).toThrow(failure);
-
+    const queue = createQueue({
+      stopLoading: () => {
+        throw failure;
+      }
+    });
+    queue.enqueue(active);
+    queue.enqueue(queued);
+    expect(() => queue.dispose()).toThrow(failure);
     expect(active.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
     expect(queued.reject).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: '请求已取消' }));
+    expect(queue.active).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['scope-revoked', 'before-send-rejected'] as const)(
+    'does not publish an invalidated request before transport: %s',
+    (reason) => {
+      let admitted = true;
+      const onActiveRequest = vi.fn();
+      const denied = createRequest(1, {
+        beforeSend: () => {
+          if (reason === 'before-send-rejected') throw new Error('final guard rejected');
+          admitted = false;
+        }
+      });
+      const queue = createQueue({ canStart: (request) => request.id !== 1 || admitted, onActiveRequest });
+      queue.enqueue(denied);
+      queue.enqueue(createRequest(2));
+      expect(denied.reject).toHaveBeenCalledOnce();
+      expect(onActiveRequest.mock.calls.some(([request]) => request?.id === 1)).toBe(false);
+      expect(queue.active?.id).toBe(2);
+    }
+  );
+
+  it('keeps reentrant work queued until the previous native stop returns', () => {
+    const onActiveRequest = vi.fn();
+    const stopLoading = vi.fn<() => void>(() => {
+      queue.enqueue(createRequest(3, { browserFetchIntent: { owner: 'write', priority: 'write' } }));
+      expect(queue.active).toBeNull();
+    });
+    const queue = createQueue({ stopLoading, onActiveRequest });
+    queue.enqueue(createRequest(1));
+    queue.enqueue(createRequest(2));
+    queue.cancel(1, 'canceled');
+    expect(queue.active?.id).toBe(3);
+    expect(onActiveRequest.mock.calls.flatMap(([request]) => (request ? [request.id] : []))).toEqual([1, 3]);
   });
 });

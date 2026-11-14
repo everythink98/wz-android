@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | B01 | 复核全部 281 项与头像请求归属修复 | 已验收 |
 | B02 | 账号恢复、认证与 Cookie 交接 | 已验收：2 项完整转换、7 项局部简化 |
-| B03 | 请求队列、代理与 Native generation | 待实施 |
+| B03 | 请求队列、代理与 Native generation | 已验收：7 项完整转换、3 项局部简化 |
 | B04 | 编辑器宿主与文档生命周期 | 待实施 |
 | B05 | 草稿、提交与互动写操作 | 待实施 |
 | B06 | 阅读入口、回复窗口与原生定位 | 待实施 |
@@ -62,3 +62,27 @@ Native 没有改动或新增执行结果，不记本批 Native/Replay 通过。�
 - 限定的 `LIVE_PASS`：主模拟器同签名覆盖安装后 UID、首次安装时间不变；真实首页与 22 条当前 buildId 启动记录正常。北京时间 2026-11-14 13:01 刷新后妖火、NodeSeek 仍已登录；linux.do 的「已验证」标签与安装前一致，该标签不证明登录身份。最终返回可见首页，构建和测试进程已退出，共享 MCP、ADB 与模拟器保留。
 
 Native 未改，不新增 Native/Replay 通过结论。真实凭据填入、所有认证失败及关闭帧组合、物理设备、私有数据库字节一致性和历史异常原因均未验证；受控错误、并发与身份替换由对应 Runtime/UI 测试证明。本批只本地提交，不 push、不合并、不发布。
+
+## B03
+
+两站各自拥有浏览器队列实例，实例接管当前请求、等待队列、timer、取消监听与一次结算。同步 starting/settling 认领防止重入时旧 renderer 停止新请求；调用方保留单调 ID、来源 generation 与物理 WebView 回执。原 5 个外部 ref 操作 API 删除后，全 Git 文件的 9、7、8、13、10 处匹配分别归零，调用与主要测试共同迁移，没有兼容壳。`stopLoading` 抛错原会跳过结算，受控红绿后仍能结算并启动下一项，20 项队列测试 seed `643031` 通过。
+
+脚本文档各自拥有唯一轮询和终态，维持 NodeSeek 15 秒、linux.do 8 秒及 500 ms 策略。重复注入不延长截止或残留第二条 timer；linux.do 的缺口由真实脚本 jsdom 实验确认，不宣称线上 provider 已频繁触发。代理 apply 绑定 owner 和实际 Promise，保存完成到调用方恢复之间仍关闭 admission。图片调用以 `Created → Claimed → Starting → Started → Released` 接管认领、generation、delegate 与释放，取消和一次失败回执独立。初版在全局锁内认领会延迟 `isExecuted`，独立复核后先补真实双工厂失败断言，再把 CAS 放回锁前，generation 仍在锁内取得。
+
+按原完整 scope：7 项完整转换、3 项局部简化、20 项保留。egress 的注入子协议、代理表单 bulk 操作、rotation 的 publication/退休集合/异常前缀仍独立，不能用局部 owner 冒充整项完成。Native `applyProxy` 已有单一串行 async 和 registry，物理 server 与 transition 成功回执各有用途，复核保留。初始实施候选由 96 调整为 95，合理保留由 181 调整为 182；4 项待补证和原 281 项分母不变，分类与实施信用分开。
+
+本批实际运行证据：
+
+- `STATIC_PASS`：最终类型检查及完整 `npm run verify` 退出 0，绑定 1140 个冻结输入；lint、格式、架构、文档、unused 和版本检查通过。
+- `UNIT_PASS`：273 文件、4626 项，seed `1794637565781`。
+- `UI_PASS`：105 suites、3276 项，seed `-603255351`，现有 act 告警保留。首轮 3272 项通过后，设备暴露旧 fixture 的初始化前置缺口，最终补的是同一设备 case 的四项主要断言。
+- Native `UNIT_PASS`：`NetworkProxyRuntimeTest` 新鲜 XML 107 项零失败，含 Image/Fresco 争锁断言；最初 106 项结果不冒充最终源码验证。
+- `DEVICE_REPLAY_PASS`：专用 ReaderStorage AVD 的私有 Release/Hermes 入口 64/64；真实 WebView 执行生产脚本，重复注入截止实际为 15112 ms / 8066 ms。三类数据库及 WAL/SHM 共九个白名单文件、通知权限均恢复。首次 60/64 的失败记录保留：fixture 没提供初始化回执，而基线早已有真实 initializer；修复仅补受控页面与 Cookie 输入、当前 session 接线和 finally 恢复，生产门禁未改。旧流程 seed `643037` 失败于 handoff/resume 均为 0，同 seed 四场景修复后通过；另断言原 Cookie reader 从未调用、方法精确恢复。
+- `APK_SANITY`：普通 Release 构建 4m50s，APK SHA-256 `6d314af79afbd3b6a776fb2d6b8cb92f77cef7a39f56652aefcb0abb17650e12`，buildId `3f954c86a6bb4e86819bf566b0999047`。实际 map 绑定 6 个运行模块，Native Kotlin producer 的两份输入与 class 核对。fixture 修正不在普通依赖图，生产和 Native 源码未变，按精确 hash 继承普通构建及 Native 证据。
+- 限定的 `LIVE_PASS`：主模拟器同签名覆盖，UID 10214、首次安装时间保持；当前包 22 条成功启动记录及真实首页正常。北京时间 2026-11-14 14:35 刷新后妖火、NodeSeek 仍已登录，linux.do「已验证」标签未变，不能据此证明其登录身份。最终保留可见首页。
+
+隔离设备原装包不可 run-as，私有 overlay 保留其 158 版本码同版本覆盖，JS 源版本仍是本仓库的 162。验收后精确覆盖恢复原 APK，核对 SHA、UID、首次安装时间，再关闭仅由本任务启动的隔离 AVD。主模拟器从未安装私有入口。自有测试与构建进程已退出，后来启动的共享 MCP 按精确归属保留。
+
+构建失败记录保留：ignored observer 的 included-build 判断、私有 overlay 的 AGP 配置时机已修；Hermes 旧下载 URL 404 后，使用官方支持的源码路径，核对现有 12371 文件及既有嵌套副本均与官方 commit `3477757eb2475555cf8d8df24bfb1deb0613880d` 的 Git blob 一致，未换版本或改 SDK 源码。干净 SDK 下载及补丁重放仍归 B10，不能由本机缓存证明。
+
+真实代理故障、全部 provider 时序、Native instrumentation、物理设备、主设备数据库字节一致性和历史异常原因未验证。受控 Cookie 输入不等于真实登录全部通过。本批只本地提交，不 push、不合并、不发布。

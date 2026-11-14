@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { sanitizeWebViewUserAgent } from '@/platform/android/userAgent';
-import { useCommittedRef, useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import {
   prepareRequestToSend,
   RequestCanceledError,
@@ -42,14 +42,11 @@ import { appQueryClient } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ScopedSiteSessionEvent, SessionSite, SiteSessionEvent } from '@/domain/session/siteSessionState';
 import {
-  enqueueBrowserFetchRequest,
+  createBrowserFetchQueue,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
-  rejectBrowserFetchRequest,
-  retireBrowserFetchRequests,
   requestHeaderValue,
-  settleBrowserFetchRequestOnce,
-  startNextBrowserFetchRequest
+  type BrowserFetchQueueRequest
 } from './browserFetchQueue';
 import { forumSessionEpochsAfterSourceChange, resetForumSourceQueries } from './sessionQueryOwnership';
 
@@ -63,22 +60,6 @@ export type NodeSeekBrowserFetchRequest = {
   owner?: BrowserFetchIntent['owner'];
 };
 
-type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
-  diagnosticTrace: DiagnosticTrace;
-  diagnosticOwnsTrace: boolean;
-  diagnosticActive?: boolean;
-  resolve: (response: Response) => void;
-  reject: (error: Error) => void;
-  timeout?: ReturnType<typeof setTimeout>;
-  abortSignal?: AbortSignal;
-  abortHandler?: () => void;
-  httpErrorStatus?: number;
-  credentialGeneration: number;
-  browserFetchIntent?: BrowserFetchIntent;
-  beforeSend?: () => void;
-  settled?: boolean;
-};
-
 export type LinuxDoBrowserFetchRequest = {
   id: number;
   url: string;
@@ -86,20 +67,11 @@ export type LinuxDoBrowserFetchRequest = {
   owner?: BrowserFetchIntent['owner'];
 };
 
-type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
+type PendingBrowserFetchRequest = BrowserFetchQueueRequest & {
   diagnosticTrace: DiagnosticTrace;
   diagnosticOwnsTrace: boolean;
-  diagnosticActive?: boolean;
   resolve: (response: Response) => void;
-  reject: (error: Error) => void;
-  timeout?: ReturnType<typeof setTimeout>;
-  abortSignal?: AbortSignal;
-  abortHandler?: () => void;
-  httpErrorStatus?: number;
   credentialGeneration: number;
-  browserFetchIntent?: BrowserFetchIntent;
-  beforeSend?: () => void;
-  settled?: boolean;
 };
 
 type MutableRef<T> = { current: T };
@@ -184,17 +156,7 @@ export function useSessionController({
   onSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
 }) {
   const nodeSeekBrowserFetchIdRef = useRef(0);
-  const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
-  const nodeSeekBrowserFetchQueueRef = useRef<PendingNodeSeekBrowserFetchRequest[]>([]);
-  const rejectNodeSeekBrowserFetchRef = useRef<
-    ((request: PendingNodeSeekBrowserFetchRequest, message: string) => void) | null
-  >(null);
   const linuxDoBrowserFetchIdRef = useRef(0);
-  const linuxDoBrowserFetchCurrentRef = useRef<PendingLinuxDoBrowserFetchRequest | null>(null);
-  const linuxDoBrowserFetchQueueRef = useRef<PendingLinuxDoBrowserFetchRequest[]>([]);
-  const rejectLinuxDoBrowserFetchRef = useRef<
-    ((request: PendingLinuxDoBrowserFetchRequest, message: string) => void) | null
-  >(null);
   const [nodeSeekBrowserFetchRequest, setNodeSeekBrowserFetchRequest] = useState<NodeSeekBrowserFetchRequest | null>(
     null
   );
@@ -208,38 +170,84 @@ export function useSessionController({
     linuxDo: linuxDoBrowserWebViewRef,
     nodeSeek: nodeSeekBrowserWebViewRef
   });
+  const createBrowserQueues = useCallback(
+    () => ({
+      nodeSeek: createBrowserFetchQueue<PendingBrowserFetchRequest>({
+        canStart: (request) =>
+          !browserLifetimeRef.current.signal.aborted &&
+          request.credentialGeneration === nodeSeekCredentialGateRef.current.generation,
+        onActiveRequest: setNodeSeekBrowserFetchRequest,
+        onQueued: (request, queueLength) =>
+          markDiagnosticStage(request.diagnosticTrace, 'guard', {
+            source: 'nodeseek',
+            channel: 'webview',
+            state: 'queued',
+            queueLength
+          }),
+        onStarted: (request, queueLength) =>
+          markDiagnosticStage(request.diagnosticTrace, 'transport', {
+            source: 'nodeseek',
+            channel: 'webview',
+            state: 'active',
+            queueLength
+          }),
+        stopLoading: () => browserWebViewRefs.current.nodeSeek.current?.stopLoading(),
+        timeoutMs: NODESEEK_BROWSER_FETCH_TIMEOUT_MS,
+        timeoutMessage: 'NodeSeek 页面读取超时'
+      }),
+      linuxDo: createBrowserFetchQueue<PendingBrowserFetchRequest>({
+        canStart: (request) =>
+          !browserLifetimeRef.current.signal.aborted &&
+          request.credentialGeneration === linuxDoCredentialGateRef.current.generation,
+        onActiveRequest: setLinuxDoBrowserFetchRequest,
+        onQueued: (request, queueLength) =>
+          markDiagnosticStage(request.diagnosticTrace, 'guard', {
+            source: 'linuxdo',
+            channel: 'webview',
+            state: 'queued',
+            queueLength
+          }),
+        onStarted: (request, queueLength) =>
+          markDiagnosticStage(request.diagnosticTrace, 'transport', {
+            source: 'linuxdo',
+            channel: 'webview',
+            state: 'active',
+            queueLength
+          }),
+        stopLoading: () => browserWebViewRefs.current.linuxDo.current?.stopLoading(),
+        timeoutMs: LINUXDO_BROWSER_FETCH_TIMEOUT_MS,
+        timeoutMessage: 'linux.do 页面读取超时'
+      })
+    }),
+    [browserWebViewRefs]
+  );
+  const [browserQueuesRef] = useState(() => ({ current: createBrowserQueues() }));
   useEffect(() => {
     if (browserLifetimeRef.current.signal.aborted) {
       browserLifetimeRef.current = new AbortController();
+      browserQueuesRef.current = createBrowserQueues();
       setNodeSeekBrowserFetchRequest(null);
       setLinuxDoBrowserFetchRequest(null);
     }
     const lifetime = browserLifetimeRef.current;
+    const queues = browserQueuesRef.current;
     return () => {
       lifetime.abort();
       const failures: unknown[] = [];
       try {
-        retireBrowserFetchRequests({
-          currentRef: nodeSeekBrowserFetchCurrentRef,
-          queueRef: nodeSeekBrowserFetchQueueRef,
-          webViewRef: browserWebViewRefs.current.nodeSeek
-        });
+        queues.nodeSeek.dispose();
       } catch (error) {
         failures.push(error);
       }
       try {
-        retireBrowserFetchRequests({
-          currentRef: linuxDoBrowserFetchCurrentRef,
-          queueRef: linuxDoBrowserFetchQueueRef,
-          webViewRef: browserWebViewRefs.current.linuxDo
-        });
+        queues.linuxDo.dispose();
       } catch (error) {
         failures.push(error);
       }
       if (failures.length === 1) throw failures[0];
       if (failures.length > 1) throw new AggregateError(failures, '隐藏浏览器请求清理失败');
     };
-  }, [browserWebViewRefs]);
+  }, [browserWebViewRefs, createBrowserQueues]);
   const ownBrowserFetch = useCallback(
     (fetcher: Fetcher): Fetcher =>
       (input, init) => {
@@ -296,57 +304,6 @@ export function useSessionController({
     [dispatchSiteSessionEvent]
   );
 
-  const startNextNodeSeekBrowserFetch = useCallback(() => {
-    if (browserLifetimeRef.current.signal.aborted) return;
-    startNextBrowserFetchRequest({
-      canStart: (request) => request.credentialGeneration === nodeSeekCredentialGateRef.current.generation,
-      currentRef: nodeSeekBrowserFetchCurrentRef,
-      queueRef: nodeSeekBrowserFetchQueueRef,
-      setActiveRequest: setNodeSeekBrowserFetchRequest,
-      timeoutMs: NODESEEK_BROWSER_FETCH_TIMEOUT_MS,
-      timeoutMessage: 'NodeSeek 页面读取超时',
-      rejectCurrent: (request, message) => rejectNodeSeekBrowserFetchRef.current?.(request, message)
-    });
-    const active = nodeSeekBrowserFetchCurrentRef.current;
-    if (active && !active.diagnosticActive) {
-      active.diagnosticActive = true;
-      markDiagnosticStage(active.diagnosticTrace, 'transport', {
-        source: 'nodeseek',
-        channel: 'webview',
-        state: 'active',
-        queueLength: nodeSeekBrowserFetchQueueRef.current.length
-      });
-    }
-  }, [
-    nodeSeekBrowserFetchCurrentRef,
-    nodeSeekBrowserFetchQueueRef,
-    rejectNodeSeekBrowserFetchRef,
-    setNodeSeekBrowserFetchRequest
-  ]);
-
-  const rejectNodeSeekBrowserFetch = useCallback(
-    (request: PendingNodeSeekBrowserFetchRequest, message: string, options: { skipStopLoading?: boolean } = {}) => {
-      rejectBrowserFetchRequest({
-        request,
-        message,
-        currentRef: nodeSeekBrowserFetchCurrentRef,
-        queueRef: nodeSeekBrowserFetchQueueRef,
-        setActiveRequest: setNodeSeekBrowserFetchRequest,
-        startNext: startNextNodeSeekBrowserFetch,
-        webViewRef: nodeSeekBrowserWebViewRef,
-        skipStopLoading: options.skipStopLoading
-      });
-    },
-    [
-      nodeSeekBrowserFetchCurrentRef,
-      nodeSeekBrowserFetchQueueRef,
-      nodeSeekBrowserWebViewRef,
-      setNodeSeekBrowserFetchRequest,
-      startNextNodeSeekBrowserFetch
-    ]
-  );
-  useCommitRefValue(rejectNodeSeekBrowserFetchRef, rejectNodeSeekBrowserFetch);
-
   const nodeSeekFetchWithWebView: Fetcher = useCallback(
     async (input, init) => {
       const url = String(input);
@@ -355,7 +312,6 @@ export function useSessionController({
       }
       const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
       return new Promise<Response>((resolve, reject) => {
-        let request: PendingNodeSeekBrowserFetchRequest;
         const id = ++nodeSeekBrowserFetchIdRef.current;
         const browserFetchIntent = browserFetchIntentFromInit(init);
         const inheritedTrace = diagnosticTraceForRequest(init);
@@ -366,7 +322,7 @@ export function useSessionController({
             channel: 'webview',
             ...diagnosticBrowserIntent(browserFetchIntent)
           });
-        request = {
+        const request: PendingBrowserFetchRequest = {
           id,
           url,
           userAgent,
@@ -384,37 +340,10 @@ export function useSessionController({
           },
           abortSignal: init?.signal || undefined
         };
-        request.abortHandler = () => {
-          rejectNodeSeekBrowserFetch(request, '请求已取消');
-        };
-        if (request.abortSignal) {
-          if (request.abortSignal.aborted) {
-            rejectNodeSeekBrowserFetch(request, '请求已取消');
-            return;
-          }
-          request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
-        }
-        enqueueBrowserFetchRequest({
-          queueRef: nodeSeekBrowserFetchQueueRef,
-          request
-        });
-        markDiagnosticStage(diagnosticTrace, 'guard', {
-          source: 'nodeseek',
-          channel: 'webview',
-          state: 'queued',
-          queueLength: nodeSeekBrowserFetchQueueRef.current.length
-        });
-        startNextNodeSeekBrowserFetch();
+        browserQueuesRef.current.nodeSeek.enqueue(request);
       });
     },
-    [
-      defaultFetcher,
-      nodeSeekBrowserFetchIdRef,
-      nodeSeekBrowserFetchCurrentRef,
-      nodeSeekBrowserFetchQueueRef,
-      rejectNodeSeekBrowserFetch,
-      startNextNodeSeekBrowserFetch
-    ]
+    [defaultFetcher]
   );
 
   const completeNodeSeekBrowserFetch = useCallback(
@@ -427,30 +356,14 @@ export function useSessionController({
       error?: string;
       httpErrorStatus?: number;
     }) => {
-      const current = nodeSeekBrowserFetchCurrentRef.current;
-      if (!current || data.id !== current.id) {
-        return;
-      }
-      if (!data.url || !isNodeSeekBrowserRequestPair(data.url, current.url)) {
-        rejectNodeSeekBrowserFetch(current, 'NodeSeek 页面跳转到外部地址，已停止读取');
-        return;
-      }
-      if (current.credentialGeneration !== nodeSeekCredentialGateRef.current.generation) {
-        rejectNodeSeekBrowserFetch(current, '请求已取消');
-        return;
-      }
-      if (data.error) {
-        rejectNodeSeekBrowserFetch(current, data.error);
-        return;
-      }
-      nodeSeekBrowserWebViewRef.current?.stopLoading();
-      nodeSeekBrowserFetchCurrentRef.current = null;
-      setNodeSeekBrowserFetchRequest(null);
-      const userAgent = sanitizeWebViewUserAgent(data.userAgent);
-      if (userAgent) {
-        commitNodeSeekWebViewUserAgent(userAgent);
-      }
-      const settled = settleBrowserFetchRequestOnce(current, () => {
+      browserQueuesRef.current.nodeSeek.complete(data.id, (current) => {
+        if (!data.url || !isNodeSeekBrowserRequestPair(data.url, current.url))
+          throw new Error('NodeSeek 页面跳转到外部地址，已停止读取');
+        if (current.credentialGeneration !== nodeSeekCredentialGateRef.current.generation)
+          throw new Error('请求已取消');
+        if (data.error) throw new Error(data.error);
+        const userAgent = sanitizeWebViewUserAgent(data.userAgent);
+        if (userAgent) commitNodeSeekWebViewUserAgent(userAgent);
         const challenge = Boolean(data.challenge);
         const status = challenge ? 403 : data.httpErrorStatus || current.httpErrorStatus || 200;
         finishBrowserFetchSuccess(
@@ -463,110 +376,29 @@ export function useSessionController({
           challenge
         );
         current.resolve(
-          nodeSeekBrowserResponse(
-            data.html || '',
-            Boolean(data.challenge),
-            data.httpErrorStatus || current.httpErrorStatus,
-            data.url
-          )
+          nodeSeekBrowserResponse(data.html || '', challenge, data.httpErrorStatus || current.httpErrorStatus, data.url)
         );
       });
-      if (!settled) {
-        return;
-      }
-      startNextNodeSeekBrowserFetch();
     },
-    [
-      nodeSeekBrowserFetchCurrentRef,
-      nodeSeekBrowserWebViewRef,
-      commitNodeSeekWebViewUserAgent,
-      rejectNodeSeekBrowserFetch,
-      setNodeSeekBrowserFetchRequest,
-      startNextNodeSeekBrowserFetch
-    ]
+    [commitNodeSeekWebViewUserAgent]
   );
 
   const failNodeSeekBrowserFetchById = useCallback(
     (requestId: number, message: string, options: { skipStopLoading?: boolean } = {}) => {
-      const current = nodeSeekBrowserFetchCurrentRef.current;
-      if (current?.id === requestId) {
-        rejectNodeSeekBrowserFetch(current, message, options);
-      }
+      browserQueuesRef.current.nodeSeek.cancel(requestId, message, options);
     },
-    [nodeSeekBrowserFetchCurrentRef, rejectNodeSeekBrowserFetch]
+    []
   );
 
   const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode?: number) => {
-    if (nodeSeekBrowserFetchCurrentRef.current?.id === requestId) {
-      if (statusCode === undefined) {
-        delete nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus;
-      } else {
-        nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
-      }
-    }
+    browserQueuesRef.current.nodeSeek.markHttpError(requestId, statusCode);
   }, []);
-
-  const startNextLinuxDoBrowserFetch = useCallback(() => {
-    if (browserLifetimeRef.current.signal.aborted) return;
-    startNextBrowserFetchRequest({
-      canStart: (request) => request.credentialGeneration === linuxDoCredentialGateRef.current.generation,
-      currentRef: linuxDoBrowserFetchCurrentRef,
-      queueRef: linuxDoBrowserFetchQueueRef,
-      setActiveRequest: setLinuxDoBrowserFetchRequest,
-      timeoutMs: LINUXDO_BROWSER_FETCH_TIMEOUT_MS,
-      timeoutMessage: 'linux.do 页面读取超时',
-      rejectCurrent: (request, message) => rejectLinuxDoBrowserFetchRef.current?.(request, message)
-    });
-    const active = linuxDoBrowserFetchCurrentRef.current;
-    if (active && !active.diagnosticActive) {
-      active.diagnosticActive = true;
-      markDiagnosticStage(active.diagnosticTrace, 'transport', {
-        source: 'linuxdo',
-        channel: 'webview',
-        state: 'active',
-        queueLength: linuxDoBrowserFetchQueueRef.current.length
-      });
-    }
-  }, [
-    linuxDoBrowserFetchCurrentRef,
-    linuxDoBrowserFetchQueueRef,
-    rejectLinuxDoBrowserFetchRef,
-    setLinuxDoBrowserFetchRequest
-  ]);
-
-  const rejectLinuxDoBrowserFetch = useCallback(
-    (
-      request: PendingLinuxDoBrowserFetchRequest,
-      message: string | Error,
-      options: { skipStopLoading?: boolean } = {}
-    ) => {
-      rejectBrowserFetchRequest({
-        request,
-        message,
-        currentRef: linuxDoBrowserFetchCurrentRef,
-        queueRef: linuxDoBrowserFetchQueueRef,
-        setActiveRequest: setLinuxDoBrowserFetchRequest,
-        startNext: startNextLinuxDoBrowserFetch,
-        webViewRef: linuxDoBrowserWebViewRef,
-        skipStopLoading: options.skipStopLoading
-      });
-    },
-    [
-      linuxDoBrowserFetchCurrentRef,
-      linuxDoBrowserFetchQueueRef,
-      linuxDoBrowserWebViewRef,
-      setLinuxDoBrowserFetchRequest,
-      startNextLinuxDoBrowserFetch
-    ]
-  );
-  useCommitRefValue(rejectLinuxDoBrowserFetchRef, rejectLinuxDoBrowserFetch);
 
   const cancelLinuxDoBrowserHandoff = useCallback(() => {
     advanceCredentialWriteGeneration(linuxDoCredentialGateRef.current);
-    const current = linuxDoBrowserFetchCurrentRef.current;
-    if (current) rejectLinuxDoBrowserFetch(current, '账号页面交接，请求已取消');
-    else startNextLinuxDoBrowserFetch();
-  }, [rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
+    const queue = browserQueuesRef.current.linuxDo;
+    if (queue.active) queue.cancel(queue.active.id, '账号页面交接，请求已取消');
+  }, []);
 
   const linuxDoFetchWithWebView: Fetcher = useCallback(
     async (input, init) => {
@@ -575,7 +407,6 @@ export function useSessionController({
         return defaultFetcher(input, init);
       }
       return new Promise<Response>((resolve, reject) => {
-        let request: PendingLinuxDoBrowserFetchRequest;
         const id = ++linuxDoBrowserFetchIdRef.current;
         const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
         const browserFetchIntent = browserFetchIntentFromInit(init);
@@ -587,7 +418,7 @@ export function useSessionController({
             channel: 'webview',
             ...diagnosticBrowserIntent(browserFetchIntent)
           });
-        request = {
+        const request: PendingBrowserFetchRequest = {
           id,
           url,
           userAgent,
@@ -605,36 +436,10 @@ export function useSessionController({
           },
           abortSignal: init?.signal || undefined
         };
-        request.abortHandler = () => {
-          rejectLinuxDoBrowserFetch(request, '请求已取消');
-        };
-        if (request.abortSignal) {
-          if (request.abortSignal.aborted) {
-            rejectLinuxDoBrowserFetch(request, '请求已取消');
-            return;
-          }
-          request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
-        }
-        enqueueBrowserFetchRequest({
-          queueRef: linuxDoBrowserFetchQueueRef,
-          request
-        });
-        markDiagnosticStage(diagnosticTrace, 'guard', {
-          source: 'linuxdo',
-          channel: 'webview',
-          state: 'queued',
-          queueLength: linuxDoBrowserFetchQueueRef.current.length
-        });
-        startNextLinuxDoBrowserFetch();
+        browserQueuesRef.current.linuxDo.enqueue(request);
       });
     },
-    [
-      defaultFetcher,
-      linuxDoBrowserFetchIdRef,
-      linuxDoBrowserFetchQueueRef,
-      rejectLinuxDoBrowserFetch,
-      startNextLinuxDoBrowserFetch
-    ]
+    [defaultFetcher]
   );
 
   const nodeSeekFetchWithWebViewFallback = useMemo(
@@ -674,34 +479,16 @@ export function useSessionController({
       error?: string;
       failureReason?: LinuxDoHiddenBrowserFailureReason;
     }) => {
-      const current = linuxDoBrowserFetchCurrentRef.current;
-      if (!current || data.id !== current.id) {
-        return;
-      }
-      if (!data.url || !isLinuxDoBrowserRequestPair(data.url, current.url)) {
-        rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
-        return;
-      }
-      if (current.credentialGeneration !== linuxDoCredentialGateRef.current.generation) {
-        rejectLinuxDoBrowserFetch(current, '请求已取消');
-        return;
-      }
-      const isLinuxDoPage = isLinuxDoRequestUrl(data.url);
-      if (data.error) {
-        rejectLinuxDoBrowserFetch(
-          current,
-          data.failureReason ? new LinuxDoHiddenBrowserFailureError(data.failureReason, data.error) : data.error
-        );
-        return;
-      }
-      linuxDoBrowserWebViewRef.current?.stopLoading();
-      linuxDoBrowserFetchCurrentRef.current = null;
-      setLinuxDoBrowserFetchRequest(null);
-      const userAgent = sanitizeWebViewUserAgent(data.userAgent);
-      if (isLinuxDoPage && userAgent) {
-        commitLinuxDoWebViewUserAgent(userAgent);
-      }
-      const settled = settleBrowserFetchRequestOnce(current, () => {
+      browserQueuesRef.current.linuxDo.complete(data.id, (current) => {
+        if (!data.url || !isLinuxDoBrowserRequestPair(data.url, current.url))
+          throw new Error('linux.do 页面跳转到外部地址，已停止读取');
+        if (current.credentialGeneration !== linuxDoCredentialGateRef.current.generation) throw new Error('请求已取消');
+        if (data.error)
+          throw data.failureReason
+            ? new LinuxDoHiddenBrowserFailureError(data.failureReason, data.error)
+            : new Error(data.error);
+        const userAgent = sanitizeWebViewUserAgent(data.userAgent);
+        if (isLinuxDoRequestUrl(data.url) && userAgent) commitLinuxDoWebViewUserAgent(userAgent);
         const challenge = Boolean(data.challenge);
         const status = current.httpErrorStatus || (challenge ? 403 : 200);
         finishBrowserFetchSuccess(
@@ -713,45 +500,22 @@ export function useSessionController({
           false,
           challenge
         );
-        if (challenge) {
-          current.reject(new LinuxDoCloudflareError());
-          return;
-        }
-        current.resolve(linuxDoBrowserResponse(data.body || '', current.httpErrorStatus));
+        if (challenge) current.reject(new LinuxDoCloudflareError());
+        else current.resolve(linuxDoBrowserResponse(data.body || '', current.httpErrorStatus));
       });
-      if (!settled) {
-        return;
-      }
-      startNextLinuxDoBrowserFetch();
     },
-    [
-      linuxDoBrowserFetchCurrentRef,
-      linuxDoBrowserWebViewRef,
-      commitLinuxDoWebViewUserAgent,
-      rejectLinuxDoBrowserFetch,
-      setLinuxDoBrowserFetchRequest,
-      startNextLinuxDoBrowserFetch
-    ]
+    [commitLinuxDoWebViewUserAgent]
   );
 
   const failLinuxDoBrowserFetchById = useCallback(
     (requestId: number, message: string, options: { skipStopLoading?: boolean } = {}) => {
-      const current = linuxDoBrowserFetchCurrentRef.current;
-      if (current?.id === requestId) {
-        rejectLinuxDoBrowserFetch(current, message, options);
-      }
+      browserQueuesRef.current.linuxDo.cancel(requestId, message, options);
     },
-    [linuxDoBrowserFetchCurrentRef, rejectLinuxDoBrowserFetch]
+    []
   );
 
   const markLinuxDoBrowserFetchHttpError = useCallback((requestId: number, statusCode?: number) => {
-    if (linuxDoBrowserFetchCurrentRef.current?.id === requestId) {
-      if (statusCode === undefined) {
-        delete linuxDoBrowserFetchCurrentRef.current.httpErrorStatus;
-      } else {
-        linuxDoBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
-      }
-    }
+    browserQueuesRef.current.linuxDo.markHttpError(requestId, statusCode);
   }, []);
 
   const clearManagedLoginState = useCallback(

@@ -10,6 +10,22 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     return;
   }
   window.__wzNodeSeekBrowserFetchRequestId = requestId;
+  const previousDocument = window.__wzNodeSeekBrowserFetchDocument;
+  if (previousDocument) previousDocument.cancel();
+  const requestDocument = {
+    phase: "polling", timer: null,
+    cancel() {
+      this.phase = "settled";
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  };
+  window.__wzNodeSeekBrowserFetchDocument = requestDocument;
+  const isCurrentDocument = () => requestDocument.phase === "polling"
+    && window.__wzNodeSeekBrowserFetchDocument === requestDocument;
+  const scheduleNextRead = () => {
+    if (isCurrentDocument()) requestDocument.timer = setTimeout(waitForReadablePage, 500);
+  };
   const bridgeMessageLimit = 900000;
   const challengeTitlePattern = /^\\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在进行安全验证|请完成验证)[.!…\\s]*$/i;
   const challengeHeadingPattern = challengeTitlePattern;
@@ -231,6 +247,8 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     || hasSearchPageContent()
   );
   const postBridgeMessage = (payload) => {
+    if (!isCurrentDocument()) return;
+    requestDocument.cancel();
     const message = JSON.stringify(payload);
     if (message.length <= bridgeMessageLimit) {
       window.ReactNativeWebView.postMessage(message);
@@ -287,6 +305,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
+    if (!isCurrentDocument()) return;
     if (jsonText()) {
       postResult();
       return;
@@ -300,7 +319,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
         postError('NodeSeek 账号资料没有加载完成，请重试');
         return;
       }
-      setTimeout(waitForReadablePage, 500);
+      scheduleNextRead();
       return;
     }
     if (requestOwner === "account") {
@@ -308,7 +327,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
         postResult();
         return;
       }
-      setTimeout(waitForReadablePage, 500);
+      scheduleNextRead();
       return;
     }
     if (embeddedPostDataHtml()) {
@@ -331,7 +350,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       postResult();
       return;
     }
-    setTimeout(waitForReadablePage, 500);
+    scheduleNextRead();
   };
   waitForReadablePage();
 })();
@@ -341,6 +360,20 @@ true;
 export const LINUXDO_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __LINUXDO_BROWSER_FETCH_ID__;
+  const previousDocument = window.__wzLinuxDoBrowserFetchDocument;
+  if (previousDocument && previousDocument.id === requestId) return;
+  if (previousDocument) previousDocument.cancel();
+  const requestDocument = {
+    id: requestId, phase: "polling", timer: null,
+    cancel() {
+      this.phase = "settled";
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  };
+  window.__wzLinuxDoBrowserFetchDocument = requestDocument;
+  const isCurrentDocument = () => requestDocument.phase === "polling"
+    && window.__wzLinuxDoBrowserFetchDocument === requestDocument;
   const bridgeMessageLimit = 900000;
   const challengeTitlePattern = /^\\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在检查|正在进行安全验证|请完成验证)[.!…\\s]*$/i;
   const challengeHeadingPattern = challengeTitlePattern;
@@ -376,6 +409,8 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
   };
   const hasReadablePage = () => Boolean(preloadedRulesHtml() || jsonText());
   const postBridgeMessage = (payload) => {
+    if (!isCurrentDocument()) return;
+    requestDocument.cancel();
     const message = JSON.stringify(payload);
     if (message.length <= bridgeMessageLimit) {
       window.ReactNativeWebView.postMessage(message);
@@ -408,11 +443,12 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 8000;
   const waitForReadablePage = () => {
+    if (!isCurrentDocument()) return;
     if (hasReadablePage() || isChallengePage() || Date.now() >= deadline) {
       postResult();
       return;
     }
-    setTimeout(waitForReadablePage, 500);
+    requestDocument.timer = setTimeout(waitForReadablePage, 500);
   };
   waitForReadablePage();
 })();

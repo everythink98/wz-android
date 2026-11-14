@@ -176,6 +176,13 @@ describe('body and poll chain device work receipts', () => {
   );
   it('requires each known business check exactly once with a boolean pass', () => {
     const results = REVIEW_CHECK_NAMES.map((name) => ({ name, passed: true }));
+    const deadlineChecks = [
+      'webview-nodeseek-reinjected-pending-deadline',
+      'webview-linuxdo-reinjected-pending-deadline'
+    ];
+    expect(REVIEW_CHECK_NAMES).toEqual(expect.arrayContaining(deadlineChecks));
+    expect(results).toHaveLength(64);
+    expect(completeReviewProofResults(results.filter(({ name }) => !deadlineChecks.includes(name)))).toBe(false);
     expect(completeReviewProofResults(results)).toBe(true);
     expect(completeReviewProofResults(results.slice(1))).toBe(false);
     for (const invalid of [

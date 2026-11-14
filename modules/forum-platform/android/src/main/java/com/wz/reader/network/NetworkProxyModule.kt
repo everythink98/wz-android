@@ -25,8 +25,8 @@ import com.facebook.react.bridge.ReadableMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 
 internal fun readDefaultWebViewUserAgentOnMainThread(
@@ -96,6 +96,8 @@ internal fun readProcessDefaultWebViewUserAgent(context: Context): String =
     readUserAgent = { WebSettings.getDefaultUserAgent(context) }
   )
 
+private enum class WebViewProxyCompletion { WAITING, COMPLETED, EXPIRED }
+
 internal fun awaitWebViewProxyOperation(
   timeoutMessage: String,
   timeoutMs: Long = 10_000,
@@ -104,9 +106,10 @@ internal fun awaitWebViewProxyOperation(
   start: ((() -> Unit) -> Unit)
 ) {
   val latch = CountDownLatch(1)
-  val timedOut = AtomicBoolean(false)
+  val completion = AtomicReference(WebViewProxyCompletion.WAITING)
   start {
-    if (timedOut.get()) {
+    if (!completion.compareAndSet(WebViewProxyCompletion.WAITING, WebViewProxyCompletion.COMPLETED) &&
+      completion.get() == WebViewProxyCompletion.EXPIRED) {
       onLateCompletion()
     }
     latch.countDown()
@@ -114,13 +117,13 @@ internal fun awaitWebViewProxyOperation(
   val completed = try {
     latch.await(timeoutMs, TimeUnit.MILLISECONDS)
   } catch (error: InterruptedException) {
-    timedOut.set(true)
+    completion.set(WebViewProxyCompletion.EXPIRED)
     onTimeoutOrLateCompletion()
     Thread.currentThread().interrupt()
     throw error
   }
   if (!completed) {
-    timedOut.set(true)
+    completion.set(WebViewProxyCompletion.EXPIRED)
     onTimeoutOrLateCompletion()
     throw IllegalStateException(timeoutMessage)
   }

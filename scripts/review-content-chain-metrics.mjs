@@ -1,8 +1,14 @@
 export const REVIEW_CHECK_NAMES = [
   ...['nodeseek', 'linuxdo'].flatMap((source) =>
-    ['short', 'long-unicode', 'cf-words', 'over-envelope', 'challenge', 'whitespace-title-only-challenge'].map(
-      (sample) => `webview-${source}-${sample}`
-    )
+    [
+      'short',
+      'long-unicode',
+      'cf-words',
+      'over-envelope',
+      'challenge',
+      'whitespace-title-only-challenge',
+      'reinjected-pending-deadline'
+    ].map((sample) => `webview-${source}-${sample}`)
   ),
   ...[
     'deep-details',

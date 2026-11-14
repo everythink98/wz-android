@@ -12,7 +12,14 @@
       "consumer": "useNetworkProxyRuntime.ts#useEffect(setDefaultAvatarFetcher(networkProxyFetcher))",
       "cannotDerive": "默认fetcher是当前transport注册，disposer捕获身份后比较再恢复；代理配置无法推导注册拥有者。",
       "tests": ["src/platform/media/avatarImages.test.ts", "tests/ui/more/network-proxy-controller.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "默认fetcher是当前transport注册，disposer捕获身份后比较再恢复；代理配置无法推导注册拥有者。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.account-probe",
@@ -49,7 +56,14 @@
       "consumer": "src/features/account/HiddenBrowserHost.tsx#NODESEEK_BROWSER_FETCH_SCRIPT",
       "cannotDerive": "在现有脚本RequestDocument owner集中polling/settled与cleanup，保留request-id sentinel、15秒/500ms策略和消息边界。",
       "tests": ["tests/ui/account/session-controller-browser-flow.test.tsx"],
-      "evidenceGap": "jsdom执行脚本不能证明真实DOM/provider和完整fallback。"
+      "evidenceGap": "jsdom执行脚本不能证明真实DOM/provider和完整fallback。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "whole",
+        "delivered": "保留原NS request-id sentinel/owner/15秒/500ms策略，document owner接管polling/settled和timer清理；新request取消旧owner，桥发送先同步claim终态。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.browser-renderer",
@@ -61,7 +75,14 @@
       "consumer": "src/features/account/AccountHosts.tsx#HiddenBrowserHost",
       "cannotDerive": "documentRef归请求keyed子组件，browserRef供session stop当前renderer；旧闭包与新实例共存时两者不相同。",
       "tests": ["tests/ui/account/hidden-browser-host.test.tsx"],
-      "evidenceGap": "保留hidden-browser-host迟到callback用例，OEM生命周期另证。"
+      "evidenceGap": "保留hidden-browser-host迟到callback用例，OEM生命周期另证。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "documentRef归请求keyed子组件，browserRef供session stop当前renderer；旧闭包与新实例共存时两者不相同。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.browser-slots",
@@ -76,7 +97,14 @@
         "src/features/account/browserFetchQueue.test.ts",
         "tests/ui/account/session-controller-browser-flow.test.tsx"
       ],
-      "evidenceGap": "需active/queued取消、同步重入、dispose、身份替换、旧文档callback；通用queue不新增强制站点字段。"
+      "evidenceGap": "需active/queued取消、同步重入、dispose、身份替换、旧文档callback；通用queue不新增强制站点字段。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "whole",
+        "delivered": "NS独立queue实例实际拥有current/queued entry、timer、abort listener、同步starting/settling claim和terminal cleanup；旧ref操作API与调用方拼接全部删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.canceled-recovery",
@@ -214,7 +242,16 @@
         "src/platform/network/cloudflareEgressDiagnostics.test.ts",
         "src/features/account/useVerificationController.test.ts"
       ],
-      "evidenceGap": "探针对照不自动证明真实CF原因；新模型需保持合成探针脱敏断言。"
+      "evidenceGap": "探针对照不自动证明真实CF原因；新模型需保持合成探针脱敏断言。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "partial",
+        "delivered": "collecting(samples,cancelReason)/completed(at,fields)接管原独立nullable字段，completed不再持原始IP样本；保留5秒总deadline、两路精确文档归属与脱敏。",
+        "residualControlAuthority": [
+          "原full scope包含注入子流程的settled boolean、AbortController与timer，本次未重写那个已有单次async协议。"
+        ],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.linuxdo-browser-document",
@@ -226,7 +263,14 @@
       "consumer": "src/features/account/HiddenBrowserHost.tsx#LINUXDO_BROWSER_FETCH_SCRIPT",
       "cannotDerive": "集中该脚本自己的completion/cleanup和结果分类；保留source/requestId/envelope，不复制NodeSeek sentinel或15秒策略。",
       "tests": ["tests/ui/account/session-controller-browser-flow.test.tsx"],
-      "evidenceGap": "真实重注入/DOM timer取消缺直接设备证据，改前补本地脚本oracle。"
+      "evidenceGap": "真实重注入/DOM timer取消缺直接设备证据，改前补本地脚本oracle。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "whole",
+        "delivered": "LDO自己的document owner管理8秒/500ms和单次结果；保持JSON/预载规则/challenge/HTML fallback分类，不借NS数值sentinel。重复注入不重开截止时间或留下第二个轮询。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.linuxdo-browser-slot",
@@ -238,7 +282,14 @@
       "consumer": "src/features/account/HiddenBrowserHost.tsx#state.linuxDo.request",
       "cannotDerive": "复用queue所有权协议的独立LinuxDo实例，保留自己的错误分类、8秒脚本和Cookie交接，不共用物理slot。",
       "tests": ["tests/ui/account/session-controller-browser-flow.test.tsx"],
-      "evidenceGap": "mock WebView不能证明真实barrier；需late failure/new slot和身份变化oracle。"
+      "evidenceGap": "mock WebView不能证明真实barrier；需late failure/new slot和身份变化oracle。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "whole",
+        "delivered": "LDO使用独立实例及credential-generation admission，保留typed failure/CF exception及Cookie handoff；每hook ID域仍独立递增，物理WebView引用不合并。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.linuxdo-init-hook",
@@ -435,7 +486,14 @@
       "consumer": "src/ui/controls/ButtonControls.tsx#recordUserInteraction",
       "cannotDerive": "AppState仅回答前台，lastInteractionAt累积跨控件历史，当前页面可见不能派生它。",
       "tests": ["tests/ui/more/network-proxy-controller.test.tsx"],
-      "evidenceGap": "所有辅助功能/输入法/手势入口的实际记账另证。"
+      "evidenceGap": "所有辅助功能/输入法/手势入口的实际记账另证。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "AppState仅回答前台，lastInteractionAt累积跨控件历史，当前页面可见不能派生它。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.proxy-bootstrap",
@@ -447,7 +505,14 @@
       "consumer": "src/app/useAppRuntime.tsx#useNetworkProxyRuntime",
       "cannotDerive": "applyState已有loading/applying/applied/disabled/failed联合；读取、owner和React投影独立，不能用loaded概括。",
       "tests": ["tests/ui/more/network-proxy-controller.test.tsx"],
-      "evidenceGap": "设备Native应用另证；不据已有phase给完整代理scope新credit。"
+      "evidenceGap": "设备Native应用另证；不据已有phase给完整代理scope新credit。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "applyState已有loading/applying/applied/disabled/failed联合；读取、owner和React投影独立，不能用loaded概括。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.proxy-native-apply",
@@ -459,7 +524,19 @@
       "consumer": "src/features/more/MoreRoute.tsx#proxy commands",
       "cannotDerive": "在现有hook的ApplyOperation内绑定Promise/owner/state并统一发布，保留串行I/O及after-reaction前缀。",
       "tests": ["tests/ui/more/network-proxy-controller.test.tsx"],
-      "evidenceGap": "需旧失败晚于新操作、重挂、beforeRequest、空白密码和补偿测试。"
+      "evidenceGap": "需旧失败晚于新操作、重挂、beforeRequest、空白密码和补偿测试。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "whole",
+        "delivered": "applying分支绑定实际operation(owner,Promise)，Native回执以操作身份发布；durable-save反应前缀也由reservation操作维持许可关闭，串行queue只负责实际顺序。旧以queue-tail同时冒充发布owner的判断已迁走。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "持久配置仍由原SaveQueue拥有。",
+          "每次profile是该dispatch闭包不可变数据，disabled为null，不新增副本。",
+          "bootstrap loading/failed属于单独原scope，未据此新增信用。"
+        ],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.read-rotate",
@@ -471,7 +548,14 @@
       "consumer": "src/features/account/useSessionController.ts#recoverReadNetworkRuntime",
       "cannotDerive": "generation键+Promise值为实际共享owner，现有finally已有引用相等删除，取消某调用者不等于取消整个恢复。",
       "tests": ["src/platform/network/networkProxy.test.ts"],
-      "evidenceGap": "Native真实旋转另证；此处已有身份guard，与头像cache不同。"
+      "evidenceGap": "Native真实旋转另证；此处已有身份guard，与头像cache不同。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "generation键+Promise值为实际共享owner，现有finally已有引用相等删除，取消某调用者不等于取消整个恢复。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.read-snapshot",
@@ -483,7 +567,14 @@
       "consumer": "src/ui/media/ImagePreviewModal.tsx#useReadNetworkRuntimeGeneration",
       "cannotDerive": "单一不可变snapshot已明确，generation是因果版本，source是影响范围，不能由代理开关派生。",
       "tests": ["src/platform/network/networkProxy.test.ts", "src/platform/network/readNetworkRuntime.test.ts"],
-      "evidenceGap": "快照订阅测试不证明Native实际排空。"
+      "evidenceGap": "快照订阅测试不证明Native实际排空。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "单一不可变snapshot已明确，generation是因果版本，source是影响范围，不能由代理开关派生。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.request-timeout",
@@ -495,7 +586,14 @@
       "consumer": "src/sources/readGateway.ts#withAbortableTimeout",
       "cannotDerive": "Promise.race控制返回winner，timedOut记录abort原因，signal/controller/timer是独立资源；函数已有完整局部owner。",
       "tests": ["src/platform/network/request.test.ts"],
-      "evidenceGap": "外部transport是否遵循AbortSignal不由此函数测试证明。"
+      "evidenceGap": "外部transport是否遵循AbortSignal不由此函数测试证明。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "Promise.race控制返回winner，timedOut记录abort原因，signal/controller/timer是独立资源；函数已有完整局部owner。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "auth.scope-epoch",
@@ -818,7 +916,14 @@
       "tests": [
         "node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcherTest.kt"
       ],
-      "evidenceGap": "外部提早初始化Fresco消费者未穷尽，保留公开时序。"
+      "evidenceGap": "外部提早初始化Fresco消费者未穷尽，保留公开时序。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "factory pair是进程依赖，hasBeenInitialized是独立SDK事实；空factory与已用默认factory不同。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "NATIVE-NEW-002",
@@ -830,7 +935,14 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyModule.kt#applyProxy/restoreWebViewProxyIfStateChanged",
       "cannotDerive": "在 awaitWebViewProxyOperation 集中 Waiting/Completed/Expired 原子转移，保留 latch、中断标记和晚完成恢复前缀。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "新模型先用现有晚完成/中断 JVM oracle 校准；真实 provider 另证。"
+      "evidenceGap": "新模型先用现有晚完成/中断 JVM oracle 校准；真实 provider 另证。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "whole",
+        "delivered": "Waiting/Completed/Expired atomic completion replaces timeout boolean; callback claims completion, expired callbacks restore current runtime. CountDownLatch remains the physical wait receipt; interruption still marks expired, restores, restores interrupt status, and throws.",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "PEER-AUTH-NEW-001",
@@ -842,7 +954,14 @@
       "consumer": "src/platform/network/useNetworkProxyRuntime.ts#persistNetworkProxyState/bootstrapReadRef",
       "cannotDerive": "模块Promise链承载跨挂载排序，局部hook phase重置后不能重建上一writer资格；调用者仍接收实际task错误。",
       "tests": ["tests/ui/more/network-proxy-controller.test.tsx"],
-      "evidenceGap": "需保留重挂/late storage write测试，不把吞tail rejection视为业务成功。"
+      "evidenceGap": "需保留重挂/late storage write测试，不把吞tail rejection视为业务成功。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "模块Promise链承载跨挂载排序，局部hook phase重置后不能重建上一writer资格；调用者仍接收实际task错误。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "PL-JS-avatar-svg-request-cache",
@@ -1316,7 +1435,14 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt#pipeBoth/copySocket",
       "cannotDerive": "共享单调 lastActivityNanos 是两线程真实活动，单方向 socket timeout 或 running bool 不能重建。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "公网隧道形态未验证。"
+      "evidenceGap": "公网隧道形态未验证。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "共享单调 lastActivityNanos 是两线程真实活动，单方向 socket timeout 或 running bool 不能重建。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-NET-generation-drain-leases",
@@ -1328,7 +1454,14 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt#scheduleDrain/currentCronetMediaTransport",
       "cannotDerive": "TransportCache 已为 Empty/Ready/Sealed；Atomic lease、实际队列和 running 数是独立使用者事实，不能由 retired 派生。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "Native 多线程/真实网络排空另证，不按一个 sealed cache 计全scope完成。"
+      "evidenceGap": "Native 多线程/真实网络排空另证，不按一个 sealed cache 计全scope完成。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "TransportCache 已为 Empty/Ready/Sealed；Atomic lease、实际队列和 running 数是独立使用者事实，不能由 retired 派生。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-NET-generation-image-call-lease",
@@ -1340,7 +1473,19 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt#imageCallFactory/frescoCallFactory",
       "cannotDerive": "在 RuntimeImageCall 内建受锁 Created/Started/Released 生命周期，Started绑定delegate/generation，独立保留 cancel 意图与 failure-once。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "需验证取消先于start、callback抛错、body close/失败竞争，保持 OkHttp Call API。"
+      "evidenceGap": "需验证取消先于start、callback抛错、body close/失败竞争，保持 OkHttp Call API。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "whole",
+        "delivered": "Created/Claimed/Starting/Started/Released 接管执行认领、实际 generation、delegate 和一次 lease 释放；CAS 在等待全局锁前，generation 在取得锁后绑定；Released 保留真实 Call 以继续接受 cancel。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "cancel intent",
+          "failure-once diagnostic receipt",
+          "actual external lease map and generation drain"
+        ],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "PL-NET-header-write-timeout",
@@ -1352,7 +1497,14 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt#ReadNetworkEventListener.requestHeadersStart/requestHeadersEnd",
       "cannotDerive": "acquiredConnection 为真实回执，headerWriteTimeout 为连接级所拥有资源，不能仅由 call 结束状态派生。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "真实网络/回调完整矩阵另证。"
+      "evidenceGap": "真实网络/回调完整矩阵另证。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "acquiredConnection 为真实回执，headerWriteTimeout 为连接级所拥有资源，不能仅由 call 结束状态派生。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-NET-managed-cookie-callback-batch",
@@ -1364,7 +1516,14 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/ManagedCookieResponses.kt#submit/flush",
       "cannotDerive": "AtomicIntegerArray 已单调编码终态并 CAS；abandoned 意图、latch 数量和一次 callback 是正交并发事实。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt"],
-      "evidenceGap": "真实 CookieManager/OEM 回调不由 JVM batch 测试证明。"
+      "evidenceGap": "真实 CookieManager/OEM 回调不由 JVM batch 测试证明。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "AtomicIntegerArray 已单调编码终态并 CAS；abandoned 意图、latch 数量和一次 callback 是正交并发事实。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-NET-runtime-rotation-finish",
@@ -1376,7 +1535,16 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyModule.kt#recoverForumReadChannel/finishForumReadChannelRecovery",
       "cannotDerive": "在 PendingReadRuntimeFinish 集中 PendingApply/PendingDrain/Completed，保留 applied/drained 两时钟及 trace/generation 身份。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "需 unsupported/noop、apply失败与drain先后顺序行为测试；日志字段不是全流程证明。"
+      "evidenceGap": "需 unsupported/noop、apply失败与drain先后顺序行为测试；日志字段不是全流程证明。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "partial",
+        "delivered": "Owner privately consumes applied/drained receipts in either order, waiting for both/remaining receipt/completed. Only exact trace/generation/source match is admitted; map removal remains the terminal claim under runtime lock. Old direct boolean writes deleted.",
+        "residualControlAuthority": [
+          "Original full scope also includes currentGeneration publication, retiredGenerations ownership and terminalRecorded error prefix in recoverForumReadChannel. This patch closes only the pending completion join; those actual resource registries remain under their existing lock."
+        ],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "PL-NET-socket-header-watch",
@@ -1388,19 +1556,33 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt#ReadNetworkEventListener.requestHeadersStart",
       "cannotDerive": "TLS到raw socket WeakMap 和 AsyncTimeout 是跨Call复用连接级资源，不由当前图片 mount/signal 派生。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "真实设备 HTTP2 停顿矩阵未运行。"
+      "evidenceGap": "真实设备 HTTP2 停顿矩阵未运行。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "TLS到raw socket WeakMap 和 AsyncTimeout 是跨Call复用连接级资源，不由当前图片 mount/signal 派生。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-NET-webview-proxy-transition",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 3,
       "owner": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyModule.kt",
       "invariant": "新代理、失败补偿与 invalidate 期间旧 owner 不得关闭或恢复新 server。",
       "consumer": "src/platform/network/networkProxy.ts#applyNetworkProxy",
-      "cannotDerive": "registry 已显式；跨 worker/WebView 的 apply 用模块私有 ProxyApplyOperation 集中 preparing/applying/compensating/settled，保留序列化与owner。",
+      "cannotDerive": "applyProxy has one serialized worker-local try/catch owner. transitionStarted records that beginTransition actually succeeded, rather than requested stage; nextServer holds a physical relay needing stop even when commit or synchronization fails. Registry already owns stale bridge admission and port publication. Neither field has a second writer or outside phase consumer. Adding a shadow phase would duplicate the visible single async protocol and cannot replace relay ownership.",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "真实 provider apply/timeout/late completion 需匹配 APK 证据。"
+      "evidenceGap": "真实 provider apply/timeout/late completion 需匹配 APK 证据。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "applyProxy has one serialized worker-local try/catch owner. transitionStarted records that beginTransition actually succeeded, rather than requested stage; nextServer holds a physical relay needing stop even when commit or synchronization fails. Registry already owns stale bridge admission and port publication. Neither field has a second writer or outside phase consumer. Adding a shadow phase would duplicate the visible single async protocol and cannot replace relay ownership.",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "PL-PATCH-animated-view-gc-registration",
@@ -1458,7 +1640,14 @@
       "consumer": "node_modules/expo/src/winter/fetch/fetch.ts#fetch 创建 FetchResponse 并注册 signal listener；App Fetcher 消费 Response",
       "cannotDerive": "body reader、abort listener 与 Native cancel Promise 有不同结束时点；stream closed 与 abort reason 并不等价。",
       "tests": ["tests/tooling/expo-fetch-cancellation.test.ts", "tests/tooling/patch-artifacts.test.ts"],
-      "evidenceGap": "原owner符号fetch实际在相邻fetch.ts，需连同FetchResponse审查；取消测试不证明clone/tee全部公开消费者。"
+      "evidenceGap": "原owner符号fetch实际在相邻fetch.ts，需连同FetchResponse审查；取消测试不证明clone/tee全部公开消费者。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "body reader、abort listener 与 Native cancel Promise 有不同结束时点；stream closed 与 abort reason 并不等价。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "PL-PATCH-expo-image-resize-generation",
@@ -1689,7 +1878,14 @@
         "modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt",
         "tests/tooling/patch-artifacts.test.ts"
       ],
-      "evidenceGap": "NetworkProxyRuntimeTest可定位合同，播放器全网络矩阵未在本审查运行。"
+      "evidenceGap": "NetworkProxyRuntimeTest可定位合同，播放器全网络矩阵未在本审查运行。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "ConcurrentHashMap.remove(generation,client)已表达身份；current generation不能代替仍被租用旧client。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-PATCH-webview-visible-prewarm",
@@ -1730,7 +1926,14 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyModule.kt#clearManagedLoginCookies",
       "cannotDerive": "CookieManager 唯一凭据事实；逐Cookie batch、epoch、主线程callback与readback各有协议用途，现有有界过程不需镜像phase。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "真实清除需按站授权；本次未清Cookie，mock不能证明平台删除。"
+      "evidenceGap": "真实清除需按站授权；本次未清Cookie，mock不能证明平台删除。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "CookieManager 唯一凭据事实；逐Cookie batch、epoch、主线程callback与readback各有协议用途，现有有界过程不需镜像phase。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-X-diagnostic-snapshot-deadline",
@@ -1840,7 +2043,14 @@
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt#LocalNetworkProxyServer CONNECT/body",
       "cannotDerive": "latch(2)计两个真实任务结算，共同idle deadline计活动，单一 completed phase无法代替两线程finally。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "真实代理全部连接形态未验证。"
+      "evidenceGap": "真实代理全部连接形态未验证。",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "latch(2)计两个真实任务结算，共同idle deadline计活动，单一 completed phase无法代替两线程finally。",
+        "validation": "docs/state-model-refactor.md#b03",
+        "limit": "未改独立 Native/SDK 资源事实；本批 canonical 107 项只覆盖 NetworkProxyRuntimeTest，其他 Native owner 未新执行，SDK 干净重放归 B10。"
+      }
     },
     {
       "id": "PL-X-ui-event-handler-routing",
@@ -2026,7 +2236,14 @@
         "tests/ui/app/content-source-navigation.test.tsx",
         "tests/ui/more/more-screen.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "keep",
+        "delivered": "显示哪个工具面板是局部选择，代理是否启用与设置值都不能表达此展示意图。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "UI-NEW-008",
@@ -3268,7 +3485,17 @@
       "consumer": "src/features/more/components/MoreUtilityPanels.tsx :: <NetworkProxyModal ; tests/ui/visual/scenarios/more/manifest.tsx :: <NetworkProxyModal",
       "cannotDerive": "用户输入、create/edit模式、已尝试校验与当前opening资格不能从持久化profile值还原。",
       "tests": ["tests/ui/more/network-proxy-modal.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B03",
+        "outcome": "partial",
+        "delivered": "单一closed/create/edit联合接管draft、mode、submitted；edit分支带实际profile id，字段patch不能改id，关闭/成功清理三组独立setter已删除。",
+        "residualControlAuthority": [
+          "原full scope还含selectedIds/bulk操作；本次保留其现有独立控制。",
+          "真实Main opening request claim/busy、测试结果、开关乐观值与键盘回执继续独立，未强并总enum。"
+        ],
+        "validation": "docs/state-model-refactor.md#b03"
+      }
     },
     {
       "id": "ui.quote-read",

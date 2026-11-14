@@ -70,8 +70,6 @@ import { FeedScreen } from '@/features/feed/FeedScreen';
 import { useFeedController } from '@/features/feed/useFeedController';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
-import { useVerificationController } from '@/features/account/useVerificationController';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import { withRequestBeforeSend } from '@/platform/network/request';
 import { validateWritableSessionTicket, type SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
@@ -85,6 +83,7 @@ import { createContentWorkSample, measureContentWork, verifyContentChain, type C
 import { verifyPendingPollMaterialization } from './pendingPollProof';
 import { acquireReviewProofEnvironment, finishReviewProofEnvironment, type ReviewProofFailure } from './environment';
 import { runReviewProofCheck, type ReviewProofCheck, type ReviewProofCheckResult } from './check';
+import { verificationRecoveryProofModes, verifyRecoveryProof } from './verificationRecoveryProof';
 
 // Isolated developer entry only. Synthetic payloads test boundaries, never upstream protocol claims.
 // HTTP fixtures use the supplied fetcher; the platform-export route uses an instrumentation-owned loopback server.
@@ -119,12 +118,14 @@ function BrowserProbe({
   source,
   body,
   html,
-  observe
+  observe,
+  onInjected
 }: {
   source: 'nodeseek' | 'linuxdo';
   body: string;
   html?: string;
   observe: (value: BrowserResult) => void;
+  onInjected?: (at: number) => void;
 }) {
   const webview = useRef<WebView>(null);
   const handlers = useHiddenBrowserFetchController({
@@ -151,9 +152,10 @@ function BrowserProbe({
         baseUrl: source === 'nodeseek' ? 'https://www.nodeseek.com/api/proof' : 'https://linux.do/proof.json'
       }}
       onLoadEnd={() => {
+        onInjected?.(Date.now());
         webview.current?.injectJavaScript(script);
-        // NodeSeek explicitly owns repeat-injection suppression; LinuxDo is injected once in production.
-        if (source === 'nodeseek') webview.current?.injectJavaScript(script);
+        // Controlled repeat delivery on one physical document; both execute the production script.
+        webview.current?.injectJavaScript(script);
       }}
       onMessage={
         source === 'nodeseek' ? handlers.handleNodeSeekBrowserFetchMessage : handlers.handleLinuxDoBrowserFetchMessage
@@ -216,6 +218,44 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
   }
   try {
     for (const source of ['nodeseek', 'linuxdo'] as const) {
+      const deadlineMs = source === 'nodeseek' ? 15_000 : 8_000;
+      const deadlineMetrics: Record<string, unknown> = { deadlineMs };
+      await run(
+        `webview-${source}-reinjected-pending-deadline`,
+        async () => {
+          const messages: BrowserResult[] = [];
+          let firstInjectionAt = 0;
+          mount(
+            <BrowserProbe
+              source={source}
+              body=""
+              html={
+                '<html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'"></head><body><main>Loading</main></body></html>'
+              }
+              onInjected={(at) => {
+                if (!firstInjectionAt) firstInjectionAt = at;
+              }}
+              observe={(value) => messages.push(value)}
+            />
+          );
+          await until(() => messages.length > 0, 'Pending WebView did not reach its read deadline');
+          const elapsedMs = Date.now() - firstInjectionAt;
+          deadlineMetrics.elapsedMs = elapsedMs;
+          check(
+            firstInjectionAt > 0 && elapsedMs >= deadlineMs - 750 && elapsedMs < deadlineMs + 4_000,
+            `WebView read deadline changed: expected ${deadlineMs}, observed ${elapsedMs}`
+          );
+          await delay(600);
+          check(
+            messages.length === 1 &&
+              !messages[0].challenge &&
+              !messages[0].error &&
+              (messages[0].html || messages[0].body)?.includes('Loading'),
+            'Repeated injection changed or duplicated the final pending document'
+          );
+        },
+        deadlineMetrics
+      );
       for (const [name, body] of [
         ['short', JSON.stringify({ boundary: '小😀文'.repeat(300) })],
         ['long-unicode', JSON.stringify({ boundary: '中😀文'.repeat(6000), tail: 'complete' })],
@@ -1366,56 +1406,10 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         );
       });
     }
-    for (const mode of ['cancel-reopen', 'inactive', 'scope-change', 'unmount']) {
-      await run(`verification-core-${mode}`, async () => {
-        const handoff = deferred();
-        let handoffStarted = false;
-        let resumed = 0;
-        const control = {
-          active: true,
-          scope: 'linuxdo:7:0',
-          handoff: async () => {
-            handoffStarted = true;
-            if (mode !== 'cancel-reopen') await handoff.promise;
-          }
-        };
-        const get = await hook(function useValue() {
-          return useRecoveryProbe(control);
-        });
-        const recovery = (): LinuxDoReadRecovery => ({
-          queryKey: ['device-proof', mode],
-          isCurrent: () => control.active,
-          resume: async () => {
-            resumed += 1;
-            return 'completed';
-          }
-        });
-        check(await get().showLinuxDoVerification('controlled proof', recovery()), 'Verification did not open');
-        if (mode === 'cancel-reopen') {
-          get().closeLinuxDoPanel();
-          check(
-            await get().showLinuxDoVerification('controlled reopen', recovery()),
-            'Canceled verification could not reopen'
-          );
-          await get().checkLinuxDoCookie();
-          await get().checkLinuxDoCookie();
-          check(resumed === 1, 'Current recovery was not resumed exactly once');
-        } else {
-          const checking = get().checkLinuxDoCookie();
-          await until(() => handoffStarted, 'Cookie handoff not reached');
-          if (mode === 'inactive') control.active = false;
-          if (mode === 'scope-change') control.scope = 'linuxdo:8:1';
-          if (mode === 'unmount') {
-            mount(null);
-            await delay(100);
-          }
-          handoff.release();
-          await checking;
-          check(resumed === 0, 'Invalid recovery resumed its old request');
-        }
-        get().closeLinuxDoPanel();
-        handoff.release();
-      });
+    for (const mode of verificationRecoveryProofModes) {
+      await run(`verification-core-${mode}`, () =>
+        verifyRecoveryProof(mode, { hook, unmount: () => mount(null), until })
+      );
     }
     for (const invalidation of ['identity', 'epoch', 'source', 'surface'] as const) {
       await run(`write-csrf-${invalidation}`, async () => {
@@ -1870,47 +1864,6 @@ function FeedProbe({
       onRefresh={controller.refreshFeed}
     />
   );
-}
-function useRecoveryProbe(control: { active: boolean; scope: string; handoff: () => Promise<void> }) {
-  const visible = useRef(false);
-  return useVerificationController({
-    awaitLinuxDoCookieHandoff: control.handoff,
-    getRecoveryScope: () => control.scope,
-    changeNodeSeekLoginPanel: () => undefined,
-    checkingRequestIdRef: useRef(0),
-    closeYaohuoLoginPanel: () => undefined,
-    commitLinuxDoWebViewUserAgent: () => undefined,
-    linuxDoWebViewMountTimerRef: useRef<ReturnType<typeof setTimeout> | null>(null),
-    linuxDoWebViewRef: useRef<WebView | null>(null),
-    linuxDoWebViewSessionRef: useRef(0),
-    isLinuxDoSurfaceVisible: () => visible.current,
-    notify: () => undefined,
-    onLoginWebViewFailure: () => undefined,
-    onLinuxDoSurfaceClosed: () => {
-      visible.current = false;
-    },
-    onLinuxDoSurfaceOpened: () => {
-      visible.current = true;
-    },
-    prepareLinuxDoCookieResponseBarrier: async () => undefined,
-    reconcileAccountStatus: async (): Promise<AccountReconcileResult> => ({
-      status: 'same',
-      session: {
-        site: 'linuxdo',
-        status: 'logged-in',
-        cookieSummary: [],
-        isVerifying: false,
-        currentUser: { source: 'linuxdo', id: '7', username: 'alice', url: 'https://linux.do/u/alice' }
-      }
-    }),
-    setChecking: () => undefined,
-    setLinuxDoWebViewError: () => undefined,
-    setLinuxDoWebViewKey: () => undefined,
-    setLoadingLinuxDoPage: () => undefined,
-    setMountLinuxDoWebView: () => undefined,
-    updateLinuxDoSession: () => undefined,
-    updateNodeSeekSession: () => undefined
-  });
 }
 function ProofApp() {
   const [content, setContent] = useState<ReactNode>(null);

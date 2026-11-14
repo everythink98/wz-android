@@ -572,6 +572,8 @@ linux.do summary 的 `post_count` 是排除主题首帖的回复数，直接映�
 
 ### ACCOUNT：账号、Cookie 与站点会话
 
+`ACCOUNT-01/02`、`FEED-01`、`SEARCH-01`、`TOPIC-01`、`USER-01` 与 `NOTIFY-01` 共用浏览器 fallback 队列：NodeSeek、linux.do 各自实例拥有排队、取消、发送前检查与一次结算，调用方只发布语义命令。排队取消不停止当前 renderer；停止当前 renderer 抛错仍完成该请求的清理与下一项调度。旧实例回调与旧 credential generation 无权结算新请求。文档重复注入复用当前轮询及原截止时间，不重复回传；两站仍保留各自响应与挑战协议。主要证据为 `src/features/account/browserFetchQueue.test.ts`、`tests/ui/account/session-controller-browser-flow.test.tsx`、`tests/integration/hidden-browser-scripts.test.ts`；受控真实 WebView 入口为 `dev/review-remediation-proof/index.tsx`，实际构建和设备范围见 [执行记录](state-model-refactor.md#b03)。
+
 `ACCOUNT-01/02/04` 与 `NAV-01`：本地身份恢复由 `useLocalIdentityRestore` 拥有当前 UA 读取与各来源迁移轮次；已完成恢复的旧重试回调无效，失败重试先同步申请新轮次，未决时重复命令不重开迁移。凭据填入由 `credentialFillSession` 绑定站点、attempt、表单消费与 trace，调用方只读快照并发送语义命令。Cookie 的物理 mount/准备/关闭回执、账号核对和最终持久化仍是独立维度；关闭面板不代表已放开受保护读写。Canonical evidence 为 `tests/ui/account/account-runtime.test.tsx`、`tests/ui/account/account-status-controller.test.tsx`、`src/features/account/useAccountCredentialController.test.ts`、`src/features/account/linuxDoCookieHandoff.test.ts` 与 `src/features/account/authSurfacePreparation.test.ts`；受控生命周期测试不等于真实登录、Cookie 或设备关闭帧已验收。
 
 `ACCOUNT-04`、`ACCOUNT-01/02` 与 `NAV-01`：linux.do 本人资料的账号统计之后、低频资料操作之前，以两行入口展示 LDC 可用余额及待到账金额，点击余额或收支明细区域进入 `LinuxDoCredit` 原生收支页。明细按官网顺序分页，事项左对齐、金额右对齐，单位集中标注，收支方向保留正负号与完整无障碍名称；交易类型、对方、时间和状态以辅助文字展示。资料页不重复提供刷新图标，明细支持下拉刷新及显式加载更多，不用当前页推算总收入或总支出。金额保留十进制字符串；待支付、失败、退款原单、测试及未知交易不冒充已发生的收支。数据独立使用 `ldc-account`、`ldc-transactions` 私有 Query，绑定主站身份、session epoch 和 ReadPlan scope；换号、来源停用或身份不匹配时不展示旧数据。

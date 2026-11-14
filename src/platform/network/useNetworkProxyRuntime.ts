@@ -31,7 +31,12 @@ import {
 } from './networkProxy';
 
 type SettledApplyStatus = Extract<NetworkProxyApplyStatus, 'disabled' | 'applied'>;
-type ProxyApplyState = { kind: Exclude<NetworkProxyApplyStatus, 'failed'> } | { kind: 'failed'; error: string };
+type ProxyApplyOperation = { owner: AbortController; promise: Promise<void> };
+type ProxyApplyState =
+  | { kind: 'loading' }
+  | { kind: SettledApplyStatus }
+  | { kind: 'applying'; operation: ProxyApplyOperation }
+  | { kind: 'failed'; error: string };
 const RESOLVED_VOID_PROMISE: Promise<void> = Promise.resolve();
 const NETWORK_PROXY_LOAD_TIMEOUT_MS = 3_000;
 const NETWORK_PROXY_RUNTIME_ENDED_MESSAGE = '代理运行时已结束';
@@ -123,16 +128,16 @@ export function useNetworkProxyRuntime({
       const profile = state.enabled ? activeNetworkProxyProfile(state) : null;
       const trace = parentTrace || beginDiagnosticTrace('proxy', 'apply', diagnosticProxyState(state));
       const ownsTrace = !parentTrace;
-      setApplyState({ kind: 'applying' });
       markDiagnosticStage(trace, 'apply', { channel: 'native', state: 'start' });
       const task = proxyApplyQueueRef.current
         .then(() => {
-          requireNetworkProxyOwner(owner);
+          requireNetworkProxyOwner(operation.owner);
           return applyNetworkProxy(profile);
         })
         .then(() => {
           const status: SettledApplyStatus = profile ? 'applied' : 'disabled';
-          if (!owner.signal.aborted && proxyApplyQueueRef.current === queued) {
+          const current = applyStateRef.current;
+          if (!operation.owner.signal.aborted && current.kind === 'applying' && current.operation === operation) {
             setApplyState({ kind: status });
           }
           markDiagnosticStage(trace, 'apply', { channel: 'native', state: status });
@@ -143,7 +148,8 @@ export function useNetworkProxyRuntime({
         })
         .catch((error) => {
           const message = errorMessage(error);
-          if (!owner.signal.aborted && proxyApplyQueueRef.current === queued) {
+          const current = applyStateRef.current;
+          if (!operation.owner.signal.aborted && current.kind === 'applying' && current.operation === operation) {
             setApplyState({ kind: 'failed', error: message });
             if (notifyOnFailure) {
               notifyRef.current(message);
@@ -162,11 +168,15 @@ export function useNetworkProxyRuntime({
           }
           throw error;
         });
-      const queued: Promise<void> = task.then(
-        () => undefined,
-        () => undefined
-      );
-      proxyApplyQueueRef.current = queued;
+      const operation: ProxyApplyOperation = {
+        owner,
+        promise: task.then(
+          () => undefined,
+          () => undefined
+        )
+      };
+      proxyApplyQueueRef.current = operation.promise;
+      setApplyState({ kind: 'applying', operation });
       return task;
     },
     [setApplyState]
@@ -265,7 +275,8 @@ export function useNetworkProxyRuntime({
           const requiresApply =
             applyStateRef.current.kind === 'failed' || networkProxyApplyKey(previous) !== networkProxyApplyKey(saved);
           if (requiresApply) {
-            setApplyState({ kind: 'applying' });
+            // Keep admission closed while the save's caller resumes before enqueueing Native work.
+            setApplyState({ kind: 'applying', operation: { owner, promise: proxyApplyQueueRef.current } });
           }
           proxyStateRef.current = saved;
           setProxyState(saved);
@@ -440,8 +451,10 @@ export function useNetworkProxyRuntime({
     await withAbortableTimeout(
       async () => {
         requireNetworkProxyOwner(owner);
-        while (applyStateRef.current.kind === 'loading' || applyStateRef.current.kind === 'applying') {
-          await (applyStateRef.current.kind === 'loading' ? loadPromiseRef.current : proxyApplyQueueRef.current);
+        while (true) {
+          const waiting = applyStateRef.current;
+          if (waiting.kind !== 'loading' && waiting.kind !== 'applying') break;
+          await (waiting.kind === 'loading' ? loadPromiseRef.current : waiting.operation.promise);
           requireNetworkProxyOwner(owner);
         }
         const current = proxyStateRef.current;
