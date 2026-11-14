@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, NativeModules } from 'react-native';
-import type { DownloadTask } from 'expo-file-system';
+import { createAppUpdateOperations, type AppUpdateOperation, type AppUpdatePhase } from './appUpdateOperation';
 import {
   type AppUpdateInfo,
   type ApkInstaller,
@@ -33,52 +33,45 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 
-export type AppUpdatePhase = 'restoring' | 'idle' | 'checking' | 'downloading' | 'pausing' | 'verifying' | 'installing';
+export type { AppUpdatePhase } from './appUpdateOperation';
+
 type UseAppUpdateRuntimeOptions = {
   autoCheck?: boolean;
   beforeRequest?: () => Promise<void>;
   fetcher: Fetcher;
   notify: (message: string) => void;
 };
-type CurrentOperation = () => boolean;
 type UpdateTrace = ReturnType<typeof beginDiagnosticTrace>;
 
 // One app-level writer. A rebuilt runtime must wait for the old writer and its metadata saves to settle.
 let settledUpdateOperation = Promise.resolve();
 
 export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher, notify }: UseAppUpdateRuntimeOptions) {
-  const [phase, setPhase] = useState<AppUpdatePhase>('restoring');
+  const [operations] = useState(createAppUpdateOperations);
+  const [phase, setPhase] = useState<AppUpdatePhase>(operations.phase);
+  const publishPhase = useCallback(() => setPhase(operations.phase), [operations]);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [artifact, setArtifact] = useState<AppUpdateArtifact | null>(null);
   const [appUpdateMessage, setAppUpdateMessage] = useState(`当前版本 ${CURRENT_APP_VERSION}`);
   const [appUpdateDownloadProgress, setAppUpdateDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
-  const phaseRef = useRef<AppUpdatePhase>('restoring');
   const artifactRef = useRef<AppUpdateArtifact | null>(null);
   const availableRef = useRef<AppUpdateInfo | null>(null);
-  const taskRef = useRef<DownloadTask | null>(null);
-  const operationRef = useRef<object | null>(null);
-  const pauseRequestedRef = useRef(false);
   const autoCheckStartedRef = useRef(false);
   const notifyRef = useRef(notify);
   useEffect(() => {
     notifyRef.current = notify;
   }, [notify]);
 
-  const transition = useCallback((next: AppUpdatePhase) => {
-    phaseRef.current = next;
-    setPhase(next);
-  }, []);
   const applyArtifact = useCallback((next: AppUpdateArtifact | null) => {
     artifactRef.current = next;
     setArtifact(next);
   }, []);
 
   useEffect(() => {
-    const token = {};
-    operationRef.current = token;
-    transition('restoring');
+    const operation = operations.restore();
+    publishPhase();
     const recovery = settledUpdateOperation.then(() => {
-      if (token !== operationRef.current) return null;
+      if (!operation.current()) return null;
       return restoreAppUpdateArtifact();
     });
     settledUpdateOperation = recovery.then(
@@ -87,47 +80,43 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
     );
     void recovery
       .then((restored) => {
-        if (token !== operationRef.current) return;
+        if (!operation.current()) return;
         applyArtifact(restored);
         if (restored)
           setAppUpdateMessage(restored.kind === 'verified' ? '安装包已就绪，可再次安装' : '下载进度已保留，可继续下载');
       })
       .catch((error) => {
-        if (token === operationRef.current) setAppUpdateMessage(errorMessage(error));
+        if (operation.current()) setAppUpdateMessage(errorMessage(error));
       })
       .finally(() => {
-        if (token === operationRef.current) transition('idle');
+        if (operation.finished()) publishPhase();
       });
     return () => {
-      operationRef.current = null;
-      const task = taskRef.current;
+      const task = operations.retire();
       if (task) {
         const stopped = task.state === 'active' ? task.pauseAsync() : Promise.resolve();
         void stopped.catch(() => undefined);
       }
     };
-  }, [applyArtifact, transition]);
+  }, [applyArtifact, operations, publishPhase]);
 
   const runOperation = useCallback(
     async (
       operation: 'check' | 'download' | 'install',
-      action: (current: CurrentOperation, trace: UpdateTrace) => Promise<void>,
+      action: (request: AppUpdateOperation, trace: UpdateTrace) => Promise<void>,
       silent = false
     ) => {
-      if (operationRef.current === null || phaseRef.current !== 'idle') return;
-      const token = {};
-      operationRef.current = token;
-      const current = () => token === operationRef.current;
-      pauseRequestedRef.current = false;
-      transition(operation === 'check' ? 'checking' : operation === 'download' ? 'downloading' : 'verifying');
+      const request = operations.begin(operation);
+      if (!request) return;
+      publishPhase();
       const trace = beginDiagnosticTrace('update', operation);
       const execution = settledUpdateOperation.then(async () => {
-        if (current()) await action(current, trace);
+        if (request.current()) await action(request, trace);
       });
       settledUpdateOperation = execution.catch(() => undefined);
       try {
         await execution;
-        finishDiagnosticTrace(trace, current() ? 'success' : 'canceled', {
+        finishDiagnosticTrace(trace, request.current() ? 'success' : 'canceled', {
           ...(operation === 'download'
             ? {
                 state: artifactRef.current?.kind === 'verified' ? 'verified' : 'paused',
@@ -140,7 +129,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
         });
       } catch (error) {
         finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-        if (current() && !silent) {
+        if (request.current() && !silent) {
           const saved = artifactRef.current;
           const recovery =
             operation === 'check' || !saved
@@ -155,26 +144,24 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
           notifyRef.current(message);
         }
       } finally {
-        if (current()) {
-          taskRef.current?.release();
-          taskRef.current = null;
+        if (request.finished()) {
           setAppUpdateDownloadProgress(null);
-          transition('idle');
+          publishPhase();
         }
       }
     },
-    [transition]
+    [operations, publishPhase]
   );
 
   const checkAppUpdate = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       await runOperation(
         'check',
-        async (current, trace) => {
+        async (request, trace) => {
           await beforeRequest?.();
-          if (!current()) return;
+          if (!request.current()) return;
           const update = await checkGithubAppUpdate(withDiagnosticFetcher(trace, fetcher));
-          if (!current()) return;
+          if (!request.current()) return;
           availableRef.current = update;
           setAppUpdateInfo(update);
           const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
@@ -188,8 +175,13 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
   );
 
   const installArtifact = useCallback(
-    async (target: Extract<AppUpdateArtifact, { kind: 'verified' }>, current: CurrentOperation, trace: UpdateTrace) => {
-      transition('verifying');
+    async (
+      target: Extract<AppUpdateArtifact, { kind: 'verified' }>,
+      request: AppUpdateOperation,
+      trace: UpdateTrace
+    ) => {
+      request.stage('verifying');
+      publishPhase();
       const installer = NativeModules.ApkInstallerModule as ApkInstaller | undefined;
       const file = appUpdateFile(target.update, true);
       markDiagnosticStage(trace, 'parse', { state: 'package-verification', versionCode: target.update.versionCode });
@@ -201,43 +193,39 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
           state: 'failure',
           reason: isInvalidApk(error) ? 'invalid_response' : normalizeDiagnosticReason(error)
         });
-        if (current() && isInvalidApk(error)) {
+        if (request.current() && isInvalidApk(error)) {
           if (file.exists) file.delete();
           applyArtifact({ kind: 'partial', update: target.update, totalBytes: target.bytes, downloadedBytes: 0 });
         }
         throw error;
       }
-      if (!current()) return;
-      transition('installing');
+      if (!request.current()) return;
+      request.stage('installing');
+      publishPhase();
       await openApkInstaller(installer, file.uri);
-      if (!current()) return;
+      if (!request.current()) return;
       markDiagnosticStage(trace, 'apply', { state: 'installer-opened' });
       setAppUpdateMessage('已打开安装确认，可随时回来再次安装');
       notifyRef.current('已打开安装确认');
     },
-    [applyArtifact, transition]
+    [applyArtifact, publishPhase]
   );
 
   const transfer = useCallback(
-    async (target: AppUpdateArtifact, current: CurrentOperation, trace: UpdateTrace) => {
+    async (target: AppUpdateArtifact, request: AppUpdateOperation, trace: UpdateTrace) => {
       let latest = target;
       let pendingSave = Promise.resolve();
       let saveError: unknown;
       try {
         if (target.kind === 'partial') {
-          if (!pauseRequestedRef.current) await beforeRequest?.();
-          if (!current()) return;
+          if (!request.pauseRequested) await beforeRequest?.();
+          if (!request.current()) return;
           for (let attempt = 0; attempt < 2; attempt++) {
-            if (pauseRequestedRef.current || latest.kind === 'verified') break;
-            transition('downloading');
+            if (request.pauseRequested || latest.kind === 'verified') break;
+            request.stage('downloading');
+            publishPhase();
             const task = createAppUpdateDownload(latest, (data) => {
-              if (
-                !current() ||
-                phaseRef.current !== 'downloading' ||
-                taskRef.current !== task ||
-                latest.kind !== 'partial'
-              )
-                return;
+              if (!request.acceptsProgress(task) || latest.kind !== 'partial') return;
               const progress = formatAppUpdateDownloadProgress(
                 target.update.version,
                 data.bytesWritten,
@@ -255,7 +243,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
                   });
               }
             });
-            taskRef.current = task;
+            request.created(task);
             markDiagnosticStage(trace, 'transport', {
               endpoint: 'github',
               method: 'GET',
@@ -265,16 +253,17 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
             });
             try {
               const result = await (task.state === 'paused' ? task.resumeAsync() : task.downloadAsync());
-              if (!current()) return;
+              if (!request.current()) return;
               if (!result) break;
               await pendingSave;
-              transition('verifying');
+              request.stage('verifying');
+              publishPhase();
               setAppUpdateMessage('下载完成，正在校验安装包');
               latest = await finishAppUpdateDownload(latest, trace);
               if (saveError) throw saveError;
               break;
             } catch (error) {
-              if (!current()) return;
+              if (!request.current()) return;
               const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
               if (
                 attempt === 0 &&
@@ -297,75 +286,73 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
                 throw error;
               }
             } finally {
-              task.release();
-              if (taskRef.current === task) taskRef.current = null;
+              request.released(task);
             }
           }
         }
       } finally {
         await pendingSave;
-        if (current()) {
+        if (request.current()) {
           const partial = appUpdateFile(latest.update);
           if (latest.kind === 'partial') latest = { ...latest, downloadedBytes: partial.exists ? partial.size : 0 };
           applyArtifact(latest);
         }
       }
-      if (!current()) return;
+      if (!request.current()) return;
       if (latest.kind === 'partial') {
         setAppUpdateMessage('下载已暂停，进度已保留');
         return;
       }
       setAppUpdateMessage('安装包已就绪，可安装');
-      if (AppState.currentState === 'active' && !pauseRequestedRef.current)
-        await installArtifact(latest, current, trace);
+      if (AppState.currentState === 'active' && !request.pauseRequested) await installArtifact(latest, request, trace);
     },
-    [applyArtifact, beforeRequest, installArtifact, transition]
+    [applyArtifact, beforeRequest, installArtifact, publishPhase]
   );
 
   const startAppUpdateDownload = useCallback(async () => {
     const update = availableRef.current;
     if (!update) return;
-    await runOperation('download', async (current, trace) => {
+    await runOperation('download', async (request, trace) => {
       const existing = artifactRef.current;
-      if (!current()) return;
+      if (!request.current()) return;
       const target =
         sameAppUpdate(existing?.update, update) && existing ? existing : await prepareAppUpdateArtifact(update, trace);
-      if (!current()) return;
+      if (!request.current()) return;
       applyArtifact(target);
-      await transfer(target, current, trace);
+      await transfer(target, request, trace);
     });
   }, [applyArtifact, runOperation, transfer]);
 
   const resumeAppUpdateDownload = useCallback(async () => {
     const target = artifactRef.current;
     if (!target || target.kind === 'verified') return;
-    await runOperation('download', async (current, trace) => {
+    await runOperation('download', async (request, trace) => {
       const restored = await inspectAppUpdateArtifact(target, trace);
-      if (current()) await transfer(restored, current, trace);
+      if (request.current()) await transfer(restored, request, trace);
     });
   }, [runOperation, transfer]);
 
   const pauseAppUpdateDownload = useCallback(async () => {
-    if (phaseRef.current !== 'downloading') return;
+    const pause = operations.pause();
+    if (!pause) return;
+    publishPhase();
     const trace = beginDiagnosticTrace('update', 'pause');
-    pauseRequestedRef.current = true;
-    transition('pausing');
-    const task = taskRef.current;
+    const task = pause.task;
     if (task?.state === 'active') {
       try {
         await task.pauseAsync();
       } catch (error) {
         finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-        if (operationRef.current !== null) setAppUpdateMessage(errorMessage(error));
+        if (operations.attached) setAppUpdateMessage(errorMessage(error));
       }
     }
     finishDiagnosticTrace(trace, 'success', { state: 'paused' });
-  }, [transition]);
+  }, [operations, publishPhase]);
 
   const installAppUpdate = useCallback(async () => {
     const target = artifactRef.current;
     if (target?.kind !== 'verified') return;
-    await runOperation('install', (current, trace) => installArtifact(target, current, trace));
+    await runOperation('install', (request, trace) => installArtifact(target, request, trace));
   }, [installArtifact, runOperation]);
 
   useEffect(() => {

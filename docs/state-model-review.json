@@ -1058,7 +1058,24 @@
       "consumer": "src/app/notificationBackgroundTask.ts#runNotificationBackgroundWorker",
       "cannotDerive": "原worker集中WorkerRound和DeliveryAttempt两个模型，分开对外deadline与真实settlement，继续由keyed runner持lane。",
       "tests": ["src/platform/notifications/notificationWorker.test.ts"],
-      "evidenceGap": "需deadline后late commit/present/rollback、禁源、proxy失败及重入；OS杀进程另证。"
+      "evidenceGap": "需deadline后late commit/present/rollback、禁源、proxy失败及重入；OS杀进程另证。",
+      "implementation": {
+        "batch": "B09",
+        "outcome": "partial",
+        "delivered": "deadline controller/timer/race与staged/recording/recorded交付补偿分别归属两个局部owner；当前worker真实调用它们，旧DeliveryCommitState/独立identifier与deadline资源writer删除。",
+        "residualControlAuthority": [
+          "原keyed delivery lane、分页循环、WorkerRound诊断生命周期与来源/身份检查仍由worker拥有，不能记整个worker转换。"
+        ],
+        "retainedIndependentFacts": ["对外deadline、真实store/present/rollback完成与交付lane占用独立。"],
+        "primaryTests": ["src/platform/notifications/notificationWorker.test.ts"],
+        "remainingEvidenceGap": "OS进程强杀、所有迟到commit/补偿/系统投递组合仍按实际验收边界；本项仅partial。",
+        "validation": "docs/state-model-refactor.md#b09",
+        "acceptance": "ACCEPTED_B09_BOUNDED_EVIDENCE",
+        "currentOwners": [
+          "src/platform/notifications/notificationWorkerDeadline.ts",
+          "src/platform/notifications/notificationDeliveryAttempt.ts"
+        ]
+      }
     },
     {
       "id": "PL-JS-opaque-reference-cache",
@@ -1310,7 +1327,21 @@
       "consumer": "src/app/useAppRuntime.tsx#useAppUpdateRuntime",
       "cannotDerive": "在原 hook 的 UpdateOperation 联合绑定 phase/token/task/pauseIntent，独立保留跨挂载 writer 与自动检查一次许可。",
       "tests": ["tests/ui/more/app-update-runtime.test.tsx"],
-      "evidenceGap": "必须覆盖任务创建前暂停、metadata失败、重挂载与installer返回。"
+      "evidenceGap": "必须覆盖任务创建前暂停、metadata失败、重挂载与installer返回。",
+      "implementation": {
+        "batch": "B09",
+        "outcome": "whole",
+        "delivered": "实际check/download/pause/verify/install都通过AppUpdateOperations的请求票据接管phase、pauseIntent和exact Native task；已迁移progress/retire/restore/finished/released路径，旧operationId/phase/task的独立writer删除。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "artifact/file/metadata、available update、progress反馈、跨挂载settledUpdateOperation writer与autoCheck一次许可独立保留。"
+        ],
+        "primaryTests": ["tests/ui/more/app-update-runtime.test.tsx"],
+        "remainingEvidenceGap": "新暂停控制在准备metadata之后、Native task之前的beforeRequest等待；不证明metadata写入中暂停。下载/安装器全流程设备范围仍待Root。",
+        "validation": "docs/state-model-refactor.md#b09",
+        "acceptance": "ACCEPTED_B09_BOUNDED_EVIDENCE",
+        "currentOwners": ["src/platform/update/appUpdateOperation.ts"]
+      }
     },
     {
       "id": "PL-N-action-mode-classification",
@@ -2151,15 +2182,27 @@
     },
     {
       "id": "PL-X-process-crash-handoff",
-      "kind": "unproven",
-      "action": "investigate",
+      "kind": "data-resource",
+      "action": "keep",
       "batch": 9,
       "owner": "modules/forum-platform/android/src/main/java/com/wz/reader/diagnostics/DiagnosticJournal.kt",
       "invariant": "保存旧 session 并与系统 previous-exit 关联，当前异常仍委派原 handler。",
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/diagnostics/DiagnosticJournal.kt#install/collectPreviousExit",
-      "cannotDerive": "previous 已局部化，但磁盘 session、OS exit 和当前处理器是跨进程事实，不能从当前内存派生。",
+      "cannotDerive": "跨进程磁盘marker、OS退出记录和当前处理器不能由当前内存派生。",
       "tests": [],
-      "evidenceGap": "原 canonical 为空；需隔离进程崩溃/重开直接证据后再确定完整重构。 原canonical为空，不能以间接测试冒充全scope证明。"
+      "evidenceGap": "本轮未重新崩溃；只继承API35已执行Java fatal→重开证据。SIGSEGV/force-kill/PID复用、fsync/rename/handler注入失败、API<30及缺失OS记录分支未验证。",
+      "implementation": {
+        "batch": "B09",
+        "outcome": "keep",
+        "delivered": "独立读取当前Native源码与两份历史原始JSONL，实际旧Java fatal的session/build与重开OS previous-exit reason4精确关联；prior在写当前marker前捕获，原uncaught handler在finally委派。磁盘/OS/处理器独立事实故具体保留，不新增实现信用。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": ["跨进程磁盘marker、OS退出记录和当前处理器不能由当前内存派生。"],
+        "primaryTests": [],
+        "remainingEvidenceGap": "本轮未重新崩溃；只继承API35已执行Java fatal→重开证据。SIGSEGV/force-kill/PID复用、fsync/rename/handler注入失败、API<30及缺失OS记录分支未验证。",
+        "validation": "docs/state-model-refactor.md#b09",
+        "acceptance": "ACCEPTED_B09_BOUNDED_EVIDENCE",
+        "inheritedEvidence": "B04 actual isolated API35 Java fatal and next-process OS previous-exit raw records; current Native source SHA unchanged. No new device run or conversion credit."
+      }
     },
     {
       "id": "PL-X-retained-export-lease",
@@ -3570,7 +3613,25 @@
         "tests/ui/notifications/notifications-route.test.tsx",
         "tests/ui/notifications/notifications-performance-stress.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B09",
+        "outcome": "whole",
+        "delivered": "NotificationForegroundDeliveries实际拥有按source合并pending Map、唯一drain身份及失效generation，旧foregroundDelivery/pending/generation refs删除；消费者currentJob仍核账号/epoch/lifecycle/读阻断，drain等待worker真实deliverySettlement。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "具体来源/身份/权限是外部事实；keyed Native交付lane仍由worker持有，不因对外deadline释放。"
+        ],
+        "primaryTests": [
+          "tests/ui/notifications/notifications-runtime.test.tsx",
+          "tests/ui/notifications/notifications-route.test.tsx",
+          "tests/ui/notifications/notifications-performance-stress.test.tsx"
+        ],
+        "remainingEvidenceGap": "只按实际通知Runtime场景声明设备覆盖，真实站点投递与全部账号/后台交错另证。",
+        "validation": "docs/state-model-refactor.md#b09",
+        "acceptance": "ACCEPTED_B09_BOUNDED_EVIDENCE",
+        "currentOwners": ["src/features/notifications/notificationForegroundDeliveries.ts"]
+      }
     },
     {
       "id": "ui.notify-detail-read",
@@ -3684,7 +3745,25 @@
         "tests/ui/notifications/notifications-route.test.tsx",
         "tests/ui/notifications/notifications-performance-stress.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B09",
+        "outcome": "whole",
+        "delivered": "NotificationBootstrap集中存储unrestored/restored/failed、系统permission/反馈与共享初始化Promise，实际restore/probe/request/enable/cleanup消费者都从owner读取；旧ready/restored/permission/ref/初始化槽writer删除。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "存储恢复成功不意味着OS授权，权限反馈也不等于存储错误；mountedRef为原runtime observer许可而非bootstrap阶段副本。"
+        ],
+        "primaryTests": [
+          "tests/ui/notifications/notifications-runtime.test.tsx",
+          "tests/ui/notifications/notifications-route.test.tsx",
+          "tests/ui/notifications/notifications-performance-stress.test.tsx"
+        ],
+        "remainingEvidenceGap": "StrictEffects旧/新3控制保持，不代表所有OS权限和账号切换时序设备全验。",
+        "validation": "docs/state-model-refactor.md#b09",
+        "acceptance": "ACCEPTED_B09_BOUNDED_EVIDENCE",
+        "currentOwners": ["src/features/notifications/notificationBootstrap.ts"]
+      }
     },
     {
       "id": "ui.notify-list-refresh",
@@ -4115,7 +4194,26 @@
         "tests/ui/library/reader-data-controller.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx"
       ],
-      "evidenceGap": "新 owner 要复用回滚、重入、恢复导入和通知接线断言。"
+      "evidenceGap": "新 owner 要复用回滚、重入、恢复导入和通知接线断言。",
+      "implementation": {
+        "batch": "B09",
+        "outcome": "whole",
+        "delivered": "ReaderCommandQueue实际接管committed/pending绝对命令、status/lifetime及只读projection；runtime从enqueue/confirmed/settled/imported/recoveryRequired语义入口发布同一snapshot，旧独立refs/status setters已删除。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "SQLite执行器仍是事务排序权威；pending owner可在StrictEffects重新附着，旧异步结算仍更新其真实持久结果，不发布退役UI。",
+          "dataRef只提供getter，兼容现有同步只读消费者，不保留外部writer。"
+        ],
+        "primaryTests": [
+          "src/app/useReaderRuntime.test.ts",
+          "tests/ui/library/reader-data-controller.test.tsx",
+          "tests/ui/notifications/notifications-runtime.test.tsx"
+        ],
+        "remainingEvidenceGap": "受控hook/存储测试不替代实际Reader回滚/导入设备流程；reading66不挂载此hook。",
+        "validation": "docs/state-model-refactor.md#b09",
+        "acceptance": "ACCEPTED_B09_BOUNDED_EVIDENCE",
+        "currentOwners": ["src/app/readerCommandQueue.ts"]
+      }
     },
     {
       "id": "ui.reading-entry",

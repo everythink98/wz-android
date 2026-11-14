@@ -539,6 +539,8 @@ describe('notification runtime', () => {
 
   it('shares held initialization across Strict effect replay', async () => {
     const pending = Promise.withResolvers<string | null>();
+    const permission = Promise.withResolvers<boolean>();
+    jest.mocked(notificationPermissionGranted).mockReturnValueOnce(permission.promise);
     jest.mocked(AsyncStorage.getItem).mockReturnValueOnce(pending.promise);
     const options = runtimeOptions();
     let latest: ReturnType<typeof useNotificationsRuntime> | undefined;
@@ -559,8 +561,13 @@ describe('notification runtime', () => {
       expect(notificationPermissionGranted).toHaveBeenCalledTimes(1);
       await act(async () => pending.resolve(JSON.stringify(defaultNotificationState())));
       expect(latest?.ready).toBe(true);
+      expect(latest?.permission).toBe('checking');
+      expect(latest?.backgroundEnabled).toBe(false);
+      await act(async () => permission.resolve(false));
+      expect(latest?.permission).toBe('denied');
       expect(loadNotificationState).toHaveBeenCalledTimes(1);
     } finally {
+      permission.resolve(false);
       pending.resolve(JSON.stringify(defaultNotificationState()));
       await act(() => renderer.unmount());
       await settleStartedRuntimeTasks(false);

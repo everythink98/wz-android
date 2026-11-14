@@ -18,6 +18,7 @@ const mockOpen = jest.fn<() => Promise<boolean>>();
 const mockNetwork = jest.fn<() => Promise<void>>();
 const mockNotify = jest.fn();
 const mockReceivedOffsets: number[] = [];
+const mockTaskFactory = jest.fn();
 type Transfer = (uri: string, progress: (data: DownloadProgress) => void) => Promise<object | null>;
 const mockPlans: Transfer[] = [];
 const mockPause = jest.fn<() => Promise<void>>();
@@ -83,6 +84,7 @@ jest.mock('expo-file-system', () => {
     }
   }
   function task(uri: string, offset: number, options: DownloadTaskOptions) {
+    mockTaskFactory();
     const result = {
       state: offset ? 'paused' : 'idle',
       release: jest.fn(),
@@ -325,6 +327,43 @@ describe('recoverable app updates', () => {
     await act(() => restored.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0, 40]);
     expect(restored.result.current.artifact).toMatchObject({ kind: 'verified', bytes: 100 });
+  });
+
+  it('preserves a pause requested before the native download task exists', async () => {
+    const prepared = Promise.withResolvers<void>();
+    const hook = await readyHook();
+    await act(() => hook.result.current.checkAppUpdate());
+    mockNetwork.mockReturnValueOnce(prepared.promise);
+    let download!: Promise<void>;
+    try {
+      await act(async () => {
+        download = hook.result.current.startAppUpdateDownload();
+      });
+      await waitFor(() => expect(mockNetwork).toHaveBeenCalledTimes(2));
+      await act(() => hook.result.current.pauseAppUpdateDownload());
+      expect(hook.result.current.phase).toBe('pausing');
+      expect(mockTaskFactory).not.toHaveBeenCalled();
+      expect(mockReceivedOffsets).toEqual([]);
+      await act(async () => {
+        prepared.resolve();
+        await download;
+      });
+      expect(mockReceivedOffsets).toEqual([]);
+      expect(mockTaskFactory).not.toHaveBeenCalled();
+      expect(mockPause).not.toHaveBeenCalled();
+      expect(mockOpen).not.toHaveBeenCalled();
+      expect(hook.result.current.artifact).toMatchObject({ kind: 'partial', downloadedBytes: 0 });
+      await act(() => hook.result.current.resumeAppUpdateDownload());
+      expect(mockReceivedOffsets).toEqual([0]);
+      expect(mockTaskFactory).toHaveBeenCalledTimes(1);
+      expect(mockOpen).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        prepared.resolve();
+        await download;
+      });
+      await hook.unmount();
+    }
   });
 
   it('pauses and ignores late progress before resuming from the saved file', async () => {

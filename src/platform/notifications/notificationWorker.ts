@@ -17,6 +17,8 @@ import {
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { withFetchGuard, type Fetcher } from '@/platform/network/request';
 import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
+import { createNotificationWorkerDeadline } from './notificationWorkerDeadline';
+import { createNotificationDeliveryAttempt } from './notificationDeliveryAttempt';
 import {
   advanceNotificationDelivery,
   type NotificationDeliveryCommit,
@@ -44,9 +46,6 @@ export function buildSourceNotificationDigest(source: NotificationSource, items:
 }
 
 type NotificationDigest = ReturnType<typeof buildSourceNotificationDigest>;
-
-type DeliveryCommitState =
-  { status: 'not-started' } | { status: 'started' } | { status: 'recorded'; rollback(): Promise<unknown> };
 
 interface NotificationWorkerAccess {
   fetcher?: Fetcher;
@@ -163,20 +162,17 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
     );
     return result;
   };
-  const controller = new AbortController();
-  const deadlineError = new Error('后台消息检查已超时');
-  const deadlineReached = new Promise<never>((_resolve, reject) => {
-    controller.signal.addEventListener('abort', () => reject(deadlineError), { once: true });
-  });
-  const beforeDeadline = <T>(operation: Promise<T>) => Promise.race([operation, deadlineReached]);
+  const deadline = createNotificationWorkerDeadline(dependencies.deadlineMs ?? 50_000);
+  const deadlineError = deadline.error;
+  const beforeDeadline = deadline.before;
   const sourceAllowed = (source: NotificationSource) =>
     beforeDeadline(Promise.resolve(dependencies.sourceAllowed(source)));
   const assertSourceCurrent = async (source: NotificationSource) => {
-    if (controller.signal.aborted) throw deadlineError;
+    if (deadline.signal.aborted) throw deadlineError;
     if (!(await sourceAllowed(source))) {
       throw Object.assign(new Error('内容源已停用'), { reason: 'source-disabled', source });
     }
-    if (controller.signal.aborted) throw deadlineError;
+    if (deadline.signal.aborted) throw deadlineError;
   };
   const assertPrivateAccessCurrent = async (source: NotificationSource, identityKey: string) => {
     await assertSourceCurrent(source);
@@ -193,9 +189,6 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
     }
     return latestState;
   };
-  const deadline = setTimeout(() => {
-    controller.abort();
-  }, dependencies.deadlineMs ?? 50_000);
   try {
     try {
       markDiagnosticStage(roundTrace, 'guard', { state: roundState });
@@ -207,7 +200,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
       }
       return finishRound({ status: 'failed' as const, reason: 'proxy' as const, delivered: 0, failedSources: 0 });
     }
-    if (controller.signal.aborted) {
+    if (deadline.signal.aborted) {
       return finishRound({ status: 'failed' as const, reason: 'deadline' as const, delivered: 0, failedSources: 0 });
     }
     try {
@@ -283,7 +276,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             await assertPrivateAccessCurrent(source, capturedIdentityKey);
             const access = await step('credential', 'probe-access', () =>
               beforeDeadline(
-                dependencies.network.probeAccess(source, controller.signal, async () => {
+                dependencies.network.probeAccess(source, deadline.signal, async () => {
                   await assertPrivateAccessCurrent(source, capturedIdentityKey);
                 })
               )
@@ -302,7 +295,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               fetcher: withFetchGuard(withDiagnosticFetcher(trace, access.fetcher || fetch), async () => {
                 await assertPrivateAccessCurrent(source, capturedIdentityKey);
               }),
-              signal: controller.signal
+              signal: deadline.signal
             };
             const uniqueItems = new Map<string, ForumNotification>();
             let rawScannedCount = 0;
@@ -311,7 +304,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             while (rawScannedCount < 60) {
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
               const page = await beforeDeadline(
-                dependencies.network.listPage(source, diagnosticAccess, controller.signal, cursor)
+                dependencies.network.listPage(source, diagnosticAccess, deadline.signal, cursor)
               );
               const summary = sourceDiagnosticSummary(page);
               markDiagnosticStage(trace, 'parse', {
@@ -343,7 +336,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               seenCursors.add(nextCursor);
               cursor = nextCursor;
             }
-            if (controller.signal.aborted) throw deadlineError;
+            if (deadline.signal.aborted) throw deadlineError;
             const items = [...uniqueItems.values()];
             const scanned = items.filter((item) => item.unread && deliverableKinds.has(item.kind));
             const scannedIds = scanned.map((item) => item.id);
@@ -366,28 +359,35 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               return;
             }
             const previousIdentifier = latestSourceState.notificationIdentifier;
-            let identifier = stagingNotificationIdentifier(source, access.identityKey, previousIdentifier);
-            let commit: DeliveryCommitState = { status: 'not-started' };
+            const attempt = createNotificationDeliveryAttempt(
+              stagingNotificationIdentifier(source, access.identityKey, previousIdentifier)
+            );
             try {
-              identifier = await step('apply', 'present', () =>
-                dependencies.system.presentDigest(source, buildSourceNotificationDigest(source, newItems), identifier)
+              attempt.presented(
+                await step('apply', 'present', () =>
+                  dependencies.system.presentDigest(
+                    source,
+                    buildSourceNotificationDigest(source, newItems),
+                    attempt.identifier
+                  )
+                )
               );
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
-              commit = { status: 'started' };
+              attempt.recording();
               const commitOperation = step('persist', 'applying', () =>
                 dependencies.store.record(source, access.identityKey, scannedIds, fields, {
                   expectedNewIds: preview.newIds,
                   previousIdentifier,
-                  notificationIdentifier: identifier
+                  notificationIdentifier: attempt.identifier
                 })
               );
               const recorded = await commitOperation;
               if (!recorded.committed) {
                 throw Object.assign(new Error('消息投递状态已变化'), { reason: 'private-access-stale', source });
               }
-              commit = { status: 'recorded', rollback: recorded.rollback };
+              attempt.recorded(recorded.rollback);
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
-              if (previousIdentifier && previousIdentifier !== identifier) {
+              if (previousIdentifier && previousIdentifier !== attempt.identifier) {
                 await step('apply', 'dismiss-previous', () =>
                   dependencies.system.dismissDigest(source, previousIdentifier)
                 );
@@ -399,20 +399,23 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 source,
                 result: 'failure',
                 reason: normalizeDiagnosticReason(error),
-                isCommitted: commit.status === 'recorded'
+                isCommitted: attempt.committed
               });
+              const compensation = attempt.compensation(error === deadlineError);
               if (error === deadlineError) {
-                if (commit.status === 'not-started') {
+                if (compensation.kind === 'dismiss') {
                   await step('rollback', 'dismiss-staged', () =>
-                    dependencies.system.dismissDigest(source, identifier)
+                    dependencies.system.dismissDigest(source, attempt.identifier)
                   ).catch(() => undefined);
                 }
                 throw error;
               }
-              if (commit.status === 'recorded') await step('rollback', 'rollback-delivery', commit.rollback);
-              await step('rollback', 'dismiss-staged', () => dependencies.system.dismissDigest(source, identifier));
+              if (compensation.kind === 'rollback') await step('rollback', 'rollback-delivery', compensation.rollback);
+              await step('rollback', 'dismiss-staged', () =>
+                dependencies.system.dismissDigest(source, attempt.identifier)
+              );
               if (
-                commit.status === 'recorded' &&
+                compensation.kind === 'rollback' &&
                 error &&
                 typeof error === 'object' &&
                 (error as { reason?: unknown }).reason === 'source-disabled'
@@ -457,19 +460,19 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
       }
       throw error;
     }
-    if (controller.signal.aborted) {
+    if (deadline.signal.aborted) {
       return finishRound({ status: 'failed' as const, reason: 'deadline' as const, delivered: 0, failedSources: 0 });
     }
     return finishRound({
       status: 'success' as const,
       delivered,
       failedSources: settled.filter((result) => result.status === 'rejected').length,
-      timedOut: controller.signal.aborted
+      timedOut: deadline.signal.aborted
     });
   } catch (error) {
     finishDiagnosticTrace(roundTrace, 'failure', { state: roundState, reason: normalizeDiagnosticReason(error) });
     throw error;
   } finally {
-    clearTimeout(deadline);
+    deadline.release();
   }
 }

@@ -180,6 +180,8 @@ describe('reader command optimistic persistence', () => {
     });
     expect(hook.result.current.readerData.favorites).toEqual({});
     expect(hook.result.current.readerData.settings.theme).toBe('dark');
+    expect(hook.result.current.readerDataRef.current).toBe(hook.result.current.readerData);
+    expect(hook.result.current.readerDataRef.current.favorites).toEqual({});
     await act(async () => {
       second.resolve({
         membership: [],

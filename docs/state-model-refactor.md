@@ -16,7 +16,7 @@
 | B06 | 阅读入口、回复窗口与原生定位 | 已验收：7 项完整转换、4 项局部简化 |
 | B07 | 列表、搜索、用户与消息读取 | 已验收：5 项完整转换、6 项局部简化 |
 | B08 | 媒体、预览与原生资源归属 | 已验收：5 项完整转换、8 项局部简化 |
-| B09 | 本地存储、更新、后台与诊断 | 待实施 |
+| B09 | 本地存储、更新、后台与诊断 | 已验收：4 项完整转换、1 项局部简化 |
 | B10 | SDK 补丁、验证工具与整体验收 | 待实施 |
 
 ## B01
@@ -334,3 +334,34 @@ Native 分享 v2 原始结果是三方法通过、一方法在 PNG 解码返回 
 相对已验收 B07 提交，16 个实际源码路径按 Git numstat 与新文件实际 LF 行数统计：生产代码 **+1096／−775 行，净 +321**；测试 **+455／−11 行，净 +444**，包含 test-only Gradle 依赖一行；SDK patch **+72／−35 行，净 +37**。整文件删除 **0**；两个新文件已计入，不重复计算安装 SDK 或 ignored 证据，三份文档另列。实际收益仍为 5 项完整转换、8 项局部简化、40 项保留；Bitmap 修复及同值 HTML seam 不另增模型消除数量。
 
 Native renderer-gone／重复 visual／晚到编码、全部 Audio 旧源事件、所有同值 worklet 回调、全屏和系统分享的全部退出交错、真实论坛写入、物理设备与历史黑图根因均不能由本批局部通过自动关闭。日志、截图、APK、数据库与原始回执只保存在 ignored 目录；不 push、不合并、不正式发布。
+
+## B09
+
+本地资料、更新、通知后台与诊断按原完整 scope 审查 22 项。实际收益为 **4 项完整转换、1 项局部简化、17 项保留**；源码、完整门禁、APK 与设备证据按下文范围验收。
+
+完整转换为 `ui.reader-command`、`PL-JS-update-operation-owner`、`ui.notify-init`、`ui.notify-delivery`。Reader 的 committed 数据、待提交绝对命令、挂载许可与展示投影交给同一 queue，存储仍是事务排序权威；失败后从 committed 加剩余命令重新投影。更新 operation 绑定实际阶段、请求身份、暂停意图和 Native task，持久文件／metadata 与跨挂载 writer 继续独立。通知 bootstrap 分开表达本地存储准备、系统权限与共享初始化 Promise；前台 delivery owner 接管待发 Map、drain 许可和 generation，具体来源、账号、epoch 与 lifecycle 守卫留在实际消费者。
+
+`PL-JS-notification-worker-deadline` 只记局部收益：deadline 与 staged／recording／recorded 补偿子流程迁入各自负责模块，原 keyed delivery lane、分页循环和整轮生命周期继续存在。对外超时不等于已开始的展示、持久记录或补偿已经结束，真实 settlement 前不得释放 lane。不能把两个局部 helper 记成整个 worker 全量转换。
+
+17 项保留各有具体职责：通知持久意图／baseline、事务变更集合、SQLite 冻结与恢复、日志文件／句柄和导出租期、Native executor、请求 trace 失效、页面去重历史、独立说明开闭、SDK 下载暂停，以及跨进程崩溃交接。它们的消费者与测试边界继续逐项记录，不以一个统一 KEEP 理由代替证据。
+
+`PL-X-process-crash-handoff` 从证据不足改为具体保留：当前 `DiagnosticJournal.kt` SHA 与历史隔离 API 35 证据一致。实际 Java fatal 于 UTC 07:31:57.688 记录旧 process session，重开后 07:32:18.989 的 OS previous-exit 记录关联同一旧 session／buildId、reason code 4；新 process session 不同。源码在写新 marker 前读取旧 marker，将 prior 捕获后交异步 OS 查询，uncaught 路径 finally 委派原 handler。磁盘历史、OS 退出信息和当前处理器不能从新进程内存推导，因此保留现有实现，不新增模型或重跑崩溃。SIGSEGV、force-kill、PID 重用、持久化故障及 API＜30／缺 OS 记录分支仍未验证。
+
+原 B09 是 5 项 refactor、16 项 KEEP、1 项 investigate；本批更新五项实施与一项补证 KEEP，原 16 个 KEEP 对象不变，281 项分类由 88／190／3 调整为 **88／191／2**。原 375 历史保持，分类不等于实施数量。
+
+保留行为的三项实际控制分别覆盖：较早收藏失败后重算较晚设置、不保留未提交记录；Native download task 创建前的暂停；Strict Effects 下复用未决初始化。相同 seed `649091` 在旧实现与迁移实现均为 3/3 通过，是保持行为的控制，不写成修前 RED。暂停控制发生在已准备 artifact metadata 后的 beforeRequest 等待，不能冒充 metadata 持久化期间暂停验证。
+
+已执行定向证据：13 个实际源码／测试路径、10 个运行模块已冻结；相关 UI 三文件 111/111（通知 69、更新 30、Reader 12），UNIT 四文件 132/132（worker 57、store 53、SQLite 6、update 16），seed `649091`。typecheck、lint、format 与架构检查均退出 0。17 套补丁和 134 个安装 SDK 文件实际 SHA 不变；本批没有 Native／SDK 修改，不把既有证据写成新增执行。
+
+- `STATIC_PASS`：完整 typecheck 与 `npm run verify` 均退出 0，绑定 1202 输入，冻结 SHA-256 `8a11d83f2a63b65bea2250a0b2660db9d5e73490757be4ffc9102d754a7b199d`。verify 于 UTC 18:13:04.855–18:21:18.303 执行，日志 SHA-256 `84a97f218dfdf9401316b74f3cfc3b6a5f804186464761ddaebf0f4adebebdfc`；最终文档收尾另做治理与引用检查。
+- `UNIT_PASS`：274 文件、4634 项，seed `1794680050390`。`UI_PASS`：105 suites、3300 项，seed `-208489848`；原 act 告警保留，定向通过不与完整数量重复累加。
+- `APK_SANITY`：普通 Release 构建 6m02s，APK SHA-256 `8d09e1394d5e0611d70a99256e015edfb2ce499a56b993a3fd6558a68efe17f0`、52784742 bytes，buildId `7f511afd020944bfadc09a97d7afaa41`；隔离 reading 包构建 4m15s，APK SHA-256 `44ea7062c7a240039bb954c2602797d0972d3ec9e4f06cf1256b4797480338dc`、53066794 bytes，buildId `cb2aed950c6f494a90d3ad72089a46f1`，保留设备 158／1.3.154。两包分别绑定 10 个生产运行模块、4 项生成 DOM 输入、实际 SDK dist、Hermes、provider、签名和版本；reading 另绑定五个 proof 输入。Native 两 source、33 个 SVG 与 7 个 Frame producer class、jar、R8／DEX 定义均按实际产物核对。
+- Native 证据明确继承 B08 的五项 frame unit 与六项 SVG 仪器结果：源码／unit 输入及两个新包的 40 个 producer class 与 B08 精确相同，本轮未重新运行这 5／6 项，不冒称 Reader 设备新执行了 SVG 或全部首帧边界。
+- `DEVICE_REPLAY_PASS`（受控通知与既有隔离场景）：匹配 reading 包实际 66/66、退出 0，UTC 18:31:28.293–18:35:31.071，日志 SHA-256 `3e773ea516e17018ce98d40e7f9cffcde78b4590b41a51ddb1ef083a99e4f9c7`。后台 cold 的成功与 deadline 两场景分别在新进程执行，536 ms／50012 ms，均实际 background、Native task／worker 完成；UTC 18:39:07.639–18:40:28.736，日志 SHA-256 `c0cfd5aa806f7db71de73d7f5b6e71cd6d6cba30c8bd12b1d0cfe72816c24c44`。这是强制 headless 验证，不是自然 15 分钟调度通过。
+- 限定的 `LIVE_PASS`：可见主模拟器普通包覆盖安装后 UID 10214、首次安装时间 `2026-07-26 16:51:37`、versionCode 162 保持，PID 13458 匹配当前 buildId 的 22 条成功启动记录。历史列表 622 条 ready，首个 NodeSeek 主题正常打开并返回 ready；收藏空态与用户页可读。显式检查更新结算为最新版 1.3.158，未下载或安装；More 滚回顶部，最终回到 All／默认数据首页。Reader 失败回滚／导入与 Update 暂停／恢复／安装返回的完整设备转换仍未验证，不能由 66 项或 map 引用代替；主要断言由受控 hook 测试负责。
+- 数据与设备恢复：独立审计及恢复原 C8 包后的再次检查，均确认九个 DB／WAL／SHM 字节、mode、owner、CE／DE inode 与权限保持原值；同签名 install-r 后经过 PackageManager wait／sync。Reader 的 qemu 89228／launcher 58656 于 18:43:24 正常关闭，可见主模拟器 qemu 67008／window 13700600 保持响应。主设备私有库字节指纹与独立站点身份刷新未验证。
+- 构建输出卫生另有未完成项：实际普通 APK 留有三个未被 normal map／Hermes 引用的合成媒体资源，共 2944589 bytes。B10 已准备精确清理三个已知生成副本并加 APK absence gate，尚未执行；B09 的正常功能和上述绑定通过不代表普通包零测试素材残留。这是本轮验证输出卫生，不修改产品行为、不新增 REG，最终普通包由 B10 再验。
+
+相对已验收 B08 提交，13 个实际源码路径按 Git numstat 与六个新文件实际 LF 行数统计：生产代码 **+563／−267 行，净 +296**；测试 **+48／−0 行**；SDK patch **0**；整文件删除 **0**。两份改动文档另计，corpus 保持原字节；安装 SDK 与 ignored 证据不重复统计。实际收益为 4 项完整转换、1 项局部简化、17 项保留，Native 崩溃交接补证不算新模型转换；用户文档与原 375 历史不变。
+
+设备范围须逐项界定：reading／review-remediation 的既有 66 项实际挂载通知 Runtime，可证明其受控通知与存储场景；AppRoot 的字面引用使 Reader／Update 出现在 map，并不表示 66 项执行了这两个 hook。普通包的 Library／Update 只读入口观察与 canonical hook 测试分开报告；实际下载／暂停／回滚、安装器返回、所有持久化故障、自然 15 分钟后台调度、物理设备和真实远端写入不能由启动或 map 绑定自动关闭。没有已确认新产品 Bug 时不新增 REG；日志、数据库与 APK 仅保存在 ignored 目录，不 push、不合并、不正式发布。
