@@ -1225,6 +1225,50 @@ describe('local login identity restoration', () => {
     }
   });
 
+  it('does not restart restored identity from a retained recovery action', async () => {
+    storageRead.mockRejectedValueOnce(new Error('storage unavailable')).mockResolvedValue(null);
+    const { result } = await startIdentityRuntime();
+    await waitFor(() => expect(result.current.hosts.startupRecovery).not.toBeNull());
+    const retained = await render(result.current.hosts.startupRecovery!, { wrapper: QueryTestWrapper });
+    try {
+      await fireEvent.press(retained.getByText('重试启动'));
+      await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+      storageRead.mockClear();
+      await fireEvent.press(retained.getByText('重试启动'));
+      expect(result.current.read.sessionsReady).toBe(true);
+      expect(storageRead.mock.calls.filter(([key]) => String(key).endsWith('-user-agent'))).toHaveLength(0);
+    } finally {
+      await retained.unmount();
+    }
+  });
+
+  it('keeps one pending legacy retry when a retained recovery action is pressed again', async () => {
+    storageRead.mockImplementation((key: string) =>
+      Promise.resolve(key === 'linuxdo-clearance' ? JSON.stringify({ userAgent: 'Legacy Linux UA' }) : null)
+    );
+    const native = jest.mocked(readManagedCookieHeader);
+    const previous = native.getMockImplementation()!;
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof readManagedCookieHeader>>>();
+    native.mockResolvedValueOnce({ status: 'unsupported' }).mockImplementation(() => pending.promise);
+    const { result } = await startIdentityRuntime(true, ['linuxdo']);
+    await waitFor(() => expect(result.current.hosts.startupRecovery).not.toBeNull());
+    const retained = await render(result.current.hosts.startupRecovery!, { wrapper: QueryTestWrapper });
+    try {
+      await fireEvent.press(retained.getByText('重试启动'));
+      await waitFor(() => expect(native).toHaveBeenCalledTimes(2));
+      expect(result.current.hosts.startupRecovery).not.toBeNull();
+      await fireEvent.press(retained.getByText('重试启动'));
+      expect(native).toHaveBeenCalledTimes(2);
+      await act(async () => pending.resolve({ status: 'ok', header: '' }));
+      await waitFor(() => expect(result.current.read.sessionsReady).toBe(true));
+      expect(result.current.read.getLinuxDoUserAgent()).toBe('Legacy Linux UA');
+    } finally {
+      await act(async () => pending.resolve({ status: 'ok', header: '' }));
+      await retained.unmount();
+      native.mockImplementation(previous);
+    }
+  });
+
   it('persists the latest Native identity after a pending legacy write before deleting old keys', async () => {
     storageRead.mockImplementation((key: string) =>
       Promise.resolve(key === 'linuxdo-clearance' ? JSON.stringify({ userAgent: 'Legacy Linux UA' }) : null)
@@ -2665,15 +2709,29 @@ it('keeps the same NodeSeek window through a rejected exact recovery and closes 
   expect(view.getByTestId('login-webview')).toBeTruthy();
   expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(true);
   expect(view.getByLabelText('正在检测…').props.accessibilityState.disabled).toBe(true);
-  await act(async () => pending.resolve('verification-required'));
-  expect(runtime().hosts.surfaces.nodeseek).toBe(true);
-  expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
-  expect(runtime().read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(true);
-  expect(mockWebViewLoads).toEqual(['https://www.nodeseek.com']);
-  await fireEvent.press(view.getByText('检测并继续'));
-  expect(resume).toHaveBeenCalledTimes(2);
-  expect(runtime().hosts.surfaces.nodeseek).toBe(false);
-  await view.unmount();
+  const marker = Promise.withResolvers<void>();
+  const mark = jest.spyOn(accountSessionStore, 'markAccountSessionHandoffPending').mockReturnValueOnce(marker.promise);
+  try {
+    await act(async () => pending.resolve('verification-required'));
+    expect(mark).toHaveBeenCalledTimes(1);
+    expect(runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('');
+    expect(view.getByTestId('login-webview')).toBeTruthy();
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    await act(async () => marker.reject(new Error('replacement marker unavailable')));
+    expect(runtime().hosts.element.props.authSurfaceBlockMessages?.nodeseek).toBe('');
+    expect(view.getByTestId('login-webview')).toBeTruthy();
+    expect(runtime().hosts.surfaces.nodeseek).toBe(true);
+    expect(runtime().read.notificationPrivateAccessAllowed('nodeseek', 'nodeseek:42')).toBe(false);
+    expect(runtime().read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(true);
+    expect(mockWebViewLoads).toEqual(['https://www.nodeseek.com']);
+    await fireEvent.press(view.getByText('检测并继续'));
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(runtime().hosts.surfaces.nodeseek).toBe(false);
+  } finally {
+    marker.resolve();
+    mark.mockRestore();
+    await view.unmount();
+  }
 });
 
 it.each(['reopened', 'background'] as const)('does not let a late NodeSeek recovery close a %s panel', async (exit) => {

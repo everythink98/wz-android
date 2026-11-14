@@ -13,8 +13,8 @@ export function useSessionReadGateway({
   beforeRequest,
   fetcher,
   getEnabledSources,
-  linuxDoUserAgentRef,
-  nodeSeekUserAgentRef,
+  getLinuxDoUserAgent,
+  getNodeSeekUserAgent,
   onSessionExpired,
   requestAccountRecheck,
   readSessionRuntimeSnapshot
@@ -24,8 +24,8 @@ export function useSessionReadGateway({
   beforeRequest?: () => Promise<void>;
   fetcher: Fetcher;
   getEnabledSources: () => readonly Source[];
-  linuxDoUserAgentRef: { current: string };
-  nodeSeekUserAgentRef: { current: string };
+  getLinuxDoUserAgent: () => string;
+  getNodeSeekUserAgent: () => string;
   onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
   requestAccountRecheck: RequestAccountRecheck;
   readSessionRuntimeSnapshot: (source: SessionSite) => SessionRuntimeSnapshot;
@@ -38,8 +38,8 @@ export function useSessionReadGateway({
         beforeRequest,
         fetcher,
         getEnabledSources,
-        linuxDoUserAgent: () => linuxDoUserAgentRef.current,
-        nodeSeekUserAgent: () => nodeSeekUserAgentRef.current,
+        linuxDoUserAgent: getLinuxDoUserAgent,
+        nodeSeekUserAgent: getNodeSeekUserAgent,
         onSessionExpired,
         requestAccountRecheck,
         readSessionRuntimeSnapshot
@@ -50,8 +50,8 @@ export function useSessionReadGateway({
       beforeRequest,
       fetcher,
       getEnabledSources,
-      linuxDoUserAgentRef,
-      nodeSeekUserAgentRef,
+      getLinuxDoUserAgent,
+      getNodeSeekUserAgent,
       onSessionExpired,
       requestAccountRecheck,
       readSessionRuntimeSnapshot

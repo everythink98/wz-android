@@ -119,6 +119,7 @@ function createController(
     options.reconcileAccountStatus || (async () => ({ status: 'same', session: loggedInSession }) as const)
   );
   const setLinuxDoWebViewError = vi.fn();
+  const setChecking = vi.fn();
   const setMountLinuxDoWebView = vi.fn();
   const onRecoveryStateChanged = vi.fn();
   const setLinuxDoWebViewUserAgent = vi.fn();
@@ -150,7 +151,7 @@ function createController(
     onLinuxDoSurfaceClosed,
     onLinuxDoSurfaceOpened,
     reconcileAccountStatus,
-    setChecking: vi.fn(),
+    setChecking,
     setLinuxDoWebViewError,
     setLinuxDoWebViewKey: vi.fn(),
     setLoadingLinuxDoPage: vi.fn(),
@@ -183,6 +184,7 @@ function createController(
     onLinuxDoSurfaceClosed,
     onLinuxDoSurfaceOpened,
     reconcileAccountStatus,
+    setChecking,
     setLinuxDoWebViewError,
     setLinuxDoWebViewUserAgent,
     showLinuxDoPanelRef,
@@ -1469,25 +1471,32 @@ describe('linux.do visible verification coordinator', () => {
     expect(setMountLinuxDoWebView).toHaveBeenLastCalledWith(true);
   });
 
-  it('ignores a late login check after backgrounding and permits a fresh check', async () => {
-    let complete!: (result: AccountReconcileResult) => void;
-    const pending = new Promise<AccountReconcileResult>((resolve) => {
-      complete = resolve;
-    });
-    const { controller, onLinuxDoSurfaceClosed, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController({
-      reconcileAccountStatus: () => pending
+  it('keeps a fresh login check active when its backgrounded predecessor settles', async () => {
+    const first = Promise.withResolvers<AccountReconcileResult>();
+    const second = Promise.withResolvers<AccountReconcileResult>();
+    const reconcile = vi
+      .fn<() => Promise<AccountReconcileResult>>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { controller, onLinuxDoSurfaceClosed, setChecking, reconcileAccountStatus } = createController({
+      reconcileAccountStatus: reconcile
     });
     await controller.showLinuxDoVerification();
-    const check = controller.checkLinuxDoCookie();
+    const oldCheck = controller.checkLinuxDoCookie();
     await vi.waitFor(() => expect(reconcileAccountStatus).toHaveBeenCalledOnce());
-    const session = linuxDoWebViewSessionRef.current;
     controller.cancelLinuxDoCheckForInactiveApp();
-    complete({ status: 'same', session: loggedInSession });
-    await check;
+    const currentCheck = controller.checkLinuxDoCookie();
+    await vi.waitFor(() => expect(reconcileAccountStatus).toHaveBeenCalledTimes(2));
+    first.resolve({ status: 'same', session: loggedInSession });
+    await oldCheck;
     expect(onLinuxDoSurfaceClosed).not.toHaveBeenCalled();
-    expect(linuxDoWebViewSessionRef.current).toBe(session);
+    expect(setChecking).toHaveBeenLastCalledWith(true);
     await controller.checkLinuxDoCookie();
+    expect(reconcileAccountStatus).toHaveBeenCalledTimes(2);
+    second.resolve({ status: 'same', session: loggedInSession });
+    await currentCheck;
     expect(onLinuxDoSurfaceClosed).toHaveBeenCalledTimes(1);
+    expect(setChecking).toHaveBeenLastCalledWith(false);
   });
 
   it.each([

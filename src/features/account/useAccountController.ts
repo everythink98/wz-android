@@ -9,7 +9,7 @@ import type { Screen } from '@/ui/navigation/types';
 import { sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
 import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -19,23 +19,16 @@ import type {
   AccountReconcileResult
 } from '@/domain/session/sessionContracts';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import { createLoginPanelDiagnostics, type LoginTransportState } from './loginPanelDiagnostics';
 
 const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
 
 type Ref<T> = RefObject<T>;
-export type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout' | 'auto-check';
+export type LoginWebViewDiagnosticState = LoginTransportState;
 type AccountSource = 'nodeseek' | 'yaohuo';
 
-type LoginTraceState = {
-  trace: DiagnosticTrace;
-  panelRequestId: number;
-};
 type LinuxDoLevelRequest =
   { kind: 'command'; resolve: (completed: boolean) => void } | { kind: 'verification'; recovery: LinuxDoReadRecovery };
-
-function webViewFailureReason(state: LoginWebViewDiagnosticState): LoginWebViewFailureReason {
-  return state === 'renderer-gone' ? 'renderer_gone' : state === 'timeout' ? 'timeout' : 'network_error';
-}
 
 export function useAccountController({
   checkingRequestIdRef,
@@ -93,12 +86,10 @@ export function useAccountController({
   yaohuoWebViewRef: Ref<WebView | null>;
 }) {
   const queryClient = useQueryClient();
-  const nodeSeekLoginTraceRef = useRef<LoginTraceState | null>(null);
-  const nodeSeekTerminalRequestRef = useRef<number | null>(null);
-  const wasNodeSeekLoginPanelVisibleRef = useRef(false);
-  const yaohuoLoginTraceRef = useRef<LoginTraceState | null>(null);
-  const yaohuoTerminalRequestRef = useRef<number | null>(null);
-  const observedYaohuoLoginPanelRequestRef = useRef<number | null>(null);
+  const [loginDiagnostics] = useState(() => ({
+    nodeseek: createLoginPanelDiagnostics('nodeseek'),
+    yaohuo: createLoginPanelDiagnostics('yaohuo')
+  }));
   const [linuxDoLevelRequest, setLinuxDoLevelRequest] = useState<LinuxDoLevelRequest | null>(null);
   const linuxDoLevelRequestRef = useRef<LinuxDoLevelRequest | null>(null);
   const linuxDoLevelScreenRef = useRef(screen);
@@ -250,112 +241,34 @@ export function useAccountController({
       trace: DiagnosticTrace,
       outcome: Parameters<typeof finishDiagnosticTrace>[1],
       fields: Record<string, unknown> = {}
-    ) => {
-      const traceRef = source === 'nodeseek' ? nodeSeekLoginTraceRef : yaohuoLoginTraceRef;
-      if (traceRef.current?.trace !== trace) {
-        return;
-      }
-      finishDiagnosticTrace(trace, outcome, { source, ...fields });
-      traceRef.current = null;
-    },
-    []
+    ) => loginDiagnostics[source].finish(trace, outcome, fields),
+    [loginDiagnostics]
   );
 
   const currentLoginTrace = useCallback(
     (source: AccountSource, mode: 'open' | 'manual') => {
-      const panelRequestId =
+      const requestId =
         source === 'nodeseek' ? nodeSeekLoginPanelRequestRef.current : yaohuoLoginPanelRequestRef.current;
-      const traceRef = source === 'nodeseek' ? nodeSeekLoginTraceRef : yaohuoLoginTraceRef;
-      if (traceRef.current?.panelRequestId === panelRequestId) {
-        return traceRef.current.trace;
-      }
-      if (traceRef.current) {
-        finishDiagnosticTrace(traceRef.current.trace, 'stale', {
-          source,
-          reason: 'superseded'
-        });
-      }
-      const trace = beginDiagnosticTrace('credential', 'check', { source, mode });
-      traceRef.current = { trace, panelRequestId };
-      return trace;
+      return loginDiagnostics[source].currentTrace(requestId, mode);
     },
-    [nodeSeekLoginPanelRequestRef, yaohuoLoginPanelRequestRef]
+    [loginDiagnostics, nodeSeekLoginPanelRequestRef, yaohuoLoginPanelRequestRef]
   );
 
   useEffect(() => {
-    const visible = showLoginPanel;
-    if (visible && !wasNodeSeekLoginPanelVisibleRef.current) {
-      markDiagnosticStage(currentLoginTrace('nodeseek', 'open'), 'guard', {
-        source: 'nodeseek',
-        state: 'open'
-      });
-    } else if (!visible && wasNodeSeekLoginPanelVisibleRef.current) {
-      const trace = nodeSeekLoginTraceRef.current?.trace;
-      if (trace) {
-        finishLoginTrace('nodeseek', trace, 'canceled', { reason: 'canceled' });
-      }
-    }
-    wasNodeSeekLoginPanelVisibleRef.current = visible;
-  }, [currentLoginTrace, finishLoginTrace, showLoginPanel]);
+    loginDiagnostics.nodeseek.observePanel(showLoginPanel, nodeSeekLoginPanelRequestRef.current);
+  }, [loginDiagnostics, nodeSeekLoginPanelRequestRef, showLoginPanel]);
 
   useEffect(() => {
-    const panelRequestId = yaohuoLoginPanelRequestRef.current;
-    const openedOrReplaced = showYaohuoLoginPanel && observedYaohuoLoginPanelRequestRef.current !== panelRequestId;
-    if (openedOrReplaced) {
-      markDiagnosticStage(currentLoginTrace('yaohuo', 'open'), 'guard', {
-        source: 'yaohuo',
-        state: 'open'
-      });
-    } else if (!showYaohuoLoginPanel && observedYaohuoLoginPanelRequestRef.current !== null) {
-      const trace = yaohuoLoginTraceRef.current?.trace;
-      if (trace) {
-        finishLoginTrace('yaohuo', trace, 'canceled', { reason: 'canceled' });
-      }
-    }
-    observedYaohuoLoginPanelRequestRef.current = showYaohuoLoginPanel ? panelRequestId : null;
+    loginDiagnostics.yaohuo.observePanel(showYaohuoLoginPanel, yaohuoLoginPanelRequestRef.current);
   });
 
   const recordLoginWebViewState = useCallback(
     (source: AccountSource, state: LoginWebViewDiagnosticState, attempt: number) => {
       const requestId =
         source === 'nodeseek' ? nodeSeekLoginPanelRequestRef.current : yaohuoLoginPanelRequestRef.current;
-      const terminalRef = source === 'nodeseek' ? nodeSeekTerminalRequestRef : yaohuoTerminalRequestRef;
-      if (state === 'start' && terminalRef.current === requestId) {
-        terminalRef.current = null;
-      } else if (terminalRef.current === requestId) {
-        return;
-      }
-      const trace = currentLoginTrace(source, 'open');
-      if (state === 'auto-check') {
-        markDiagnosticStage(trace, 'parse', { source, channel: 'webview', verificationAction: 'auto-check' });
-        return;
-      }
-      if (state === 'error' || state === 'renderer-gone' || state === 'timeout') {
-        terminalRef.current = requestId;
-        const reason = webViewFailureReason(state);
-        markDiagnosticStage(trace, 'transport', {
-          source,
-          channel: 'webview',
-          state: 'failure',
-          reason
-        });
-        finishLoginTrace(source, trace, 'failure', { reason });
-        onLoginWebViewFailure(source, attempt, reason);
-        return;
-      }
-      markDiagnosticStage(trace, 'transport', {
-        source,
-        channel: 'webview',
-        state: state === 'start' ? 'started' : 'ready'
-      });
+      loginDiagnostics[source].recordWebView(requestId, state, attempt, onLoginWebViewFailure);
     },
-    [
-      currentLoginTrace,
-      finishLoginTrace,
-      nodeSeekLoginPanelRequestRef,
-      onLoginWebViewFailure,
-      yaohuoLoginPanelRequestRef
-    ]
+    [loginDiagnostics, nodeSeekLoginPanelRequestRef, onLoginWebViewFailure, yaohuoLoginPanelRequestRef]
   );
 
   const recordNodeSeekLoginWebViewState = useCallback(

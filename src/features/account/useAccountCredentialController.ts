@@ -8,7 +8,7 @@ import {
   type CredentialSummaries
 } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
-import type { AccountCenterCommand, AccountCredentialFillAttempt } from '@/domain/session/accountCenter';
+import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import {
   isTrustedLoginFormMessageSource,
   LOGIN_FORM_ADAPTERS,
@@ -26,12 +26,11 @@ import {
 import {
   finishCredentialFillTraceForWebViewFailure,
   loadCredentialSummariesWithTrace,
-  type CredentialFillTraceState,
   type LoginWebViewFailureReason
 } from './credentialDiagnostics';
+import { createCredentialFillSession } from './credentialFillSession';
 
 type WebViewRef = RefObject<WebView | null>;
-type CredentialFill = CredentialFillTraceState & { owner: AbortSignal };
 type CredentialWrite = { owner: AbortSignal };
 
 export function useAccountCredentialController({
@@ -58,11 +57,10 @@ export function useAccountCredentialController({
   yaohuoWebViewRef: WebViewRef;
 }) {
   const [credentialSummaries, setCredentialSummaries] = useState<CredentialSummaries>(emptyCredentialSummaries);
-  const [pendingCredentialFillSite, setPendingCredentialFillSite] = useState<CredentialSite | null>(null);
-  const [credentialFillAttempt, setCredentialFillAttempt] = useState<AccountCredentialFillAttempt | null>(null);
-  const credentialLoginSiteRef = useRef<CredentialSite | null>(null);
-  const pendingCredentialFillSiteRef = useRef<CredentialSite | null>(null);
-  const credentialFillTraceRef = useRef<CredentialFill | null>(null);
+  const [fillSession] = useState(createCredentialFillSession);
+  const [fillSnapshot, setFillSnapshot] = useState(fillSession.snapshot);
+  const { attempt: credentialFillAttempt, pendingSite: pendingCredentialFillSite } = fillSnapshot;
+  const publishFill = useCallback(() => setFillSnapshot(fillSession.snapshot), [fillSession]);
   const credentialFillAttemptRef = useRef(0);
   const summaryLoadGenerationRef = useRef(0);
   const summaryRevisionRef = useRef(0);
@@ -74,12 +72,11 @@ export function useAccountCredentialController({
     if (lifetimeRef.current.signal.aborted) lifetimeRef.current = new AbortController();
     const lifetime = lifetimeRef.current;
     const owner = lifetime.signal;
-    const fill = credentialFillTraceRef.current;
     // Strict effect reconstruction keeps the same logical fill and dispatched writes.
-    if (fill && credentialLoginSiteRef.current === fill.site) fill.owner = owner;
+    fillSession.adopt(owner);
     for (const write of pendingWritesRef.current) write.owner = owner;
     return () => lifetime.abort();
-  }, []);
+  }, [fillSession]);
 
   const reloadCredentialSummaries = useCallback(async () => {
     const owner = lifetimeRef.current.signal;
@@ -113,43 +110,34 @@ export function useAccountCredentialController({
       fields: DiagnosticFields = {},
       expectedTrace?: DiagnosticTrace
     ) => {
-      const current = credentialFillTraceRef.current;
+      const current = fillSession.active;
       if (!current || current.site !== site || (expectedTrace && current.trace !== expectedTrace)) {
         return;
       }
       finishDiagnosticTrace(current.trace, outcome, { site, ...fields });
-      credentialFillTraceRef.current = null;
+      fillSession.finishTrace(current);
     },
-    []
+    [fillSession]
   );
 
   const clearCredentialLoginIntent = useCallback(
     (site: CredentialSite) => {
       finishCredentialFillTrace(site, 'canceled', { reason: 'canceled' });
-      if (credentialLoginSiteRef.current === site) {
-        credentialLoginSiteRef.current = null;
-        setCredentialFillAttempt(null);
-      }
-      if (pendingCredentialFillSiteRef.current === site) {
-        pendingCredentialFillSiteRef.current = null;
-        setPendingCredentialFillSite(null);
-      }
+      fillSession.close(site);
+      publishFill();
     },
-    [finishCredentialFillTrace]
+    [fillSession, finishCredentialFillTrace, publishFill]
   );
 
   const finishCredentialFillForLoginFailure = useCallback(
     (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) => {
-      if (!finishCredentialFillTraceForWebViewFailure(credentialFillTraceRef.current, site, attempt, reason)) {
-        return;
-      }
-      credentialFillTraceRef.current = null;
-      if (pendingCredentialFillSiteRef.current === site) {
-        pendingCredentialFillSiteRef.current = null;
-        setPendingCredentialFillSite(null);
-      }
+      const fill = fillSession.active;
+      if (!fill || !finishCredentialFillTraceForWebViewFailure(fill, site, attempt, reason)) return;
+      fillSession.finishTrace(fill);
+      fillSession.consumeForm(site);
+      publishFill();
     },
-    []
+    [fillSession, publishFill]
   );
 
   useEffect(() => {
@@ -159,7 +147,7 @@ export function useAccountCredentialController({
   const openAccountLogin = useCallback(
     (site: SessionSite, fill: boolean) => {
       if (lifetimeRef.current.signal.aborted) return;
-      const previousSite = credentialLoginSiteRef.current;
+      const previousSite = fillSession.site;
       if (previousSite && previousSite !== site) {
         clearCredentialLoginIntent(previousSite);
       }
@@ -183,7 +171,7 @@ export function useAccountCredentialController({
         return;
       }
 
-      const previousTrace = credentialFillTraceRef.current;
+      const previousTrace = fillSession.active;
       if (previousTrace) {
         finishCredentialFillTrace(previousTrace.site, 'stale', { reason: 'superseded' }, previousTrace.trace);
       }
@@ -195,16 +183,13 @@ export function useAccountCredentialController({
         generation: attempt
       });
       markDiagnosticStage(trace, 'guard', { site, state: 'pending', generation: attempt });
-      credentialFillTraceRef.current = { site, attempt, trace, owner: lifetimeRef.current.signal };
-      credentialLoginSiteRef.current = site;
-      pendingCredentialFillSiteRef.current = site;
-      setPendingCredentialFillSite(site);
-      setCredentialFillAttempt({ site, attempt });
+      fillSession.begin({ site, attempt, trace, owner: lifetimeRef.current.signal });
+      publishFill();
       if (webViewBlockMessage) {
         markDiagnosticStage(trace, 'guard', { site, state: 'failure', reason: 'network_error' });
         finishCredentialFillTrace(site, 'blocked', { reason: 'network_error' }, trace);
-        pendingCredentialFillSiteRef.current = null;
-        setPendingCredentialFillSite(null);
+        fillSession.consumeForm(site);
+        publishFill();
       }
     },
     [
@@ -212,7 +197,9 @@ export function useAccountCredentialController({
       changeNodeSeekLoginPanel,
       changeYaohuoLoginPanel,
       clearCredentialLoginIntent,
+      fillSession,
       finishCredentialFillTrace,
+      publishFill,
       setYaohuoLoginPrompt,
       webViewBlockMessage
     ]
@@ -226,11 +213,11 @@ export function useAccountCredentialController({
       }
       if (lifetimeRef.current.signal.aborted) return true;
       const site = message.site;
-      if (credentialLoginSiteRef.current !== site) {
+      if (fillSession.site !== site) {
         return true;
       }
       const trustedSource = isTrustedLoginFormMessageSource(message, event.nativeEvent.url);
-      const fillState = credentialFillTraceRef.current;
+      const fillState = fillSession.active;
       if (!fillState || fillState.site !== site || fillState.attempt !== message.attempt) {
         return true;
       }
@@ -251,12 +238,12 @@ export function useAccountCredentialController({
         notifyRef.current(filled ? '已填入保存的登录信息，请完成验证后手动提交。' : '表单已变化，请手动登录。');
         return true;
       }
-      if (pendingCredentialFillSiteRef.current !== site) {
+      if (fillSession.pendingSite !== site) {
         return true;
       }
       if (!message.ok || !trustedSource) {
-        pendingCredentialFillSiteRef.current = null;
-        setPendingCredentialFillSite(null);
+        fillSession.consumeForm(site);
+        publishFill();
         if (fillTrace) {
           markDiagnosticStage(fillTrace, 'guard', { site, state: 'failure', reason: 'unsupported' });
           finishCredentialFillTrace(site, 'blocked', { reason: 'unsupported' }, fillTrace);
@@ -269,19 +256,19 @@ export function useAccountCredentialController({
         markDiagnosticStage(fillTrace, 'guard', { site, state: 'confirmed' });
         markDiagnosticStage(fillTrace, 'credential', { site, store: 'secure-store', state: 'pending' });
       }
-      pendingCredentialFillSiteRef.current = null;
-      setPendingCredentialFillSite(null);
+      fillSession.consumeForm(site);
+      publishFill();
       void credentialVault
         .readForFill(site)
         .then((credential) => {
           if (
             fillState.owner.aborted ||
             lifetimeRef.current.signal !== fillState.owner ||
-            credentialFillTraceRef.current !== fillState
+            fillSession.active !== fillState
           ) {
             return;
           }
-          if (!credential || credentialLoginSiteRef.current !== site) {
+          if (!credential || fillSession.site !== site) {
             if (!credential) {
               markDiagnosticStage(fillTrace, 'credential', {
                 site,
@@ -312,7 +299,7 @@ export function useAccountCredentialController({
           if (
             fillState.owner.aborted ||
             lifetimeRef.current.signal !== fillState.owner ||
-            credentialFillTraceRef.current !== fillState
+            fillSession.active !== fillState
           ) {
             return;
           }
@@ -328,7 +315,16 @@ export function useAccountCredentialController({
         });
       return true;
     },
-    [finishCredentialFillTrace, linuxDoWebViewRef, notifyRef, reloadCredentialSummaries, webViewRef, yaohuoWebViewRef]
+    [
+      fillSession,
+      finishCredentialFillTrace,
+      linuxDoWebViewRef,
+      notifyRef,
+      publishFill,
+      reloadCredentialSummaries,
+      webViewRef,
+      yaohuoWebViewRef
+    ]
   );
 
   const handleAccountCenterCommand = useCallback(

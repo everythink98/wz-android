@@ -83,8 +83,8 @@ async function renderStatusController({
   enabledSourcesReady = false,
   sessionEpochs = initialForumSessionEpochs,
   fetcher = jest.fn(async () => new Response('{}')),
-  linuxDoUserAgentRef = { current: 'safe-agent' },
-  nodeSeekUserAgentRef = { current: 'safe-agent' },
+  getLinuxDoUserAgent = () => 'safe-agent',
+  getNodeSeekUserAgent = () => 'safe-agent',
   readNodeSeekCookieHeader = jest.fn(async () => undefined),
   notify = jest.fn(),
   onAccountStatusChanged = jest.fn(),
@@ -143,8 +143,8 @@ async function renderStatusController({
       useAccountStatusController({
         fetcher: renderedFetcher || fetcher,
         enabledSources: renderedEnabledSources || enabledSources,
-        linuxDoUserAgentRef,
-        nodeSeekUserAgentRef,
+        getLinuxDoUserAgent,
+        getNodeSeekUserAgent,
         notify,
         onAccountStatusChanged: commitAccountStatusChange,
         readManagedCookieHeader,
@@ -220,8 +220,8 @@ describe('account status queries', () => {
     const options: Parameters<typeof useAccountStatusController>[0] = {
       enabledSourcesReady: false,
       fetcher,
-      linuxDoUserAgentRef: { current: 'safe-agent' },
-      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      getLinuxDoUserAgent: () => 'safe-agent',
+      getNodeSeekUserAgent: () => 'safe-agent',
       notify: baseRuntime.notify,
       onAccountStatusChanged: () => undefined
     };
@@ -530,8 +530,8 @@ describe('account status queries', () => {
       enabledSources: ['nodeseek'],
       enabledSourcesReady: true,
       fetcher: jest.fn(async () => new Response('{}')),
-      linuxDoUserAgentRef: { current: 'safe-agent' },
-      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      getLinuxDoUserAgent: () => 'safe-agent',
+      getNodeSeekUserAgent: () => 'safe-agent',
       notify: jest.fn(),
       onAccountStatusChanged: jest.fn()
     };
@@ -772,8 +772,8 @@ describe('account status queries', () => {
       enabledSources: ['nodeseek'],
       enabledSourcesReady: true,
       fetcher: jest.fn(async () => new Response('{}')),
-      linuxDoUserAgentRef: { current: 'safe-agent' },
-      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      getLinuxDoUserAgent: () => 'safe-agent',
+      getNodeSeekUserAgent: () => 'safe-agent',
       notify: jest.fn(),
       onAccountStatusChanged: jest.fn()
     };
@@ -824,8 +824,8 @@ describe('account status queries', () => {
       enabledSources: ['nodeseek'],
       enabledSourcesReady: false,
       fetcher: jest.fn(async () => new Response('{}')),
-      linuxDoUserAgentRef: { current: 'safe-agent' },
-      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      getLinuxDoUserAgent: () => 'safe-agent',
+      getNodeSeekUserAgent: () => 'safe-agent',
       readManagedCookieHeader: async () => ({ status: 'ok', header: 'session=safe' }),
       notify: jest.fn(),
       onAccountStatusChanged: jest.fn()
@@ -2083,6 +2083,7 @@ describe('account status queries', () => {
       second = hook.result.current.reconcileAccountStatus('nodeseek');
       await Promise.resolve();
     });
+    expect(second).toBe(first);
     expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
 
     await act(async () => {

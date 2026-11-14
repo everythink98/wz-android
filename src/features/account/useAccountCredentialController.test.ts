@@ -5,7 +5,7 @@ vi.mock('react', () => ({
   useEffect: () => undefined,
   useLayoutEffect: () => undefined,
   useRef: <T>(value: T) => ({ current: value }),
-  useState: <T>(initial: T) => [initial, vi.fn()]
+  useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, vi.fn()]
 }));
 
 const mocks = vi.hoisted(() => ({

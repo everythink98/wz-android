@@ -627,7 +627,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     expect(resetLinuxDoWebView).toHaveBeenCalledTimes(1);
   });
 
-  it('reports one terminal WebView failure per panel request', async () => {
+  it('keeps a terminal page failure separate from a later manual account check until navigation restarts', async () => {
     const onLoginWebViewFailure = jest.fn();
     const { hook } = await renderAccountController({ onLoginWebViewFailure });
 
@@ -638,6 +638,20 @@ describe('account workflows with canonical identity reconciliation', () => {
 
     expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
     expect(onLoginWebViewFailure).toHaveBeenCalledWith('nodeseek', 3, 'renderer_gone');
+
+    await act(async () => {
+      await hook.result.current.checkNodeSeekAccount();
+      hook.result.current.recordNodeSeekLoginWebViewState('ready', 3);
+      hook.result.current.recordNodeSeekLoginWebViewState('error', 3);
+    });
+    expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
+
+    await act(() => {
+      hook.result.current.recordNodeSeekLoginWebViewState('start', 3);
+      hook.result.current.recordNodeSeekLoginWebViewState('timeout', 3);
+    });
+    expect(onLoginWebViewFailure).toHaveBeenCalledTimes(2);
+    expect(onLoginWebViewFailure).toHaveBeenLastCalledWith('nodeseek', 3, 'timeout');
   });
 
   it('observes a replaced Yaohuo panel while visible and a reopened panel with the same request id', async () => {

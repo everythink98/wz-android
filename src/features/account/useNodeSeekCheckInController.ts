@@ -126,7 +126,7 @@ export function useNodeSeekCheckInController({
   ensureWritableSession,
   fetcher,
   isWritableSessionTicketCurrent,
-  nodeSeekUserAgentRef,
+  getNodeSeekUserAgent,
   notify,
   onConfirmed,
   onSessionExpired,
@@ -136,7 +136,7 @@ export function useNodeSeekCheckInController({
   ensureWritableSession: (source: 'nodeseek') => Promise<WritableSessionTicket>;
   fetcher: Fetcher;
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
-  nodeSeekUserAgentRef: { current: string };
+  getNodeSeekUserAgent: () => string;
   notify: (message: string) => void;
   onConfirmed?: (ticket: WritableSessionTicket, current?: number) => void;
   onSessionExpired: (source: 'nodeseek', requestSessionEpoch: number) => void;
@@ -270,7 +270,7 @@ export function useNodeSeekCheckInController({
           ),
           request: buildNodeSeekAttendanceRequest({ random }),
           signal,
-          userAgent: nodeSeekUserAgentRef.current
+          userAgent: getNodeSeekUserAgent()
         });
       } catch (error) {
         expireIfUnauthorized(error, ticket);

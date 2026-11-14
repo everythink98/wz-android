@@ -66,6 +66,17 @@ type AccountRestoreState =
   | { kind: 'loaded'; records: RestoredAccountRecords }
   | { kind: 'restoring' | 'ready'; records: RestoredAccountRecords; run: AccountRestoreRun };
 
+type AccountProbeState =
+  | { kind: 'idle'; generation: number }
+  | {
+      kind: 'running';
+      generation: number;
+      controller: AbortController;
+      promise: Promise<AccountReconcileResult>;
+      surfaceGeneration: number;
+      trace: DiagnosticTrace;
+    };
+
 const ACCOUNT_SESSION_MIGRATION_TIMEOUT_MS = 5_000;
 
 function eventConfirmsTerminalIdentity(event: ScopedSiteSessionEvent) {
@@ -95,18 +106,18 @@ function snapshotQueryDefinition(source: StatusSource) {
 export function useAccountStatusController({
   enabledSources = sessionSources,
   enabledSourcesReady = true,
-  linuxDoUserAgentRef,
+  getLinuxDoUserAgent,
   fetcher,
-  nodeSeekUserAgentRef,
+  getNodeSeekUserAgent,
   notify,
   onAccountStatusChanged,
   readManagedCookieHeader = readManagedCookieHeaderFromNative
 }: {
   enabledSources?: readonly StatusSource[];
   enabledSourcesReady?: boolean;
-  linuxDoUserAgentRef: { current: string };
+  getLinuxDoUserAgent: () => string;
   fetcher: Fetcher;
-  nodeSeekUserAgentRef: { current: string };
+  getNodeSeekUserAgent: () => string;
   notify: (message: string) => void;
   onAccountStatusChanged: (source: StatusSource) => void;
   readManagedCookieHeader?: (exactUrl: string) => Promise<ManagedCookieReadResult>;
@@ -171,32 +182,18 @@ export function useAccountStatusController({
   // Diagnostic aggregation must not change the public reconciliation result or identity rules.
   const persistenceFailedResultsRef = useRef(new WeakSet<AccountReconcileResult>());
 
-  const probeGenerationRef = useRef<Record<StatusSource, number>>({
-    linuxdo: 0,
-    nodeseek: 0,
-    yaohuo: 0
+  const probesRef = useRef<Record<StatusSource, AccountProbeState>>({
+    linuxdo: { kind: 'idle', generation: 0 },
+    nodeseek: { kind: 'idle', generation: 0 },
+    yaohuo: { kind: 'idle', generation: 0 }
   });
-  const activeProbeRef = useRef<
-    Partial<
-      Record<
-        StatusSource,
-        {
-          controller: AbortController;
-          promise: Promise<AccountReconcileResult>;
-          surfaceGeneration: number;
-          trace: DiagnosticTrace;
-        }
-      >
-    >
-  >({});
 
   const supersedeProbe = useCallback((source: StatusSource, reason: DiagnosticFields['reason'] = 'superseded') => {
-    probeGenerationRef.current[source] += 1;
-    const activeProbe = activeProbeRef.current[source];
-    if (!activeProbe) return;
+    const activeProbe = probesRef.current[source];
+    probesRef.current[source] = { kind: 'idle', generation: activeProbe.generation + 1 };
+    if (activeProbe.kind === 'idle') return;
     activeProbe.controller.abort();
     finishDiagnosticTrace(activeProbe.trace, 'stale', { source, reason });
-    delete activeProbeRef.current[source];
   }, []);
 
   useEffect(() => {
@@ -213,9 +210,10 @@ export function useAccountStatusController({
       if ((restore.kind === 'restoring' || restore.kind === 'ready') && restore.run.owner === owner.signal)
         restore.run.cancel();
       for (const source of sessionSources) {
-        const active = activeProbeRef.current[source];
+        const active = probesRef.current[source];
         supersedeProbe(source, 'canceled');
-        if (active) commitAccountSnapshot(source, (snapshot) => ({ ...snapshot, isVerifying: false }));
+        if (active.kind === 'running')
+          commitAccountSnapshot(source, (snapshot) => ({ ...snapshot, isVerifying: false }));
       }
     };
   }, [commitAccountSnapshot, supersedeProbe]);
@@ -224,11 +222,11 @@ export function useAccountStatusController({
     (source: StatusSource) => {
       const owner = lifetimeRef.current.signal;
       supersedeProbe(source);
-      const generation = probeGenerationRef.current[source];
+      const generation = probesRef.current[source].generation;
       return () =>
         !owner.aborted &&
         lifetimeRef.current.signal === owner &&
-        probeGenerationRef.current[source] === generation &&
+        probesRef.current[source].generation === generation &&
         enabledSourcesRef.current.has(source);
     },
     [supersedeProbe]
@@ -249,12 +247,12 @@ export function useAccountStatusController({
         onAccountStatusChanged(event.site);
       }
       if (terminalEvent && (next.identityTrust === 'confirmed' || next.identityTrust === 'none')) {
-        const generation = probeGenerationRef.current[event.site];
+        const generation = probesRef.current[event.site].generation;
         void saveAccountSessionSnapshot(next, event.type === 'cleared' ? () => true : undefined).catch(() => {
           if (
             owner.aborted ||
             lifetimeRef.current.signal !== owner ||
-            probeGenerationRef.current[event.site] !== generation ||
+            probesRef.current[event.site].generation !== generation ||
             !enabledSourcesRef.current.has(event.site)
           )
             return;
@@ -273,14 +271,14 @@ export function useAccountStatusController({
     (source: StatusSource, surfaceGeneration?: number) => {
       if (lifetimeRef.current.signal.aborted || !enabledSourcesRef.current.has(source)) return;
       if (surfaceGeneration !== undefined) {
-        const activeProbe = activeProbeRef.current[source];
-        if (activeProbe && activeProbe.surfaceGeneration < surfaceGeneration) {
-          probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source] + 1, surfaceGeneration);
+        const activeProbe = probesRef.current[source];
+        const generation = Math.max(activeProbe.generation + 1, surfaceGeneration);
+        if (activeProbe.kind === 'running' && activeProbe.surfaceGeneration < surfaceGeneration) {
+          probesRef.current[source] = { kind: 'idle', generation };
           activeProbe.controller.abort();
           finishDiagnosticTrace(activeProbe.trace, 'stale', { source, reason: 'superseded' });
-          delete activeProbeRef.current[source];
         } else {
-          probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source] + 1, surfaceGeneration);
+          probesRef.current[source] = { ...activeProbe, generation };
         }
       }
       commitAccountSnapshot(source, (current) => ({
@@ -311,8 +309,8 @@ export function useAccountStatusController({
         return Promise.resolve({ status: 'stale' });
       }
       const requestedSurfaceGeneration = options.surfaceGeneration || 0;
-      const activeProbe = activeProbeRef.current[source];
-      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
+      const activeProbe = probesRef.current[source];
+      if (activeProbe.kind === 'running' && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
         markDiagnosticStage(activeProbe.trace, 'guard', {
           source,
           state: 'busy',
@@ -321,14 +319,16 @@ export function useAccountStatusController({
         });
         return activeProbe.promise;
       }
-      activeProbe?.controller.abort();
-      if (activeProbe) finishDiagnosticTrace(activeProbe.trace, 'stale', { source, reason: 'superseded' });
+      if (activeProbe.kind === 'running') {
+        activeProbe.controller.abort();
+        finishDiagnosticTrace(activeProbe.trace, 'stale', { source, reason: 'superseded' });
+      }
       beginAccountIdentityCheck(source);
       const generation =
         options.surfaceGeneration === undefined
-          ? probeGenerationRef.current[source] + 1
-          : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
-      probeGenerationRef.current[source] = generation;
+          ? probesRef.current[source].generation + 1
+          : Math.max(probesRef.current[source].generation + 1, options.surfaceGeneration);
+      probesRef.current[source] = { kind: 'idle', generation };
       const trace = beginDiagnosticTrace('session', 'account-reconcile', {
         source,
         generation,
@@ -349,14 +349,14 @@ export function useAccountStatusController({
       const isCurrent = () =>
         !owner.aborted &&
         lifetimeRef.current.signal === owner &&
-        probeGenerationRef.current[source] === generation &&
+        probesRef.current[source].generation === generation &&
         enabledSourcesRef.current.has(source) &&
         !controller.signal.aborted;
       const stale = () =>
         settle({ status: 'stale' }, controller.signal.aborted || owner.aborted ? 'canceled' : 'stale', {
           reason: !enabledSourcesRef.current.has(source)
             ? 'source_disabled'
-            : probeGenerationRef.current[source] !== generation
+            : probesRef.current[source].generation !== generation
               ? 'superseded'
               : 'canceled'
         });
@@ -375,8 +375,8 @@ export function useAccountStatusController({
           }
           const observation = await readAccountStatus(source, {
             fetcher: withDiagnosticFetcher(trace, rejectUnauthorizedResponse(fetcher)),
-            linuxDoUserAgent: linuxDoUserAgentRef.current,
-            nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+            linuxDoUserAgent: getLinuxDoUserAgent(),
+            nodeSeekUserAgent: getNodeSeekUserAgent(),
             readManagedCookieHeader,
             signal: controller.signal
           });
@@ -464,13 +464,16 @@ export function useAccountStatusController({
           });
         } finally {
           options.signal?.removeEventListener('abort', abortProbe);
-          if (activeProbeRef.current[source]?.promise === promise) {
-            delete activeProbeRef.current[source];
+          const current = probesRef.current[source];
+          if (current.kind === 'running' && current.promise === promise) {
+            probesRef.current[source] = { kind: 'idle', generation: current.generation };
             commitAccountSnapshot(source, (current) => ({ ...current, isVerifying: false }));
           }
         }
       });
-      activeProbeRef.current[source] = {
+      probesRef.current[source] = {
+        kind: 'running',
+        generation,
         controller,
         promise,
         trace,
@@ -482,8 +485,8 @@ export function useAccountStatusController({
       beginAccountIdentityCheck,
       commitAccountSnapshot,
       fetcher,
-      linuxDoUserAgentRef,
-      nodeSeekUserAgentRef,
+      getLinuxDoUserAgent,
+      getNodeSeekUserAgent,
       onAccountStatusChanged,
       readManagedCookieHeader
     ]
@@ -606,9 +609,9 @@ export function useAccountStatusController({
             (signal) => {
               migrationProbes = Promise.all(
                 candidates.map((source) => {
-                  const previous = activeProbeRef.current[source];
+                  const previous = probesRef.current[source];
                   const promise = restoreCommands.current.reconcileAccountStatus(source, { signal });
-                  if (previous?.promise !== promise) ownedProbes.push({ source, promise });
+                  if (previous.kind === 'idle' || previous.promise !== promise) ownedProbes.push({ source, promise });
                   return promise;
                 })
               );
@@ -637,7 +640,8 @@ export function useAccountStatusController({
               if (!isCurrent()) return;
               degradeRestore({ reason: normalizeDiagnosticReason(error) });
               for (const { source, promise } of ownedProbes) {
-                if (activeProbeRef.current[source]?.promise !== promise) continue;
+                const current = probesRef.current[source];
+                if (current.kind === 'idle' || current.promise !== promise) continue;
                 supersedeProbe(source);
                 commitAccountSnapshot(source, (snapshot) => ({ ...snapshot, isVerifying: false }));
               }

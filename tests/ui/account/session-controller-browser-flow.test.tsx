@@ -784,11 +784,18 @@ describe('session controller browser flow', () => {
     );
   });
 
-  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
-    'publishes an authoritative %s clear without owning the account transition',
-    async (source) => {
+  it.each([
+    { source: 'nodeseek', legacyFailure: false },
+    { source: 'linuxdo', legacyFailure: false },
+    { source: 'yaohuo', legacyFailure: false },
+    { source: 'nodeseek', legacyFailure: true }
+  ] as const)(
+    'publishes an authoritative $source clear after legacy cleanup (partial failure: $legacyFailure)',
+    async ({ source, legacyFailure }) => {
       const clearManagedLoginCookies = jest.fn(async () => true);
       NativeModules.NetworkProxyModule = { ...NativeModules.NetworkProxyModule, clearManagedLoginCookies };
+      if (legacyFailure)
+        jest.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error('legacy cleanup failed'));
       const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
       const hook = await renderSessionController(
         jest.fn(async () => new Response('{}')),
@@ -796,13 +803,15 @@ describe('session controller browser flow', () => {
       );
 
       await act(async () => {
-        await hook.result.current[
-          source === 'nodeseek'
-            ? 'clearNodeSeekLoginState'
-            : source === 'linuxdo'
-              ? 'clearLinuxDoLoginState'
-              : 'clearYaohuoLoginState'
-        ]();
+        await expect(
+          hook.result.current[
+            source === 'nodeseek'
+              ? 'clearNodeSeekLoginState'
+              : source === 'linuxdo'
+                ? 'clearLinuxDoLoginState'
+                : 'clearYaohuoLoginState'
+          ]()
+        ).resolves.toBe(true);
       });
 
       expect(clearManagedLoginCookies).toHaveBeenCalledWith(source, {
@@ -811,6 +820,13 @@ describe('session controller browser flow', () => {
       });
       expect(onSiteSessionEvent).toHaveBeenCalledWith({ site: source, type: 'cleared' });
       expect(hook.result.current.forumSessionEpochs[source]).toBe(initialForumSessionEpochs[source]);
+      if (legacyFailure) {
+        expect(jest.mocked(SecureStore.deleteItemAsync).mock.calls).toEqual([
+          ['nodeseek-access'],
+          ['nodeseek-cookie-header']
+        ]);
+        expect(onSiteSessionEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'check-failed' }));
+      }
     }
   );
 

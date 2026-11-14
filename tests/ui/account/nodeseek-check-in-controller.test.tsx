@@ -82,7 +82,7 @@ async function renderController(
         ensureWritableSession,
         fetcher: options.fetcher || fetch,
         isWritableSessionTicketCurrent: options.current || (() => true),
-        nodeSeekUserAgentRef: { current: 'WZ Test' },
+        getNodeSeekUserAgent: () => 'WZ Test',
         notify,
         onSessionExpired,
         onConfirmed,

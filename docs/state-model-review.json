@@ -22,9 +22,22 @@
       "owner": "src/features/account/useAccountStatusController.ts",
       "invariant": "当前probe独享提交资格，旧Promise不清新busy、不覆盖新身份。",
       "consumer": "src/features/account/useAccountRuntime.ts#useAccountStatusController/reconcileAccountStatus",
-      "cannotDerive": "原controller内ProbeOperation统一Promise/owner/generation/应用，global generation在空slot时仍独立推进，isVerifying仅投影。",
+      "cannotDerive": "活动 probe 绑定 Promise/controller/owner/generation；空槽 generation 仍独立推进。snapshot.isVerifying 还覆盖没有活动 probe 的显式身份核对，不能从 running 槽派生。",
       "tests": ["tests/ui/account/account-status-controller.test.tsx"],
-      "evidenceGap": "需timeout、终态覆盖、取消后新核对及同账号新generation用例。"
+      "evidenceGap": "需timeout、终态覆盖、取消后新核对及同账号新generation用例。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "partial",
+        "delivered": "idle/running单槽闭合每站generation、活动Promise/controller/surfaceGeneration/trace；matching finally和migration timeout仍核确切Promise，空槽也推进generation。",
+        "residualControlAuthority": [
+          "useAccountStatusController.beginAccountIdentityCheck/applyAccountSessionEvent及多个commitAccountSnapshot对isVerifying的独立转换。",
+          "saveAccountSessionSnapshot之后的generation/lifetime guard和partial-save发布仍处于原async reconcile协议内。"
+        ],
+        "retainedIndependentFacts": [
+          "空槽generation、Promise身份、owner及持久化完成是必要事实；本结论不建议机械添加persisting phase。"
+        ],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.browser-document",
@@ -87,7 +100,20 @@
       "consumer": "src/features/account/useAccountRuntime.ts#handoffLinuxDoCookies/AccountHosts callbacks",
       "cannotDerive": "在原Account局部owner集中mounted/preparing/closing/settled及waiter清理，保留Native已提交回执与Promise身份；render意图不能派生物理mount。",
       "tests": ["tests/ui/account/account-runtime.test.tsx", "src/features/account/useVerificationController.test.ts"],
-      "evidenceGap": "需替换旧waiter、StrictEffects重接、卸载、Native barrier失败，不能只await React setState。"
+      "evidenceGap": "需替换旧waiter、StrictEffects重接、卸载、Native barrier失败，不能只await React setState。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "partial",
+        "delivered": "新owner接管物理mount回执、waiters、preparation/handoff Promise及Strict adopt/release，调用方不再拼接和清空旧refs；mount union排除unmounted但仍持waiters的组合。",
+        "residualControlAuthority": [
+          "useAccountRuntime.handoffLinuxDoCookies向close注入Native apply，authSurfaceRegistry.generation和enabledSources仍决定barrier值。",
+          "Runtime prepareLinuxDoCookieResponseBarrier和其他直接setLinuxDoCookieResponseBarrier调用仍承担Native策略。"
+        ],
+        "retainedIndependentFacts": [
+          "真实mount、Native preparation、closing handoff、Credit reconciliation Promise各有独立回执；不应合并总busy或仅为信用添加phase。"
+        ],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.credential-fill",
@@ -102,7 +128,19 @@
         "src/features/account/useAccountCredentialController.test.ts",
         "tests/ui/account/account-site-panels.test.tsx"
       ],
-      "evidenceGap": "需迟到Vault读取、站点切换、弹窗失败及同步重复命令；不读真实凭据。"
+      "evidenceGap": "需迟到Vault读取、站点切换、弹窗失败及同步重复命令；不读真实凭据。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "whole",
+        "delivered": "FillSession统一原site/pendingSite/attempt/trace，open分支绑定同一attempt，pendingSite与attempt从唯一snapshot投影；begin/consumeForm/finishTrace/close/adopt独占写入。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "单调fillAttempt是消息身份分配器，不是未建模阶段。",
+          "lifetime AbortSignal、实际Vault读写Promise、WebView物理引用继续独立；它们不构成旁路流程writer。",
+          "trace已结算与表单观察是否已消费具有不同含义，在open session内分别明确表达。"
+        ],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.credential-summary",
@@ -150,7 +188,18 @@
       "consumer": "src/features/account/useAccountRuntime.ts#beginAuthSurfaceTicket/watchAuthSurfacePreparation/reconcileAccountStatus",
       "cannotDerive": "PreparationOutcome(pending/ready/error)与HandoffSettlement(pending/confirmed/persisted)正交建模，集中identity-checked/persisted事件，保留snapshot身份。",
       "tests": ["tests/ui/account/account-runtime.test.tsx"],
-      "evidenceGap": "同页ready与新marker pending可共存；旧准备不得清新闩，磁盘schema不变。"
+      "evidenceGap": "同页ready与新marker pending可共存；旧准备不得清新闩，磁盘schema不变。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "partial",
+        "delivered": "Preparation marker、identity confirmation和final persistence已由带数据模型独占写入，ready继承与pending持久化含义保持独立，真实Runtime调用prepared/failed/confirm/persisted。",
+        "residualControlAuthority": [
+          "useAccountRuntime.reconcileAccountStatus的canCompleteHandoff、preparation.pending || snapshot.handoffPending以及save后ticket释放。",
+          "attemptedInterruptedSourcesRef和interrupted-source effect仍独立决定本轮是否尝试恢复。"
+        ],
+        "retainedIndependentFacts": ["持久handoffPending与真实save完成不是marker Promise状态的副本，必须保留。"],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.egress",
@@ -225,7 +274,20 @@
       "consumer": "src/features/account/components/LinuxDoVerifyModal.tsx#useLinuxDoVerificationPage",
       "cannotDerive": "在现有hook集中PageLifecycle(account/challenge/returning)与当前文档失败结果，保留同步returned claim和订阅/诊断once。",
       "tests": ["tests/ui/account/account-site-panels.test.tsx"],
-      "evidenceGap": "需重复消息、旧key、HTTP先到及renderer重挂测试；真实导航另证。"
+      "evidenceGap": "需重复消息、旧key、HTTP先到及renderer重挂测试；真实导航另证。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "partial",
+        "delivered": "Document owner接管stage、URL/failure、receipt去重、renderer回执；只读stage/needsRemount真实控制URL、按钮和WebView挂载，旧六个refs和两个直接setter已迁走。",
+        "residualControlAuthority": [
+          "linuxDoVerificationDocument.challengeMessage仍联合committedStage、documentUrl、failedUrl和challenge-return receipt决定返回。",
+          "useLinuxDoVerificationPage保留isCurrent key/visible/web检查、12秒loading timer和onLoadEnd的stage注入分支。"
+        ],
+        "retainedIndependentFacts": [
+          "早到HTTP失败、已消费return receipt和renderer退出不能从requested stage可靠推导；partial不是要求把它们合并成巨型enum。"
+        ],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.linuxdo-page-observer",
@@ -249,7 +311,20 @@
       "consumer": "src/features/account/useAccountRuntime.ts#useVerificationController/AccountHost recoveryPanel",
       "cannotDerive": "原controller集中VerificationSession联合，各阶段携带文档/intent，迁移旁路phase/queue/postChallenge写入，保留timer与同步回调前缀。",
       "tests": ["src/features/account/useVerificationController.test.ts"],
-      "evidenceGap": "需旧回调、重入、callback抛错、排队登录及初始化oracle；真实Cookie与关闭帧另证。"
+      "evidenceGap": "需旧回调、重入、callback抛错、排队登录及初始化oracle；真实Cookie与关闭帧另证。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "partial",
+        "delivered": "account/recovery检查owner绑定requestId/generation/WebView/session，以对象身份保护结算；删除重复closing phase，改读实际close handoff。",
+        "residualControlAuthority": [
+          "linuxDoVerificationPhaseRef和linuxDoVerificationGenerationRef仍控制preparing/awaiting/checking。",
+          "linuxDoCloseRef.closing/request/timer、linuxDoDocumentRef.automatic、initializationConfirmed和terminalWebViewSession仍独立参与调度。"
+        ],
+        "retainedIndependentFacts": [
+          "WebView物理session、原生mount回执和postChallenge文档身份保持独立合理；不因保留它们自动判缺陷。"
+        ],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.local-identity",
@@ -261,7 +336,19 @@
       "consumer": "src/features/account/useAccountRuntime.ts#isSourceIdentityReady/retrySessionRestore",
       "cannotDerive": "抽出局部LocalIdentityRestore owner，按attempt持有UA结果与各来源迁移结果，迁移原读写及就绪投影，保留每站写gate和并行恢复。",
       "tests": ["tests/ui/account/account-runtime.test.tsx"],
-      "evidenceGap": "需旧retry闭包、新凭据替换未决迁移、部分来源就绪、重试和卸载；不能改成串行网络启动门禁。"
+      "evidenceGap": "需旧retry闭包、新凭据替换未决迁移、部分来源就绪、重试和卸载；不能改成串行网络启动门禁。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "whole",
+        "delivered": "原恢复轮次、UA读取完成、来源恢复集合、legacy retry 与错误阶段已由 Restoration/MigrationRun 接管；UA和legacy写入口、gate、最新write均私有，Runtime/Status/ReadGateway/CheckIn改用语义能力和只读投影。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "每站CredentialWriteGate防Native新UA被legacy覆盖。",
+          "最新write Promise是实际持久化资源；旧键删除继续等待最新写完成，不应为它额外增加phase。",
+          "feedback表示重试中的既有错误反馈，独立于恢复运行阶段。"
+        ],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.login-check",
@@ -273,7 +360,18 @@
       "consumer": "src/features/account/useAccountRuntime.ts#useAccountController",
       "cannotDerive": "原controller内LoginCheckOperation绑定trace/panelRequestId/terminal回执，分别实例化两站；trace生命周期与页面终态仍独立。",
       "tests": ["tests/ui/account/account-controller.test.tsx"],
-      "evidenceGap": "需重复终态、手动重查、旧面板异步结果；真实登录因果另证。"
+      "evidenceGap": "需重复终态、手动重查、旧面板异步结果；真实登录因果另证。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "partial",
+        "delivered": "LoginPanelDiagnostics接管每站trace/terminal/observed visibility，terminal失败与后续manual trace独立；旧六个diagnostic refs已删除。",
+        "residualControlAuthority": [
+          "useAccountController.checkAccount继续递增checkingRequestIdRef，并直接setChecking(true/false)。",
+          "Runtime两站loginPanelCheckRef和面板requestId仍参与UI admission，与diagnostics owner分离。"
+        ],
+        "retainedIndependentFacts": ["terminal!=manualTrace是必要独立语义；这次加强现有UI用例已保真。"],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.login-recovery",
@@ -282,10 +380,23 @@
       "batch": 2,
       "owner": "src/features/account/useAccountRuntime.ts",
       "invariant": "NodeSeek恢复等待当前核对，只有当前来源/epoch/回执resume一次。",
-      "consumer": "src/features/account/useAccountRuntime.ts#pendingNodeSeekRecoveryRef/checkLogin",
+      "consumer": "src/features/account/useAccountRuntime.ts#useNodeSeekRecoveryIntent/checkNodeSeekLoginAndRetry",
       "cannotDerive": "RecoveryIntent(none/pending/checking/consumed)集中同步许可与readonly pending投影，不借无关authSurfaceRevision重渲染。",
       "tests": ["tests/ui/account/account-runtime.test.tsx", "tests/ui/account/account-controller.test.tsx"],
-      "evidenceGap": "需核对时替换recovery、取消旧resume、来源停用、同页重查用例。"
+      "evidenceGap": "需核对时替换recovery、取消旧resume、来源停用、同页重查用例。",
+      "implementation": {
+        "batch": "B02",
+        "outcome": "partial",
+        "delivered": "NodeSeek pending/checking(check,capability)/consumed及React投影由唯一同步publish入口接管，旧pending ref+独立bool删除，旧结果不消费新intent。",
+        "residualControlAuthority": [
+          "useAccountRuntime.loginPanelCheckRef仍作为NodeSeek/Yaohuo共享检查占用authority。",
+          "nodeSeek/yaohuoLoginPanelRequestRef、verificationAppActive、visible/source membership及identityBeforeCheck仍联合判定继续或退出。"
+        ],
+        "retainedIndependentFacts": [
+          "确切recovery capability和identity版本必须保留；这里只标实际覆盖未完成，不建议为计数强并到总状态。"
+        ],
+        "validation": "docs/state-model-refactor.md#b02"
+      }
     },
     {
       "id": "auth.nodeimage-doc",
@@ -403,15 +514,19 @@
     },
     {
       "id": "auth.session-clear",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 2,
       "owner": "src/features/account/useSessionController.ts",
-      "invariant": "Native按站清除确认后才删旧键，每await后新clear/身份/probe都可使旧工作失效。",
-      "consumer": "src/features/account/useAccountRuntime.ts#clearManagedLoginState command",
-      "cannotDerive": "在useSessionController集中ClearSessionOperation(native-clearing/legacy-cleaning/settled complete|partial)，保留三种独立guard和allSettled部分失败语义。",
-      "tests": ["tests/ui/account/session-controller-browser-flow.test.tsx"],
-      "evidenceGap": "实际清除须用户按站授权；审查不读凭据或删除登录态。"
+      "invariant": "Native按站清除完成后全量尝试旧键清理，credential generation、forum session epoch、account probe owner仍有效才发布cleared；Native失败不清新状态，旧键部分失败保留cleared与partial诊断。",
+      "consumer": "src/features/account/useAccountRuntime.ts#beginAccountSessionClear -> useSessionController.ts#clearManagedLoginState -> useAccountController.ts#clearLogin/clearYaohuoLogin/clearLinuxDoCookie",
+      "cannotDerive": "三个失效时钟独立；单入口async控制流已唯一拥有Native清除→旧键清理→最终发布的排序，消费者只等待Promise<boolean>，没有进度阶段消费者，另加phase会复制已有控制流。",
+      "tests": [
+        "tests/ui/account/session-controller-browser-flow.test.tsx",
+        "tests/ui/account/account-runtime.test.tsx",
+        "tests/ui/account/account-controller.test.tsx"
+      ],
+      "evidenceGap": "B02深入复核后由计划重构改为保留，不计实现信用；Native/旧clear/旧键失败分支由受控测试证明，未执行主设备真实清登录操作。"
     },
     {
       "id": "auth.site-session",
@@ -2273,7 +2388,7 @@
       "batch": 8,
       "owner": "src/features/topic/rendering/contentMediaRenderers.tsx",
       "invariant": "视频贴纸文档的READY只同步claim一次，buffered watermark只前进；claim后旧RAF/重复DOM事件不能重复发布READY。",
-      "consumer": "src/app/AppRoot.tsx :: <AppComposition /> ; src/app/AppComposition.tsx :: <AppRoutes",
+      "consumer": "src/features/topic/rendering/useHtmlRenderingController.tsx#createContentMediaRenderers -> contentMediaRenderers.tsx#ForumVideoStickerWebView/videoStickerBrowserDocument/videoStickerBrowserHtml",
       "cannotDerive": "settled是READY发射许可而lastBufferedEnd是单调进度数值，error并非同一终态；不能合并或把DOM显示状态当权威。",
       "tests": ["tests/ui/topic/topic-image-loading.test.tsx"],
       "evidenceGap": "现有topic-image-loading用字符串断言和手动onMessage证明宿主行为，没有执行实际IIFE的DOM事件/RAF链；需VM或真实WebView补证后判定是否重构。"
