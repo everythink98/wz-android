@@ -122,6 +122,20 @@ private class SvgPosterException(
   cause: Throwable? = null
 ) : Exception(message, cause)
 
+private data class SvgRenderPage(val prepared: PreparedPoster, val url: String)
+
+private sealed class SvgRenderStage {
+  object Reserved : SvgRenderStage()
+  object Queued : SvgRenderStage()
+  object Preparing : SvgRenderStage()
+  data class Loading(val page: SvgRenderPage) : SvgRenderStage()
+  data class AwaitingVisual(val page: SvgRenderPage) : SvgRenderStage()
+  data class AwaitingCapture(val page: SvgRenderPage) : SvgRenderStage()
+  data class Capturing(val page: SvgRenderPage) : SvgRenderStage()
+  data class Encoding(val page: SvgRenderPage) : SvgRenderStage()
+  object Settled : SvgRenderStage()
+}
+
 private class RenderRequest(
   val id: Long,
   val context: Context,
@@ -131,13 +145,66 @@ private class RenderRequest(
   val promise: Promise
 ) {
   val deadlineUptimeMs = SystemClock.uptimeMillis() + totalTimeoutMs
-  var settled = false
-  var expectedPageUrl: String? = null
-  var prepared: PreparedPoster? = null
-  var visualStateRequested = false
-  var captureStarted = false
+  private var stage: SvgRenderStage = SvgRenderStage.Reserved
+  val settled: Boolean get() = stage === SvgRenderStage.Settled
+  val expectedPageUrl: String? get() = when (val current = stage) {
+    is SvgRenderStage.Loading -> current.page.url
+    is SvgRenderStage.AwaitingVisual -> current.page.url
+    is SvgRenderStage.AwaitingCapture -> current.page.url
+    is SvgRenderStage.Capturing -> current.page.url
+    is SvgRenderStage.Encoding -> current.page.url
+    else -> null
+  }
   var totalTimeout: Runnable? = null
   var visualTimeout: Runnable? = null
+
+  fun queued() {
+    check(stage === SvgRenderStage.Reserved)
+    stage = SvgRenderStage.Queued
+  }
+
+  fun prepare(): Boolean {
+    if (stage !== SvgRenderStage.Queued) return false
+    stage = SvgRenderStage.Preparing
+    return true
+  }
+
+  fun load(prepared: PreparedPoster, url: String): Boolean {
+    if (stage !== SvgRenderStage.Preparing) return false
+    stage = SvgRenderStage.Loading(SvgRenderPage(prepared, url))
+    return true
+  }
+
+  fun awaitVisual(url: String): SvgRenderPage? {
+    val current = stage as? SvgRenderStage.Loading ?: return null
+    if (current.page.url != url) return null
+    stage = SvgRenderStage.AwaitingVisual(current.page)
+    return current.page
+  }
+
+  fun visualReady(page: SvgRenderPage): Boolean {
+    val current = stage as? SvgRenderStage.AwaitingVisual ?: return false
+    if (current.page !== page) return false
+    stage = SvgRenderStage.AwaitingCapture(page)
+    return true
+  }
+
+  fun capture(): SvgRenderPage? {
+    val current = stage as? SvgRenderStage.AwaitingCapture ?: return null
+    stage = SvgRenderStage.Capturing(current.page)
+    return current.page
+  }
+
+  fun encoding(page: SvgRenderPage) {
+    val current = stage as? SvgRenderStage.Capturing ?: return
+    if (current.page === page) stage = SvgRenderStage.Encoding(page)
+  }
+
+  fun settle(): Boolean {
+    if (settled) return false
+    stage = SvgRenderStage.Settled
+    return true
+  }
 }
 
 internal fun validateDecodedSvgSize(bytes: ByteArray) {
@@ -454,6 +521,18 @@ private fun preparePoster(request: RenderRequest): PreparedPoster {
   )
 }
 
+internal fun drawSvgPosterBitmap(bitmap: Bitmap, draw: (Canvas) -> Unit): Bitmap {
+  try {
+    val canvas = Canvas(bitmap)
+    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+    draw(canvas)
+    return bitmap
+  } catch (error: Throwable) {
+    bitmap.recycle()
+    throw error
+  }
+}
+
 private fun writePosterBitmap(bitmap: Bitmap, outputFile: File) {
   val tempFile = File(outputFile.parentFile, "." + outputFile.nameWithoutExtension + ".tmp")
   if (tempFile.exists()) {
@@ -564,6 +643,12 @@ private object SvgDocumentFetcherRuntime {
   }
 }
 
+private sealed class SvgRendererLease {
+  object Empty : SvgRendererLease()
+  data class Ready(val view: WebView) : SvgRendererLease()
+  data class Clearing(val view: WebView) : SvgRendererLease()
+}
+
 private object SvgPosterRendererRuntime {
   private val mainHandler = Handler(Looper.getMainLooper())
   private val workExecutor = Executors.newSingleThreadExecutor { runnable ->
@@ -573,8 +658,12 @@ private object SvgPosterRendererRuntime {
   private val admittedRequests = AtomicInteger(0)
   private val queue = ArrayDeque<RenderRequest>()
   private var active: RenderRequest? = null
-  private var webView: WebView? = null
-  private var clearingRenderer = false
+  private var rendererLease: SvgRendererLease = SvgRendererLease.Empty
+  private val webView: WebView? get() = when (val lease = rendererLease) {
+    is SvgRendererLease.Ready -> lease.view
+    is SvgRendererLease.Clearing -> lease.view
+    SvgRendererLease.Empty -> null
+  }
   private val webViewCreations = AtomicInteger(0)
   private val webViewDestructions = AtomicInteger(0)
 
@@ -618,6 +707,7 @@ private object SvgPosterRendererRuntime {
         return@post
       }
       mainHandler.postDelayed(timeout, remainingMs)
+      request.queued()
       queue.addLast(request)
       startNext()
     }
@@ -637,12 +727,12 @@ private object SvgPosterRendererRuntime {
 
   private fun startNext() {
     check(Looper.myLooper() == Looper.getMainLooper())
-    if (active != null || clearingRenderer) {
+    if (active != null || rendererLease is SvgRendererLease.Clearing) {
       return
     }
     while (queue.isNotEmpty()) {
       val request = queue.removeFirst()
-      if (request.settled) {
+      if (!request.prepare()) {
         continue
       }
       active = request
@@ -653,7 +743,6 @@ private object SvgPosterRendererRuntime {
             if (!isCurrent(request)) {
               return@post
             }
-            request.prepared = prepared
             if (prepared.cacheHit) {
               succeed(request, prepared)
             } else {
@@ -716,8 +805,9 @@ private object SvgPosterRendererRuntime {
       }
 
       override fun onPageFinished(view: WebView, url: String) {
-        if (clearingRenderer && webView === view && url == "about:blank" && view.url == "about:blank") {
-          clearingRenderer = false
+        val lease = rendererLease
+        if (lease is SvgRendererLease.Clearing && lease.view === view && url == "about:blank" && view.url == "about:blank") {
+          rendererLease = SvgRendererLease.Ready(view)
           startNext()
           return
         }
@@ -747,7 +837,7 @@ private object SvgPosterRendererRuntime {
         return true
       }
     }
-    webView = created
+    rendererLease = SvgRendererLease.Ready(created)
     return created
   }
 
@@ -772,7 +862,7 @@ private object SvgPosterRendererRuntime {
       view.layout(0, 0, prepared.dimensions.width, prepared.dimensions.height)
       view.scrollTo(0, 0)
       val pageUrl = "https://svg-renderer.invalid/render/" + request.id + "/"
-      request.expectedPageUrl = pageUrl
+      if (!request.load(prepared, pageUrl)) return
       view.loadDataWithBaseURL(pageUrl, prepared.html, "text/html", "UTF-8", pageUrl)
     } catch (error: Exception) {
       fail(request, "svg_render_failed", error.message ?: "Chromium SVG 渲染启动失败。", error)
@@ -781,10 +871,8 @@ private object SvgPosterRendererRuntime {
 
   private fun pageFinished(view: WebView, url: String) {
     val request = active ?: return
-    if (!isCurrent(request) || request.expectedPageUrl != url || request.visualStateRequested) {
-      return
-    }
-    request.visualStateRequested = true
+    if (!isCurrent(request) || webView !== view) return
+    val page = request.awaitVisual(url) ?: return
     val visualTimeout = Runnable {
       fail(request, "svg_visual_timeout", "Chromium SVG 稳定帧等待超时。", null)
     }
@@ -793,7 +881,7 @@ private object SvgPosterRendererRuntime {
     try {
       view.postVisualStateCallback(request.id, object : WebView.VisualStateCallback() {
         override fun onComplete(requestId: Long) {
-          if (requestId != request.id || !isCurrent(request)) {
+          if (requestId != request.id || !isCurrent(request) || webView !== view || !request.visualReady(page)) {
             return
           }
           request.visualTimeout?.let(mainHandler::removeCallbacks)
@@ -808,23 +896,18 @@ private object SvgPosterRendererRuntime {
   }
 
   private fun capturePoster(request: RenderRequest, view: WebView) {
-    val prepared = request.prepared ?: run {
-      fail(request, "svg_render_failed", "SVG 海报渲染状态无效。", null)
-      return
-    }
-    if (!isCurrent(request) || request.captureStarted) {
-      return
-    }
-    request.captureStarted = true
+    if (!isCurrent(request) || webView !== view) return
+    val page = request.capture() ?: return
+    val prepared = page.prepared
     android.os.Trace.beginSection("WZ.Svg.Poster.Capture")
     val bitmap = try {
-      Bitmap.createBitmap(
-        prepared.dimensions.width,
-        prepared.dimensions.height,
-        Bitmap.Config.ARGB_8888
-      ).also { target ->
-        val canvas = Canvas(target)
-        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+      drawSvgPosterBitmap(
+        Bitmap.createBitmap(
+          prepared.dimensions.width,
+          prepared.dimensions.height,
+          Bitmap.Config.ARGB_8888
+        )
+      ) { canvas ->
         android.os.Trace.beginSection("WZ.Svg.Poster.Draw")
         try {
           view.draw(canvas)
@@ -841,6 +924,8 @@ private object SvgPosterRendererRuntime {
     } finally {
       android.os.Trace.endSection()
     }
+    // Encoding owns this physical bitmap even if the request settles during draw or before the worker runs.
+    request.encoding(page)
     workExecutor.execute {
       try {
         writePosterBitmap(bitmap, prepared.outputFile)
@@ -903,7 +988,7 @@ private object SvgPosterRendererRuntime {
       view.stopLoading()
       // A subsequent loadDataWithBaseURL can be treated as a reload while the previous
       // data URL is still committed. Await this navigation before reusing the renderer.
-      clearingRenderer = true
+      rendererLease = SvgRendererLease.Clearing(view)
       view.loadUrl("about:blank")
     } catch (_: Exception) {
       destroyRenderer(view)
@@ -912,8 +997,7 @@ private object SvgPosterRendererRuntime {
 
   private fun destroyRenderer(view: WebView) {
     if (webView === view) {
-      webView = null
-      clearingRenderer = false
+      rendererLease = SvgRendererLease.Empty
     }
     try {
       view.stopLoading()
@@ -928,10 +1012,7 @@ private object SvgPosterRendererRuntime {
 
   private fun settle(request: RenderRequest): Boolean {
     check(Looper.myLooper() == Looper.getMainLooper())
-    if (request.settled) {
-      return false
-    }
-    request.settled = true
+    if (!request.settle()) return false
     request.totalTimeout?.let(mainHandler::removeCallbacks)
     request.visualTimeout?.let(mainHandler::removeCallbacks)
     request.totalTimeout = null
@@ -958,13 +1039,14 @@ internal fun enqueueSvgPosterForTest(
   context: Context,
   svgBase64: String,
   cacheKey: String,
-  promise: Promise
+  promise: Promise,
+  timeoutMs: Long = TOTAL_RENDER_TIMEOUT_MS
 ) {
   SvgPosterRendererRuntime.enqueue(
     context.applicationContext,
     svgBase64,
     cacheKey,
-    TOTAL_RENDER_TIMEOUT_MS,
+    timeoutMs,
     promise
   )
 }

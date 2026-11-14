@@ -276,6 +276,15 @@ class TopicShareCaptureInstrumentedTest {
         SystemClock.sleep(25)
       }
       val captured = checkNotNull(file) { "Share sheet did not export its PNG" }
+      val chooserPackage = checkNotNull(context.packageManager.resolveActivity(
+        Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/png"), ""), 0)?.activityInfo?.packageName)
+      val chooserDeadline = SystemClock.elapsedRealtime() + 20_000
+      while (SystemClock.elapsedRealtime() < chooserDeadline &&
+        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != chooserPackage) {
+        SystemClock.sleep(25)
+      }
+      assertEquals("system share chooser must appear", chooserPackage,
+        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString())
       val bitmap = checkNotNull(BitmapFactory.decodeFile(captured.absolutePath))
       try {
         assertEquals(1440, bitmap.width)
@@ -302,15 +311,6 @@ class TopicShareCaptureInstrumentedTest {
           putString("stream", "\nSHARE_SHEET_PNG size=${bitmap.width}x${bitmap.height} bytes=${captured.length()} stripeTransitions=$maximumTransitions\n")
         })
       } finally { bitmap.recycle() }
-      val chooserPackage = checkNotNull(context.packageManager.resolveActivity(
-        Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/png"), ""), 0)?.activityInfo?.packageName)
-      val chooserDeadline = SystemClock.elapsedRealtime() + 20_000
-      while (SystemClock.elapsedRealtime() < chooserDeadline &&
-        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() != chooserPackage) {
-        SystemClock.sleep(25)
-      }
-      assertEquals("system share chooser must appear", chooserPackage,
-        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString())
       instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
       awaitText("上下滑动预览")
     } finally {

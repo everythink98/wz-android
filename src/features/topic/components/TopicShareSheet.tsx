@@ -155,6 +155,76 @@ const ShareTableCell: CustomBlockRenderer = ({ TDefaultRenderer, ...props }) => 
 const defaultTextProps = { selectable: false };
 const renderersProps = { a: { onPress: () => undefined } };
 
+type ShareCaptureRun = { action: 'share' | 'save'; preview: number; abort: AbortController };
+type ShareCaptureState =
+  { phase: 'idle' } | { phase: 'waiting-layout' | 'capturing' | 'sharing' | 'saving'; run: ShareCaptureRun };
+
+/** Admission and cancellation belong to one export; preview readiness remains an independent native observation. */
+class TopicShareCaptureSession {
+  private state: ShareCaptureState = { phase: 'idle' };
+  private mounted = true;
+  private preview = 0;
+  private ready = false;
+
+  constructor(private publishOperation: (action: 'share' | 'save' | null) => void) {}
+
+  mount() {
+    this.mounted = true;
+  }
+  close() {
+    this.mounted = false;
+    this.invalidateCapture();
+  }
+  isMounted() {
+    return this.mounted;
+  }
+  acceptsPreview(preview: number) {
+    return this.mounted && preview === this.preview;
+  }
+  observeReady(ready: boolean) {
+    this.ready = ready;
+  }
+  invalidateCapture() {
+    if (this.state.phase !== 'idle') this.state.run.abort.abort();
+  }
+
+  retryPreview() {
+    if (!this.mounted || this.state.phase !== 'idle') return null;
+    this.preview += 1;
+    return this.preview;
+  }
+
+  claim(action: 'share' | 'save') {
+    if (!this.ready || !this.mounted || this.state.phase !== 'idle') return null;
+    const run: ShareCaptureRun = { action, preview: this.preview, abort: new AbortController() };
+    this.state = { phase: 'waiting-layout', run };
+    this.publishOperation(action);
+    return run;
+  }
+
+  owns(run: ShareCaptureRun) {
+    return this.mounted && this.state.phase !== 'idle' && this.state.run === run && run.preview === this.preview;
+  }
+
+  capture(run: ShareCaptureRun) {
+    if (!this.owns(run) || !this.ready) return false;
+    this.state = { phase: 'capturing', run };
+    return true;
+  }
+
+  handoff(run: ShareCaptureRun) {
+    if (!this.owns(run)) return false;
+    this.state = { phase: run.action === 'share' ? 'sharing' : 'saving', run };
+    return true;
+  }
+
+  finish(run: ShareCaptureRun) {
+    if (this.state.phase === 'idle' || this.state.run !== run) return;
+    this.state = { phase: 'idle' };
+    if (this.mounted) this.publishOperation(null);
+  }
+}
+
 export function TopicShareSheet({
   topic,
   mediaContext,
@@ -213,14 +283,11 @@ export function TopicShareSheet({
   );
   const stackActions = windowWidth < 360 || settings.fontScale * PixelRatio.getFontScale() > 1.3;
   const scrollRef = useRef<ScrollView>(null);
-  const mounted = useRef(true);
-  const busyRef = useRef(false);
-  const captureAbort = useRef<AbortController | null>(null);
   const [operation, setOperation] = useState<'share' | 'save' | null>(null);
+  const [capture] = useState(() => new TopicShareCaptureSession(setOperation));
   const [saved, setSaved] = useState(false);
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [attempt, setAttempt] = useState(0);
-  const currentAttempt = useRef(0);
   const [completed, setCompleted] = useState<ReadonlySet<number>>(new Set());
   const [height, setHeight] = useState(0);
   const [imageError, setImageError] = useState('');
@@ -236,15 +303,15 @@ export function TopicShareSheet({
   const source = useMemo(() => ({ html: document.kind === 'ready' ? document.html : '' }), [document]);
   const onImageComplete = useCallback(
     (index: number) => {
-      if (!mounted.current || currentAttempt.current !== attempt) return;
+      if (!capture.acceptsPreview(attempt)) return;
       setCompleted((current) => (current.has(index) ? current : new Set([...current, index])));
     },
-    [attempt]
+    [attempt, capture]
   );
   const onImageStart = useCallback(
     (index: number) => {
-      if (!mounted.current || currentAttempt.current !== attempt) return;
-      captureAbort.current?.abort();
+      if (!capture.acceptsPreview(attempt)) return;
+      capture.invalidateCapture();
       setCompleted((current) => {
         if (!current.has(index)) return current;
         const next = new Set(current);
@@ -252,11 +319,11 @@ export function TopicShareSheet({
         return next;
       });
     },
-    [attempt]
+    [attempt, capture]
   );
   const onImageError = useCallback(() => {
-    if (mounted.current && currentAttempt.current === attempt) setImageError('有图片未能加载，请重试。');
-  }, [attempt]);
+    if (capture.acceptsPreview(attempt)) setImageError('有图片未能加载，请重试。');
+  }, [attempt, capture]);
   const progress = useMemo(
     () => ({
       completed,
@@ -270,19 +337,16 @@ export function TopicShareSheet({
     [completed, contentWidth, mediaContext, nodeSeekUserAgent, onImageComplete, onImageError, onImageStart]
   );
   useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      captureAbort.current?.abort();
-    };
-  }, []);
+    capture.mount();
+    return () => capture.close();
+  }, [capture]);
   useEffect(() => {
     if (completed.size >= imageCount) return;
     const timeout = setTimeout(() => {
-      if (mounted.current && currentAttempt.current === attempt) setImageError('图片加载超时，请重试。');
+      if (capture.acceptsPreview(attempt)) setImageError('图片加载超时，请重试。');
     }, 30_000);
     return () => clearTimeout(timeout);
-  }, [attempt, completed.size, imageCount]);
+  }, [attempt, capture, completed.size, imageCount]);
 
   const density = PixelRatio.get();
   // Android always redraws at export resolution; view-shot retains the full native bitmap on other platforms.
@@ -295,25 +359,22 @@ export function TopicShareSheet({
         ? '正文过长，无法安全生成单张图片，请使用链接分享。'
         : imageError;
   const ready = !error && height > 0 && completed.size === imageCount;
-  const canCapture = useRef(false);
-  canCapture.current = ready;
+  capture.observeReady(ready);
   useEffect(() => {
-    if (!ready) captureAbort.current?.abort();
-  }, [ready]);
+    if (!ready) capture.invalidateCapture();
+  }, [capture, ready]);
   const close = () => {
-    mounted.current = false;
-    captureAbort.current?.abort();
+    capture.close();
     onClose();
   };
   const back = () => {
-    mounted.current = false;
-    captureAbort.current?.abort();
+    capture.close();
     (onBack || onClose)();
   };
   const retry = () => {
-    if (busyRef.current || !mounted.current) return;
-    currentAttempt.current += 1;
-    setAttempt(currentAttempt.current);
+    const nextAttempt = capture.retryPreview();
+    if (nextAttempt === null) return;
+    setAttempt(nextAttempt);
     setCompleted(new Set());
     setHeight(0);
     setImageError('');
@@ -321,18 +382,17 @@ export function TopicShareSheet({
     setSaved(false);
   };
   const exportImage = async (action: 'share' | 'save') => {
-    if (!ready || busyRef.current || !mounted.current) return;
-    busyRef.current = true;
-    setOperation(action);
+    if (!ready) return;
+    const run = capture.claim(action);
+    if (!run) return;
     setShareError('');
-    const abort = new AbortController();
-    captureAbort.current = abort;
+    const { abort } = run;
     let uri: string | undefined;
     let release: (() => void) | undefined;
     try {
       // Wait for the layout after the final decoded image before reading native pixels.
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      if (!mounted.current || !canCapture.current) return;
+      if (!capture.capture(run)) return;
       if (Platform.OS === 'android') {
         const captured = await captureLongTopicImage(scrollRef.current, abort.signal);
         uri = captured.uri;
@@ -349,24 +409,22 @@ export function TopicShareSheet({
         const capturedUri = uri;
         release = () => viewShot.releaseCapture(capturedUri);
       }
-      if (!mounted.current) return;
-      if (action === 'share') await shareTopicImageFile(uri, topic.title, () => mounted.current);
+      if (!capture.handoff(run)) return;
+      if (action === 'share') await shareTopicImageFile(uri, topic.title, () => capture.owns(run));
       else {
         // Load the gallery module only when the user chooses to save.
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const imageSave: typeof import('@/platform/media/imageSave') = require('@/platform/media/imageSave');
         await imageSave.saveLocalImageFileToLibrary(uri, () => {
-          if (!mounted.current) throw new Error('图片保存已取消');
+          if (!capture.owns(run)) throw new Error('图片保存已取消');
         });
-        if (mounted.current) setSaved(true);
+        if (capture.owns(run)) setSaved(true);
       }
     } catch (cause) {
-      if (mounted.current) setShareError(`${action === 'share' ? '分享' : '保存'}失败：${errorMessage(cause)}`);
+      if (capture.owns(run)) setShareError(`${action === 'share' ? '分享' : '保存'}失败：${errorMessage(cause)}`);
     } finally {
       release?.();
-      captureAbort.current = null;
-      busyRef.current = false;
-      if (mounted.current) setOperation(null);
+      capture.finish(run);
     }
   };
 
@@ -409,7 +467,7 @@ export function TopicShareSheet({
                   contentContainerStyle={styles.card}
                   removeClippedSubviews={false}
                   onContentSizeChange={(_width, nextHeight) => {
-                    if (mounted.current && currentAttempt.current === attempt) setHeight(nextHeight);
+                    if (capture.acceptsPreview(attempt)) setHeight(nextHeight);
                   }}
                 >
                   <View style={styles.brandRow}>

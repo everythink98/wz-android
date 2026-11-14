@@ -67,6 +67,131 @@ type ForumContentVideoProps = {
 
 type ForumMediaPlayerSource = Awaited<ReturnType<typeof forumMediaPlayerSourceFromUrl>>;
 
+type VideoRuntimeLeaseSnapshot = {
+  owner: VideoRuntimeLease;
+  admissionAttemptId: string;
+  generation: number;
+  requestKey: string;
+} & ({ status: 'acquiring' | 'failed' } | { status: 'retained'; source: ForumMediaPlayerSource });
+
+type PhysicalVideoLease = 'unclaimed' | 'held' | 'release-scheduled' | 'released';
+
+/** The runtime retain survives row recycling until its native fullscreen player is disposed. */
+class VideoRuntimeLease {
+  private phase: 'acquiring' | 'resolving' | 'retained' | 'failed' | 'retired' = 'acquiring';
+  private physicalLease: PhysicalVideoLease = 'unclaimed';
+  private handle: MediaPlaybackHandle | null = null;
+  private readonly diagnostic: ReturnType<typeof playerLoadDiagnosticAttempt>;
+
+  constructor(
+    readonly key: string,
+    private generation: number,
+    private profile: Pick<ForumContentVideoProps, 'mediaContext' | 'nodeSeekMediaUserAgent' | 'referrerPolicy' | 'src'>,
+    private admission: ForumContentMediaAdmission,
+    private requestKey: string,
+    private publish: (snapshot: VideoRuntimeLeaseSnapshot) => void,
+    private retryGeneration: (generation: number) => void
+  ) {
+    this.diagnostic = playerLoadDiagnosticAttempt(profile.src, 'video', generation);
+  }
+
+  private snapshot(value: { status: 'acquiring' | 'failed' } | { status: 'retained'; source: ForumMediaPlayerSource }) {
+    this.publish({
+      owner: this,
+      admissionAttemptId: this.admission.attemptId,
+      generation: this.generation,
+      requestKey: this.requestKey,
+      ...value
+    });
+  }
+
+  async start() {
+    this.diagnostic.stage('runtime-lease');
+    this.snapshot({ status: 'acquiring' });
+    try {
+      const lease = await retainReadNetworkRuntimeGeneration(this.generation);
+      if (!lease?.retained) {
+        if (this.phase === 'retired') return;
+        const currentGeneration = lease?.generation ?? getReadNetworkRuntimeSnapshot().generation;
+        if (
+          Number.isSafeInteger(currentGeneration) &&
+          currentGeneration >= 0 &&
+          currentGeneration !== this.generation
+        ) {
+          this.retryGeneration(currentGeneration);
+        } else {
+          this.failed();
+        }
+        return;
+      }
+      this.physicalLease = 'held';
+      if (this.phase === 'retired') {
+        this.release();
+        return;
+      }
+      this.phase = 'resolving';
+      const source = await forumMediaPlayerSourceFromUrl(this.profile.src, {
+        kind: 'video',
+        mediaContext: this.profile.mediaContext,
+        nodeSeekUserAgent: this.profile.nodeSeekMediaUserAgent,
+        referrerPolicy: this.profile.referrerPolicy,
+        runtimeGeneration: this.generation
+      });
+      if (this.isRetired()) return;
+      this.phase = 'retained';
+      this.diagnostic.stage('player-replace');
+      this.snapshot({ status: 'retained', source });
+    } catch (error) {
+      this.failed(error);
+    }
+  }
+
+  private isRetired() {
+    return this.phase === 'retired';
+  }
+
+  attach(handle: MediaPlaybackHandle) {
+    this.handle = handle;
+  }
+
+  status(status: string, error?: unknown) {
+    if (this.phase !== 'retained') return false;
+    if (status === 'readyToPlay') {
+      this.diagnostic.ready();
+      this.admission.settle('displayed');
+    } else if (status === 'error') {
+      this.diagnostic.failed(error);
+      this.admission.settle('error');
+    }
+    return true;
+  }
+
+  private failed(error?: unknown) {
+    if (this.phase === 'retired') return;
+    this.phase = 'failed';
+    this.diagnostic.failed(error);
+    this.snapshot({ status: 'failed' });
+    this.admission.settle('error');
+  }
+
+  retire() {
+    if (this.phase === 'retired') return;
+    this.phase = 'retired';
+    this.diagnostic.canceled();
+    if (this.physicalLease !== 'held') return;
+    this.physicalLease = 'release-scheduled';
+    if (this.handle) this.handle.afterDispose(() => this.release());
+    else this.release();
+  }
+
+  private release() {
+    if (this.physicalLease !== 'held' && this.physicalLease !== 'release-scheduled') return;
+    this.physicalLease = 'released';
+    this.handle = null;
+    void releaseReadNetworkRuntimeGeneration(this.generation).catch(() => undefined);
+  }
+}
+
 export function ForumContentVideo({ admission = UNMANAGED_MEDIA_ADMISSION, ...props }: ForumContentVideoProps) {
   return admission.attemptId === 'unmanaged' ? (
     <UnmanagedForumContentVideo admission={admission} {...props} />
@@ -100,25 +225,20 @@ function ForumContentVideoRuntime({
     runtimeSnapshot?.triggerSource === mediaContext.contentSource ? runtimeSnapshot.generation : 0;
   const [playerGeneration, setPlayerGeneration] = useState(() => getReadNetworkRuntimeSnapshot().generation);
   const [playerStatus, setPlayerStatus] = useState('idle');
-  const [runtimeLease, setRuntimeLease] = useState<
-    | ({ admissionAttemptId: string; generation: number; requestKey: string } & (
-        { status: 'acquiring' | 'failed' } | { status: 'retained'; source: ForumMediaPlayerSource }
-      ))
-    | null
-  >(null);
+  const [runtimeLease, setRuntimeLease] = useState<VideoRuntimeLeaseSnapshot | null>(null);
   const requestKey = JSON.stringify([mediaContext, nodeSeekMediaUserAgent, referrerPolicy, src]);
   const request = useCommittedRef({ mediaContext, nodeSeekMediaUserAgent, referrerPolicy, src });
   const pendingRetryGeneration = useRef(0);
   const acquiredAttempt = useRef(admission.attemptId);
   const hasBeenReady = useRef(false);
-  const loadDiagnosticRef = useRef<ReturnType<typeof playerLoadDiagnosticAttempt> | null>(null);
-  const playerHandles = useRef(new Map<string, MediaPlaybackHandle>());
+  const activeLease = useRef<VideoRuntimeLease | null>(null);
   const leaseKey = JSON.stringify([admission.attemptId, playerGeneration, requestKey]);
+  const renderingLease = runtimeLease?.status === 'retained' ? runtimeLease.owner : null;
   const handlePlayer = useCallback(
     (handle: MediaPlaybackHandle) => {
-      playerHandles.current.set(leaseKey, handle);
+      if (renderingLease && activeLease.current === renderingLease) renderingLease.attach(handle);
     },
-    [leaseKey]
+    [renderingLease]
   );
 
   useEffect(() => {
@@ -150,89 +270,21 @@ function ForumContentVideoRuntime({
         return undefined;
       }
     }
-    let disposed = false;
-    let retained = false;
-    const profile = request.current;
-    const diagnostic = playerLoadDiagnosticAttempt(src, 'video', playerGeneration);
-    loadDiagnosticRef.current = diagnostic;
-    diagnostic.stage('runtime-lease');
-    setPlayerStatus('idle');
-    setRuntimeLease({
-      admissionAttemptId: admission.attemptId,
-      generation: playerGeneration,
+    const owner = new VideoRuntimeLease(
+      leaseKey,
+      playerGeneration,
+      request.current,
+      admission,
       requestKey,
-      status: 'acquiring'
-    });
-    void retainReadNetworkRuntimeGeneration(playerGeneration)
-      .then(async (lease) => {
-        if (!lease?.retained) {
-          if (!disposed) {
-            const currentGeneration = lease?.generation ?? getReadNetworkRuntimeSnapshot().generation;
-            if (
-              Number.isSafeInteger(currentGeneration) &&
-              currentGeneration >= 0 &&
-              currentGeneration !== playerGeneration
-            ) {
-              setPlayerGeneration(currentGeneration);
-            } else {
-              setRuntimeLease({
-                admissionAttemptId: admission.attemptId,
-                generation: playerGeneration,
-                requestKey,
-                status: 'failed'
-              });
-              admission.settle('error');
-              diagnostic.failed();
-            }
-          }
-          return;
-        }
-        if (disposed) {
-          void releaseReadNetworkRuntimeGeneration(playerGeneration).catch(() => undefined);
-          return;
-        }
-        retained = true;
-        const source = await forumMediaPlayerSourceFromUrl(profile.src, {
-          kind: 'video',
-          mediaContext: profile.mediaContext,
-          nodeSeekUserAgent: profile.nodeSeekMediaUserAgent,
-          referrerPolicy: profile.referrerPolicy,
-          runtimeGeneration: playerGeneration
-        });
-        if (disposed) return;
-        diagnostic.stage('player-replace');
-        setRuntimeLease({
-          admissionAttemptId: admission.attemptId,
-          generation: playerGeneration,
-          requestKey,
-          status: 'retained',
-          source
-        });
-      })
-      .catch((error) => {
-        if (!disposed) {
-          diagnostic.failed(error);
-          setRuntimeLease({
-            admissionAttemptId: admission.attemptId,
-            generation: playerGeneration,
-            requestKey,
-            status: 'failed'
-          });
-          admission.settle('error');
-        }
-      });
+      setRuntimeLease,
+      setPlayerGeneration
+    );
+    activeLease.current = owner;
+    setPlayerStatus('idle');
+    void owner.start();
     return () => {
-      disposed = true;
-      diagnostic.canceled();
-      if (retained) {
-        const release = () => {
-          playerHandles.current.delete(leaseKey);
-          void releaseReadNetworkRuntimeGeneration(playerGeneration).catch(() => undefined);
-        };
-        const handle = playerHandles.current.get(leaseKey);
-        if (handle) handle.afterDispose(release);
-        else release();
-      }
+      if (activeLease.current === owner) activeLease.current = null;
+      owner.retire();
     };
   }, [admission.admitted, admission.attemptId, admission.settle, leaseKey, playerGeneration, request, requestKey, src]);
 
@@ -249,18 +301,14 @@ function ForumContentVideoRuntime({
 
   const handleStatusChange = useCallback(
     (status: string, error?: unknown) => {
+      const owner = renderingLease;
+      if (!owner || activeLease.current !== owner) return;
       const nextStatus = status || 'idle';
+      if (!owner.status(nextStatus, error)) return;
       setPlayerStatus(nextStatus);
-      if (nextStatus === 'readyToPlay') {
-        hasBeenReady.current = true;
-        loadDiagnosticRef.current?.ready();
-        admission.settle('displayed');
-      } else if (nextStatus === 'error') {
-        loadDiagnosticRef.current?.failed(error);
-        admission.settle('error');
-      }
+      if (nextStatus === 'readyToPlay') hasBeenReady.current = true;
     },
-    [admission.settle]
+    [renderingLease]
   );
 
   if (!admission.admitted) {
@@ -357,9 +405,37 @@ function ForumContentVideoPlayer({
   statusCallback.current = onStatusChange;
   const sourceRef = useRef(source);
   sourceRef.current = source;
-  const [laidOutPlayer, setLaidOutPlayer] = useState<VideoPlayer | null>(null);
+  const [presentation, setPresentation] = useState<{
+    player: VideoPlayer;
+    layout: 'waiting' | 'measured';
+    frame: 'waiting' | 'rendered';
+    playback: 'playing-or-paused' | 'ended';
+  }>(() => ({ player, layout: 'waiting', frame: 'waiting', playback: 'playing-or-paused' }));
+  const currentPlayer = useCommittedRef(player);
+  const observePlayer = useCallback(
+    (target: VideoPlayer, event: 'layout' | 'frame' | 'playing' | 'ended') => {
+      if (currentPlayer.current !== target) return;
+      setPresentation((previous) => {
+        const snapshot =
+          previous.player === target
+            ? previous
+            : {
+                player: target,
+                layout: 'waiting' as const,
+                frame: 'waiting' as const,
+                playback: 'playing-or-paused' as const
+              };
+        if (event === 'layout') return snapshot.layout === 'measured' ? snapshot : { ...snapshot, layout: 'measured' };
+        if (event === 'frame') return snapshot.frame === 'rendered' ? snapshot : { ...snapshot, frame: 'rendered' };
+        const playback = event === 'ended' ? 'ended' : 'playing-or-paused';
+        return snapshot.playback === playback ? snapshot : { ...snapshot, playback };
+      });
+    },
+    [currentPlayer]
+  );
+  const laidOut = presentation.player === player && presentation.layout === 'measured';
   useEffect(() => {
-    if (laidOutPlayer !== player) return;
+    if (!laidOut) return;
     let active = true;
     void player.replaceAsync(sourceRef.current).catch((error) => {
       if (active) statusCallback.current('error', error);
@@ -367,7 +443,7 @@ function ForumContentVideoPlayer({
     return () => {
       active = false;
     };
-  }, [laidOutPlayer, player]);
+  }, [laidOut, player]);
   const routePlayback = useMediaPlaybackSession();
   const [fallbackPlayback] = useState(() => new MediaPlaybackSession());
   const playback = routePlayback || fallbackPlayback;
@@ -382,22 +458,20 @@ function ForumContentVideoPlayer({
       handle.detach(() => undefined);
     };
   }, [mediaIdentity, onHandle, playback, player]);
-  const [ended, setEnded] = useState(false);
-  const [renderedPlayer, setRenderedPlayer] = useState<VideoPlayer | null>(null);
-  const hasReadyFrame = renderedPlayer === player;
+  const ended = presentation.player === player && presentation.playback === 'ended';
+  const hasReadyFrame = presentation.player === player && presentation.frame === 'rendered';
   useEffect(() => {
-    setEnded(false);
     const endSubscription = player.addListener('playToEnd', () => {
-      if (player.duration > 0) setEnded(true);
+      if (currentPlayer.current === player && player.duration > 0) observePlayer(player, 'ended');
     });
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
-      if (isPlaying) setEnded(false);
+      if (isPlaying) observePlayer(player, 'playing');
     });
     return () => {
       endSubscription.remove();
       playingSubscription.remove();
     };
-  }, [player]);
+  }, [currentPlayer, observePlayer, player]);
   const lastBufferedPositionRef = useRef(
     Number.isFinite(player.bufferedPosition) ? Math.max(0, player.bufferedPosition) : 0
   );
@@ -435,12 +509,12 @@ function ForumContentVideoPlayer({
       <VideoView
         key={sourceKey}
         onLayout={({ nativeEvent: { layout } }) => {
-          if (layout.width > 0 && layout.height > 0) setLaidOutPlayer(player);
+          if (layout.width > 0 && layout.height > 0) observePlayer(player, 'layout');
         }}
         contentFit="contain"
         fullscreenOptions={{ enable: true }}
         nativeControls
-        onFirstFrameRender={() => setRenderedPlayer(player)}
+        onFirstFrameRender={() => observePlayer(player, 'frame')}
         player={player}
         style={styles.video}
         surfaceType="textureView"

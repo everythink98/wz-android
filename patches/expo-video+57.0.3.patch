@@ -370,7 +370,7 @@ index 0000000..b77e1bf
 +  }
 +}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-index 45d3d7b9..a4cbb9db 100644
+index 45d3d7b9..a141e423 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
 @@ -8,12 +8,15 @@ import android.os.Bundle
@@ -401,30 +401,11 @@ index 45d3d7b9..a4cbb9db 100644
    private var videoPlayer: VideoPlayer? = null
    private lateinit var playerView: PlayerView
    private lateinit var videoView: VideoView
-@@ -38,14 +42,48 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -38,14 +42,29 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    private lateinit var options: FullscreenOptions
    private var orientationHelper: FullscreenActivityOrientationHelper? = null
    private var captioningChangeListener: CaptioningManager.CaptioningChangeListener? = null
-+  private var transitionFrame: ImageView? = null
-+  private val transitionListener = object : Player.Listener {
-+    override fun onRenderedFirstFrame() {
-+      videoPlayer?.player?.removeListener(this)
-+      // The decoder callback precedes composition; keep the last frame through that draw.
-+      transitionFrame?.postOnAnimation { transitionFrame?.postOnAnimation { clearTransitionFrame() } }
-+    }
-+
-+    override fun onPlayerError(error: PlaybackException) {
-+      clearTransitionFrame()
-+    }
-+  }
-+
-+  private fun clearTransitionFrame() {
-+    transitionFrame?.let {
-+      playerView.overlayFrameLayout?.removeView(it)
-+      it.setImageDrawable(null)
-+    }
-+    transitionFrame = null
-+  }
++  private var transitionFrame: FullscreenTransitionFrame? = null
  
    override fun onCreate(savedInstanceState: Bundle?) {
      super.onCreate(savedInstanceState)
@@ -451,7 +432,7 @@ index 45d3d7b9..a4cbb9db 100644
        options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
          intent.getSerializableExtra(INTENT_FULLSCREEN_OPTIONS_KEY, FullscreenOptions::class.java)
            ?: throw FullScreenOptionsNotFoundException()
-@@ -55,9 +93,6 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -55,9 +74,6 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
            ?: throw FullScreenOptionsNotFoundException()
        }
  
@@ -461,7 +442,7 @@ index 45d3d7b9..a4cbb9db 100644
        orientationHelper = FullscreenActivityOrientationHelper(
          this,
          options,
-@@ -69,33 +104,42 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -69,33 +85,41 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
          }
        )
        orientationHelper?.startOrientationEventListener()
@@ -473,13 +454,12 @@ index 45d3d7b9..a4cbb9db 100644
 +      requestedOrientation = options.orientation.toActivityOrientation()
 +
 +      (videoView.playerView.videoSurfaceView as? TextureView)?.takeUnless { videoView.shouldHideSurfaceView }?.bitmap?.let { bitmap ->
-+        transitionFrame = ImageView(this).apply {
++        val frame = ImageView(this).apply {
 +          importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
 +          scaleType = ImageView.ScaleType.FIT_CENTER
 +          setImageBitmap(bitmap)
 +        }
-+        playerView.overlayFrameLayout?.addView(transitionFrame, FrameLayout.LayoutParams(-1, -1))
-+        videoPlayer?.player?.addListener(transitionListener)
++        transitionFrame = FullscreenTransitionFrame(playerView.overlayFrameLayout, videoPlayer?.player, frame).also { it.install() }
 +      }
 +      videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
 +      videoPlayer?.player?.let {
@@ -524,7 +504,7 @@ index 45d3d7b9..a4cbb9db 100644
      hideStatusBar()
      setupFullscreenButton()
      val requiresLinearPlayback = videoPlayer?.requiresLinearPlayback ?: false
-@@ -121,16 +165,22 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -121,16 +145,22 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun finish() {
@@ -549,7 +529,7 @@ index 45d3d7b9..a4cbb9db 100644
      // Disable the exit transition
      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
        overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
-@@ -141,6 +191,11 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -141,6 +171,11 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onResume() {
@@ -561,7 +541,7 @@ index 45d3d7b9..a4cbb9db 100644
      orientationHelper?.startOrientationEventListener()
      playerView.useController = true
      // Reconfigure subtitles when resuming (handles returning from settings)
-@@ -149,8 +204,13 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -149,8 +184,13 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onPause() {
@@ -576,16 +556,16 @@ index 45d3d7b9..a4cbb9db 100644
        if (wasAutoPaused) {
          playerView.useController = false
          videoPlayer?.player?.pause()
-@@ -171,6 +231,8 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -171,6 +211,8 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
    }
  
    override fun onDestroy() {
-+    videoPlayer?.player?.removeListener(transitionListener)
-+    clearTransitionFrame()
++    transitionFrame?.release()
++    transitionFrame = null
      super.onDestroy()
  
      // Clean up captioning change listener
-@@ -181,8 +243,9 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -181,8 +223,9 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
      }
  
      if (::videoView.isInitialized) {
@@ -596,7 +576,7 @@ index 45d3d7b9..a4cbb9db 100644
      VideoManager.unregisterListener(this)
      videoViewId?.let { VideoManager.unregisterFullscreenPlayerActivity(it) }
      orientationHelper?.stopOrientationEventListener()
-@@ -200,12 +263,14 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -200,12 +243,14 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
  
    private fun setupFullscreenButton() {
      playerView.setFullscreenButtonClickListener { finish() }
@@ -614,6 +594,63 @@ index 45d3d7b9..a4cbb9db 100644
      if (!isInPictureInPictureMode) {
        playerView.useController = videoView.useNativeControls
      } else {
+@@ -256,3 +301,56 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+     const val INTENT_FULLSCREEN_OPTIONS_KEY = "fullscreen_options"
+   }
+ }
++
++/** Owns the captured overlay and decoder callback through the two composition frames. */
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++private class FullscreenTransitionFrame(
++  private val overlay: FrameLayout?,
++  private val player: Player?,
++  frame: ImageView
++) : Player.Listener {
++  private sealed class State {
++    data class WaitingForDecoder(val frame: ImageView) : State()
++    data class WaitingForComposition(val frame: ImageView) : State()
++    object Released : State()
++  }
++
++  private var state: State = State.WaitingForDecoder(frame)
++
++  fun install() {
++    val waiting = state as? State.WaitingForDecoder ?: return
++    overlay?.addView(waiting.frame, FrameLayout.LayoutParams(-1, -1))
++    player?.addListener(this)
++  }
++
++  override fun onRenderedFirstFrame() {
++    val waiting = state as? State.WaitingForDecoder ?: return
++    val composition = State.WaitingForComposition(waiting.frame)
++    state = composition
++    player?.removeListener(this)
++    // A decoded frame precedes composition; keep this exact captured frame through both draws.
++    composition.frame.postOnAnimation {
++      if (state === composition) {
++        composition.frame.postOnAnimation {
++          if (state === composition) release()
++        }
++      }
++    }
++  }
++
++  override fun onPlayerError(error: PlaybackException) {
++    release()
++  }
++
++  fun release() {
++    val frame = when (val current = state) {
++      is State.WaitingForDecoder -> current.frame
++      is State.WaitingForComposition -> current.frame
++      State.Released -> return
++    }
++    state = State.Released
++    player?.removeListener(this)
++    overlay?.removeView(frame)
++    frame.setImageDrawable(null)
++  }
++}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
 index 235844e..20234f3 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt

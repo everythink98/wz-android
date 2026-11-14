@@ -1095,7 +1095,19 @@
       "cannotDerive": "首次ready是历史收据，不等于当前readyToPlay；desired、suspended、buffer progress与disposed不能全并为loading。",
       "tests": ["src/platform/media/mediaPlaybackSession.test.ts"],
       "evidenceGap": "",
-      "targetModel": "现有MediaPlaybackHandle分attachment lifetime、play intent及first-readiness，统一transition/schedule/retire，保留timer/player/subscriptions资源。"
+      "targetModel": "现有MediaPlaybackHandle分attachment lifetime、play intent及first-readiness，统一transition/schedule/retire，保留timer/player/subscriptions资源。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "whole",
+        "delivered": "MediaPlaybackHandle 的真实 intent/status/buffered/fullscreen/timeout/dispose 调用分别写入 lifetime、firstReadiness、intent、buffering、fullscreen 模型，原有独立 bool 写入已迁走，读取和预算重置使用这些模型。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "真实 timer、最后 bufferedPosition 数值、player 与回收回调是物理资源/历史值；暂停、初次就绪与当前缓冲仍是不同维度，保留合理。"
+        ],
+        "primaryTests": ["src/platform/media/mediaPlaybackSession.test.ts"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "PL-JS-playback-session-exclusive-ownership",
@@ -1382,18 +1394,30 @@
     },
     {
       "id": "PL-N-native-selection-overlay-drag",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 8,
       "owner": "modules/forum-content-selection/android/src/main/java/expo/modules/forumcontentselection/ForumContentSelectionView.kt",
       "invariant": "拖柄仅更新当前document/drag，回收行重投影保留选区，overlay按实际几何绘制。",
       "consumer": "ForumContentSelectionView.kt#refreshOverlay / beginHandleDrag / updateHandleDrag；TopicSelectionSurface.tsx",
-      "cannotDerive": "PointerGesture已有sealed，但dragUpdatePending/dragLine/redraw仍管理同次调度，局部显式不等于完整scope转换。",
+      "cannotDerive": "现有PointerGesture sealed及实际Native dragId/revision已是明确owner；排队frame、pre-draw重算和无drag也需要的redraw是不同事实，另造phase会吞掉合法重叠。",
       "tests": [
         "modules/forum-content-selection/android/src/androidTest/java/expo/modules/forumcontentselection/ForumContentSelectionViewTest.kt"
       ],
       "evidenceGap": "跨回收连续选择/手柄几何/物理触感需设备。",
-      "targetModel": "现有View将当前drag的pending projection/frame归DragSession，document与连续几何仍独立输入。"
+      "targetModel": "现有View将当前drag的pending projection/frame归DragSession，document与连续几何仍独立输入。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "keep",
+        "delivered": "现有PointerGesture sealed及实际Native dragId/revision已是明确owner；排队frame、pre-draw重算和无drag也需要的redraw是不同事实，另造phase会吞掉合法重叠。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [],
+        "primaryTests": [
+          "modules/forum-content-selection/android/src/androidTest/java/expo/modules/forumcontentselection/ForumContentSelectionViewTest.kt"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "PL-N-native-share-raster-lease",
@@ -1423,16 +1447,28 @@
     },
     {
       "id": "PL-N-region-decode-generation",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 8,
       "owner": "modules/forum-platform/android/src/main/java/com/wz/reader/media/PreviewRegionImageView.kt",
       "invariant": "换源、缩放、暂停、detach后旧decode只回收自己的bitmap，不替换新区域。",
       "consumer": "PreviewRegionImageView.kt#setFilePath / requestDecode / onDetachedFromWindow；ImagePreviewModal#PreviewPage",
-      "cannotDerive": "generation是工作身份，已显示region与下个排队decode可共存，单loading不足。",
+      "cannotDerive": "现有AtomicInteger generation、不可变DecodeRequest、真实decoded bitmap与UI Runnable合并许可各有消费者；显示资源可与旧解码、新排队同时存在，不适合总枚举。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/media/PreviewRegionImageMathTest.kt"],
       "evidenceGap": "JVM主要证明数学/generation，后台bitmap迟到结果需Native仪器。",
-      "targetModel": "现有PreviewRegionImageView统一Idle/Queued/Decoding请求快照与retire/cancel；显示缓存、viewport独立保留。"
+      "targetModel": "现有PreviewRegionImageView统一Idle/Queued/Decoding请求快照与retire/cancel；显示缓存、viewport独立保留。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "keep",
+        "delivered": "现有AtomicInteger generation、不可变DecodeRequest、真实decoded bitmap与UI Runnable合并许可各有消费者；显示资源可与旧解码、新排队同时存在，不适合总枚举。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [],
+        "primaryTests": [
+          "modules/forum-platform/android/src/test/java/com/wz/reader/media/PreviewRegionImageMathTest.kt"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "PL-N-svg-page-visual-capture",
@@ -1445,7 +1481,22 @@
       "cannotDerive": "prepared/visualStateRequested/captureStarted/expectedPageUrl组合依赖散落回调；删任一位会丢重入或旧文档屏障。",
       "tests": ["modules/forum-platform/android/src/hostTest/java/com/wz/reader/svg/SvgRendererInstrumentedTest.kt"],
       "evidenceGap": "仪器覆盖正常渲染/容量/动态SVG，仍缺duplicate visual、late-write/total timeout、renderer-gone明确故障断言。",
-      "targetModel": "RenderRequest以Queued/Loading/AwaitingVisual/Capturing/Settled分支持prepared/page identity，保持原主线程调度和实例校验。"
+      "targetModel": "RenderRequest以Queued/Loading/AwaitingVisual/Capturing/Settled分支持prepared/page identity，保持原主线程调度和实例校验。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "whole",
+        "delivered": "Every request stage writer now uses one private Reserved/Queued/Preparing/Loading/AwaitingVisual/AwaitingCapture/Capturing/Encoding/Settled owner. PreparedPoster and exact page ticket accompany active page stages. Physical renderer Empty/Ready/Clearing lease independently owns its WebView and about:blank acknowledgment. Runtime queue, active request and admission CAS keep their real independent resource roles.",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "实际renderer、queue/active、预留容量、timeout资源与编码持有的Bitmap独立；工作阶段不推导这些资源的结束。"
+        ],
+        "primaryTests": [
+          "modules/forum-platform/android/src/hostTest/java/com/wz/reader/svg/SvgRendererInstrumentedTest.kt"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE",
+        "remainingEvidenceGap": "仪器覆盖正常渲染/容量/动态SVG，仍缺duplicate visual、late-write/total timeout、renderer-gone明确故障断言。"
+      }
     },
     {
       "id": "PL-N-svg-render-admission",
@@ -1458,7 +1509,21 @@
       "cannotDerive": "admitted count是容量，queue/active是工作资源；request phase与clearingRenderer独立，queue长度不足以推导全部占用。",
       "tests": ["modules/forum-platform/android/src/hostTest/java/com/wz/reader/svg/SvgRendererInstrumentedTest.kt"],
       "evidenceGap": "取消时点、格式worker与WebView清理回调组合需新的Native行为断言。",
-      "targetModel": "现有SvgPosterRendererRuntime统一admit/start/settle，active引用非终态request；清理lease独立，真实原子计数保留。"
+      "targetModel": "现有SvgPosterRendererRuntime统一admit/start/settle，active引用非终态request；清理lease独立，真实原子计数保留。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "whole",
+        "delivered": "Every request stage writer now uses one private Reserved/Queued/Preparing/Loading/AwaitingVisual/AwaitingCapture/Capturing/Encoding/Settled owner. PreparedPoster and exact page ticket accompany active page stages. Physical renderer Empty/Ready/Clearing lease independently owns its WebView and about:blank acknowledgment. Runtime queue, active request and admission CAS keep their real independent resource roles.",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "实际renderer、queue/active、预留容量、timeout资源与编码持有的Bitmap独立；工作阶段不推导这些资源的结束。"
+        ],
+        "primaryTests": [
+          "modules/forum-platform/android/src/hostTest/java/com/wz/reader/svg/SvgRendererInstrumentedTest.kt"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "PL-NET-bidirectional-tunnel-idle-budget",
@@ -1895,7 +1960,25 @@
         "node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt"
       ],
       "evidenceGap": "长会话黑帧原因开放，不能以一次冷启动正常替代像素因果证据。",
-      "targetModel": "现有Activity以Preparing/Presented/Returning/Finished持有过渡资源，集中finish清理；首次ready和自动暂停回执独立。"
+      "targetModel": "现有Activity以Preparing/Presented/Returning/Finished持有过渡资源，集中finish清理；首次ready和自动暂停回执独立。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "FullscreenTransitionFrame 实际接管截图 ImageView、播放器 Listener、首帧等待与两帧 composition 延后释放；late posted callbacks 按具体 frame state 身份拒绝，error/destroy 走同一 release。",
+        "residualControlAuthority": [
+          "didFinish、playerView 初始化/注册、wasAutoPaused、Activity stopped/fullscreen ownership 仍在 Activity 原路径。只闭合 transition-frame 资源子流程，不能称整个 Activity transition full scope 全部转换。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": [
+          "dev/media-pressure-proof/index.tsx",
+          "tests/tooling/patch-artifacts.test.ts",
+          "node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt",
+          "modules/forum-platform/android/src/test/java/com/wz/reader/media/FullscreenPlayerActivityEarlyExitTest.kt"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE",
+        "remainingEvidenceGap": "媒体功能25轮通过，但round20-start实际全黑、end有图；原因/时长/本批因果未建立。Native正常overlay时点与B07相同；direct owner error单测不证明首帧移除listener后的两帧窗口会交付新Native error。全部GPU首帧/历史黑图/Native heap与物理音频未验证。"
+      }
     },
     {
       "id": "PL-PATCH-video-fullscreen-handoff",
@@ -2689,15 +2772,30 @@
     },
     {
       "id": "UI-NEW-042",
-      "kind": "unproven",
-      "action": "investigate",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 8,
       "owner": "src/features/topic/rendering/contentMediaRenderers.tsx",
       "invariant": "视频贴纸文档的READY只同步claim一次，buffered watermark只前进；claim后旧RAF/重复DOM事件不能重复发布READY。",
-      "consumer": "src/features/topic/rendering/useHtmlRenderingController.tsx#createContentMediaRenderers -> contentMediaRenderers.tsx#ForumVideoStickerWebView/videoStickerBrowserDocument/videoStickerBrowserHtml",
-      "cannotDerive": "settled是READY发射许可而lastBufferedEnd是单调进度数值，error并非同一终态；不能合并或把DOM显示状态当权威。",
-      "tests": ["tests/ui/topic/topic-image-loading.test.tsx"],
-      "evidenceGap": "现有topic-image-loading用字符串断言和手动onMessage证明宿主行为，没有执行实际IIFE的DOM事件/RAF链；需VM或真实WebView补证后判定是否重构。"
+      "consumer": "src/features/topic/rendering/useHtmlRenderingController.tsx#createContentMediaRenderers -> contentMediaRenderers.tsx#ForumVideoStickerWebView/videoStickerBrowserDocument -> videoStickerDocument.ts#videoStickerBrowserHtml",
+      "cannotDerive": "生产 owner 实际导入纯 HTML builder 与3个原协议常量；原函数体、常量和5组 HTML 字节保持。canonical 直接 import 真实 builder，JSDOM 执行真实 IIFE，5项通过（3行为+2生成脚本守卫负控）。READY claim、单调 buffer 值和 ERROR 独立消费，保留实现，不新增转换信用。",
+      "tests": ["tests/ui/topic/topic-image-loading.test.tsx", "tests/integration/video-sticker-document.test.ts"],
+      "evidenceGap": "真实生产IIFE的DOM事件/RAF与两个守卫负控已通过；Native解码/视觉/自动播放/真实网络仍未验证。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "keep",
+        "delivered": "生产 owner 实际导入纯 HTML builder 与3个原协议常量；原函数体、常量和5组 HTML 字节保持。canonical 直接 import 真实 builder，JSDOM 执行真实 IIFE，5项通过（3行为+2生成脚本守卫负控）。READY claim、单调 buffer 值和 ERROR 独立消费，保留实现，不新增转换信用。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [],
+        "primaryTests": [
+          "tests/ui/topic/topic-image-loading.test.tsx",
+          "tests/integration/video-sticker-document.test.ts"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE",
+        "currentOwner": "src/features/topic/rendering/videoStickerDocument.ts",
+        "historicalOwner": "src/features/topic/rendering/contentMediaRenderers.tsx"
+      }
     },
     {
       "id": "ui.accepted-answer",
@@ -2747,7 +2845,20 @@
       "consumer": "src/features/topic/media/TopicAudioSession.tsx :: () => new TopicAudioSession({ active, paused, runtimeGeneration }, playback || new MediaPlaybackSession()), ; dev/media-pressure-proof/index.tsx :: import { TopicAudioSessionProvider, useTopicAudioControl } from '@/features/topic/media/TopicAudioSession';",
       "cannotDerive": "player状态事件没有携带业务audio id，acceptPlayerEvents与当前替源ticket是接纳资格，快照数值和retry意图不能互推。",
       "tests": ["tests/ui/topic/topic-image-loading.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "异步 replace、超时和 captured intent 使用同一个 AudioLoadRun owner，新的 active/failed 读取来自真实 source state。",
+        "residualControlAuthority": [
+          "ensurePlayer 对同一物理 player 只订阅一次。statusChange/timeUpdate/sourceLoad/playToEnd 处理器读取当时 current active run，但 Native payload 无 source ticket。run guard 不能证明迟到的旧源 Native event 被识别；不是 exact-source 事件协议。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": ["tests/ui/topic/topic-image-loading.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE",
+        "remainingEvidenceGap": "精确Native乱序、renderer-gone/late-encoder和同值worklet协议边界不由阶段提取自动关闭，按B08实际设备记录界定。"
+      }
     },
     {
       "id": "ui.audio-owner",
@@ -2759,7 +2870,19 @@
       "consumer": "src/features/topic/media/TopicAudioSession.tsx :: () => new TopicAudioSession({ active, paused, runtimeGeneration }, playback || new MediaPlaybackSession()), ; dev/media-pressure-proof/index.tsx :: import { TopicAudioSessionProvider, useTopicAudioControl } from '@/features/topic/media/TopicAudioSession';",
       "cannotDerive": "replaceQueue是真实串行IO，retainedGeneration/playbackHandle是lease，activeId和pendingPlay是业务意图；单个playing布尔不包含这些信息。",
       "tests": ["tests/ui/topic/topic-image-loading.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "idle/replacing/active/failed/disposed 的真实 owner 持有 descriptor、恢复位置、pending play、preparation cancel、diagnostic 和 handle；replace/fail/retire 的实际调用已迁走旧 loadRevision/acceptPlayerEvents 组合。final retireSource 的 terminal+CAS 已核。",
+        "residualControlAuthority": [
+          "原 scope 同时包含真实物理 player、串行 replaceQueue 与 retainedGeneration。它们继续由 session 的独立资源协议持有与释放；本轮完整改造的是逻辑 source run，不是整个物理替换/代际资源协议，按原 full scope 保守记 partial。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": ["tests/ui/topic/topic-image-loading.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.audio-scrub",
@@ -3325,7 +3448,23 @@
         "tests/ui/topic/media-pressure.test.tsx",
         "tests/ui/topic/topic-image-loading.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "真实 admission entry 的 deadline/lastProgress 只在 running 变体存在，failure 只在 failed；actual markProgress/settle/timeout 迁移到联合类型。",
+        "residualControlAuthority": [
+          "原实现已明确 waiting/running/displayed/failed。warmKeys、visibleRowKeys、viewportRowKeys、recompute scheduling 和实际 timer 仍由 coordinator 调度。局部 payload 约束得到改善，不是全部调度 full scope 新接管。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": [
+          "tests/ui/topic/topic-media-coordinator.test.tsx",
+          "tests/ui/topic/media-pressure.test.tsx",
+          "tests/ui/topic/topic-image-loading.test.tsx"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.media-retry",
@@ -3798,7 +3937,19 @@
       "cannotDerive": "settled/nativeFailed/recovering/sourceIdentity/generation共同属于加载归属，但分散字段容许隐式组合；metrics仍是观测。",
       "tests": ["tests/ui/topic/image-preview.test.tsx"],
       "evidenceGap": "fallback后迟到success与渲染复用竞争需强化真实PreviewPage断言。",
-      "targetModel": "createPreviewLoadOwner/PreviewPage使用Loading/Recovering/Loaded/Failed/Retired持请求数据，事件经一个owner身份检查和settle/retire入口。"
+      "targetModel": "createPreviewLoadOwner/PreviewPage使用Loading/Recovering/Loaded/Failed/Retired持请求数据，事件经一个owner身份检查和settle/retire入口。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "whole",
+        "delivered": "PreviewLoadOwner 实际接管 pending/recovering/loaded/failed/retired 与 generation、身份、恢复承诺；render、retry、settle、error、cleanup 都读写该 owner，只读 snapshot 通过 useSyncExternalStore 真正用于 UI。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "AbortController、metrics/trace 与 Native 原图失败历史有独立作用；fallback 成功后仍需记住原图失败，不能从当前 loaded 派生。Strict Effects cleanup/reacquire 仍构造新 owner。"
+        ],
+        "primaryTests": ["tests/ui/topic/image-preview.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.preview-region",
@@ -3823,7 +3974,20 @@
       "cannotDerive": "requested/desired/active分别输入目标、待执行目标、已提交位置；transition与commit ACK不同因果阶段，需集中协调。",
       "tests": ["tests/ui/topic/image-preview.test.tsx"],
       "evidenceGap": "Reanimated callback和React commit实际时序需翻页/打断设备测试。",
-      "targetModel": "现有content内PreviewNavigation Idle/Animating/AwaitingCommit持ring、desired及request身份，UI shared values仅投影。"
+      "targetModel": "现有content内PreviewNavigation Idle/Animating/AwaitingCommit持ring、desired及request身份，UI shared values仅投影。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "PreviewRingController 实际拥有 currentRing/requestedIndex/destination/pending external rebuild。commitStep 创建 committing{ring}，React useLayoutEffect 只在 exact ring 真正提交后 commitPublished 并释放 UI transitioning。旧 releaseTransitionAfterCommitRef 已迁走。",
+        "residualControlAuthority": [
+          "UI-thread SharedValue/动画与 JS 仍为两端协议；animating 不带具体操作 owner，worklet completion 的 admission 仍依赖原 slot/index/adjacency 值组合。React exact-ring commit 边界改善已实际接线，但不能说 full scope 所有同值旧 callback 都获得新命令身份。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": ["tests/ui/topic/image-preview.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE",
+        "remainingEvidenceGap": "Reanimated callback和React commit实际时序需翻页/打断设备测试。"
+      }
     },
     {
       "id": "ui.preview-svg",
@@ -3836,7 +4000,20 @@
       "cannotDerive": "attempted/inFlight、ready view identity、displayed poster identity是不同回执，单request status不足，但可归source-keyed owner。",
       "tests": ["tests/ui/topic/image-preview.test.tsx"],
       "evidenceGap": "正常SVG仪器不覆盖预览刷新/缩放/换图竞争。",
-      "targetModel": "PreviewPage load owner下PosterIdle/Refreshing/Displayed/Failed子模型，Native文档ready收据独立。"
+      "targetModel": "PreviewPage load owner下PosterIdle/Refreshing/Displayed/Failed子模型，Native文档ready收据独立。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "poster refresh 的 idle/running/finished 与 request owner 实际归入 PreviewLoadOwner；旧异步 poster generation 回交核对 owner。",
+        "residualControlAuthority": [
+          "readySvgViewIdentity 与 displayedSvgPosterIdentity 只是合并到同一 React presentation 对象，仍分别表示真实 Native view 与 poster 的不同确认；原 full scope 的实际 AbortController、文档和 artifact 身份继续独立持有。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": ["tests/ui/topic/image-preview.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE",
+        "remainingEvidenceGap": "正常SVG仪器不覆盖预览刷新/缩放/换图竞争。"
+      }
     },
     {
       "id": "ui.proxy-draft",
@@ -4178,19 +4355,33 @@
     },
     {
       "id": "ui.selection-document",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 8,
       "owner": "src/features/topic/selection/TopicSelectionSurface.tsx",
       "invariant": "文档或route scope变化使旧selection回执无效，Back只调用当前文档的Native取消能力，退役文档清高亮/错误资格。",
       "consumer": "src/features/topic/components/TopicContentList.tsx :: <TopicSelectionSurface ; dev/forum-selection-proof/index.tsx :: <TopicSelectionSurface active items={items} listRef={list} sessionKey=\"forum-selection-proof\">",
-      "cannotDerive": "document generation是文档身份，nativeRef是资源能力，lastError是去重回执；当前内容key不包含跨同key重建的世代。",
+      "cannotDerive": "当前keyed document generation统一决定revision，实际每个callback核mounted/enabled/revision；Native cancel ref是真能力，lastError是去重回执，新增phase无旁路可接管。",
       "tests": [
         "tests/ui/topic/topic-rich-text-selection.test.tsx",
         "tests/ui/topic/topic-table-rendering.test.tsx",
         "tests/ui/topic/topic-components.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "keep",
+        "delivered": "当前keyed document generation统一决定revision，实际每个callback核mounted/enabled/revision；Native cancel ref是真能力，lastError是去重回执，新增phase无旁路可接管。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [],
+        "primaryTests": [
+          "tests/ui/topic/topic-rich-text-selection.test.tsx",
+          "tests/ui/topic/topic-table-rendering.test.tsx",
+          "tests/ui/topic/topic-components.test.tsx"
+        ],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.selection-drag",
@@ -4230,7 +4421,19 @@
       "consumer": "src/features/topic/TopicRoute.tsx :: <TopicShareSheet ; dev/topic-share-capture-proof/index.tsx :: <TopicShareSheet",
       "cannotDerive": "completed索引集合与实测height是证据，captureAbort是实际取消资源；操作busy和可捕获条件不能由截图目标存在推导。",
       "tests": ["tests/ui/topic/topic-share-sheet.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "whole",
+        "delivered": "真实 capture session idle/waiting-layout/capturing/sharing/saving 由一个同步 owner claim 操作并持有 action、preview attempt、AbortController；两个 RAF、Native capture 与系统分享/保存的返回路径都归还同一 owner。旧 busyRef 与独立 operation 写入已迁走。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "图片 completed 集合、实测 height、mounted 与 capture view 是实际输入/物理资源；它们不能由导出操作阶段推导。render 中 observeReady 延续原 canCapture.current 的时机，不能宣称新增 committed-layout 屏障。"
+        ],
+        "primaryTests": ["tests/ui/topic/topic-share-sheet.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.sheet-snapshot-gate",
@@ -4533,7 +4736,19 @@
       "cannotDerive": "renderedPlayer与laidOutPlayer是不同确认，ended是历史；player.status不含布局或一次playToEnd。",
       "tests": ["tests/ui/topic/topic-image-loading.test.tsx"],
       "evidenceGap": "RN commit/原生首帧/Media3事件仍须设备。",
-      "targetModel": "现有ForumContentVideoPlayer集中player-keyed attachment snapshot，接收render/layout/end回执，buffer progress和player独立。"
+      "targetModel": "现有ForumContentVideoPlayer集中player-keyed attachment snapshot，接收render/layout/end回执，buffer progress和player独立。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "布局/首帧/ended 的真实 presentation 以 current committed player 为身份，旧 player 的 callbacks 在发布 React 事件前拒绝，render consumer 使用该 snapshot。",
+        "residualControlAuthority": [
+          "最后 bufferedPosition 的历史 watermark 仍为独立 ref，原 full scope 中跨 sourceKey 的该路径没有改造；不能将 presentation owner 外推为全部 buffering/event 协议已转换。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": ["tests/ui/topic/topic-image-loading.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.video-lease",
@@ -4546,7 +4761,19 @@
       "cannotDerive": "runtimeLease已有acquiring/failed/retained，但effect局部retained/disposed与handles Map仍拥有资源责任；只改view union不算whole。",
       "tests": ["tests/ui/topic/topic-image-loading.test.tsx"],
       "evidenceGap": "网络rotation与Native player跨全屏交接需组合设备证据。",
-      "targetModel": "现有runtime以acquisition对象绑定attempt/generation/requestKey与release owner，React投影lease，释放仍挂handle.afterDispose。"
+      "targetModel": "现有runtime以acquisition对象绑定attempt/generation/requestKey与release owner，React投影lease，释放仍挂handle.afterDispose。",
+      "implementation": {
+        "batch": "B08",
+        "outcome": "partial",
+        "delivered": "VideoRuntimeLease 私有 owner 实际接管 acquiring/resolving/retained/failed/retired 与 physical unclaimed/held/release-scheduled/released；late acquisition 在 retired 后只释放该 generation，attached handle 的 afterDispose 决定真实 lease 释放时机。",
+        "residualControlAuthority": [
+          "原 scope 的 generation retry admission、pendingRetryGeneration、acquiredAttempt 与 hasBeenReady UI authority 仍在组件原路径；当前完成的是代际资源子流程。"
+        ],
+        "retainedIndependentFacts": [],
+        "primaryTests": ["tests/ui/topic/topic-image-loading.test.tsx"],
+        "validation": "docs/state-model-refactor.md#b08",
+        "acceptance": "ACCEPTED_B08_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.viewport-membership",

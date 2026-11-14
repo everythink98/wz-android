@@ -1,10 +1,24 @@
 package com.wz.reader
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageView
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import expo.modules.video.FullscreenPlayerActivity
 import expo.modules.video.managers.VideoManager
+import java.lang.reflect.Proxy
+import java.util.ArrayDeque
 import java.util.UUID
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,6 +31,7 @@ import org.robolectric.annotation.LooperMode
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], manifest = Config.NONE, application = Application::class)
 @LooperMode(LooperMode.Mode.PAUSED)
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class FullscreenPlayerActivityEarlyExitTest {
   @Test
   fun missingTokenFinishesAndDestroysWithoutInitializedView() {
@@ -44,6 +59,172 @@ class FullscreenPlayerActivityEarlyExitTest {
       assertTrue(activity.isFinishing)
     } finally {
       controller.destroy()
+    }
+  }
+
+  @Test
+  fun transitionFrameWaitsForTheDecoderAndBothCompositionCallbacks() {
+    val fixture = TransitionFixture()
+    val owner = fixture.install()
+    try {
+      assertSame(fixture.overlay, owner.image.parent)
+      assertEquals(0, owner.image.pendingFrames)
+      assertSame(owner.listener, fixture.added.single())
+
+      owner.listener.onRenderedFirstFrame()
+      owner.listener.onRenderedFirstFrame()
+      assertEquals(1, owner.image.pendingFrames)
+      assertSame(fixture.overlay, owner.image.parent)
+      assertEquals(1, fixture.removals(owner))
+
+      owner.image.advanceFrame()
+      assertSame(fixture.overlay, owner.image.parent)
+      assertEquals(0, owner.image.clears)
+      assertEquals(1, owner.image.pendingFrames)
+
+      owner.image.advanceFrame()
+      assertNull(owner.image.parent)
+      assertNull(owner.image.drawable)
+      assertEquals(1, fixture.overlay.removals(owner.image))
+      assertEquals(1, owner.image.clears)
+      assertEquals(2, fixture.removals(owner)) // Decoder unsubscribe, then terminal cleanup.
+
+      owner.listener.onRenderedFirstFrame()
+      owner.listener.onPlayerError(frameError())
+      owner.release()
+      assertEquals(0, owner.image.pendingFrames)
+      assertEquals(1, fixture.overlay.removals(owner.image))
+      assertEquals(1, owner.image.clears)
+      assertEquals(2, fixture.removals(owner))
+    } finally {
+      owner.release()
+    }
+  }
+
+  @Test
+  fun transitionFrameErrorsReleaseOnceWithoutLettingOldCallbacksClearAReplacement() {
+    for (compositions in -1..1) {
+      val fixture = TransitionFixture()
+      val previous = fixture.install()
+      var replacement: TransitionOwner? = null
+      try {
+        if (compositions >= 0) previous.listener.onRenderedFirstFrame()
+        if (compositions == 1) previous.image.advanceFrame()
+        previous.listener.onPlayerError(frameError())
+        previous.listener.onPlayerError(frameError())
+        previous.release()
+        assertNull(previous.image.parent)
+        assertNull(previous.image.drawable)
+        assertEquals(1, fixture.overlay.removals(previous.image))
+        assertEquals(1, previous.image.clears)
+        assertEquals(if (compositions < 0) 1 else 2, fixture.removals(previous))
+
+        val next = fixture.install().also { replacement = it }
+        if (compositions >= 0) previous.image.advanceFrame()
+        previous.listener.onRenderedFirstFrame()
+        previous.listener.onPlayerError(frameError())
+        previous.release()
+        assertSame(fixture.overlay, next.image.parent)
+        assertTrue(next.image.drawable != null)
+        assertEquals(0, fixture.overlay.removals(next.image))
+        assertEquals(0, next.image.clears)
+        assertEquals(0, previous.image.pendingFrames)
+        assertEquals(0, fixture.removals(next))
+      } finally {
+        previous.release()
+        replacement?.release()
+      }
+    }
+  }
+
+  @Test
+  fun activityDestroyReleasesTheWaitingFrameOnceAndRejectsLateCallbacks() {
+    for (decoded in listOf(false, true)) {
+      val fixture = TransitionFixture()
+      val owner = fixture.install()
+      val intent = Intent(RuntimeEnvironment.getApplication(), FullscreenPlayerActivity::class.java)
+      val controller = Robolectric.buildActivity(FullscreenPlayerActivity::class.java, intent)
+      val activity = controller.create().get()
+      val field = FullscreenPlayerActivity::class.java.getDeclaredField("transitionFrame").apply { isAccessible = true }
+      try {
+        field.set(activity, owner.instance)
+        if (decoded) owner.listener.onRenderedFirstFrame()
+        controller.destroy()
+        assertNull(field.get(activity))
+        assertNull(owner.image.parent)
+        assertNull(owner.image.drawable)
+
+        if (decoded) owner.image.advanceFrame()
+        owner.listener.onRenderedFirstFrame()
+        owner.listener.onPlayerError(frameError())
+        owner.release()
+        owner.release()
+        assertEquals(0, owner.image.pendingFrames)
+        assertEquals(1, fixture.overlay.removals(owner.image))
+        assertEquals(1, owner.image.clears)
+        assertEquals(if (decoded) 2 else 1, fixture.removals(owner))
+      } finally {
+        owner.release()
+        if (field.get(activity) != null) controller.destroy()
+      }
+    }
+  }
+
+  private fun frameError() = PlaybackException("controlled frame failure", null, PlaybackException.ERROR_CODE_UNSPECIFIED)
+
+  private class TransitionFixture {
+    val overlay = ObservedOverlay(RuntimeEnvironment.getApplication())
+    val added = mutableListOf<Player.Listener>()
+    private val removed = mutableListOf<Player.Listener>()
+    private val player = Player::class.java.cast(Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { proxy, method, arguments ->
+      when (method.name) {
+        "addListener" -> { added.add(Player.Listener::class.java.cast(arguments!![0])); null }
+        "removeListener" -> { removed.add(Player.Listener::class.java.cast(arguments!![0])); null }
+        "hashCode" -> System.identityHashCode(proxy)
+        "equals" -> proxy === arguments?.get(0)
+        "toString" -> "TransitionPlayerBoundary"
+        else -> error("Unexpected player call: ${method.name}")
+      }
+    })
+    fun install(): TransitionOwner {
+      val image = CompositionImage(RuntimeEnvironment.getApplication())
+      image.setImageDrawable(ColorDrawable(Color.BLUE))
+      val type = Class.forName("expo.modules.video.FullscreenTransitionFrame")
+      val instance = type.getDeclaredConstructor(FrameLayout::class.java, Player::class.java, ImageView::class.java)
+        .apply { isAccessible = true }.newInstance(overlay, player, image)
+      type.getDeclaredMethod("install").apply { isAccessible = true }.invoke(instance)
+      return TransitionOwner(instance, Player.Listener::class.java.cast(instance), image) {
+        type.getDeclaredMethod("release").apply { isAccessible = true }.invoke(instance)
+      }
+    }
+
+    fun removals(owner: TransitionOwner) = removed.count { it === owner.listener }
+  }
+
+  private class TransitionOwner(val instance: Any, val listener: Player.Listener, val image: CompositionImage, val release: () -> Unit)
+
+  private class ObservedOverlay(context: Context) : FrameLayout(context) {
+    private val removed = mutableListOf<View>()
+    override fun removeView(view: View) {
+      removed.add(view)
+      super.removeView(view)
+    }
+    fun removals(view: View) = removed.count { it === view }
+  }
+
+  private class CompositionImage(context: Context) : ImageView(context) {
+    private val posted = ArrayDeque<Runnable>()
+    var clears = 0
+      private set
+    val pendingFrames get() = posted.size
+    override fun postOnAnimation(action: Runnable) { posted.addLast(action) }
+    override fun setImageDrawable(drawable: Drawable?) {
+      if (drawable == null) clears += 1
+      super.setImageDrawable(drawable)
+    }
+    fun advanceFrame() {
+      assertEquals("Expected one outstanding composition callback", 1, posted.size)
+      posted.removeFirst().run()
     }
   }
 }

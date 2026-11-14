@@ -88,20 +88,29 @@ function sameSnapshot(left: TopicAudioSnapshot, right: TopicAudioSnapshot) {
   );
 }
 
+type AudioLoadRun = {
+  id: string;
+  descriptor: TopicAudioDescriptor;
+  restorePosition: number;
+  pendingPlay: boolean;
+  cancelPreparation: (() => void) | null;
+  diagnostic: ReturnType<typeof playerLoadDiagnosticAttempt>;
+};
+
+type AudioSourceState =
+  | { phase: 'idle' }
+  | { phase: 'replacing'; run: AudioLoadRun }
+  | { phase: 'active'; run: AudioLoadRun; handle: MediaPlaybackHandle }
+  | { phase: 'failed'; run: AudioLoadRun; handle: MediaPlaybackHandle | null }
+  | { phase: 'disposed' };
+
 class TopicAudioSession {
-  private acceptPlayerEvents = false;
+  private sourceState: AudioSourceState = { phase: 'idle' };
   private active: boolean;
-  private activeId: string | null = null;
   private attachments = new Map<string, Map<string, TopicAudioAttachment>>();
-  private disposed = false;
   private listeners = new Map<string, Set<() => void>>();
-  private loadRevision = 0;
   private paused: boolean;
-  private pendingPlay = false;
   private player: VideoPlayer | null = null;
-  private playbackHandle: MediaPlaybackHandle | null = null;
-  private cancelPreparation: (() => void) | null = null;
-  private loadDiagnostic: ReturnType<typeof playerLoadDiagnosticAttempt> | null = null;
   private playerSubscriptions: { remove: () => void }[] = [];
   private replaceQueue: Promise<void> = Promise.resolve();
   private retainedGeneration: number | null = null;
@@ -117,6 +126,44 @@ class TopicAudioSession {
     this.active = active;
     this.paused = paused;
     this.runtimeGeneration = runtimeGeneration;
+  }
+
+  private get currentRun() {
+    return 'run' in this.sourceState ? this.sourceState.run : null;
+  }
+
+  private get activeId() {
+    return this.currentRun?.id ?? null;
+  }
+
+  private get playbackHandle() {
+    return 'handle' in this.sourceState ? this.sourceState.handle : null;
+  }
+
+  private owns(run: AudioLoadRun) {
+    return (
+      (this.sourceState.phase === 'replacing' || this.sourceState.phase === 'active') && this.sourceState.run === run
+    );
+  }
+
+  private finishPreparation(run: AudioLoadRun) {
+    const cancel = run.cancelPreparation;
+    run.cancelPreparation = null;
+    cancel?.();
+  }
+
+  private retireSource() {
+    if (this.sourceState.phase === 'disposed') return false;
+    const owner = this.sourceState;
+    const run = this.currentRun;
+    this.playbackHandle?.dispose();
+    if (run) {
+      this.finishPreparation(run);
+      run.diagnostic.canceled();
+    }
+    if (this.sourceState !== owner) return false;
+    this.sourceState = { phase: 'idle' };
+    return true;
   }
 
   getSnapshot = (id: string) => this.snapshots.get(id) || IDLE_AUDIO_SNAPSHOT;
@@ -139,11 +186,7 @@ class TopicAudioSession {
       previous.mediaContext.sessionIdentity !== descriptor.mediaContext.sessionIdentity
     ) {
       this.pauseActive();
-      this.playbackHandle?.dispose();
-      this.playbackHandle = null;
-      this.acceptPlayerEvents = false;
-      this.loadRevision += 1;
-      this.activeId = null;
+      this.retireSource();
     }
     const attachments = this.attachments.get(id) || new Map<string, TopicAudioAttachment>();
     attachments.set(key, { admission });
@@ -189,7 +232,7 @@ class TopicAudioSession {
     const snapshot = this.getSnapshot(id);
     if (this.activeId === id && (snapshot.status === 'ready' || snapshot.status === 'buffering') && this.player) {
       this.playbackHandle?.intent(true);
-      this.pendingPlay = false;
+      if (this.currentRun) this.currentRun.pendingPlay = false;
       if (snapshot.duration > 0 && snapshot.position >= snapshot.duration) {
         this.player.replay();
         this.updateSnapshot(id, { position: 0 });
@@ -222,15 +265,16 @@ class TopicAudioSession {
   }
 
   dispose() {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.cancelPreparation?.();
-    this.loadDiagnostic?.canceled();
-    this.loadRevision += 1;
-    this.pendingPlay = false;
-    this.acceptPlayerEvents = false;
-    this.playbackHandle?.dispose();
-    this.playbackHandle = null;
+    if (this.sourceState.phase === 'disposed') return;
+    const run = this.currentRun;
+    const handle = this.playbackHandle;
+    this.sourceState = { phase: 'disposed' };
+    if (run) {
+      this.finishPreparation(run);
+      run.diagnostic.canceled();
+      run.pendingPlay = false;
+    }
+    handle?.dispose();
     for (const subscription of this.playerSubscriptions) subscription.remove();
     this.playerSubscriptions = [];
     try {
@@ -251,53 +295,36 @@ class TopicAudioSession {
   }
 
   isDisposed() {
-    return this.disposed;
+    return this.sourceState.phase === 'disposed';
   }
 
   private load(id: string, playWhenReady: boolean) {
     const descriptor = this.sources.get(id);
-    if (!descriptor || this.disposed) return;
+    if (!descriptor || this.isDisposed()) return;
     if (this.activeId) this.rememberActivePosition();
-    this.playbackHandle?.dispose();
-    this.playbackHandle = null;
-    this.acceptPlayerEvents = false;
-    this.activeId = id;
-    this.pendingPlay = playWhenReady && this.active && !this.paused;
-    const revision = ++this.loadRevision;
-    this.cancelPreparation?.();
-    this.cancelPreparation = this.playback.prepare(id, 'audio', () => {
-      if (revision === this.loadRevision) this.fail(id);
-    });
+    if (!this.retireSource()) return;
     const generation = this.runtimeGeneration;
-    this.loadDiagnostic?.canceled();
-    this.loadDiagnostic = playerLoadDiagnosticAttempt(descriptor.src, 'audio', generation);
-    const restorePosition = this.getSnapshot(id).position;
-    this.updateSnapshot(id, { error: null, playing: false, playWhenReady: this.pendingPlay, status: 'loading' });
-    this.replaceQueue = this.replaceQueue
-      .catch(() => undefined)
-      .then(() => this.replaceSource({ descriptor, generation, id, restorePosition, revision }));
+    const run: AudioLoadRun = {
+      id,
+      descriptor,
+      restorePosition: this.getSnapshot(id).position,
+      pendingPlay: playWhenReady && this.active && !this.paused,
+      cancelPreparation: null,
+      diagnostic: playerLoadDiagnosticAttempt(descriptor.src, 'audio', generation)
+    };
+    this.sourceState = { phase: 'replacing', run };
+    run.cancelPreparation = this.playback.prepare(id, 'audio', () => this.fail(run));
+    this.updateSnapshot(id, { error: null, playing: false, playWhenReady: run.pendingPlay, status: 'loading' });
+    this.replaceQueue = this.replaceQueue.catch(() => undefined).then(() => this.replaceSource(run, generation));
   }
 
-  private async replaceSource({
-    descriptor,
-    generation,
-    id,
-    restorePosition,
-    revision
-  }: {
-    descriptor: TopicAudioDescriptor;
-    generation: number;
-    id: string;
-    restorePosition: number;
-    revision: number;
-  }): Promise<void> {
-    if (this.disposed || revision !== this.loadRevision) return;
-    const targetGeneration = generation;
+  private async replaceSource(run: AudioLoadRun, targetGeneration: number): Promise<void> {
+    if (!this.owns(run)) return;
     let previousGeneration = this.retainedGeneration;
     if (previousGeneration !== targetGeneration) {
-      this.loadDiagnostic?.stage('runtime-lease');
+      run.diagnostic.stage('runtime-lease');
       const lease = await retainReadNetworkRuntimeGeneration(targetGeneration).catch(() => null);
-      if (this.disposed || revision !== this.loadRevision) {
+      if (!this.owns(run)) {
         if (lease?.retained) void releaseReadNetworkRuntimeGeneration(targetGeneration).catch(() => undefined);
         return;
       }
@@ -310,9 +337,9 @@ class TopicAudioSession {
           currentGeneration !== targetGeneration
         ) {
           this.runtimeGeneration = Math.max(this.runtimeGeneration, currentGeneration);
-          return this.replaceSource({ descriptor, generation: currentGeneration, id, restorePosition, revision });
+          return this.replaceSource(run, currentGeneration);
         }
-        this.fail(id);
+        this.fail(run);
         return;
       }
       this.retainedGeneration = targetGeneration;
@@ -320,36 +347,32 @@ class TopicAudioSession {
       previousGeneration = null;
     }
     try {
-      const source = await forumMediaPlayerSourceFromUrl(descriptor.src, {
+      const source = await forumMediaPlayerSourceFromUrl(run.descriptor.src, {
         kind: 'audio',
-        mediaContext: descriptor.mediaContext,
-        nodeSeekUserAgent: descriptor.nodeSeekMediaUserAgent,
-        referrerPolicy: descriptor.referrerPolicy,
+        mediaContext: run.descriptor.mediaContext,
+        nodeSeekUserAgent: run.descriptor.nodeSeekMediaUserAgent,
+        referrerPolicy: run.descriptor.referrerPolicy,
         runtimeGeneration: targetGeneration
       });
-      if (this.disposed || revision !== this.loadRevision || this.activeId !== id) return;
-      this.loadDiagnostic?.stage('player-replace');
+      if (!this.owns(run)) return;
+      run.diagnostic.stage('player-replace');
       const player = this.ensurePlayer();
-      this.acceptPlayerEvents = false;
       await player.replaceAsync(source);
-      if (this.disposed || revision !== this.loadRevision || this.activeId !== id) return;
-      player.currentTime = restorePosition;
-      this.cancelPreparation?.();
-      this.cancelPreparation = null;
-      this.acceptPlayerEvents = true;
-      this.playbackHandle = this.playback.attach(player, id, 'audio', {
+      if (!this.owns(run)) return;
+      player.currentTime = run.restorePosition;
+      this.finishPreparation(run);
+      const handle = this.playback.attach(player, run.id, 'audio', {
         onIntent: (playWhenReady) => {
-          if (this.activeId !== id || revision !== this.loadRevision) return;
-          if (!playWhenReady) this.pendingPlay = false;
-          this.updateSnapshot(id, { playWhenReady });
+          if (!this.owns(run)) return;
+          if (!playWhenReady) run.pendingPlay = false;
+          this.updateSnapshot(run.id, { playWhenReady });
         },
-        onTimeout: () => {
-          if (this.activeId === id && revision === this.loadRevision) this.fail(id);
-        }
+        onTimeout: () => this.fail(run)
       });
+      this.sourceState = { phase: 'active', run, handle };
       this.applyStatus({ status: player.status });
     } catch (error) {
-      if (!this.disposed && revision === this.loadRevision && this.activeId === id) this.fail(id, error);
+      this.fail(run, error);
     } finally {
       if (previousGeneration !== null) {
         void releaseReadNetworkRuntimeGeneration(previousGeneration).catch(() => undefined);
@@ -374,10 +397,12 @@ class TopicAudioSession {
   }
 
   private applyStatus({ status, error }: Pick<StatusChangeEventPayload, 'status' | 'error'>) {
-    const id = this.activeId;
-    if (!id || !this.acceptPlayerEvents) return;
+    const state = this.sourceState;
+    if (state.phase !== 'active') return;
+    const { run } = state;
+    const id = run.id;
     if (status === 'error') {
-      this.fail(id, error);
+      this.fail(run, error);
       return;
     }
     if (status !== 'readyToPlay') {
@@ -397,10 +422,10 @@ class TopicAudioSession {
     const duration = safeMediaTime(player?.duration || this.getSnapshot(id).duration);
     const position = Math.min(duration || Number.POSITIVE_INFINITY, safeMediaTime(player?.currentTime || 0));
     this.updateSnapshot(id, { duration, error: null, position, status: 'ready' });
-    this.loadDiagnostic?.ready();
+    run.diagnostic.ready();
     this.settleAttachments(id, 'displayed');
-    if (this.pendingPlay && this.active && !this.paused && player) {
-      this.pendingPlay = false;
+    if (run.pendingPlay && this.active && !this.paused && player) {
+      run.pendingPlay = false;
       this.playbackHandle?.intent(true);
       player.play();
       this.updateSnapshot(id, { playWhenReady: true });
@@ -408,12 +433,12 @@ class TopicAudioSession {
   }
 
   private applyPlaying({ isPlaying }: PlayingChangeEventPayload) {
-    if (this.activeId && this.acceptPlayerEvents) this.updateSnapshot(this.activeId, { playing: isPlaying });
+    if (this.sourceState.phase === 'active') this.updateSnapshot(this.sourceState.run.id, { playing: isPlaying });
   }
 
   private applyTime({ bufferedPosition, currentTime }: TimeUpdateEventPayload) {
-    const id = this.activeId;
-    if (!id || !this.acceptPlayerEvents) return;
+    if (this.sourceState.phase !== 'active') return;
+    const id = this.sourceState.run.id;
     const snapshot = this.getSnapshot(id);
     const position = Math.min(snapshot.duration || Number.POSITIVE_INFINITY, safeMediaTime(currentTime));
     this.updateSnapshot(id, { position });
@@ -423,20 +448,20 @@ class TopicAudioSession {
   }
 
   private applySourceLoad({ duration }: Pick<SourceLoadEventPayload, 'duration'>) {
-    if (this.activeId && this.acceptPlayerEvents) {
-      this.updateSnapshot(this.activeId, { duration: safeMediaTime(duration) });
+    if (this.sourceState.phase === 'active') {
+      this.updateSnapshot(this.sourceState.run.id, { duration: safeMediaTime(duration) });
     }
   }
 
   private applyPlayToEnd() {
-    const id = this.activeId;
-    if (!id || !this.acceptPlayerEvents) return;
+    if (this.sourceState.phase !== 'active') return;
+    const id = this.sourceState.run.id;
     const duration = this.getSnapshot(id).duration;
     this.updateSnapshot(id, { playing: false, playWhenReady: false, position: duration });
   }
 
   private pauseActive() {
-    this.pendingPlay = false;
+    if (this.currentRun) this.currentRun.pendingPlay = false;
     this.playbackHandle?.pause();
     try {
       this.player?.pause();
@@ -455,14 +480,15 @@ class TopicAudioSession {
     this.updateSnapshot(id, { duration, playing: false, playWhenReady: false, position });
   }
 
-  private fail(id: string, error?: unknown) {
-    this.cancelPreparation?.();
-    this.cancelPreparation = null;
-    this.loadRevision += 1;
-    this.loadDiagnostic?.failed(error);
-    this.pendingPlay = false;
-    this.acceptPlayerEvents = false;
-    this.playbackHandle?.pause();
+  private fail(run: AudioLoadRun, error?: unknown) {
+    if (!this.owns(run)) return;
+    const id = run.id;
+    const handle = this.playbackHandle;
+    this.finishPreparation(run);
+    run.diagnostic.failed(error);
+    run.pendingPlay = false;
+    this.sourceState = { phase: 'failed', run, handle };
+    handle?.pause();
     this.updateSnapshot(id, { error: '音频加载失败', playing: false, playWhenReady: false, status: 'error' });
     this.settleAttachments(id, 'error');
   }

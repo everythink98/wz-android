@@ -18,8 +18,10 @@ import java.net.ServerSocket
 import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -37,21 +39,24 @@ class SvgRendererInstrumentedTest {
 
   private class PendingPoster {
     val settled = CountDownLatch(1)
+    val settlements = AtomicInteger(0)
     var result: ReadableMap? = null
     var failure: AssertionError? = null
     var code: String? = null
   }
 
-  private fun enqueuePoster(svg: String, cacheKey: String): PendingPoster {
+  private fun enqueuePoster(svg: String, cacheKey: String, timeoutMs: Long = 30_000L): PendingPoster {
     val pending = PendingPoster()
     val promise = PromiseImpl(
       { arguments ->
         pending.result = arguments.firstOrNull() as? ReadableMap
+        pending.settlements.incrementAndGet()
         pending.settled.countDown()
       },
       { arguments ->
         pending.failure = AssertionError("SVG poster rejected: " + arguments.joinToString())
         pending.code = (arguments.firstOrNull() as? ReadableMap)?.getString("code")
+        pending.settlements.incrementAndGet()
         pending.settled.countDown()
       }
     )
@@ -59,7 +64,8 @@ class SvgRendererInstrumentedTest {
       instrumentation.targetContext,
       Base64.encodeToString(svg.toByteArray(Charsets.UTF_8), Base64.NO_WRAP),
       cacheKey,
-      promise
+      promise,
+      timeoutMs
     )
     return pending
   }
@@ -82,6 +88,39 @@ class SvgRendererInstrumentedTest {
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     instrumentation.runOnMainSync { view.draw(Canvas(bitmap)) }
     return bitmap
+  }
+
+  @Test
+  fun posterDrawFailureRecyclesTheAllocatedBitmapBeforeRethrowing() {
+    val failures = listOf<Throwable>(
+      IllegalStateException("controlled poster draw failure"),
+      OutOfMemoryError("controlled poster draw allocation failure")
+    )
+    failures.forEach { failure ->
+      val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+      try {
+        val thrown = runCatching {
+          drawSvgPosterBitmap(bitmap) { throw failure }
+        }.exceptionOrNull()
+        assertSame("poster drawing replaced the original failure", failure, thrown)
+        assertTrue("poster drawing leaked its allocated bitmap on failure", bitmap.isRecycled)
+      } finally {
+        if (!bitmap.isRecycled) bitmap.recycle()
+      }
+    }
+  }
+
+  @Test
+  fun successfulPosterDrawTransfersTheLiveBitmapToEncoding() {
+    val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+    try {
+      val captured = drawSvgPosterBitmap(bitmap) { canvas -> canvas.drawColor(Color.BLUE) }
+      assertSame("poster drawing copied or replaced the allocated bitmap", bitmap, captured)
+      assertFalse("poster drawing recycled a bitmap before encoding could own it", captured.isRecycled)
+      assertEquals(Color.BLUE, captured.getPixel(0, 0))
+    } finally {
+      if (!bitmap.isRecycled) bitmap.recycle()
+    }
   }
 
   @Test
@@ -119,6 +158,46 @@ class SvgRendererInstrumentedTest {
       assertTrue("SVG admission cleanup did not drain every submission", drained)
       assertFalse("invalid SVG admission retained the renderer", hasRetainedRenderer())
       assertEquals("invalid SVG admission created a WebView", creationsBefore, svgPosterWebViewCreationCount())
+    }
+  }
+
+  @Test
+  fun expiredMainDispatchReturnsEveryReservationWithoutStartingPreparationOrRenderer() {
+    val pending = mutableListOf<PendingPoster>()
+    val nonce = System.nanoTime().toString()
+    val creationsBefore = svgPosterWebViewCreationCount()
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(35)
+    try {
+      instrumentation.runOnMainSync {
+        // These are real pre-main-dispatch reservations. No request can enter the queue yet.
+        repeat(32) { index ->
+          pending += enqueuePoster("<not-svg/>", "dispatch-deadline-$nonce-$index", timeoutMs = 1L)
+        }
+        assertTrue("reserved requests settled before main dispatch", pending.all { it.settled.count == 1L })
+        Thread.sleep(20L)
+      }
+      pending.forEach { item ->
+        assertTrue("expired reservation did not settle", item.settled.await(
+          (deadline - System.nanoTime()).coerceAtLeast(0L), TimeUnit.NANOSECONDS))
+        assertEquals("svg_render_timeout", item.code)
+      }
+      instrumentation.waitForIdleSync()
+      assertTrue("expired request settled more than once", pending.all { it.settlements.get() == 1 })
+      // Invalid input proves this retry reached preparation, rather than leaking all 32 permits.
+      val retry = enqueuePoster("<not-svg/>", "dispatch-deadline-$nonce-retry").also { pending += it }
+      assertTrue("reservation was not reusable", retry.settled.await(
+        (deadline - System.nanoTime()).coerceAtLeast(0L), TimeUnit.NANOSECONDS))
+      assertEquals("svg_invalid_input", retry.code)
+    } finally {
+      var drained = true
+      pending.forEach { item ->
+        drained = item.settled.await((deadline - System.nanoTime()).coerceAtLeast(0L), TimeUnit.NANOSECONDS) && drained
+      }
+      instrumentation.waitForIdleSync()
+      assertTrue("SVG deadline proof left a pending request", drained)
+      assertFalse("expired reservations retained the renderer", hasRetainedRenderer())
+      assertEquals("expired reservations created a WebView", creationsBefore, svgPosterWebViewCreationCount())
+      assertTrue("terminal reservation callback repeated", pending.all { it.settlements.get() == 1 })
     }
   }
 

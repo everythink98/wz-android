@@ -1,6 +1,15 @@
 import { ActivityIndicator } from 'react-native-paper';
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode
+} from 'react';
 import {
   Modal,
   PixelRatio,
@@ -63,7 +72,6 @@ type PreviewStatus = 'failed' | 'loaded' | 'loading';
 type PreviewImageState = {
   regionEligible: boolean;
   sourceIdentity: string;
-  status: PreviewStatus;
 };
 type PreviewResolution = { height: number; width: number };
 type PreviewRegionState = {
@@ -83,21 +91,119 @@ type PreviewImageLoadMetrics = {
   totalBytes?: number;
 };
 
-function createPreviewLoadOwner(requestIdentity: string, sourceIdentity: string, startedAt: number) {
-  const metrics: PreviewImageLoadMetrics = { sourceIdentity, startedAt };
-  const previewDiagnosticRef: { current: { fallback: boolean; trace: DiagnosticTrace } | null } = { current: null };
-  return {
-    requestIdentity,
-    loadMetricsRef: { current: metrics },
-    nativeFailedRef: { current: false },
-    posterRefreshRef: { current: { attempted: false, inFlight: false, sourceIdentity: '' } },
-    previewDiagnosticRef,
-    recoveringRef: { current: false },
-    requestGenerationRef: { current: 0 },
-    settledRef: { current: false },
-    sourceIdentityRef: { current: sourceIdentity },
-    svgArtifactConsumer: new AbortController()
+type PreviewLoadState =
+  { phase: 'pending' } | { phase: 'recovering'; generation: number } | { phase: 'loaded' | 'failed' | 'retired' };
+type PreviewPosterRefresh = { phase: 'idle' } | { phase: 'running' | 'finished'; sourceIdentity: string };
+
+class PreviewLoadOwner {
+  private state: PreviewLoadState = { phase: 'pending' };
+  private listeners = new Set<() => void>();
+  private poster: PreviewPosterRefresh = { phase: 'idle' };
+  private generation = 0;
+  private identity: string;
+  private nativeFailure = false;
+  readonly loadMetricsRef: { current: PreviewImageLoadMetrics };
+  readonly previewDiagnosticRef: { current: { fallback: boolean; trace: DiagnosticTrace } | null } = { current: null };
+  readonly svgArtifactConsumer = new AbortController();
+
+  constructor(
+    readonly requestIdentity: string,
+    sourceIdentity: string,
+    startedAt: number
+  ) {
+    this.identity = sourceIdentity;
+    this.loadMetricsRef = { current: { sourceIdentity, startedAt } };
+  }
+
+  get sourceIdentity() {
+    return this.state.phase === 'retired' ? '' : this.identity;
+  }
+  get settled() {
+    return this.state.phase === 'loaded' || this.state.phase === 'failed' || this.state.phase === 'retired';
+  }
+  get nativeFailed() {
+    return this.nativeFailure;
+  }
+  get requestGeneration() {
+    return this.generation;
+  }
+  get recovering() {
+    return this.state.phase === 'recovering';
+  }
+
+  getStatus = (): PreviewStatus =>
+    this.state.phase === 'loaded' ? 'loaded' : this.state.phase === 'failed' ? 'failed' : 'loading';
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   };
+
+  private commit(state: PreviewLoadState) {
+    this.state = state;
+    for (const listener of this.listeners) listener();
+  }
+
+  settle(outcome: 'loaded' | 'failed') {
+    if (outcome === 'failed') this.nativeFailure = true;
+    this.commit({ phase: outcome });
+  }
+
+  nativeError() {
+    this.nativeFailure = true;
+  }
+
+  beginRecovery() {
+    if (this.settled || this.recovering) return null;
+    this.commit({ phase: 'recovering', generation: this.generation });
+    return this.generation;
+  }
+
+  finishRecovery(generation: number) {
+    if (this.state.phase === 'recovering' && this.state.generation === generation) this.commit({ phase: 'pending' });
+  }
+
+  invalidateRecovery() {
+    this.generation += 1;
+    if (this.state.phase === 'recovering') this.commit({ phase: 'pending' });
+  }
+
+  claimPosterRefresh(sourceIdentity: string) {
+    if (this.poster.phase !== 'idle' && this.poster.sourceIdentity === sourceIdentity) {
+      return this.poster.phase === 'running' ? 'busy' : 'already-attempted';
+    }
+    this.poster = { phase: 'running', sourceIdentity };
+    return 'started';
+  }
+
+  finishPosterRefresh(sourceIdentity: string) {
+    if (this.poster.phase === 'running' && this.poster.sourceIdentity === sourceIdentity)
+      this.poster = { phase: 'finished', sourceIdentity };
+  }
+
+  reopenSettled() {
+    if (!this.settled) return false;
+    this.commit({ phase: 'pending' });
+    return true;
+  }
+
+  retry(sourceIdentity: string) {
+    this.invalidateRecovery();
+    this.commit({ phase: 'pending' });
+    this.nativeFailure = false;
+    this.identity = sourceIdentity;
+  }
+
+  dispose() {
+    this.invalidateRecovery();
+    this.svgArtifactConsumer.abort();
+    this.commit({ phase: 'retired' });
+  }
+}
+
+function createPreviewLoadOwner(requestIdentity: string, sourceIdentity: string, startedAt: number) {
+  return new PreviewLoadOwner(requestIdentity, sourceIdentity, startedAt);
 }
 
 type ImagePreviewModalProps = {
@@ -157,6 +263,125 @@ type PreviewRingState = {
   slots: PreviewRingSlot[];
 };
 
+type PreviewRingTransition = { phase: 'idle' | 'animating' } | { phase: 'committing'; ring: PreviewRingState };
+
+/** Owns the JS ring and queued destination; UI-thread animation is a separate physical receipt. */
+class PreviewRingController {
+  private currentRing: PreviewRingState;
+  private transition: PreviewRingTransition = { phase: 'idle' };
+  private pendingExternalRebuild = false;
+  private requestedIndex: number;
+  private destination: number;
+
+  constructor(
+    private items: readonly ImagePreviewItem[],
+    index: number,
+    private overrideIndex: number | undefined,
+    private override: ImagePreviewItem | undefined,
+    private open: boolean
+  ) {
+    this.currentRing = createPreviewRingState(items, index, overrideIndex, override);
+    this.requestedIndex = index;
+    this.destination = index;
+  }
+
+  get ring() {
+    return this.currentRing;
+  }
+  get activeIndex() {
+    return this.currentRing.activeIndex;
+  }
+  get desiredIndex() {
+    return this.destination;
+  }
+  get transitioning() {
+    return this.transition.phase !== 'idle';
+  }
+  get needsRebuild() {
+    return this.pendingExternalRebuild;
+  }
+
+  commitPublished(ring: PreviewRingState) {
+    if (this.transition.phase !== 'committing' || this.transition.ring !== ring) return false;
+    this.transition = { phase: 'idle' };
+    return true;
+  }
+
+  rebuild(index: number) {
+    this.currentRing = createPreviewRingState(this.items, index, this.overrideIndex, this.override);
+    this.transition = { phase: 'idle' };
+    this.pendingExternalRebuild = false;
+    this.destination = this.currentRing.activeIndex;
+    return this.currentRing;
+  }
+
+  observeCatalog(
+    items: readonly ImagePreviewItem[],
+    overrideIndex: number | undefined,
+    override: ImagePreviewItem | undefined,
+    open: boolean
+  ) {
+    const reopening = open && !this.open;
+    const changed = this.items !== items || this.override !== override || this.overrideIndex !== overrideIndex;
+    this.items = items;
+    this.override = override;
+    this.overrideIndex = overrideIndex;
+    this.open = open;
+    return { reopening, changed };
+  }
+
+  requestExternal(index: number, catalogChanged: boolean, reopening: boolean, animationRunning: boolean) {
+    if (!reopening && !catalogChanged && this.requestedIndex === index) return 'unchanged';
+    this.requestedIndex = index;
+    this.destination = index;
+    if (this.transitioning || animationRunning) {
+      this.pendingExternalRebuild = true;
+      return 'deferred';
+    }
+    return 'rebuild';
+  }
+
+  started(targetIndex: number) {
+    this.transition = { phase: 'animating' };
+    if (this.destination === this.activeIndex) this.destination = targetIndex;
+  }
+
+  canceled() {
+    this.transition = { phase: 'idle' };
+    if (!this.pendingExternalRebuild) this.destination = this.activeIndex;
+  }
+
+  commitStep(direction: -1 | 1, targetIndex: number, targetSlot: number, recycleSlot: number) {
+    const currentRing = this.currentRing;
+    const target = currentRing.slots.find(({ slot }) => slot === targetSlot);
+    if (target?.page?.index !== targetIndex || targetIndex !== currentRing.activeIndex + direction) {
+      this.transition = { phase: 'idle' };
+      return null;
+    }
+    const recycledIndex = targetIndex + direction;
+    const recycledItem = previewItemAtIndex(this.items, recycledIndex, this.overrideIndex, this.override);
+    const nextSlots = currentRing.slots.map((slot): PreviewRingSlot => {
+      if (slot.slot === currentRing.activeSlot) return { ...slot, role: direction === 1 ? -1 : 1 };
+      if (slot.slot === targetSlot) return { ...slot, role: 0 };
+      if (slot.slot === recycleSlot)
+        return { ...slot, page: recycledItem ? { index: recycledIndex, item: recycledItem } : null, role: direction };
+      return slot;
+    });
+    const nextRing = { activeIndex: targetIndex, activeSlot: targetSlot, slots: nextSlots };
+    const notifySelection = !this.pendingExternalRebuild;
+    if (notifySelection) this.requestedIndex = targetIndex;
+    this.currentRing = nextRing;
+    this.transition = { phase: 'committing', ring: nextRing };
+    return { ring: nextRing, notifySelection };
+  }
+
+  requestMove(index: number) {
+    this.destination = clampIndex(index, this.items.length);
+    this.pendingExternalRebuild = false;
+    return this.destination;
+  }
+}
+
 const FULL_PREVIEW_VIEWPORT: PreviewRegionViewport = { height: 1, width: 1, x: 0, y: 0 };
 
 function currentPreviewRegion(reference: ResumableZoomRefType | null): Omit<PreviewRegionState, 'sourceIdentity'> {
@@ -211,9 +436,10 @@ function ImagePreviewModalContent({
   const itemOverrideIndex = preview?.itemOverrideIndex;
   const previewCount = previewItems.length;
   const requestedIndex = clampIndex(preview?.index ?? 0, previewCount);
-  const [ring, setRing] = useState(() =>
-    createPreviewRingState(previewItems, requestedIndex, itemOverrideIndex, itemOverride)
+  const [previewRing] = useState(
+    () => new PreviewRingController(previewItems, requestedIndex, itemOverrideIndex, itemOverride, Boolean(preview))
   );
+  const [ring, setRing] = useState(() => previewRing.ring);
   const activeIndex = ring.activeIndex;
   const [activeZoomed, setActiveZoomed] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
@@ -221,17 +447,6 @@ function ImagePreviewModalContent({
   const [animatedSvgZoomSuspended, setAnimatedSvgZoomSuspended] = useState(false);
   const [resolutions, setResolutions] = useState<Record<string, PreviewResolution>>({});
   const zoomRefs = useRef(new Map<number, ResumableZoomRefType>());
-  const ringRef = useRef(ring);
-  const previewItemsRef = useRef(previewItems);
-  const itemOverrideRef = useRef(itemOverride);
-  const itemOverrideIndexRef = useRef(itemOverrideIndex);
-  const activeIndexRef = useRef(requestedIndex);
-  const requestedIndexRef = useRef(requestedIndex);
-  const desiredIndexRef = useRef(requestedIndex);
-  const pendingExternalRebuildRef = useRef(false);
-  const transitioningRef = useRef(false);
-  const releaseTransitionAfterCommitRef = useRef(false);
-  const previewOpenRef = useRef(Boolean(preview));
   const mountedRef = useRef(true);
   const overlayOpacity = useSharedValue(1);
   const pullTranslateY = useSharedValue(0);
@@ -272,23 +487,13 @@ function ImagePreviewModalContent({
   }, []);
 
   useLayoutEffect(() => {
-    if (!releaseTransitionAfterCommitRef.current) {
-      return;
-    }
-    releaseTransitionAfterCommitRef.current = false;
-    transitioningRef.current = false;
-    transitioning.value = false;
-  }, [ring, transitioning]);
+    if (previewRing.commitPublished(ring)) transitioning.value = false;
+  }, [previewRing, ring, transitioning]);
 
   const rebuildRing = useCallback(
     (index: number) => {
-      const nextRing = createPreviewRingState(
-        previewItemsRef.current,
-        index,
-        itemOverrideIndexRef.current,
-        itemOverrideRef.current
-      );
-      zoomRefs.current.get(activeIndexRef.current)?.reset(false);
+      zoomRefs.current.get(previewRing.activeIndex)?.reset(false);
+      const nextRing = previewRing.rebuild(index);
       for (const slot of nextRing.slots) {
         setSlotRole(slot.slot, slot.role);
       }
@@ -298,30 +503,30 @@ function ImagePreviewModalContent({
       activeZoomScale.value = 1;
       activeIndexOnUI.value = nextRing.activeIndex;
       transitioning.value = false;
-      transitioningRef.current = false;
-      releaseTransitionAfterCommitRef.current = false;
-      pendingExternalRebuildRef.current = false;
-      activeIndexRef.current = nextRing.activeIndex;
-      desiredIndexRef.current = nextRing.activeIndex;
-      ringRef.current = nextRing;
       setActiveZoomed(false);
       setAnimatedSvgZoomSuspended(false);
       setRing(nextRing);
     },
-    [activeIndexOnUI, activeZoomScale, overlayOpacity, pullTranslateY, ringTranslateX, setSlotRole, transitioning]
+    [
+      activeIndexOnUI,
+      activeZoomScale,
+      overlayOpacity,
+      previewRing,
+      pullTranslateY,
+      ringTranslateX,
+      setSlotRole,
+      transitioning
+    ]
   );
 
   useEffect(() => {
     const previewOpen = Boolean(preview && previewCount > 0);
-    const reopening = previewOpen && !previewOpenRef.current;
-    const catalogChanged =
-      previewItemsRef.current !== previewItems ||
-      itemOverrideRef.current !== itemOverride ||
-      itemOverrideIndexRef.current !== itemOverrideIndex;
-    previewItemsRef.current = previewItems;
-    itemOverrideRef.current = itemOverride;
-    itemOverrideIndexRef.current = itemOverrideIndex;
-    previewOpenRef.current = previewOpen;
+    const { reopening, changed: catalogChanged } = previewRing.observeCatalog(
+      previewItems,
+      itemOverrideIndex,
+      itemOverride,
+      previewOpen
+    );
     closing.value = false;
     overlayOpacity.value = 1;
     pullTranslateY.value = 0;
@@ -333,22 +538,15 @@ function ImagePreviewModalContent({
       setActiveZoomed(false);
       setAnimatedSvgZoomSuspended(false);
     }
-    if (!reopening && !catalogChanged && requestedIndexRef.current === requestedIndex) {
-      return;
-    }
-    requestedIndexRef.current = requestedIndex;
-    desiredIndexRef.current = requestedIndex;
-    if (transitioningRef.current || transitioning.value) {
-      pendingExternalRebuildRef.current = true;
-      return;
-    }
-    rebuildRing(requestedIndex);
+    if (previewRing.requestExternal(requestedIndex, catalogChanged, reopening, transitioning.value) === 'rebuild')
+      rebuildRing(requestedIndex);
   }, [
     closing,
     overlayOpacity,
     preview,
     previewCount,
     previewItems,
+    previewRing,
     itemOverride,
     itemOverrideIndex,
     pullTranslateY,
@@ -395,23 +593,23 @@ function ImagePreviewModalContent({
   }, [lastInteractionAt, onInteraction]);
   const handleZoomGestureStart = useCallback(
     (index: number) => {
-      if (activeIndexRef.current !== index) return;
+      if (previewRing.activeIndex !== index) return;
       zoomGestureActive.value = true;
       reportInteraction();
       setAnimatedSvgZoomSuspended(true);
     },
-    [reportInteraction, zoomGestureActive]
+    [previewRing, reportInteraction, zoomGestureActive]
   );
   const handleZoomGestureSettled = useCallback(
     (index: number, scale: number) => {
-      if (activeIndexRef.current !== index) return;
+      if (previewRing.activeIndex !== index) return;
       if (zoomGestureActive.value) reportInteraction();
       zoomGestureActive.value = false;
       const zoomed = Math.abs(scale - 1) > 0.001;
       setActiveZoomed(zoomed);
       setAnimatedSvgZoomSuspended(zoomed);
     },
-    [reportInteraction, zoomGestureActive]
+    [previewRing, reportInteraction, zoomGestureActive]
   );
   useLayoutEffect(() => {
     zoomGestureActive.value = false;
@@ -432,77 +630,35 @@ function ImagePreviewModalContent({
       if (!mountedRef.current) {
         return;
       }
-      transitioningRef.current = true;
-      if (desiredIndexRef.current === activeIndexRef.current) {
-        desiredIndexRef.current = targetIndex;
-      }
-      zoomRefs.current.get(activeIndexRef.current)?.reset(false);
+      previewRing.started(targetIndex);
+      zoomRefs.current.get(previewRing.activeIndex)?.reset(false);
       activeZoomScale.value = 1;
       setActiveZoomed(false);
       setAnimatedSvgZoomSuspended(false);
     },
-    [activeZoomScale]
+    [activeZoomScale, previewRing]
   );
 
   const cancelTransition = useCallback(() => {
-    transitioningRef.current = false;
-    if (pendingExternalRebuildRef.current) {
-      rebuildRing(desiredIndexRef.current);
-    } else {
-      desiredIndexRef.current = activeIndexRef.current;
-    }
-  }, [rebuildRing]);
+    previewRing.canceled();
+    if (previewRing.needsRebuild) rebuildRing(previewRing.desiredIndex);
+  }, [previewRing, rebuildRing]);
 
   const commitRingStep = useCallback(
     (direction: -1 | 1, targetIndex: number, targetSlot: number, recycleSlot: number) => {
       if (!mountedRef.current) {
         return;
       }
-      const currentRing = ringRef.current;
-      const target = currentRing.slots.find(({ slot }) => slot === targetSlot);
-      if (target?.page?.index !== targetIndex || targetIndex !== currentRing.activeIndex + direction) {
-        transitioningRef.current = false;
+      const committed = previewRing.commitStep(direction, targetIndex, targetSlot, recycleSlot);
+      if (!committed) {
         transitioning.value = false;
         return;
       }
-      const recycledIndex = targetIndex + direction;
-      const recycledItem = previewItemAtIndex(
-        previewItemsRef.current,
-        recycledIndex,
-        itemOverrideIndexRef.current,
-        itemOverrideRef.current
-      );
-      const nextSlots = currentRing.slots.map((slot) => {
-        if (slot.slot === currentRing.activeSlot) {
-          return { ...slot, role: (direction === 1 ? -1 : 1) as PreviewRingRole };
-        }
-        if (slot.slot === targetSlot) {
-          return { ...slot, role: 0 as PreviewRingRole };
-        }
-        if (slot.slot === recycleSlot) {
-          return {
-            ...slot,
-            page: recycledItem ? { index: recycledIndex, item: recycledItem } : null,
-            role: direction
-          };
-        }
-        return slot;
-      });
-      const nextRing = { activeIndex: targetIndex, activeSlot: targetSlot, slots: nextSlots };
-      const notifySelection = !pendingExternalRebuildRef.current;
-      if (notifySelection) {
-        requestedIndexRef.current = targetIndex;
-      }
-      activeIndexRef.current = targetIndex;
       activeIndexOnUI.value = targetIndex;
-      ringRef.current = nextRing;
-      releaseTransitionAfterCommitRef.current = true;
-      setRing(nextRing);
-      if (notifySelection) {
-        onSelect(targetIndex);
-      }
+      setRing(committed.ring);
+      if (committed.notifySelection) onSelect(targetIndex);
     },
-    [activeIndexOnUI, onSelect, transitioning]
+    [activeIndexOnUI, onSelect, previewRing, transitioning]
   );
 
   const animateRingStep = useCallback(
@@ -546,10 +702,10 @@ function ImagePreviewModalContent({
 
   const startRingStep = useCallback(
     (direction: -1 | 1) => {
-      if (transitioningRef.current || transitioning.value) {
+      if (previewRing.transitioning || transitioning.value) {
         return false;
       }
-      const currentRing = ringRef.current;
+      const currentRing = previewRing.ring;
       const targetIndex = currentRing.activeIndex + direction;
       const target = currentRing.slots.find(({ page, role }) => role === direction && page?.index === targetIndex);
       if (!target) {
@@ -563,51 +719,49 @@ function ImagePreviewModalContent({
       animateRingStep(direction, targetIndex, currentRing.activeSlot, target.slot, recycle);
       return true;
     },
-    [animateRingStep, markTransitionStarted, transitioning]
+    [animateRingStep, markTransitionStarted, previewRing, transitioning]
   );
 
   const moveToIndex = useCallback(
     (index: number) => {
-      const nextIndex = clampIndex(index, previewItemsRef.current.length);
-      desiredIndexRef.current = nextIndex;
-      pendingExternalRebuildRef.current = false;
-      if (!transitioningRef.current && !transitioning.value && nextIndex !== activeIndexRef.current) {
-        startRingStep(nextIndex > activeIndexRef.current ? 1 : -1);
+      const nextIndex = previewRing.requestMove(index);
+      if (!previewRing.transitioning && !transitioning.value && nextIndex !== previewRing.activeIndex) {
+        startRingStep(nextIndex > previewRing.activeIndex ? 1 : -1);
       }
     },
-    [startRingStep, transitioning]
+    [previewRing, startRingStep, transitioning]
   );
 
   const queueGestureStep = useCallback(
     (direction: -1 | 1) => {
-      moveToIndex(desiredIndexRef.current + direction);
+      moveToIndex(previewRing.desiredIndex + direction);
     },
-    [moveToIndex]
+    [moveToIndex, previewRing]
   );
 
   useEffect(() => {
-    if (transitioningRef.current || transitioning.value) {
+    if (previewRing.transitioning || transitioning.value) {
       return;
     }
-    if (pendingExternalRebuildRef.current) {
-      rebuildRing(desiredIndexRef.current);
+    if (previewRing.needsRebuild) {
+      rebuildRing(previewRing.desiredIndex);
       return;
     }
-    const desiredIndex = desiredIndexRef.current;
+    const desiredIndex = previewRing.desiredIndex;
     if (desiredIndex !== ring.activeIndex) {
       startRingStep(desiredIndex > ring.activeIndex ? 1 : -1);
     }
-  }, [rebuildRing, ring, startRingStep, transitioning]);
+  }, [previewRing, rebuildRing, ring, startRingStep, transitioning]);
 
   const handleAccessibilityAction = useCallback(
     (event: AccessibilityActionEvent) => {
       if (event.nativeEvent.actionName === 'increment') {
-        moveToIndex(desiredIndexRef.current + 1);
+        moveToIndex(previewRing.desiredIndex + 1);
       } else if (event.nativeEvent.actionName === 'decrement') {
-        moveToIndex(desiredIndexRef.current - 1);
+        moveToIndex(previewRing.desiredIndex - 1);
       }
     },
-    [moveToIndex]
+    [moveToIndex, previewRing]
   );
 
   const handleSave = useCallback(async () => {
@@ -1081,17 +1235,12 @@ function PreviewPage({
   if (logicalLoadOwner.requestIdentity !== requestIdentity) {
     setLogicalLoadOwner(createPreviewLoadOwner(requestIdentity, sourceIdentity, initialLoadStartedAt));
   }
-  const {
-    loadMetricsRef,
-    nativeFailedRef,
-    posterRefreshRef,
-    previewDiagnosticRef,
-    recoveringRef,
-    requestGenerationRef,
-    settledRef,
-    sourceIdentityRef,
-    svgArtifactConsumer
-  } = logicalLoadOwner;
+  const { loadMetricsRef, previewDiagnosticRef, svgArtifactConsumer } = logicalLoadOwner;
+  const loadStatus = useSyncExternalStore(
+    logicalLoadOwner.subscribe,
+    logicalLoadOwner.getStatus,
+    logicalLoadOwner.getStatus
+  );
   const cachedArtifact = useMemo(() => cachedCompatibleSvgArtifact(originalSource), [originalSource]);
   useEffect(() => {
     if (cachedArtifact) {
@@ -1105,16 +1254,16 @@ function PreviewPage({
   const svgViewIdentity = activeAnimatedArtifact
     ? `${sourceIdentity}\u0000${activeAnimatedArtifact.requestIdentity}`
     : '';
-  const [readySvgViewIdentity, setReadySvgViewIdentity] = useState('');
-  const [displayedSvgPosterIdentity, setDisplayedSvgPosterIdentity] = useState('');
+  const [svgPresentation, setSvgPresentation] = useState({ viewIdentity: '', posterIdentity: '' });
+  const readySvgViewIdentity = svgPresentation.viewIdentity;
+  const displayedSvgPosterIdentity = svgPresentation.posterIdentity;
   const svgPosterIdentity = activeAnimatedArtifact
     ? `${svgViewIdentity}\u0000${activeAnimatedArtifact.posterRevision}`
     : '';
   const animatedSvgPosterReady = displayedSvgPosterIdentity === svgPosterIdentity;
   const [imageState, setImageState] = useState<PreviewImageState>({
     regionEligible: false,
-    sourceIdentity,
-    status: 'loading'
+    sourceIdentity
   });
   const [cachedOriginalState, setCachedOriginalState] = useState<{
     filePath: string | null;
@@ -1126,7 +1275,7 @@ function PreviewPage({
     viewport: FULL_PREVIEW_VIEWPORT
   });
   const [regionSuspended, setRegionSuspended] = useState(false);
-  const status = imageState.sourceIdentity === sourceIdentity ? imageState.status : 'loading';
+  const status = logicalLoadOwner.sourceIdentity === sourceIdentity ? loadStatus : 'loading';
   useLayoutEffect(() => {
     if (!active) return;
     onVisibleImageChange?.(status === 'loaded' ? item : null);
@@ -1134,24 +1283,13 @@ function PreviewPage({
   }, [active, item, onVisibleImageChange, status]);
   const regionEligible = imageState.sourceIdentity === sourceIdentity && imageState.regionEligible;
   const suppressLoadingOverlay =
-    displayedBeforeMount && !knownArtifact && !nativeFailedRef.current && retryVersion === 0;
-  const setCurrentStatus = useCallback(
-    (nextStatus: PreviewStatus) => {
-      setImageState((current) => ({
-        regionEligible: current.sourceIdentity === sourceIdentity && current.regionEligible,
-        sourceIdentity,
-        status: nextStatus
-      }));
-    },
-    [sourceIdentity]
-  );
+    displayedBeforeMount && !knownArtifact && !logicalLoadOwner.nativeFailed && retryVersion === 0;
   const setCurrentRegionEligibility = useCallback(
     (eligible: boolean) => {
-      setImageState((current) => ({
+      setImageState({
         regionEligible: eligible,
-        sourceIdentity,
-        status: current.sourceIdentity === sourceIdentity ? current.status : 'loading'
-      }));
+        sourceIdentity
+      });
     },
     [sourceIdentity]
   );
@@ -1235,11 +1373,10 @@ function PreviewPage({
 
   const settleLoaded = useCallback(
     (fallback: boolean) => {
-      if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+      if (!mountedRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity || logicalLoadOwner.settled) {
         return;
       }
-      settledRef.current = true;
-      recoveringRef.current = false;
+      logicalLoadOwner.settle('loaded');
       if (activeRef.current) {
         const displayedAt = Date.now();
         finishActiveDiagnostic(
@@ -1251,41 +1388,19 @@ function PreviewPage({
         );
       }
       markOriginalImageDisplayed(originalSource);
-      setCurrentStatus('loaded');
     },
-    [
-      finishActiveDiagnostic,
-      loadMetricsRef,
-      originalSource,
-      recoveringRef,
-      setCurrentStatus,
-      settledRef,
-      sourceIdentity,
-      sourceIdentityRef
-    ]
+    [finishActiveDiagnostic, loadMetricsRef, originalSource, logicalLoadOwner, sourceIdentity]
   );
 
   const settleFailure = useCallback(
     (fallback: boolean, terminalReason: 'fallback-error' | 'native-error' | 'timeout') => {
-      if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+      if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
         return;
       }
-      nativeFailedRef.current = true;
-      settledRef.current = true;
-      recoveringRef.current = false;
+      logicalLoadOwner.settle('failed');
       finishActiveDiagnostic('failure', fallback, terminalReason, previewImageMetricFields(loadMetricsRef.current));
-      setCurrentStatus('failed');
     },
-    [
-      finishActiveDiagnostic,
-      loadMetricsRef,
-      nativeFailedRef,
-      recoveringRef,
-      setCurrentStatus,
-      settledRef,
-      sourceIdentity,
-      sourceIdentityRef
-    ]
+    [finishActiveDiagnostic, loadMetricsRef, logicalLoadOwner, sourceIdentity]
   );
 
   const recoverSvgArtifact = useCallback(
@@ -1293,16 +1408,15 @@ function PreviewPage({
       if (
         !mountedRef.current ||
         !activeRef.current ||
-        sourceIdentityRef.current !== sourceIdentity ||
-        settledRef.current ||
-        recoveringRef.current
+        logicalLoadOwner.sourceIdentity !== sourceIdentity ||
+        logicalLoadOwner.settled ||
+        logicalLoadOwner.recovering
       ) {
         return;
       }
-      recoveringRef.current = true;
+      const generation = logicalLoadOwner.beginRecovery();
+      if (generation === null) return;
       currentDiagnostic(true);
-      setCurrentStatus('loading');
-      const generation = requestGenerationRef.current;
       try {
         const artifact = await recoverCompatibleSvgArtifact(diagnosticSource, {
           signal: svgArtifactConsumer.signal
@@ -1310,13 +1424,13 @@ function PreviewPage({
         if (
           !mountedRef.current ||
           !activeRef.current ||
-          sourceIdentityRef.current !== sourceIdentity ||
-          settledRef.current ||
-          generation !== requestGenerationRef.current
+          logicalLoadOwner.sourceIdentity !== sourceIdentity ||
+          logicalLoadOwner.settled ||
+          generation !== logicalLoadOwner.requestGeneration
         ) {
           return;
         }
-        recoveringRef.current = false;
+        logicalLoadOwner.finishRecovery(generation);
         if (!artifact) {
           settleFailure(true, 'native-error');
           return;
@@ -1331,7 +1445,7 @@ function PreviewPage({
         };
         onResolution(resolutionIdentity, artifact.dimensions);
       } catch {
-        if (generation === requestGenerationRef.current) {
+        if (generation === logicalLoadOwner.requestGeneration) {
           settleFailure(true, 'fallback-error');
         }
       }
@@ -1341,50 +1455,38 @@ function PreviewPage({
       loadMetricsRef,
       onResolution,
       originalSource,
-      recoveringRef,
-      requestGenerationRef,
+      logicalLoadOwner,
       resolutionIdentity,
       setCompatibleSvgArtifact,
-      setCurrentStatus,
       setResolution,
-      settledRef,
       settleFailure,
       sourceIdentity,
-      sourceIdentityRef,
       svgArtifactConsumer
     ]
   );
 
   const refreshSvgPoster = useCallback(
     async (artifact: CompatibleSvgArtifact, terminalOnFailure: boolean) => {
-      if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+      if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
         return;
       }
-      if (posterRefreshRef.current.sourceIdentity !== sourceIdentity) {
-        posterRefreshRef.current = { attempted: false, inFlight: false, sourceIdentity };
-      }
-      if (posterRefreshRef.current.inFlight) {
-        return;
-      }
-      if (posterRefreshRef.current.attempted) {
+      const refresh = logicalLoadOwner.claimPosterRefresh(sourceIdentity);
+      if (refresh === 'busy') return;
+      if (refresh === 'already-attempted') {
         if (terminalOnFailure) {
           settleFailure(true, 'fallback-error');
         }
         return;
       }
-      posterRefreshRef.current.attempted = true;
-      posterRefreshRef.current.inFlight = true;
-      if (settledRef.current) {
-        settledRef.current = false;
+      if (logicalLoadOwner.reopenSettled()) {
         loadMetricsRef.current = { sourceIdentity, startedAt: Date.now() };
       }
       currentDiagnostic(true);
-      setCurrentStatus('loading');
       try {
         const refreshed = await refreshCompatibleSvgPoster(artifact, {
           signal: svgArtifactConsumer.signal
         });
-        if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+        if (!mountedRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
           return;
         }
         setCompatibleSvgArtifact(refreshed);
@@ -1395,24 +1497,19 @@ function PreviewPage({
           settleFailure(true, 'fallback-error');
         }
       } finally {
-        if (posterRefreshRef.current.sourceIdentity === sourceIdentity) {
-          posterRefreshRef.current.inFlight = false;
-        }
+        logicalLoadOwner.finishPosterRefresh(sourceIdentity);
       }
     },
     [
       currentDiagnostic,
       loadMetricsRef,
       onResolution,
-      posterRefreshRef,
+      logicalLoadOwner,
       resolutionIdentity,
       setCompatibleSvgArtifact,
-      setCurrentStatus,
       setResolution,
-      settledRef,
       settleFailure,
       sourceIdentity,
-      sourceIdentityRef,
       svgArtifactConsumer
     ]
   );
@@ -1434,20 +1531,10 @@ function PreviewPage({
       return;
     }
     return () => {
-      requestGenerationRef.current += 1;
-      svgArtifactConsumer.abort();
+      logicalLoadOwner.dispose();
       finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
-      sourceIdentityRef.current = '';
     };
-  }, [
-    finishActiveDiagnostic,
-    loadMetricsRef,
-    requestGenerationRef,
-    requestIdentity,
-    sourceIdentity,
-    sourceIdentityRef,
-    svgArtifactConsumer
-  ]);
+  }, [finishActiveDiagnostic, loadMetricsRef, logicalLoadOwner, requestIdentity, sourceIdentity, svgArtifactConsumer]);
 
   useEffect(() => {
     if (!activeArtifact) {
@@ -1459,14 +1546,12 @@ function PreviewPage({
 
   useEffect(() => {
     if (!active) {
-      setReadySvgViewIdentity('');
-      setDisplayedSvgPosterIdentity('');
-      requestGenerationRef.current += 1;
-      recoveringRef.current = false;
+      setSvgPresentation({ viewIdentity: '', posterIdentity: '' });
+      logicalLoadOwner.invalidateRecovery();
       finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
       return;
     }
-    if (!settledRef.current) {
+    if (!logicalLoadOwner.settled) {
       if (!previewDiagnosticRef.current) {
         loadMetricsRef.current = {
           sourceIdentity,
@@ -1475,7 +1560,7 @@ function PreviewPage({
       }
       currentDiagnostic(false);
     }
-    if (nativeFailedRef.current && !settledRef.current) {
+    if (logicalLoadOwner.nativeFailed && !logicalLoadOwner.settled) {
       void recoverSvgArtifact();
     }
   }, [
@@ -1483,22 +1568,19 @@ function PreviewPage({
     currentDiagnostic,
     finishActiveDiagnostic,
     loadMetricsRef,
-    nativeFailedRef,
+    logicalLoadOwner,
     previewDiagnosticRef,
     recoverSvgArtifact,
-    recoveringRef,
-    requestGenerationRef,
-    settledRef,
     sourceIdentity
   ]);
 
   useEffect(() => {
-    if (!active || settledRef.current || status !== 'loading') {
+    if (!active || logicalLoadOwner.settled || status !== 'loading') {
       return undefined;
     }
     const timeout = setTimeout(() => settleFailure(false, 'timeout'), IMAGE_LOAD_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [active, progressDeadlineVersion, retryVersion, settleFailure, settledRef, status]);
+  }, [active, progressDeadlineVersion, retryVersion, settleFailure, logicalLoadOwner, status]);
 
   useEffect(() => {
     if (!active) {
@@ -1516,7 +1598,12 @@ function PreviewPage({
     let cancelled = false;
     void ExpoImage.getCachePathAsync(cacheKey)
       .then((filePath) => {
-        if (cancelled || !mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+        if (
+          cancelled ||
+          !mountedRef.current ||
+          !activeRef.current ||
+          logicalLoadOwner.sourceIdentity !== sourceIdentity
+        ) {
           return;
         }
         setCachedOriginalState({ filePath, sourceIdentity });
@@ -1534,7 +1621,7 @@ function PreviewPage({
     originalSource,
     regionEligible,
     sourceIdentity,
-    sourceIdentityRef,
+    logicalLoadOwner,
     status,
     syncPreviewRegion
   ]);
@@ -1557,32 +1644,17 @@ function PreviewPage({
     if (!activeRef.current) {
       return;
     }
-    requestGenerationRef.current += 1;
-    settledRef.current = false;
-    recoveringRef.current = false;
-    nativeFailedRef.current = false;
+
     finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
-    setCurrentStatus('loading');
     const nextRetryVersion = retryVersion + 1;
     const nextSourceIdentity = `${requestIdentity}\u0000${nextRetryVersion}`;
-    sourceIdentityRef.current = nextSourceIdentity;
+    logicalLoadOwner.retry(nextSourceIdentity);
     loadMetricsRef.current = {
       sourceIdentity: nextSourceIdentity,
       startedAt: Date.now()
     };
     setRetryState({ requestIdentity, version: nextRetryVersion });
-  }, [
-    finishActiveDiagnostic,
-    loadMetricsRef,
-    nativeFailedRef,
-    recoveringRef,
-    requestGenerationRef,
-    requestIdentity,
-    retryVersion,
-    setCurrentStatus,
-    settledRef,
-    sourceIdentityRef
-  ]);
+  }, [finishActiveDiagnostic, loadMetricsRef, logicalLoadOwner, requestIdentity, retryVersion]);
   const handledRuntimeGenerationRef = useRef({ generation: runtimeGeneration, requestIdentity });
   useEffect(() => {
     if (handledRuntimeGenerationRef.current.requestIdentity !== requestIdentity) {
@@ -1644,31 +1716,33 @@ function PreviewPage({
               svgViewIdentity={svgViewIdentity}
               showDisplayUnderlay={!knownArtifact && status !== 'loaded'}
               onAnimatedPosterDisplay={() => {
-                if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
                   return;
                 }
-                setDisplayedSvgPosterIdentity(svgPosterIdentity);
+                setSvgPresentation((current) => ({ ...current, posterIdentity: svgPosterIdentity }));
               }}
               onAnimatedPosterError={() => {
-                if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
                   return;
                 }
-                setDisplayedSvgPosterIdentity((identity) => (identity === svgPosterIdentity ? '' : identity));
+                setSvgPresentation((current) =>
+                  current.posterIdentity === svgPosterIdentity ? { ...current, posterIdentity: '' } : current
+                );
                 void refreshSvgPoster(activeAnimatedArtifact!, false);
               }}
               onDisplay={() => settleLoaded(false)}
               onError={(diagnosticSource) => {
-                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                if (!mountedRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
                   return;
                 }
-                nativeFailedRef.current = true;
+                logicalLoadOwner.nativeError();
                 if (activeRef.current) {
                   void recoverSvgArtifact(diagnosticSource);
                 }
               }}
               onLoad={(event) => {
                 const source = event.source;
-                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                if (!mountedRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
                   return;
                 }
                 setCurrentRegionEligibility(
@@ -1690,7 +1764,11 @@ function PreviewPage({
                 }
               }}
               onLoadStart={() => {
-                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+                if (
+                  !mountedRef.current ||
+                  logicalLoadOwner.sourceIdentity !== sourceIdentity ||
+                  logicalLoadOwner.settled
+                ) {
                   return;
                 }
                 if (!previewDiagnosticRef.current) {
@@ -1702,14 +1780,17 @@ function PreviewPage({
                 if (activeRef.current) {
                   currentDiagnostic(false);
                 }
-                setCurrentStatus('loading');
               }}
               onPosterDisplay={() => settleLoaded(true)}
               onPosterError={() => {
                 void refreshSvgPoster(knownArtifact!, true);
               }}
               onProgress={(event) => {
-                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+                if (
+                  !mountedRef.current ||
+                  logicalLoadOwner.sourceIdentity !== sourceIdentity ||
+                  logicalLoadOwner.settled
+                ) {
                   return;
                 }
                 const loadedBytes = Number(event.loaded);
@@ -1743,7 +1824,7 @@ function PreviewPage({
                 if (
                   !mountedRef.current ||
                   !activeRef.current ||
-                  sourceIdentityRef.current !== sourceIdentity ||
+                  logicalLoadOwner.sourceIdentity !== sourceIdentity ||
                   nextResolution.width <= 0 ||
                   nextResolution.height <= 0
                 ) {
@@ -1769,10 +1850,10 @@ function PreviewPage({
                   : componentStyles.hiddenMedia
               ]}
               onLoad={() => {
-                if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                if (!mountedRef.current || !activeRef.current || logicalLoadOwner.sourceIdentity !== sourceIdentity) {
                   return;
                 }
-                setReadySvgViewIdentity(svgViewIdentity);
+                setSvgPresentation((current) => ({ ...current, viewIdentity: svgViewIdentity }));
                 settleLoaded(true);
               }}
               onError={() => settleFailure(true, 'fallback-error')}

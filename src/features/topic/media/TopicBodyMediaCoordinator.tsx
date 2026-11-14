@@ -25,7 +25,11 @@ type TopicBodyMediaKind = 'audio' | 'base' | 'inline' | 'sticker' | 'poster' | '
 type TopicBodyMediaPriority = 'visible' | 'prefetch' | 'upgrade' | 'user';
 type TopicBodyMediaOutcome = 'displayed' | 'error';
 type TopicBodyMediaFailure = 'error' | 'timeout' | null;
-type TopicBodyMediaEntryStatus = 'waiting' | 'running' | 'displayed' | 'failed';
+type TopicBodyMediaEntryState =
+  | { phase: 'waiting' }
+  | { phase: 'running'; deadline: number; lastProgressValue: number | null }
+  | { phase: 'displayed' }
+  | { phase: 'failed'; failure: Exclude<TopicBodyMediaFailure, null> };
 
 export type TopicBodyMediaDiagnosticSession = Readonly<{
   networkMediaCount: number;
@@ -65,18 +69,15 @@ type TopicBodyMediaEntry = {
   automaticRetry: boolean;
   attempt: number;
   attachmentRevision: number;
-  deadline: number | null;
-  failure: TopicBodyMediaFailure;
   key: string;
   kind: TopicBodyMediaKind;
-  lastProgressValue: number | null;
   listener: (snapshot: TopicBodyMediaSnapshot) => void;
   priority: TopicBodyMediaPriority;
   requestIdentity: string;
   rowKey: string;
   sequence: number;
   snapshot: TopicBodyMediaSnapshot;
-  status: TopicBodyMediaEntryStatus;
+  state: TopicBodyMediaEntryState;
 };
 
 const PRIORITY_ORDER: Record<TopicBodyMediaPriority, number> = {
@@ -165,11 +166,8 @@ class TopicBodyMediaCoordinator {
       automaticRetry: options.automaticRetry,
       attempt: 0,
       attachmentRevision: 0,
-      deadline: null,
-      failure: null,
       key: options.key,
       kind: options.kind,
-      lastProgressValue: null,
       listener,
       priority: options.priority,
       requestIdentity: options.requestIdentity,
@@ -181,18 +179,17 @@ class TopicBodyMediaCoordinator {
         attemptId: `${options.key}:0`,
         failure: null
       },
-      status: 'waiting'
+      state: { phase: 'waiting' }
     };
     const identityFailure = this.failedIdentities.get(entry.requestIdentity);
     if (identityFailure) {
-      entry.failure = identityFailure;
-      entry.status = 'failed';
+      entry.state = { phase: 'failed', failure: identityFailure };
     }
     this.entries.set(entry.key, entry);
     this.scheduleRecompute();
     return () => {
       if (this.entries.get(entry.key) !== entry) return;
-      if (entry.status === 'running') this.cancelCount += 1;
+      if (entry.state.phase === 'running') this.cancelCount += 1;
       this.entries.delete(entry.key);
       this.warmKeys.delete(entry.key);
       this.scheduleRecompute();
@@ -240,12 +237,11 @@ class TopicBodyMediaCoordinator {
     const deadline = Date.now() + MEDIA_NO_PROGRESS_TIMEOUT_MS;
     let restarted = false;
     for (const entry of this.entries.values()) {
-      if (entry.status !== 'running') continue;
+      if (entry.state.phase !== 'running') continue;
       this.cancelCount += 1;
       entry.attempt += 1;
       entry.attachmentRevision += 1;
-      entry.deadline = deadline;
-      entry.lastProgressValue = null;
+      entry.state = { phase: 'running', deadline, lastProgressValue: null };
       restarted = true;
     }
     if (restarted) this.recompute();
@@ -255,12 +251,11 @@ class TopicBodyMediaCoordinator {
     const entry = this.entries.get(key);
     if (
       !entry ||
-      (entry.status !== 'running' && !(outcome === 'error' && entry.status === 'displayed')) ||
+      (entry.state.phase !== 'running' && !(outcome === 'error' && entry.state.phase === 'displayed')) ||
       attemptId !== this.attemptIdFor(entry)
     ) {
       return;
     }
-    entry.deadline = null;
     if (outcome === 'error') {
       this.errorCount += 1;
       if (!entry.automaticRetry || !this.beginAutomaticRetry(entry.requestIdentity, entry.key)) {
@@ -268,13 +263,11 @@ class TopicBodyMediaCoordinator {
       }
     } else {
       this.displayCount += 1;
-      entry.failure = null;
-      entry.status = 'displayed';
+      entry.state = { phase: 'displayed' };
       this.failedIdentities.delete(entry.requestIdentity);
       for (const duplicate of this.entries.values()) {
-        if (duplicate.requestIdentity === entry.requestIdentity && duplicate.status === 'failed') {
-          duplicate.failure = null;
-          duplicate.status = 'waiting';
+        if (duplicate.requestIdentity === entry.requestIdentity && duplicate.state.phase === 'failed') {
+          duplicate.state = { phase: 'waiting' };
         }
       }
     }
@@ -285,15 +278,15 @@ class TopicBodyMediaCoordinator {
     const entry = this.entries.get(key);
     if (
       !entry ||
-      entry.status !== 'running' ||
+      entry.state.phase !== 'running' ||
       attemptId !== this.attemptIdFor(entry) ||
       !Number.isFinite(value) ||
-      (entry.lastProgressValue !== null && value <= entry.lastProgressValue)
+      (entry.state.lastProgressValue !== null && value <= entry.state.lastProgressValue)
     ) {
       return;
     }
-    entry.lastProgressValue = value;
-    entry.deadline = Date.now() + MEDIA_NO_PROGRESS_TIMEOUT_MS;
+    entry.state.lastProgressValue = value;
+    entry.state.deadline = Date.now() + MEDIA_NO_PROGRESS_TIMEOUT_MS;
     this.scheduleTimer();
   }
 
@@ -307,7 +300,7 @@ class TopicBodyMediaCoordinator {
     if (
       !entry ||
       attemptId !== this.attemptIdFor(entry) ||
-      entry.status !== 'failed' ||
+      entry.state.phase !== 'failed' ||
       this.explicitlyRetriedIdentities.has(entry.requestIdentity)
     )
       return;
@@ -320,7 +313,7 @@ class TopicBodyMediaCoordinator {
   dispose() {
     if (this.disposed) return;
     for (const entry of this.entries.values()) {
-      if (entry.status === 'running') this.cancelCount += 1;
+      if (entry.state.phase === 'running') this.cancelCount += 1;
     }
     this.captureHighWater();
     this.finishDiagnosticAggregate();
@@ -344,7 +337,7 @@ class TopicBodyMediaCoordinator {
     if (runningCount === undefined) {
       runningCount = 0;
       for (const entry of this.entries.values()) {
-        if (entry.status === 'running') runningCount += 1;
+        if (entry.state.phase === 'running') runningCount += 1;
       }
     }
     this.warmHighWater = Math.max(this.warmHighWater, this.warmKeys.size);
@@ -359,13 +352,13 @@ class TopicBodyMediaCoordinator {
   ) {
     this.failedIdentities.set(requestIdentity, failure);
     for (const entry of this.entries.values()) {
-      if (entry.requestIdentity !== requestIdentity || (entry.status === 'displayed' && entry.key !== failedEntryKey)) {
+      if (
+        entry.requestIdentity !== requestIdentity ||
+        (entry.state.phase === 'displayed' && entry.key !== failedEntryKey)
+      ) {
         continue;
       }
-      entry.deadline = null;
-      entry.failure = failure;
-      entry.lastProgressValue = null;
-      entry.status = 'failed';
+      entry.state = { phase: 'failed', failure };
     }
   }
 
@@ -380,14 +373,14 @@ class TopicBodyMediaCoordinator {
   private resetIdentityForRetry(requestIdentity: string, retryEntryKey?: string) {
     this.failedIdentities.delete(requestIdentity);
     for (const entry of this.entries.values()) {
-      if (entry.requestIdentity !== requestIdentity || (entry.status === 'displayed' && entry.key !== retryEntryKey)) {
+      if (
+        entry.requestIdentity !== requestIdentity ||
+        (entry.state.phase === 'displayed' && entry.key !== retryEntryKey)
+      ) {
         continue;
       }
-      entry.deadline = null;
       entry.attachmentRevision += 1;
-      entry.failure = null;
-      entry.lastProgressValue = null;
-      entry.status = 'waiting';
+      entry.state = { phase: 'waiting' };
     }
   }
 
@@ -424,17 +417,17 @@ class TopicBodyMediaCoordinator {
 
   private attemptIdFor(entry: TopicBodyMediaEntry) {
     // An unstarted lease has no callbacks to accept and needs no idle-state commit.
-    return entry.attempt === 0 && entry.status === 'waiting'
+    return entry.attempt === 0 && entry.state.phase === 'waiting'
       ? `${entry.key}:0`
       : `${entry.key}:${entry.sequence}:${entry.attempt}`;
   }
 
   private snapshotFor(entry: TopicBodyMediaEntry): TopicBodyMediaSnapshot {
     return {
-      admitted: entry.status === 'displayed' || (this.warmKeys.has(entry.key) && entry.status === 'running'),
+      admitted: entry.state.phase === 'displayed' || (this.warmKeys.has(entry.key) && entry.state.phase === 'running'),
       attachmentKey: `${entry.key}:attachment:${entry.attachmentRevision}`,
       attemptId: this.attemptIdFor(entry),
-      failure: entry.failure
+      failure: entry.state.phase === 'failed' ? entry.state.failure : null
     };
   }
 
@@ -457,12 +450,12 @@ class TopicBodyMediaCoordinator {
         (entry) =>
           rowOrder.has(entry.rowKey) &&
           (entry.kind !== 'audio' || visibleRows.has(entry.rowKey)) &&
-          entry.status !== 'failed' &&
-          entry.status !== 'displayed'
+          entry.state.phase !== 'failed' &&
+          entry.state.phase !== 'displayed'
       )
       .sort((left, right) => {
-        const leftRetained = left.status === 'running' ? 0 : 1;
-        const rightRetained = right.status === 'running' ? 0 : 1;
+        const leftRetained = left.state.phase === 'running' ? 0 : 1;
+        const rightRetained = right.state.phase === 'running' ? 0 : 1;
         return (
           PRIORITY_ORDER[left.priority] - PRIORITY_ORDER[right.priority] ||
           (rowOrder.get(left.rowKey) ?? 0) - (rowOrder.get(right.rowKey) ?? 0) ||
@@ -476,7 +469,7 @@ class TopicBodyMediaCoordinator {
       let scheduledOriginalCount = 0;
       for (const entry of eligible) {
         if (scheduledKeys.size >= MAX_IN_FLIGHT_BODY_MEDIA) break;
-        if (this.paused && entry.status !== 'running') continue;
+        if (this.paused && entry.state.phase !== 'running') continue;
         if (scheduledIdentities.has(entry.requestIdentity)) continue;
         if (entry.kind === 'original' && scheduledOriginalCount >= 1) continue;
         scheduledKeys.add(entry.key);
@@ -495,13 +488,11 @@ class TopicBodyMediaCoordinator {
     let runningOriginalCount = 0;
     const runningIdentities = new Set<string>();
     for (const entry of this.entries.values()) {
-      if (entry.status === 'running' && !scheduledKeys.has(entry.key)) {
+      if (entry.state.phase === 'running' && !scheduledKeys.has(entry.key)) {
         this.cancelCount += 1;
-        entry.deadline = null;
-        entry.lastProgressValue = null;
-        entry.status = 'waiting';
+        entry.state = { phase: 'waiting' };
       }
-      if (entry.status === 'running') {
+      if (entry.state.phase === 'running') {
         runningCount += 1;
         runningIdentities.add(entry.requestIdentity);
         if (entry.kind === 'original') runningOriginalCount += 1;
@@ -511,14 +502,15 @@ class TopicBodyMediaCoordinator {
     if (this.active && !this.paused) {
       for (const entry of eligible) {
         if (runningCount >= MAX_IN_FLIGHT_BODY_MEDIA) break;
-        if (!scheduledKeys.has(entry.key) || entry.status !== 'waiting') continue;
+        if (!scheduledKeys.has(entry.key) || entry.state.phase !== 'waiting') continue;
         if (runningIdentities.has(entry.requestIdentity)) continue;
         if (entry.kind === 'original' && runningOriginalCount >= 1) continue;
         entry.attempt += 1;
-        entry.deadline = Date.now() + MEDIA_NO_PROGRESS_TIMEOUT_MS;
-        entry.failure = null;
-        entry.lastProgressValue = null;
-        entry.status = 'running';
+        entry.state = {
+          phase: 'running',
+          deadline: Date.now() + MEDIA_NO_PROGRESS_TIMEOUT_MS,
+          lastProgressValue: null
+        };
         const responseReadyAt = this.diagnosticSession?.responseReadyAt;
         if (
           this.firstMediaElapsedMs === undefined &&
@@ -543,7 +535,7 @@ class TopicBodyMediaCoordinator {
       }
     }
     const displayedRows = new Set(
-      [...this.entries.values()].filter((entry) => entry.status === 'displayed').map((entry) => entry.rowKey)
+      [...this.entries.values()].filter((entry) => entry.state.phase === 'displayed').map((entry) => entry.rowKey)
     );
     if (
       displayedRows.size !== this.displayedRows.size ||
@@ -558,8 +550,8 @@ class TopicBodyMediaCoordinator {
     if (this.disposed) return;
     let nextDeadline: number | null = null;
     for (const entry of this.entries.values()) {
-      if (entry.status === 'running' && entry.deadline !== null) {
-        nextDeadline = nextDeadline === null ? entry.deadline : Math.min(nextDeadline, entry.deadline);
+      if (entry.state.phase === 'running') {
+        nextDeadline = nextDeadline === null ? entry.state.deadline : Math.min(nextDeadline, entry.state.deadline);
       }
     }
     if (nextDeadline === null) {
@@ -579,7 +571,7 @@ class TopicBodyMediaCoordinator {
         const timedOutIdentities = new Map<string, boolean>();
         let timedOutCount = 0;
         for (const entry of this.entries.values()) {
-          if (entry.status === 'running' && entry.deadline !== null && entry.deadline <= now) {
+          if (entry.state.phase === 'running' && entry.state.deadline <= now) {
             if (entry.kind !== 'audio' && entry.kind !== 'video') {
               recordImageBudgetTimeout(entry.requestIdentity, MEDIA_NO_PROGRESS_TIMEOUT_MS);
             } else recordMediaBudgetTimeout(entry.requestIdentity, entry.kind, MEDIA_NO_PROGRESS_TIMEOUT_MS);

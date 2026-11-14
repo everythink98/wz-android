@@ -6,6 +6,19 @@
 
 
 
+
+## `REG-TOPIC-223` SVG 绘制失败后未回收已分配 Bitmap
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`，共享复杂 SVG 的 poster renderer |
+| 历史症状与根因 | 生产代码先分配 Bitmap，再在 `.also` 中构造 Canvas、clear 并调用 WebView.draw。后者抛错时 `.also` 不返回，局部 val 未取得 Bitmap；只有成功排入编码 worker 才存在的 finally 无法回收这份资源。外层正确报告请求失败也不能替代物理 Bitmap 回收。 |
+| 当前 owner | `modules/forum-platform/android/src/hostTest/java/com/wz/reader/svg/SvgRendererInstrumentedTest.kt#posterDrawFailureRecyclesTheAllocatedBitmapBeforeRethrowing` 与成功 live-Bitmap 控制；生产 `drawSvgPosterBitmap` 的唯一 capture 调用方。 |
+| 修前 oracle | 实际 ImageRuntime 专用 Android 设备上等价提取原 clear／draw 顺序后执行同一主要用例：RED 六方法中五个控制通过，失败为 bitmap.isRecycled 应 true 实际 false。首个 IllegalStateException 迭代即失败，RED 未到达 OOM；构建前长 `.cxx`／ninja 环境失败不是该 oracle。 |
+| 修复与当前证据 | 实际生产 owner 在失败时 recycle 并重抛同一 Throwable，成功保持同一 live 实例给原编码 worker。相同 canonical 源 SHA `9614838d…e86e6` 下 GREEN 六方法通过，包含 IllegalStateException／OOM 两迭代和蓝色像素／同实例／未提前回收控制。GREEN source `ae4899a9…3e5ee`、APK `1a7d8806…ffe136`、buildId `a64ad87f8ea049159731f57493f4ef63` 分别有实际回执；这不是模拟 enum 或源码字符串断言。 |
+| 验收边界 | 最终普通与媒体 APK 的实际 SVG source／canonical 与 33 个 producer class 已分别核对与真实 GREEN 完全相同；两包另完成源码、jar、R8 与 DEX anchor 绑定，因此在该具体范围继承六方法结果。媒体功能 25 轮及分享四方法的设备证据另列；单个全屏黑色起始截图保留为首帧边界，不能外推该 Bitmap 缺陷未修复或历史黑图已经解决。 控制证明实际 Bitmap 的所有权和失败收尾，不证明真实 WebView.draw 故障频率、全部 renderer-gone／late-encoder／timeout 交错、所有设备或历史黑图根因。后改的 SDK FrameLayout 依赖意味着最终新 APK 必须另行绑定；六方法只可在最终相同 SVG source／test 与 33 producer class 字节条件下继承，不声称完整旧 APK 未变。 |
+
 ## `REG-SEARCH-040` 旧认证恢复在查询替换后仍报告完成
 
 | 字段 | 内容 |

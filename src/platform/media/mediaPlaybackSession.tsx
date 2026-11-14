@@ -90,22 +90,23 @@ export class MediaPlaybackSession {
   }
 }
 
-/** Player callbacks are scoped to this attachment, never to a recycled row. */
+type PlaybackLifetime =
+  { phase: 'attached' } | { phase: 'detached'; releasePlayer: () => void } | { phase: 'disposed' };
+type FirstReadiness = { phase: 'waiting'; initialPosition: number } | { phase: 'confirmed' };
+type PlaybackIntent = 'idle' | 'playing' | 'suspended';
+type BufferingState = 'loading' | 'not-loading' | 'failed';
+type FullscreenPresentation = { phase: 'inline' } | { phase: 'fullscreen'; active: boolean };
+
+/** Player callbacks and physical release belong to this attachment, including a recycled fullscreen row. */
 export class MediaPlaybackHandle {
-  private desired = false;
-  private ready = false;
-  private readonly initialPosition: number;
-  private loading = true;
-  private failed = false;
-  private suspended = false;
-  private disposed = false;
+  private lifetime: PlaybackLifetime = { phase: 'attached' };
+  private readiness: FirstReadiness;
+  private playIntent: PlaybackIntent = 'idle';
+  private buffering: BufferingState = 'loading';
+  private presentation: FullscreenPresentation = { phase: 'inline' };
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastBufferedPosition: number | null = null;
   private subscriptions: { remove: () => void }[];
-  private fullscreen = false;
-  private fullscreenActive = false;
-  private detached = false;
-  private releasePlayer: (() => void) | null = null;
   private disposeCallbacks: (() => void)[] = [];
 
   constructor(
@@ -115,13 +116,12 @@ export class MediaPlaybackHandle {
     private kind: 'audio' | 'video',
     private callbacks: PlaybackCallbacks
   ) {
-    this.initialPosition = kind === 'video' ? session.position(id) : 0;
+    this.readiness = { phase: 'waiting', initialPosition: kind === 'video' ? session.position(id) : 0 };
     this.subscriptions = [
       player.addListener('fullscreenChange', ({ fullscreen, active = fullscreen }) => {
-        this.fullscreen = fullscreen;
-        this.fullscreenActive = fullscreen && active;
+        this.presentation = fullscreen ? { phase: 'fullscreen', active } : { phase: 'inline' };
         if (fullscreen && !active) this.pause();
-        if (!fullscreen && this.detached) this.dispose();
+        if (!fullscreen && this.lifetime.phase === 'detached') this.dispose();
       }),
       player.addListener('playWhenReadyChange', ({ playWhenReady }) => this.intent(playWhenReady)),
       player.addListener('playingChange', ({ isPlaying }) => {
@@ -130,66 +130,69 @@ export class MediaPlaybackHandle {
       player.addListener('statusChange', ({ status }) => this.status(status)),
       player.addListener('positionDiscontinuity', () => this.seek()),
       player.addListener('timeUpdate', ({ currentTime, bufferedPosition }) => {
-        if (this.disposed) return;
-        if (this.ready) this.session.remember(id, currentTime);
+        if (this.lifetime.phase === 'disposed') return;
+        if (this.readiness.phase === 'confirmed') this.session.remember(id, currentTime);
         this.progress(bufferedPosition);
       }),
       player.addListener('playToEnd', () => {
-        if (this.disposed || player.duration <= 0) return;
+        if (this.lifetime.phase === 'disposed' || player.duration <= 0) return;
         this.session.remember(id, player.duration);
-        this.loading = false;
+        if (this.buffering !== 'failed') this.buffering = 'not-loading';
         this.intent(false);
       })
     ];
     this.status(player.status);
   }
 
+  private commitIntent(next: PlaybackIntent) {
+    const playing = this.playIntent === 'playing';
+    this.playIntent = next;
+    if (playing !== (next === 'playing')) this.callbacks.onIntent?.(next === 'playing');
+  }
+
   intent(playing: boolean) {
-    if (this.disposed) return;
-    if (playing && (this.failed || !this.session.claim(this))) {
+    if (this.lifetime.phase === 'disposed') return;
+    if (playing && (this.buffering === 'failed' || !this.session.claim(this))) {
       this.pause();
       return;
     }
-    if (playing) this.suspended = false;
-    if (this.desired !== playing) {
-      this.desired = playing;
-      this.callbacks.onIntent?.(playing);
-    }
+    this.commitIntent(playing ? 'playing' : this.playIntent === 'suspended' ? 'suspended' : 'idle');
     this.schedule();
   }
 
   isFullscreenActive() {
-    return this.fullscreenActive;
+    return this.presentation.phase === 'fullscreen' && this.presentation.active;
   }
 
   pause() {
-    if (this.disposed) return;
-    this.suspended = true;
-    this.intent(false);
+    if (this.lifetime.phase === 'disposed') return;
+    this.commitIntent('suspended');
+    this.schedule();
     this.player.pause();
     this.clearTimer();
   }
 
   status(status: string) {
-    if (this.disposed || this.failed) return;
-    this.loading = status === 'loading' || status === 'idle';
-    if (status === 'readyToPlay' && !this.ready) {
-      this.ready = true;
-      if (this.initialPosition > 0) this.player.currentTime = this.initialPosition;
+    if (this.lifetime.phase === 'disposed' || this.buffering === 'failed') return;
+    this.buffering =
+      status === 'error' ? 'failed' : status === 'loading' || status === 'idle' ? 'loading' : 'not-loading';
+    if (status === 'readyToPlay' && this.readiness.phase === 'waiting') {
+      const position = this.readiness.initialPosition;
+      this.readiness = { phase: 'confirmed' };
+      if (position > 0) this.player.currentTime = position;
     }
-    if (status === 'error') this.failed = true;
     this.schedule();
   }
 
   seek() {
-    if (this.disposed) return;
+    if (this.lifetime.phase === 'disposed') return;
     this.lastBufferedPosition = null;
     this.clearTimer();
     this.schedule();
   }
 
   progress(bufferedPosition: number) {
-    if (this.disposed || !Number.isFinite(bufferedPosition) || bufferedPosition < 0) return;
+    if (this.lifetime.phase === 'disposed' || !Number.isFinite(bufferedPosition) || bufferedPosition < 0) return;
     const advanced = this.lastBufferedPosition !== null && bufferedPosition > this.lastBufferedPosition;
     this.lastBufferedPosition = bufferedPosition;
     if (advanced) {
@@ -199,31 +202,30 @@ export class MediaPlaybackHandle {
   }
 
   dispose() {
-    if (this.disposed) return;
-    if (this.ready) this.session.remember(this.id, this.player.currentTime);
+    if (this.lifetime.phase === 'disposed') return;
+    if (this.readiness.phase === 'confirmed') this.session.remember(this.id, this.player.currentTime);
     this.pause();
-    this.disposed = true;
+    const releasePlayer = this.lifetime.phase === 'detached' ? this.lifetime.releasePlayer : null;
+    this.lifetime = { phase: 'disposed' };
     for (const subscription of this.subscriptions) subscription.remove();
     this.clearTimer();
     this.session.remove(this);
-    this.releasePlayer?.();
-    this.releasePlayer = null;
+    releasePlayer?.();
     for (const callback of this.disposeCallbacks) callback();
     this.disposeCallbacks = [];
   }
 
   detach(releasePlayer: () => void) {
-    if (this.disposed) {
+    if (this.lifetime.phase === 'disposed') {
       releasePlayer();
       return;
     }
-    this.detached = true;
-    this.releasePlayer = releasePlayer;
-    if (!this.fullscreen) this.dispose();
+    this.lifetime = { phase: 'detached', releasePlayer };
+    if (this.presentation.phase === 'inline') this.dispose();
   }
 
   afterDispose(callback: () => void) {
-    if (this.disposed) callback();
+    if (this.lifetime.phase === 'disposed') callback();
     else this.disposeCallbacks.push(callback);
   }
 
@@ -233,14 +235,18 @@ export class MediaPlaybackHandle {
   }
 
   private schedule() {
-    if (this.suspended || this.failed || !this.loading || (this.ready && !this.desired)) {
+    if (
+      this.playIntent === 'suspended' ||
+      this.buffering !== 'loading' ||
+      (this.readiness.phase === 'confirmed' && this.playIntent !== 'playing')
+    ) {
       this.clearTimer();
       return;
     }
     if (this.timer !== null) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.failed = true;
+      this.buffering = 'failed';
       this.pause();
       recordMediaBudgetTimeout(this.id, this.kind, NO_PROGRESS_TIMEOUT_MS);
       this.callbacks.onTimeout();

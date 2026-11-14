@@ -15,7 +15,7 @@
 | B05 | 草稿、提交与互动写操作 | 已验收：11 项完整转换、2 项局部简化 |
 | B06 | 阅读入口、回复窗口与原生定位 | 已验收：7 项完整转换、4 项局部简化 |
 | B07 | 列表、搜索、用户与消息读取 | 已验收：5 项完整转换、6 项局部简化 |
-| B08 | 媒体、预览与原生资源归属 | 待实施 |
+| B08 | 媒体、预览与原生资源归属 | 已验收：5 项完整转换、8 项局部简化 |
 | B09 | 本地存储、更新、后台与诊断 | 待实施 |
 | B10 | SDK 补丁、验证工具与整体验收 | 待实施 |
 
@@ -268,3 +268,69 @@ Native 未改，不新增 Native/Replay 通过结论。真实凭据填入、所�
 原 C8 回装后实际做了一次无 snapshot load/save 的专用 AVD 冷启动复核，UTC 15:19:24.419–15:19:58.169：APK SHA、签名、UID 10209、首次安装时间、CE／DE 目录 inode、九个数据库／WAL／SHM 字节、mode 与 owner 均与关机前一致。它证明本次冷启动保持，不推断长期耐久或此前 codePath 异常根因；本任务两次启动的 Reader 进程均在精确身份核对后正常关闭。最终主模拟器仍可见响应，普通 B07 APK SHA 与原 UID／首次安装时间／162 保持，当前 App PID 10924；实际显式刷新妖火、NodeSeek 已登录，linux.do「已验证」仍不等同于独立身份确认，原 NodeSeek 账号中心选择已恢复，最终有数据的 All／default 首页。主模拟器、共享 MCP 与 ADB 保留。
 
 真实论坛写入、真实系统通知交付、全部来源和 Native 导航帧交错、物理设备及历史黑图／妖火异常／Search 慢帧因果仍为 `NOT_VERIFIED`；不因普通启动或受控数据通过关闭历史问题。日志、截图、APK、数据库及回执只保存在 ignored 目录。本批只保存本地提交，不 push、不合并、不正式发布。
+
+## B08
+
+媒体、预览、分享与原生资源按原完整 scope 审查 53 项。实际收益为 **5 项完整转换、8 项局部简化、40 项保留**；实际 Native 红绿、完整门禁、普通 APK 与设备证据按下文界定，本批按该有限范围验收。
+
+完整转换为 `PL-JS-playback-handle-intent-budget`、`ui.preview-load`、`ui.share-capture`、`PL-N-svg-render-admission`、`PL-N-svg-page-visual-capture`。实际调用已经使用播放 handle、预览 load、分享 capture、SVG request 和 renderer lease 的负责模块，旧并行状态写入随调用方迁走，不只在外面包一个 phase。首次就绪、当前缓冲、播放意图、全屏资源和生命周期分开表达；首次 ready 不等于当前 readyToPlay，暂停也不等于加载超时。
+
+SVG 的 Reserved 发生在 main enqueue 之前，32 项准入计量不能由 queue 长度推导。页面的 Loading／AwaitingVisual／AwaitingCapture／Capturing／Encoding 跟随具体 PreparedPoster 与页面票据；renderer 的 Empty／Ready／Clearing 则负责物理 WebView 及 about:blank 回执，两条职责不合成一个总 busy。结算只消费本请求，编码仍拥有已交接的 Bitmap，即使请求已超时也沿原路径完成自身回收。新增 draw 失败回收修复的真实 Native 红绿证据另列，不以源码推演或构建失败冒充复现。
+
+8 项局部收益按原 scope 记账：
+
+| 原项 | 实际接管的职责 | 保留职责与边界 |
+| --- | --- | --- |
+| `PL-PATCH-video-activity-transition` | 全屏截图 overlay、decoder listener、两帧 composition 与一次 release | Activity 的 didFinish、播放器安装、auto pause、stop 与导航归属仍独立 |
+| `ui.audio-events` | 异步 replace、超时和 captured intent 使用同一 AudioLoadRun | Native event 没有 source ticket，不能凭当前 run 辨认所有晚到旧源事件 |
+| `ui.audio-owner` | replacing／active／failed／disposed 的逻辑源实例与收尾 | 物理 player、串行 replaceQueue 和 retained generation 不互相派生 |
+| `ui.media-admission` | deadline／progress 只随 running，failure 只随 failed | 原调度器、warm／viewport／visible 集合和实际 timer 保留；原阶段已明确，不算整套调度新建模型 |
+| `ui.preview-ring` | JS ring、目标与待重建意图；真实 React layout 只确认 exact ring | UI worklet 仍按 slot／index／adjacency 接纳旧协议，没有为所有同值回调新增命令 ticket |
+| `ui.preview-svg` | poster refresh 及 load owner 的请求归属 | Native view ready 与 poster displayed 是两个实际确认，不能由一次 loaded 推导 |
+| `ui.video-events` | 当前 committed player 的 layout／首帧／ended 展示 | bufferedPosition 历史 watermark 与跨 source 路径仍独立 |
+| `ui.video-lease` | 请求代际与物理 retained lease 的一次释放 | generation retry admission、acquiredAttempt、pending retry 与 hasBeenReady 仍由组件管理 |
+
+视频行回收只释放行的逻辑附着；仍在全屏的真实 handle 持续持有 generation，直到其实际 dispose 后才归还物理 lease。Audio retire 的 cleanup 后使用原 owner 身份再提交 idle，避免候选中清理重入覆盖后来的 disposed／替换 owner；这属于候选审查修正，没有真实既有消费者的修前复现，不申报产品事故。
+
+三项重审保留为 `PL-N-native-selection-overlay-drag`、`PL-N-region-decode-generation`、`ui.selection-document`。它们已有 PointerGesture sealed、不可变 DecodeRequest／generation 和 keyed document revision 的真实 owner；拖动／pre-draw／redraw 排队、正在显示的 Bitmap、Native cancel ref、布局和去重回执各有独立消费者。另造总枚举会丢失合法并存关系，没有额外旁路可接管。
+
+`UI-NEW-042` 原证据缺口现有真实 DOM canonical：纯 HTML builder 与三个协议常量原样迁至 `src/features/topic/rendering/videoStickerDocument.ts`，生产 owner 实际导入并删除旧副本；独立核对原函数体、常量与五组 HTML 字节等价。canonical 直接 import 真实 builder，在 JSDOM 执行实际 IIFE；实际事件与受控 RAF 触发一次两帧 READY、严格递增有限 buffer watermark、独立 ERROR，两个生成脚本守卫移除负控证明断言可识别重复发布。5/5 已执行通过。READY 的一次 claim、buffer 数值和 ERROR 不能互相派生，因此具体保留现有实现，不给迁移或消除信用；Native 解码、视觉、自动播放和网络仍未由 JSDOM 证明。首轮从生产源码抽取 AST 的写法被完整架构门禁拒绝，失败记录保留，改为真实生产纯函数边界后定向架构检查通过，没有增加门禁例外。
+
+原始 B08 是 16 项 refactor、36 项 keep、1 项 investigate。本批更新 13 项实施、3 项重审 KEEP 和 1 项补证 KEEP，共 17 行；原 36 个 KEEP 对象不变，281 项分类由 91／186／4 调整为 **88／190／3**。分类与实施成果分开，原 375 项历史保持。
+
+已实际执行的证据：
+
+- `UNIT_PASS`：播放预算和真实视频贴纸 DOM 两文件 10/10，seed `648081`，包括上述 5 项 DOM canonical；不把负控另加进用例总数。
+- `UI_PASS`：媒体、预览、分享、列表与压力五个主要 owner 共 500/500，seed `648081`；原 act 告警保留。
+- 定向 typecheck、lint 与格式检查退出 0。最终 builder seam 后重跑实际两文件 10 项 UNIT、renderer 140 项 UI 和架构检查，seed `648081`；此前五文件 500 项 UI 为其余未变媒体运行代码证据，不把两次 UI 重复累计。最终 v3 为 16 个 tracked scope 路径、8 个普通包 JS runtime 与 22 个安装 SDK 文件，共 38 个唯一源码 pin；未把静态语法检查写成真实行为通过。
+- `STATIC_PASS`、`UNIT_PASS`、`UI_PASS`：完整 typecheck 与 `npm run verify` v2 均退出 0，UNIT 274 文件／4634 项，seed `1794675873547`；UI 105 suites／3299 项，seed `-634224729`。verify 于 UTC 17:03:29.973–17:13:21.665 执行，日志 SHA-256 `99936ffdc1061713ea28047437d0cde5c254a270b3a734ab296297e75a020aa2`，绑定 v2 冻结 `4bfff10b…e3d`。独立比较最终 v3 冻结 `cc003609…9444` 的 1196 输入，1195 项逐字不变，唯一变化是 JS 检查之外的 Native 分享 HostTest；因此按相同 JS／类型／工具输入继承完整 v2 结果，不称为 v3 全量重跑。原 act 告警保留。
+- SDK 重放：expo-video 57.0.3 官方完整包校验 lock integrity 后，真实 patch-package 正向／反向校验通过，22 个补丁文件与安装树相同；其它 21 段保持，实际新增的是 FullscreenPlayerActivity 的 transition-frame owner。这里只证明该包，不代替 B10 的 17 套最终干净依赖树重放，也不证明最终 APK 已编译入此 SDK 源码。
+
+本批确认的实际资源缺陷记录为 `REG-TOPIC-223`：Bitmap 分配后，Canvas 初始化／clear／draw 若抛错，原 `.also` 没有把资源交给编码 worker，也没有保留可回收引用。先把原 draw 顺序等价提取到真实生产 owner，再运行真实 Android Bitmap canonical；RED 的 6 个方法中 5 个控制通过，失败明确为「poster drawing leaked its allocated bitmap on failure」。首个 IllegalStateException 迭代已中止该方法，RED 没有执行到 OOM，不把它写成两个修前失败。
+
+最小修复由 `drawSvgPosterBitmap` 接收已分配的真实 Bitmap，在失败时 recycle 并重新抛出同一 Throwable；成功时仍返回同一 live Bitmap，交原编码 worker 的 finally 回收，外层异常分类和原有编码／缓存写入路径不改。GREEN 六方法全通过，包含 IllegalStateException 与 OutOfMemoryError 两个迭代、成功蓝色像素／同实例／未提前回收控制，以及真实队列渲染、准入 33 项拒绝和准入过期释放。受控异常证明回收路径，不证明 WebView.draw 在线故障频率，也不解释历史长会话黑图。
+
+Native RED 的源 SHA `6551cff1…c2b21`、GREEN `ae4899a9…3e5ee`、两次相同 canonical SHA `9614838d…e86e6` 均绑定实际仪器产物；GREEN APK SHA-256 `1a7d88067340491a8d265c649ba25df540cf61981940783e040f27e0b3ffe136`、buildId `a64ad87f8ea049159731f57493f4ef63`。原长 `.cxx`／ninja mkdir 环境失败发生在安装和测试前，不算修前 oracle，失败记录仍保留。
+
+此后全屏 transition-frame 的私有依赖从 PlayerView 收窄为其实际 FrameLayout，唯一 Activity 调用方同批迁移；解码与两帧 composition 行为保持，新增三个真实 owner 单测已与两个原有 early-exit 控制实际通过。SDK 源码 `69f4e181…92fa6`、补丁 `a2bd377e…478d1` 已实际正反重放 22 个文件，另外 21 段不变。最终 APK 已不同于上述 GREEN 包：只有最终 SVG source／test 以及 33 个实际编译 producer class 与归档逐字相同，才能继承六方法证据；完整新包、SDK Native 接线和设备证据必须另行验证，不能声称整份旧 APK 同源。
+
+全屏新单测曾在编译阶段因 Media3 的 Player／PlaybackException 不可见而失败，该次尚未执行五个方法。实际 expo-video 将 Media3 1.9.0 作为 implementation，未向 forum-platform 的测试编译导出；本地仅补一行相同版本的 `testImplementation('androidx.media3:media3-common:1.9.0')`，没有新增生产依赖。该配置行不在此前 SHA 以 `1464` 开头的首轮冻结（1195 输入）中，新增后的真实 Native 单测与最终 APK 必须单独记录，不能把旧冻结描述成包含它；原编译失败保留，不当作行为 RED。
+
+`UNIT_PASS`：最终 Native frame v3 fresh XML 为 5 tests、0 failures、0 errors、0 skipped，实际报告 SHA-256 `501786c905b1af65cb398186bfb5778cc9b19e4189c08febb4fbeb9280ff4569`。报告绑定测试配置 `988d8704…2458`、canonical `b25188ef…40e9`、SDK `69f4e181…92fa6` 与补丁 `a2bd377e…478d1`；真实 Android FrameLayout／ImageView／Drawable 验证 first-frame 两次受控 draw 回调、error 与 destroy 的一次释放及旧回调不能清除替换 overlay。这里控制动画边界，不宣称两帧物理 GPU 合成已经通过。
+
+Native 分享 v2 原始结果是三方法通过、一方法在 PNG 解码返回 null 处失败，记录保留。生产 `shareTopicImageFile` 实际 await 文件复制后才调用系统分享，原测试却在仅发现目标文件名后立即解码；这是可达的测试读取窗口，不证明该次失败的唯一根因。v3 只把原九行 chooser 等待及同一断言移至 `captured` 之后、decode 之前，保留原 40 秒找文件再 20 秒等 chooser 的顺序、完整 PNG 宽度／条纹／返回断言；移除同一块后整个 Native 测试文件与 HEAD 相同，没有产品修复或新 REG。
+
+最终 HostTest SHA `16b5ebe7ab754d362205dff22bb24759adde07364b93f7f1a2d96f2bd8044fbe` 的真实 v3 仪器输出为四方法全部结束 0、`OK (4 tests)`；分享 PNG 为 1440×1605、182918 bytes、179 次条纹转换，原要求为至少 170。四方法还覆盖长 PNG 分片、取消／磁盘失败／布局变化丢弃 partial，以及真实 Fabric／ExpoImage 的 JS bridge。完整 runner 在 finally 普通重建后退出 0，UTC 17:20:53.505–17:24:49.535，日志 SHA-256 `de9c720140fe388b5e6109948a72e4884d613dcba616f9bcfe322f1fdb2d2fe7`。实际拉取的分享专用包 SHA `323f6d2cbd2cf55cecc2d36ede625ef7ed5a90550b5694e8bd7b34b850de74d0`、buildId `f133f9c788e243a9af0e04c11f489d7b` 与四份归档来源已分别核对；此包用于分享仪器流程，不替代后续普通／MediaPressure 包和主模拟器预览验收。
+
+主模拟器普通包的图片基本流程限定通过：NodeSeek 主题内首张、第二张可见，HOME 后约 32 秒返回仍为同 PID 与 `2/1381`，关闭再打开相同第二张仍显示同一内容。一次工具呈现曾被误判为黑图；独立读取实际文件后，返回前／返回后／同值重开三份 PNG 均为 1035834 bytes，完整 SHA-256 同为 `f3512fed05ab61fdf6fa58432fd9e0113eb808893b7610848767e243740f355b`，独立解码中央像素也同为 RGB 243／210／201，实际图像没有该次黑帧差异。原图与诊断更正均保留，没有为此建立产品事故或执行所设想的 B07 旧包对照，也没有修改产品。这个观察只证明本次截图时点的返回与重开，历史长会话黑图、其它后台时长及全部 worklet 回调交错仍未解释。
+
+- `APK_SANITY`：普通 v3 Release 构建 4m23s、退出 0，APK SHA-256 `a404e6630a2415f80cc5166efc0a83b9bb3259e93d41ee1201613ae7ca837f42`，buildId `f7a741175d6e4f4b99510c92c67b259a`；实际 map 绑定 8 个生产运行模块和两个 SDK dist 模块。媒体专用 v3 构建 4m17s、退出 0，APK SHA-256 `c8c723f89e6d7e1a6deb806752877ae36c2f3bf9037214b4fd600c3c49ae840a`，buildId `e5c8a2f23ba046ca82237d05ee95ee69`；实际 map 绑定三个生产媒体模块、三个 proof 模块与 Paper dist；冻结另包含三个本地媒体文件及 manifest，APK 逐字核对三个媒体文件。两包各自核对 SourceMap、Hermes、provider、版本、签名、RNC 与 DEX 身份；Native 两个实际 source 分别绑定 33 个 SVG、7 个 Fullscreen 编译 class、jar、R8 输入与 APK class definition，R8 已合并或内联的私有类不冒称仍独立存在。普通与媒体的 33 个 SVG producer class 各自与原 GREEN 逐字一致，继承六方法证据；不称整份旧 APK 未变。
+- `DEVICE_REPLAY_PASS`（媒体功能范围）：匹配媒体包在专用 ImageRuntime AVD 完整 runner 退出 0，UTC 17:40:32.371–17:43:37.118，日志 SHA-256 `c8b6b37487ba66c3fe0a4e79e1fac062ac818a66b0a27286aa157bef2d10efa6`。目标至少 20 轮／180 秒，实际 25 轮、180819.716 ms；created／released 为 81／81、peak 2、live 0、observer subscriptions 0，6 次全屏往返与 6 次后台返回，errors 为空。真实行移除已 commit 后，同一物理 player 仍在全屏推进，回行后再归还；UID 10209、首次安装时间 `2026-09-07 17:29:25`、versionCode 162 与安装 SHA 前后一致。
+- 媒体视觉按实际边界报告：14 张原 PNG 中 13 张有真实测试画面；round 0／5／10／15／19 五对全屏起止图都有可见斜带／方块变化，两个 inline sample 也有画面变化，排除时间码区域后的像素比较支持该观察。round 20 的 start 原 PNG 全部 2073600 个 RGB 像素为 0，随后 end 有彩色视频；该单点保留，不能宣称六对起止全部有图或零转场黑帧。静态对照确认 B07 与 B08 的正常 overlay 安装、首次 decoder 回执后两个 postOnAnimation 时点相同；本批 error release 会立即移除 listener。五个 owner 单测直接调用 error，不证明首帧移除 listener 后的两帧窗口还能收到新 Native error。这个黑色起始截图的原因、时长与 B08 因果关系均未建立，不新建事故或关闭历史黑图。
+- Native 日志含 49 条同文的 ExpoVideo PiP 配置 E 级信息。实际 SDK helper 默认 `shouldThrow=false`，对 IllegalStateException 记录后软处理；本批未修改该 helper 或启用 PiP。功能回执通过不等于 0 条 E 级日志，也不提供该信息与黑色起始截图的因果关系。
+- 限定的 `LIVE_PASS`：普通包在可见主模拟器覆盖安装，UID 10214、首次安装时间 `2026-07-26 16:51:37`、versionCode 162 保持；PID 12282 的当前 buildId 匹配 22 条成功启动记录。上述前两张图片／32 秒后台返回／同值重开按实际 PNG 验收，最终回到 All／默认数据首页。独立站点身份刷新与主设备私有数据库字节指纹未验证，没有保存图片或真实论坛写入。
+- 设备收尾：ImageRuntime 的 App 与 test 两份原 APK 已同签名 install-r 恢复为 `b30f80bf…f0ddf`／`a5c5d220…fb99`，原 UID、首次安装时间、versionCode 与权限逐项相同；PackageManager wait 与 sync 后复核一致。仅本批拥有的 Image AVD／launcher 精确关闭，可见主模拟器 qemu 67008、window 13700600 仍响应。原 375 历史和用户文档保持；下一批独立启动的 Reader 不属于本批清理对象。
+
+相对已验收 B07 提交，16 个实际源码路径按 Git numstat 与新文件实际 LF 行数统计：生产代码 **+1096／−775 行，净 +321**；测试 **+455／−11 行，净 +444**，包含 test-only Gradle 依赖一行；SDK patch **+72／−35 行，净 +37**。整文件删除 **0**；两个新文件已计入，不重复计算安装 SDK 或 ignored 证据，三份文档另列。实际收益仍为 5 项完整转换、8 项局部简化、40 项保留；Bitmap 修复及同值 HTML seam 不另增模型消除数量。
+
+Native renderer-gone／重复 visual／晚到编码、全部 Audio 旧源事件、所有同值 worklet 回调、全屏和系统分享的全部退出交错、真实论坛写入、物理设备与历史黑图根因均不能由本批局部通过自动关闭。日志、截图、APK、数据库与原始回执只保存在 ignored 目录；不 push、不合并、不正式发布。

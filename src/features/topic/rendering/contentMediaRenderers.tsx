@@ -9,15 +9,15 @@ import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
 import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 import type { HtmlRenderers } from './types';
+import {
+  videoStickerBrowserHtml,
+  VIDEO_STICKER_READY_MESSAGE,
+  VIDEO_STICKER_ERROR_MESSAGE,
+  VIDEO_STICKER_PROGRESS_MESSAGE
+} from './videoStickerDocument';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
-import {
-  escapeHtmlAttribute,
-  FORUM_AUDIO_TAG,
-  FORUM_LINK_CARD_TAG,
-  FORUM_VIDEO_STICKER_TAG,
-  FORUM_VIDEO_TAG
-} from '@/domain/forum/html';
+import { FORUM_AUDIO_TAG, FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
@@ -49,10 +49,6 @@ function videoStickerRequestHeaders(
       }
     : undefined;
 }
-
-const VIDEO_STICKER_READY_MESSAGE = 'wz-video-sticker-ready';
-const VIDEO_STICKER_ERROR_MESSAGE = 'wz-video-sticker-error';
-const VIDEO_STICKER_PROGRESS_MESSAGE = 'wz-video-sticker-progress';
 
 function ForumVideoStickerWebView({
   document,
@@ -633,56 +629,6 @@ function videoStickerBrowserDocument(
   } catch {
     return null;
   }
-}
-
-function videoStickerBrowserHtml(src: string, origin: string, referrerPolicy: MediaReferrerPolicy) {
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<meta name="referrer" content="${referrerPolicy}">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src ${escapeHtmlAttribute(origin)}; style-src 'unsafe-inline'; script-src 'nonce-wz-video-sticker'; base-uri 'none'; connect-src 'none'; font-src 'none'; form-action 'none'; frame-src 'none'; img-src 'none'; object-src 'none'; worker-src 'none'">
-<style>
-html, body, video { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
-video { display: block; object-fit: contain; }
-</style>
-</head>
-<body>
-<video autoplay loop muted playsinline webkit-playsinline disablepictureinpicture src="${escapeHtmlAttribute(src)}"></video>
-<script nonce="wz-video-sticker">
-(() => {
-  const video = document.querySelector('video');
-  let settled = false;
-  let lastBufferedEnd = -1;
-  const post = (message) => window.ReactNativeWebView.postMessage(message);
-  const play = () => video.play().catch(() => {});
-  const progress = () => {
-    if (settled) return;
-    let bufferedEnd = 0;
-    for (let index = 0; index < video.buffered.length; index += 1) {
-      bufferedEnd = Math.max(bufferedEnd, video.buffered.end(index));
-    }
-    if (!Number.isFinite(bufferedEnd) || bufferedEnd <= lastBufferedEnd) return;
-    lastBufferedEnd = bufferedEnd;
-    post('${VIDEO_STICKER_PROGRESS_MESSAGE}:' + String(1 + bufferedEnd));
-  };
-  const ready = () => {
-    if (settled) return;
-    settled = true;
-    requestAnimationFrame(() => requestAnimationFrame(() => post('${VIDEO_STICKER_READY_MESSAGE}')));
-  };
-  video.addEventListener('progress', progress);
-  video.addEventListener('loadedmetadata', progress, { once: true });
-  video.addEventListener('loadeddata', ready, { once: true });
-  video.addEventListener('error', () => post('${VIDEO_STICKER_ERROR_MESSAGE}'), { once: true });
-  document.addEventListener('visibilitychange', () => document.hidden ? video.pause() : play());
-  if (video.readyState >= 2) ready();
-  play();
-})();
-</script>
-</body>
-</html>`;
 }
 
 function isVideoStickerBootstrapUrl(value: string, baseUrl: string) {
