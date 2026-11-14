@@ -327,7 +327,6 @@ function NotificationProof({ token }: { token: string }) {
     backgroundEnabled: false,
     backgroundError: '',
     initializationError: '',
-    partialUnavailable: false,
     permission: 'denied',
     ready: true,
     retryInitialization: async () => undefined,
@@ -338,7 +337,6 @@ function NotificationProof({ token }: { token: string }) {
     setSourceEnabled: async () => undefined,
     state: defaultNotificationState(),
     unreadTotal: 1,
-    snapshotErrors: {},
     sessions: {
       nodeseek: createAccountSessionViewModel(
         accountSessionSnapshotFromObservation(createAccountSessionSnapshot('nodeseek'), {

@@ -217,7 +217,7 @@ export function useTopicComposerController({
       const next = update(current);
       if (next === current) return;
       installDraft({ ...next, revision: current.revision + 1, updatedAt: Date.now() });
-      markDraftEdited(current.id);
+      markDraftEdited();
       setErrors({});
     },
     [installDraft, runtimeRef, operationIdle, markDraftEdited]
@@ -242,7 +242,7 @@ export function useTopicComposerController({
         updatedAt: Date.now()
       };
       installDraft(next);
-      markDraftEdited(current.id);
+      markDraftEdited();
       if (contentChanged)
         setErrors((previous) =>
           Object.fromEntries(Object.entries(previous).filter(([key]) => key !== 'body' && key !== 'poll'))
@@ -465,7 +465,7 @@ export function useTopicComposerController({
         setAttempt(null);
         return;
       }
-      restoreDraftPersistence(result.stored, result.draft);
+      restoreDraftPersistence(result.stored);
       installDraft(result.draft);
       if (result.editing) installRestoredEdit(result.editing);
       setAttempt(result.attempt);
@@ -578,7 +578,7 @@ export function useTopicComposerController({
   const switchSource = useCallback(
     async (next: TopicCreationSource) => {
       if (editTopicId || !operationIdle() || next === source) return;
-      const run = beginTravel('switch');
+      const run = beginTravel();
       if (!run) return;
       try {
         if (!(await waitForUploads())) return;
@@ -597,7 +597,7 @@ export function useTopicComposerController({
       setError('正在保存或发布，请等待结果');
       return false;
     }
-    const run = beginTravel('leave');
+    const run = beginTravel();
     if (!run) return false;
     try {
       if (!(await waitForUploads())) return false;
@@ -693,9 +693,8 @@ export function useTopicComposerController({
         startedAt: Date.now(),
         status: 'sending'
       };
-      run.prepare(submission);
+      run.attempted(submission);
       await beginTopicSubmissionAttempt(submission);
-      run.claim(submission);
       setAttempt(submission);
       let body = value.body;
       if (value.source === 'nodeseek' && value.pendingNodeSeekPolls.length) {
@@ -867,7 +866,7 @@ export function useTopicComposerController({
         status: 'sending'
       };
       await beginTopicSubmissionAttempt(candidate);
-      run.claim(candidate);
+      run.attempted(candidate);
       const submission = candidate;
       setAttempt(submission);
       let body = value.body;
@@ -1000,7 +999,7 @@ export function useTopicComposerController({
     )
       return;
     if (!operationIdle()) return;
-    const run = beginTravel('acknowledge');
+    const run = beginTravel();
     if (!run) return;
     try {
       if (
@@ -1050,7 +1049,7 @@ export function useTopicComposerController({
   const discard = useCallback(async () => {
     if (!operationIdle() || getUploadJob(attachmentWork.current) || !draftRef.current) return;
     const owner = draftRef.current;
-    const run = beginTravel('discard');
+    const run = beginTravel();
     if (!run) return;
     try {
       if (!(await confirm('丢弃当前草稿', '只删除当前站点当前账号的本机草稿。', '丢弃'))) return;

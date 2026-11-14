@@ -9,8 +9,8 @@ type Durability =
   { kind: 'unknown' } | { kind: 'saved'; draftId: string; revision: number } | { kind: 'retired'; draftId: string };
 type Feedback =
   | { kind: 'empty' }
-  | { kind: 'saving' | 'saved' | 'restored' | 'fresh' | 'discarded'; draftId: string | null }
-  | { kind: 'failed'; draftId: string | null; message: string };
+  | { kind: 'saving' | 'saved' | 'restored' | 'fresh' | 'discarded' }
+  | { kind: 'failed'; message: string };
 
 export function useTopicDraftPersistence(input: {
   getDraft(): TopicDraft | null;
@@ -48,7 +48,7 @@ export function useTopicDraftPersistence(input: {
           if (current?.id === value.id)
             durability.current = { kind: 'saved', draftId: value.id, revision: value.revision };
           if (current?.id === value.id && current.revision === value.revision && inputRef.current.isMounted()) {
-            report({ kind: 'saved', draftId: value.id });
+            report({ kind: 'saved' });
             inputRef.current.onSaved(value.source);
           }
         });
@@ -57,7 +57,7 @@ export function useTopicDraftPersistence(input: {
         await operation;
       } catch (cause) {
         if (inputRef.current.getDraft()?.id === value.id)
-          report({ kind: 'failed', draftId: value.id, message: `保存失败：${errorMessage(cause)}` });
+          report({ kind: 'failed', message: `保存失败：${errorMessage(cause)}` });
         throw cause;
       }
     },
@@ -73,7 +73,7 @@ export function useTopicDraftPersistence(input: {
     }) => {
       const before = inputRef.current.getDraft();
       if (!before) return null;
-      report({ kind: 'saving', draftId: before.id });
+      report({ kind: 'saving' });
       try {
         if (capture) {
           const snapshot = await capture();
@@ -86,7 +86,7 @@ export function useTopicDraftPersistence(input: {
           const current = inputRef.current.getDraft();
           if (current?.id !== before.id) throw new Error('草稿已切换，请重试');
           if (current.revision === latest.revision) {
-            report({ kind: 'saved', draftId: current.id });
+            report({ kind: 'saved' });
             return latest;
           }
           latest = current;
@@ -94,19 +94,19 @@ export function useTopicDraftPersistence(input: {
         return null;
       } catch (cause) {
         if (inputRef.current.getDraft()?.id === before.id)
-          report({ kind: 'failed', draftId: before.id, message: `保存失败：${errorMessage(cause)}` });
+          report({ kind: 'failed', message: `保存失败：${errorMessage(cause)}` });
         throw cause;
       }
     },
     [inputRef, persist, report]
   );
-  const edited = useCallback((draftId: string) => report({ kind: 'saving', draftId }), [report]);
+  const edited = useCallback(() => report({ kind: 'saving' }), [report]);
   const restored = useCallback(
-    (stored: TopicDraft | null, value: TopicDraft) => {
+    (stored: TopicDraft | null) => {
       durability.current = stored
         ? { kind: 'saved', draftId: stored.id, revision: stored.revision }
         : { kind: 'unknown' };
-      report({ kind: stored ? 'restored' : 'fresh', draftId: value.id });
+      report({ kind: stored ? 'restored' : 'fresh' });
     },
     [report]
   );
@@ -114,23 +114,16 @@ export function useTopicDraftPersistence(input: {
     (cause: unknown) => {
       report({
         kind: 'failed',
-        draftId: inputRef.current.getDraft()?.id ?? null,
         message: `保存或恢复失败：${errorMessage(cause)}`
       });
     },
-    [inputRef, report]
+    [report]
   );
   const retire = useCallback((draftId: string) => {
     durability.current = { kind: 'retired', draftId };
   }, []);
-  const fresh = useCallback(
-    () => report({ kind: 'fresh', draftId: inputRef.current.getDraft()?.id ?? null }),
-    [inputRef, report]
-  );
-  const discarded = useCallback(
-    () => report({ kind: 'discarded', draftId: inputRef.current.getDraft()?.id ?? null }),
-    [inputRef, report]
-  );
+  const fresh = useCallback(() => report({ kind: 'fresh' }), [report]);
+  const discarded = useCallback(() => report({ kind: 'discarded' }), [report]);
   const recordSnapshot = useCallback((draftId: string, value: ComposerSnapshot['validationIssues']) => {
     issues.current = { draftId, issues: value };
   }, []);

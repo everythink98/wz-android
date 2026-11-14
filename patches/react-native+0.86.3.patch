@@ -539,20 +539,45 @@ index 0000000..06a8d42
 diff --git a/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts b/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
 --- a/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
 +++ b/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
-@@ -163,5 +163,5 @@ fun configureBuildForHermesCommandLineArgs(
+@@ -107,7 +107,7 @@
+     tasks.registering(Download::class) {
+       src(
+           providers.provider {
+-            "https://github.com/facebook/hermes/tarball/${hermesVersionProvider.get()}"
++            "https://github.com/meta/hermes/tarball/${hermesVersionProvider.get()}"
+           }
+       )
+       onlyIfModified(true)
+@@ -123,9 +123,8 @@
+       dependsOn(downloadHermes)
+       from(tarTree(downloadHermesDest)) {
+         eachFile {
+-          // We flatten the unzip as the tarball contains a `facebook-hermes-<SHA>`
+-          // folder at the top level.
+-          if (this.path.startsWith("facebook-hermes-")) {
++          // We flatten both current and cached legacy Hermes archive roots.
++          if (this.path.startsWith("facebook-hermes-") || this.path.startsWith("meta-hermes-")) {
+             this.path = this.path.substringAfter("/")
+           }
+         }
+@@ -163,7 +162,7 @@
            ".",
            "-B",
            hermesBuildDir.toString(),
 -          "-DJSI_DIR=" + jsiDir.absolutePath,
 +          "-DJSI_DIR=" + jsiDir.invariantSeparatorsPath,
            "-DCMAKE_BUILD_TYPE=Release",
-@@ -349,5 +349,5 @@ android {
+       )
+   if (enableDebugger) {
+@@ -349,7 +348,7 @@
              "-DANDROID_PIE=True",
              "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
              "-DIMPORT_HOST_COMPILERS=${File(hermesBuildDir, "ImportHostCompilers.cmake").toString()}",
 -            "-DJSI_DIR=${jsiDir}",
 +            "-DJSI_DIR=${jsiDir.invariantSeparatorsPath}",
              "-DHERMES_BUILD_SHARED_JSI=True",
+             "-DHERMES_RELEASE_VERSION=for RN ${version}",
+             "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=True",
 diff --git a/node_modules/react-native/settings.gradle.kts b/node_modules/react-native/settings.gradle.kts
 --- a/node_modules/react-native/settings.gradle.kts
 +++ b/node_modules/react-native/settings.gradle.kts

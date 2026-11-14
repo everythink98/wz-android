@@ -260,7 +260,6 @@ jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
       activeSources: [],
       backgroundEnabled: false,
       onNavigationReady: mockNotificationNavigationReady,
-      partialUnavailable: false,
       unreadTotal: 0
     };
   }

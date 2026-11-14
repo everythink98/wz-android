@@ -17,7 +17,7 @@
 | B07 | 列表、搜索、用户与消息读取 | 已验收：5 项完整转换、6 项局部简化 |
 | B08 | 媒体、预览与原生资源归属 | 已验收：5 项完整转换、8 项局部简化 |
 | B09 | 本地存储、更新、后台与诊断 | 已验收：4 项完整转换、1 项局部简化 |
-| B10 | SDK 补丁、验证工具与整体验收 | 待实施 |
+| B10 | SDK 补丁、验证工具与整体验收 | 已验收：逐项处置完成，2 项具体证据缺口保留 |
 
 ## B01
 
@@ -365,3 +365,78 @@ Native renderer-gone／重复 visual／晚到编码、全部 Audio 旧源事件�
 相对已验收 B08 提交，13 个实际源码路径按 Git numstat 与六个新文件实际 LF 行数统计：生产代码 **+563／−267 行，净 +296**；测试 **+48／−0 行**；SDK patch **0**；整文件删除 **0**。两份改动文档另计，corpus 保持原字节；安装 SDK 与 ignored 证据不重复统计。实际收益为 4 项完整转换、1 项局部简化、17 项保留，Native 崩溃交接补证不算新模型转换；用户文档与原 375 历史不变。
 
 设备范围须逐项界定：reading／review-remediation 的既有 66 项实际挂载通知 Runtime，可证明其受控通知与存储场景；AppRoot 的字面引用使 Reader／Update 出现在 map，并不表示 66 项执行了这两个 hook。普通包的 Library／Update 只读入口观察与 canonical hook 测试分开报告；实际下载／暂停／回滚、安装器返回、所有持久化故障、自然 15 分钟后台调度、物理设备和真实远端写入不能由启动或 map 绑定自动关闭。没有已确认新产品 Bug 时不新增 REG；日志、数据库与 APK 仅保存在 ignored 目录，不 push、不合并、不正式发布。
+
+## B10
+
+本批收尾审查 36 项开发／验证工具与 2 项 SDK 原始 scope，最终为 **36 项具体保留、2 项证据不足**；未给工具重分类或 SDK 分发一致性增加完整转换信用。另对前批范围作小幅减法：通知删除无产品消费者的错误投影，B05 删除已被模型替代的冗余 payload；原提交、草稿和副作用收据仍保留。
+
+实际源码范围为 12 个 tracked 路径、4 个普通包运行模块及 2 个安装 SDK 文件。Git 相对 B09 统计：生产代码 **+35／−70 行，净 −35**；测试 **+56／−50 行，净 +6**；proof／fixture **+0／−4 行**；SDK patch **+57／−2 行，净 +55**。整文件删除 **0**；安装 SDK 与 ignored 证据不重复计行，文档另计。两套 SDK 修复增加 patch 行，不把它们混称为 App 新增状态。
+
+### 删除与保留的实际依据
+
+`snapshotErrors`／`partialUnavailable` 在旧 HEAD 的全仓匹配只落在 owner 写入／返回、fixture 和对应测试，没有产品读取者；当前 `src`、`dev`、`tests` 的 TS／TSX 搜索为零。删除状态、setter、转发与 `errorUpdatedAt` 的投影触发后，Query 仍持有请求／错误，来源 lifecycle 的 cleanup 拒绝、诊断日志、发送前 revision 和持久消费收据继续有效。测试观察真实 Query `status/error` 或实际 cleanup 拒绝，不为被删副本保留断言。此收益归到原 `ui.notify-snapshot` 的一次局部简化，不能称为整个通知模型已被替换。
+
+B05 删除的 `Feedback.draftId`、travel command、submitting mode 和 prepared／claimed 重复阶段均没有独立消费者；真实 draftId／revision／retired、磁盘日志、发送资格与 `mayHaveSent` 仍在。edit 的 attempted 仍在 durable begin 之前，create 仍在其之后，发送时点和 unknown 分类不改。它们属于已计原项的进一步减法，不再增加模型数量。
+
+`ui.new-topic-exit` 从遗留 refactor 分类改为具体 KEEP：`entered` 是 Native 非 closing 且 focused 的首次进入回执，决定编辑器挂载；`exitAction` 是上传／草稿 flush 后批准的原 NavigationAction，须先 React commit 解除 prevent，再派发。两个事实有独立消费者，不能互相派生。route／screen／draft canonical 分别证明旧 epoch 返回、编辑器挂载前输入保留及保存失败阻止退出；不冒称完整 Native 转场矩阵已验。
+
+工具保留理由按实际入口逐项核对：独立 `registerRootComponent` proof、package script／runner、VisualGallery scenario 和测试 fixture 都有各自消费者。设备操作许可、已取得的 session、录屏进程、已分配的 Native task、已提交资料与观察取消不是同一个 busy 的重复表达。`TOOL-07` 的 finally 已先撤许可再核身份，只在再次确认后驱动或关闭本次 session；现有媒体 runner 保留，不再加总 phase。真实 proof-root 生命周期与 visual scenario canonical 可作局部证据，但未覆盖的 Native 安装器、全部故障收尾和硬件返回组合仍逐项留缺口，不能因有测试文件便写成全面通过。
+
+### 两项 SDK 实际红绿
+
+Reanimated 的 `node_modules/react-native-reanimated/src/PropsRegistryGarbageCollector.ts` 已是 Map 成员资格与 timer 资源的明确实现，保持不变；公开 `lib/module` 分发副本仍使用过期计数。相同 canonical 在旧源码入口通过、旧 dist 入口失败于应回写 `height:460` 却实际调用 0 次；同步 dist 的 Map.size 与成功 delete 后两个入口均通过。主要普通包实际 map 使用 src，因此这是分发一致性修复，不能写成新发现并修复了 App 的线上视觉故障，也不计 whole／partial。
+
+Hermes 使用真实 `downloadHermes`／`unzipHermes` task 建立归档布局断言：旧 task 虽报告 BUILD SUCCESSFUL，cached meta 归档仍多一层目录，根 CMake／API 缺失，实际 oracle 为 RED。新实现使用 meta URL 并兼容 `facebook-hermes-`、`meta-hermes-` 两类 archive root；官方下载、cached facebook、cached meta 三条真实 task 路径均 GREEN。没有改版本、根缓存或生产业务状态；不把该问题描述成永久 404。Hermes 不属于原 281 项，作为额外构建修复报告。
+
+定向证据实际通过：5 个 UI 文件 **347/347**，patch／collector 两个 UNIT 文件 **19/19**；typecheck、lint、format 与架构检查均退出 0。修前两个预期 RED 与修后 GREEN 原日志保留；ignored recipe 的 `vi.fn` 文本守卫适配只影响应用前检查，没有删改 canonical 断言。
+
+- `STATIC_PASS`：最终完整 typecheck 与 `npm run verify` 均退出 0；冻结 1205 个输入，SHA-256 `5e2b5aa743398ffb3e7742b4fe99abfd794e9967b447b57bb09f4a9baee1119a`。verify 于 UTC 19:05:25.314–19:13:53.505 执行，日志 SHA-256 `18f898d8ae11b98c32dafc2e65833ac5fc86d1232127d1b4186826356b306561`。
+- `UNIT_PASS`：274 文件／4635 项，seed `1794683197125`；`UI_PASS`：105 suites／3300 项，seed `200272678`。原 act 告警保留，定向数量不重复累计。
+- SDK 最终干净重放：隔离目录实际 `npm ci`、17 套 patch-package 与原 canonical 17 项均退出 0，seed `650101`，134 个对应安装文件逐字一致；主依赖树／package 与补丁输入保持。fixture 只增加局部 Vitest config 及显式 `--config`，避免继承父工作区配置；原 canonical 字节与断言未改。它证明补丁可重放，不代替 Native 编译或真实设备。
+
+- `APK_SANITY`：普通 Release 构建 6m41.633s、完整 wrapper 退出 0；APK SHA-256 `53d0b70ad12a317579124040951342dfaaf775c78f174e7a15e32ab266851340`，49845386 bytes，buildId `b5ad7679e41c4aa9b31e5df0a3c704ef`。实际 map 绑定四个本批生产运行模块、FlashList／Paper／Reanimated 三个 SDK 输入与四项 DOM 输入；Hermes、版本、签名、provider 和 RNC 接线逐项核对。
+- Native 按实际产物确认两个 producer source、40 个编译 class、六个 JAR 与两个 R8 输入，实际 APK class definitions／public anchor 通过；33 个 SVG、7 个 Fullscreen class 及五项 frame-unit 输入与 B08 同字节。只继承原五项 Native unit／六项 SVG 仪器证据，本批没有重跑，也不新增首帧／长期黑图结论。
+- 生成资源卫生已在最终普通包验收：只删除 `android/app/build/generated/res/react/release/raw` 中三个同名、同大小、同 SHA 的已知生成副本，共 2944589 bytes；三个原始 ignored 媒体文件保留。实际 APK 所有 wav／mp4 entry 为零，三个 synthetic payload 零匹配，map／Hermes 无五个指定 proof 引用；脏 B09 包拒绝、干净 B08 包通过的负控与最终包分别记录。此为本次输出卫生，不写成全局 Gradle 缺陷或产品行为修复。
+- 限定的 `LIVE_PASS`：主模拟器同签名覆盖安装后 UID 10214、首次安装时间 `2026-07-26 16:51:37`、versionCode 162 保持，PID 14978 的当前 buildId 对应 22 条成功启动记录。实际首页数据、空输入 Search、消息列表 76 条、More、历史 622 条均可读；历史首个既有 NodeSeek 主题打开正常，图片预览 `1/1381` 有可见内容，返回主题／历史后回到首页。消息数量与 B09 安装前只读基线一致；未开消息详情或触发已读、发帖、点赞、切换收藏及清理。
+- IME 如实收尾：实际发现 helper IME，按工具保存的 previous 值及早期基线核对后，仅一次 `ime set` 恢复 Gboard 并读回一致。`testIme=false` 仅跳过 activation，不能证明原 IME 未变；切换时点不明，本批没有键盘几何／输入／composing 验收，不归因为 App 故障。
+- 设备与进程收尾：实际可见主模拟器 qemu 67008／window 13700600 未最小化且响应；本批 full-gate、构建与隔离重放会话已结束，观察为 Java 0、B10 脚本 0，仅保留主模拟器，ADB 仅列 emulator-5554。专用 proof 设备此前按各批恢复后关闭；共享 MCP／ADB 与未知进程未停止。独立站点身份刷新、主设备私有数据库字节指纹与完整键盘／业务写操作均未验证。
+
+### 原 281 项的最终处置
+
+| 归属 | 完整转换 | 局部简化 |
+| --- | --- | --- |
+| B01 | 0 | 1 |
+| B02 | 2 | 7 |
+| B03 | 7 | 3 |
+| B04 | 8 | 5 |
+| B05 | 11 | 2 |
+| B06 | 7 | 4 |
+| B07 | 5 | 6 |
+| B08 | 5 | 8 |
+| B09 | 4 | 1 |
+| B10 | 0 | 1 |
+| 合计 | **49** | **38** |
+
+其余 **192 项合理保留、2 项证据不足**，合计仍为 281。B01 头像只修正缓存请求归属，补记局部成果；B10 通知只删除死投影；B05 进一步减法不重复计数；Reanimated dist、Hermes 与生成资源卫生分别报告。49／38 是原 scope 的实施结果，不是文件数、删除字段数或“所有状态机均已消失”。必要的身份、资源和回执仍存在，38 个局部项也各有剩余控制职责。
+
+动作分类最终为 **87 refactor／192 keep／2 investigate**，其中 87 项已分别交付 49 whole 与 38 partial。原 `ui.new-topic-exit`、`TOOL-07` 改为具体 KEEP，通知从 KEEP 改为实际局部简化；不以历史分类数字充当未完成数量。原 375 项历史、原 ID／owner 与用户文档保持。当前逐项审查保留实际消费者、不可派生理由、canonical 与具体证据缺口；本轮 source 审计另核 owner SHA、字面入口图及独立 proof 入口。字面 import 图包含 type import，动态／Native／公开入口另按实际契约判断，静态不可达本身不构成删除证明。
+
+两项证据不足继续保留：
+
+- `DEV-X02`：`pendingAction.settled` 与 fresh-JS sentinel 有实际消费者；`.operation` 没有显式读取，但可能在 checkpoint／GC 期间强引用未决 Promise。尚缺“只去掉 operation”后的同 Hermes GC 压力、未决 transport、force-stop／reopen 与 durable journal 因果对照，不能仅凭搜索删掉。
+- `ROOT-TOOLING-NEW-005`：全局替换 `String.prototype.split/slice` 跨 await 计量，finally 恢复精确 descriptor。已有真实 Hermes 成功、输出／预算和 descriptor 恢复证据；缺口是 DB／materializer 暂停时与其它 React／Query／trace／proof String 消费或另一 hook 重叠，以及失败／取消的恢复隔离。正常成功不能证明全局计量互不污染。
+
+基线 `beff077f` 至最终工作树按 Git 直接差分统计，未累加批间反复编辑；原用户文档、安装 SDK 与 ignored 证据排除。
+
+| 类别 | 增加行 | 删除行 | 净变化 |
+| --- | --- | --- | --- |
+| 生产代码 | 9345 | 5793 | +3552 |
+| 测试 | 2033 | 379 | +1654 |
+| 文档 | 5665 | 1 | +5664 |
+| SDK patch | 294 | 131 | +163 |
+| proof／fixture | 907 | 102 | +805 |
+| 开发工具 | 158 | 5 | +153 |
+
+整文件删除 **0**，新增整文件 **55**；移动、重命名和 SDK 安装副本不算删除。这里的删除行是 Git 差分，不能换算成模型数量。生产净增加来自真正接管旧流程的 owner、类型和必要边界；本轮目标按“状态清晰优先”验收，不以总行数下降代替行为证明。
+
+长期黑图、妖火掉线／空回复、Search 慢帧和冷启动波动仍按各批已确认范围保留；本轮没有补齐因果的历史问题不关闭。媒体 round 20 的黑色起始截图、Native 首帧窗口、真实下载／安装返回与全部身份交错等已列 NOT_VERIFIED 边界继续生效。没有新增已确认的 App 产品事故，corpus 保持原字节；测试、构建、设备截图与原始日志仅保存 ignored。不 push、不合并、不正式发布。

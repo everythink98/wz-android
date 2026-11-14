@@ -568,3 +568,33 @@ diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/Events/U
    const auto eventHash = std::make_pair(emitterReactTag, eventName);
    auto it = eventMappingsWithTag.find(eventHash);
    return it != eventMappingsWithTag.end() && !it->second.empty();
+diff --git a/node_modules/react-native-reanimated/lib/module/PropsRegistryGarbageCollector.js b/node_modules/react-native-reanimated/lib/module/PropsRegistryGarbageCollector.js
+--- a/node_modules/react-native-reanimated/lib/module/PropsRegistryGarbageCollector.js
++++ b/node_modules/react-native-reanimated/lib/module/PropsRegistryGarbageCollector.js
+@@ -4,7 +4,6 @@
+ import { ReanimatedModule } from './ReanimatedModule';
+ const FLUSH_INTERVAL_MS = 500;
+ export const PropsRegistryGarbageCollector = {
+-  viewsCount: 0,
+   viewsMap: new Map(),
+   intervalId: null,
+   registerView(viewTag, component) {
+@@ -17,15 +16,13 @@
+       return;
+     }
+     this.viewsMap.set(viewTag, component);
+-    this.viewsCount++;
+-    if (this.viewsCount === 1) {
++    if (this.viewsMap.size === 1) {
+       this.registerInterval();
+     }
+   },
+   unregisterView(viewTag) {
+-    this.viewsMap.delete(viewTag);
+-    this.viewsCount--;
+-    if (this.viewsCount === 0) {
++    const deleted = this.viewsMap.delete(viewTag);
++    if (deleted && this.viewsMap.size === 0) {
+       this.unregisterInterval();
+     }
+   },

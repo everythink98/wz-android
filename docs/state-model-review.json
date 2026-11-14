@@ -659,8 +659,8 @@
       "invariant": "proof同步拒第二操作，真实task可暂停续传，busy/bytes/message只展示。",
       "consumer": "dev/app-update-proof/index.tsx#registerRootComponent standalone ENTRY_FILE；fixture server供下载",
       "cannotDerive": "running是React提交前准入，task是Native句柄，busy投影不能替代二者。",
-      "tests": ["tests/tooling/app-update-proof-server.test.ts"],
-      "evidenceGap": "原主要测试仅server，dev-client入口/Native安装器没有完整直接proof。"
+      "tests": ["tests/tooling/app-update-proof-server.test.ts", "tests/ui/dev/proof-entry-lifecycle.test.tsx"],
+      "evidenceGap": "server及真实root lifecycle有canonical测试；真实Native下载/安装器全矩阵仍需专项设备。"
     },
     {
       "id": "DEV-03",
@@ -671,7 +671,7 @@
       "invariant": "effect退休不再配置fault或发布snapshot，卸载清timer，rendererFault对应真实诊断故障。",
       "consumer": "scripts/run-diagnostic-device-proof.mjs#entryFile=dev/diagnostics-proof/index.tsx",
       "cannotDerive": "canceled是observer许可，timer/trace是资源；含动态错误的status文案不能作清理权威。",
-      "tests": ["tests/tooling/diagnostic-device-proof.test.ts"],
+      "tests": ["tests/tooling/diagnostic-device-proof.test.ts", "tests/ui/dev/proof-entry-lifecycle.test.tsx"],
       "evidenceGap": "Native崩溃、renderer退出和导出分享需专项设备。"
     },
     {
@@ -863,9 +863,9 @@
       "owner": "dev/reader-storage-proof/pollJournal.ts",
       "invariant": "未结算poll操作跨checkpoint保留，旧settled回调不能当当前写入，fixture验证重开后的日志。",
       "consumer": "dev/reader-storage-proof/index.tsx#poll action mode -> exercisePollActionTransport",
-      "cannotDerive": "operation无成员读取，但强引用对pending/GC/进程生命周期是否有作用不能按unused-property删除。",
+      "cannotDerive": "pendingAction stores {settled,operation}. settled is read before the interruption receipt; pendingAction===undefined is a fresh-JS-process sentinel on reopen. The operation property is never read explicitly, but may retain the unresolved promise/continuation across the checkpoint and GC. A string-search-only deletion would not prove that strong-root effect absent.",
       "tests": ["src/platform/persistence/nodeSeekPollJournal.test.ts"],
-      "evidenceGap": "须在同pending+force-stop+reopen proof对照去除强引用前后，搜索不能证明无用。",
+      "evidenceGap": "Missing causal experiment: remove only operation property while keeping settled/sentinel, reproduce the identical Hermes pending transport with GC pressure and force-stop/reopen, and compare durable journal plus entered/dispatch/pending receipts. Until then the field and item remain investigate, with zero deletion/conversion credit.",
       "targetModel": "保持pendingAction，补证若只需settled收据，再在本module删operation payload，不造框架。"
     },
     {
@@ -973,8 +973,22 @@
       "consumer": "src/ui/avatar/Avatar.tsx#loadRemoteAvatarSvgText",
       "cannotDerive": "键只识别目标、不识别逐出后的新操作；删除前须用现有Promise身份比较。",
       "tests": ["src/platform/media/avatarImages.test.ts"],
-      "evidenceGap": "Root已复现HTTP retry-later与Promise拒绝两路径HEAD预期2实际3；本子任务不重复执行或宣称修复通过。",
-      "targetModel": "avatarImages.ts保留Map<key,Promise>，删除前检查get(key)===request；Root同批补两路径行为测试。"
+      "evidenceGap": "B01真实13项canonical已证明两失败路径；实际设备200项并发现场未验证。",
+      "targetModel": "avatarImages.ts保留Map<key,Promise>，删除前检查get(key)===request；Root同批补两路径行为测试。",
+      "implementation": {
+        "batch": "B01",
+        "outcome": "partial",
+        "delivered": "B01已修正旧Promise失败只能删除仍属于自己的同键缓存，复用已有Promise身份，两个淘汰/重建失败路径有实际修前红绿；没有接管整个下载/cache业务为新模型。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "缓存容量/Map成员/真实Promise仍是独立事实；本轮仅补最终归属，不给B10重复实施信用。"
+        ],
+        "primaryTests": ["src/platform/media/avatarImages.test.ts"],
+        "remainingEvidenceGap": "B01真实13项canonical已证明两失败路径；实际设备200项并发现场未验证。",
+        "validation": "docs/state-model-refactor.md#b10",
+        "acceptance": "ACCEPTED_B10_BOUNDED_EVIDENCE",
+        "reviewedIn": "B10"
+      }
     },
     {
       "id": "PL-JS-cookie-snapshot-migration",
@@ -1725,7 +1739,20 @@
       "consumer": "node_modules/react-native-reanimated/src/createAnimatedComponent/AnimatedComponent.tsx#PropsRegistryGarbageCollector.registerView/unregisterView",
       "cannotDerive": "viewsMap是组件注册，intervalId是待清理资源；size决定资格但不能代替timer句柄。",
       "tests": ["tests/tooling/reanimated-settled-props.test.ts", "tests/tooling/patch-artifacts.test.ts"],
-      "evidenceGap": "TS source与lib/module备用实现及resolver消费者仍需分列，未同步镜像不能宣称全包修复。"
+      "evidenceGap": "本轮测试分别执行src/dist，但不证明所有Native注册回调或物理视觉交错。",
+      "implementation": {
+        "batch": "B10",
+        "outcome": "keep",
+        "delivered": "原src collector已明确且保持不变；本批只把公开lib/module分发副本同步为Map.size及成功delete，实际同一canonical旧dist RED→两个入口GREEN。原保留scope仍KEEP，不计新whole/partial模型。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "真实viewsMap注册与intervalId资源不能互相派生；普通APK已实际使用react-native-reanimated/src入口，因此不冒称本批App视觉修复。"
+        ],
+        "primaryTests": ["tests/tooling/reanimated-settled-props.test.ts", "tests/tooling/patch-artifacts.test.ts"],
+        "remainingEvidenceGap": "本轮测试分别执行src/dist，但不证明所有Native注册回调或物理视觉交错。",
+        "validation": "docs/state-model-refactor.md#b10",
+        "acceptance": "ACCEPTED_B10_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "PL-PATCH-compose-pager-attachment",
@@ -2291,9 +2318,9 @@
       "owner": "dev/review-remediation-proof/pendingPollProof.ts",
       "invariant": "异步materialize结束/失败后恢复split/slice精确descriptor，不污染后续任务。",
       "consumer": "dev/review-remediation-proof/index.tsx mode -> pendingPollProof.ts#verifyPendingPollMaterialization",
-      "cannotDerive": "descriptor lease跨await生效，metrics不能证明全局prototype已恢复，未知并发任务可能观察hook。",
+      "cannotDerive": "The proof temporarily replaces process-global String.prototype split/slice descriptors across an awaited SQLite/materializer operation, counts total copied characters, then restores exact saved descriptors in finally. The normal body/output/restore have actual Hermes evidence; global observer isolation cannot be inferred from that successful run.",
       "tests": [],
-      "evidenceGap": "须核独立proof的并发String消费者，当前不能安全删除计量或按同步hook处理。",
+      "evidenceGap": "Still missing exclusivity/overlap evidence: pause DB/materializer while unrelated React/Query/trace/parallel-proof String consumers or another hook run, and test failure/cancel restoration plus exact output/copy budget. Another hook may contaminate measurements or be overwritten by restoring an older descriptor. Keep investigate; normal executed proof is not a concurrency-isolation proof.",
       "targetModel": "保持finally；仅在该proof评估把计量移至materializer局部入口，补相同结果/无污染断言后迁移。"
     },
     {
@@ -2310,16 +2337,28 @@
     },
     {
       "id": "TOOL-07",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 10,
       "owner": "scripts/run-media-pressure-device-proof.mjs",
       "invariant": "身份复核并取得session后才能驱动；恢复前撤许可，身份失败不再导航/截图或停止未知session。",
       "consumer": "scripts/run-media-pressure-device-proof.mjs#runMediaPressureDeviceProof / finally restore",
-      "cannotDerive": "safeToDrive/agentOpened/recording是权限及不同清理责任，不能直接删；目前许可转换分散主流程/finally。",
+      "cannotDerive": "safeToDrive是已核设备身份后的操作许可，agentOpened是实际取得会话的清理责任，recording是独立物理进程；finally先撤许可再核身份，只在重新确认后驱动/关闭自己会话。它们不是同一busy的重复副本。",
       "tests": ["tests/tooling/media-pressure-device-proof.test.ts"],
-      "evidenceGap": "真实断连/身份变化及录制需保留故障模拟和隔离设备。",
-      "targetModel": "现有runner收拢verified-device lease acquire/suspend/revalidate/release，recording独立，复用现有工具不加通用框架。"
+      "evidenceGap": "现有canonical覆盖AVD/identity/receipt/timeout；未完整故障注入runner finally的身份变化/首open失败/未知session组合。",
+      "implementation": {
+        "batch": "B10",
+        "outcome": "keep",
+        "delivered": "独立重审现有runner主流程/finally许可边界：已验证设备、已取得session与recording分别有真实消费者；加总phase不能减少事实。源代码保留，无转换信用。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "safeToDrive是已核设备身份后的操作许可，agentOpened是实际取得会话的清理责任，recording是独立物理进程；finally先撤许可再核身份，只在重新确认后驱动/关闭自己会话。它们不是同一busy的重复副本。"
+        ],
+        "primaryTests": ["tests/tooling/media-pressure-device-proof.test.ts"],
+        "remainingEvidenceGap": "现有canonical覆盖AVD/identity/receipt/timeout；未完整故障注入runner finally的身份变化/首open失败/未知session组合。",
+        "validation": "docs/state-model-refactor.md#b10",
+        "acceptance": "ACCEPTED_B10_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "TOOL-08",
@@ -3577,15 +3616,36 @@
     },
     {
       "id": "ui.new-topic-exit",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 5,
       "owner": "src/features/topic-composer/TopicComposerRoute.tsx",
       "invariant": "离场须先等待草稿保存，并在解除usePreventRemove后派发原始NavigationAction；首次进入回执仍控制编辑器挂载。",
-      "consumer": "tests/ui/topicCreationFixture.tsx :: <Stack.Screen name=\"TopicComposer\" component={TopicComposerRoute} />",
-      "cannotDerive": "entered来自Native转场而exitAction来自异步离场授权，不能互相派生。",
-      "tests": ["tests/ui/topic-composer/topic-composer-route.test.tsx"],
-      "evidenceGap": ""
+      "consumer": "src/app/AppRoutes.tsx#getTopicComposerRoute -> AppNavigator.tsx Stack.Screen; entered -> TopicComposerScreen editorEnabled; exitAction -> usePreventRemove commit then navigation.dispatch.",
+      "cannotDerive": "entered是Native非closing且focused的首次进入回执，exitAction是等待上传/草稿flush后批准的原NavigationAction。编辑器可已进入而没有离场授权，离场授权也不能从Native转场推导；解除prevent须先React commit再dispatch。",
+      "tests": [
+        "tests/ui/topic-composer/topic-composer-route.test.tsx",
+        "tests/ui/topic-composer/create-topic-screen.test.tsx",
+        "tests/ui/topic-composer/topic-draft-controller.test.tsx"
+      ],
+      "evidenceGap": "route测试证明返回原主题/旧epoch隔离，screen测试证明正文挂载前输入保留，draft测试证明保存失败阻止leave；全部Native转场乱序仍未直接证明。",
+      "implementation": {
+        "batch": "B10",
+        "outcome": "keep",
+        "delivered": "B05已说明为必要独立Native entered/exitAction，本次把遗留refactor分类修正为具体KEEP；当前writer/consumer已明确，没有新增phase或运行改动。",
+        "residualControlAuthority": [],
+        "retainedIndependentFacts": [
+          "entered是Native非closing且focused的首次进入回执，exitAction是等待上传/草稿flush后批准的原NavigationAction。编辑器可已进入而没有离场授权，离场授权也不能从Native转场推导；解除prevent须先React commit再dispatch。"
+        ],
+        "primaryTests": [
+          "tests/ui/topic-composer/topic-composer-route.test.tsx",
+          "tests/ui/topic-composer/create-topic-screen.test.tsx",
+          "tests/ui/topic-composer/topic-draft-controller.test.tsx"
+        ],
+        "remainingEvidenceGap": "route测试证明返回原主题/旧epoch隔离，screen测试证明正文挂载前输入保留，draft测试证明保存失败阻止leave；全部Native转场乱序仍未直接证明。",
+        "validation": "docs/state-model-refactor.md#b10",
+        "acceptance": "ACCEPTED_B10_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.notification-media",
@@ -3917,31 +3977,34 @@
     {
       "id": "ui.notify-snapshot",
       "kind": "explicit",
-      "action": "keep",
+      "action": "refactor",
       "batch": 7,
       "owner": "src/features/notifications/useNotificationsRuntime.ts",
       "invariant": "未读快照在发送前分配revision，只消费当前来源/身份且尚未处理的结果，关闭来源先标记cleaning再清理数据。",
       "consumer": "src/app/useAppRuntime.tsx :: const notificationsRuntime = useNotificationsRuntime({ ; dev/review-remediation-proof/index.tsx :: return useNotificationsRuntime(notificationOptions);",
-      "cannotDerive": "Query数据身份、发送前分配的revision、已落盘副作用消费收据及source lifecycle是独立事实；当前网络结果不能推导副作用已经保存。此保留理由不涵盖无产品消费者的snapshotErrors/partialUnavailable，后者留待B10删除。",
+      "cannotDerive": "Query数据身份、发送前分配的revision、已落盘副作用消费收据及source lifecycle是独立事实；当前网络结果不能推导副作用已经保存。无产品消费者的snapshotErrors/partialUnavailable已删除，不属于本保留理由。",
       "tests": [
         "tests/ui/notifications/notifications-performance-stress.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx",
         "tests/ui/notifications/notifications-route.test.tsx"
       ],
-      "evidenceGap": "",
+      "evidenceGap": "真实站点通知/全部后台与身份交错仍按既有范围；只计原项局部简化。",
       "implementation": {
-        "batch": "B07",
-        "outcome": "keep",
-        "delivered": "复核保留Query权威数据/错误、发送前分配revision及handledSnapshotUpdate持久化消费收据、来源清理/交付边界。不能从Query当前结果推导副作用已经落盘；仅针对这些必要职责保留，不声称全部本地投影字段必要。",
-        "residualControlAuthority": [],
-        "validation": "docs/state-model-refactor.md#b07",
+        "batch": "B10",
+        "outcome": "partial",
+        "delivered": "删除无产品消费者的snapshotErrors/partialUnavailable状态、setter、透传和errorUpdatedAt投影触发。真实错误由Query持有，cleanup拒绝/lifecycle和持久消费收据仍在；旧测试改观察实际Query或拒绝，不复制已删投影。",
+        "residualControlAuthority": ["Query请求/错误生命周期、持久消费收据、来源清理和前台交付仍各归既有owner。"],
+        "retainedIndependentFacts": [
+          "Query身份/错误、发送前revision、handledSnapshotUpdate持久副作用收据和来源lifecycle各有用途。不能把局部删除当整个通知模型whole。"
+        ],
         "primaryTests": [
           "tests/ui/notifications/notifications-performance-stress.test.tsx",
           "tests/ui/notifications/notifications-runtime.test.tsx",
           "tests/ui/notifications/notifications-route.test.tsx"
         ],
-        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
-        "remainingEvidenceGap": "B10将单独删除已证明无消费者的重复错误投影；本项KEEP不代表整个文件不能再减法。"
+        "remainingEvidenceGap": "真实站点通知/全部后台与身份交错仍按既有范围；只计原项局部简化。",
+        "validation": "docs/state-model-refactor.md#b10",
+        "acceptance": "ACCEPTED_B10_BOUNDED_EVIDENCE"
       }
     },
     {

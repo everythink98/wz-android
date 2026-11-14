@@ -225,7 +225,6 @@ export function useNotificationsRuntime({
   const [state, setState] = useState(stateRef.current);
   const [centerVisible, setCenterVisibleState] = useState(false);
   const [backgroundError, setBackgroundError] = useState('');
-  const [snapshotErrors, setSnapshotErrors] = useState<Partial<Record<NotificationSource, string>>>({});
   const [sourceLifecycleSnapshot, setSourceLifecycleSnapshot] = useState(() => ({ ...sourceLifecyclesRef.current }));
   const runtimeReady = ready && contentSourcesReady;
   const operationalSources = useMemo(
@@ -410,13 +409,6 @@ export function useNotificationsRuntime({
       (source) => sourceLifecyclesRef.current[source].phase !== 'clean'
     );
     if (!sourcesToClean.length) return;
-    setSnapshotErrors((current) =>
-      sourcesToClean.some((source) => current[source] !== undefined)
-        ? Object.fromEntries(
-            Object.entries(current).filter(([source]) => !sourcesToClean.includes(source as NotificationSource))
-          )
-        : current
-    );
     void (async () => {
       const ownsPreviousAggregate = (query: { queryKey: readonly unknown[] }) =>
         Boolean(
@@ -466,9 +458,6 @@ export function useNotificationsRuntime({
           if (started) {
             void operation.catch((error) => {
               recordDiagnosticError('source', 'notification-cleanup', error, { source });
-              if (!mountedRef.current) return;
-              const message = error instanceof Error ? error.message : '内容源停用清理失败';
-              setSnapshotErrors((current) => ({ ...current, [source]: message }));
             });
           }
           return operation;
@@ -687,15 +676,13 @@ export function useNotificationsRuntime({
 
   const handledSnapshotUpdateRef = useRef(new Map<string, number>());
   const snapshotRevision = snapshotQueries
-    .map((query, index) => `${snapshotSources[index]}:${query.data?.revision || 0}:${query.errorUpdatedAt}`)
+    .map((query, index) => `${snapshotSources[index]}:${query.data?.revision || 0}`)
     .join('|');
   useEffect(() => {
-    const errors: Partial<Record<NotificationSource, string>> = {};
     const deliveries: ForegroundDelivery[] = [];
     const writes = snapshotSources.flatMap((source, index) => {
       const query = snapshotQueriesRef.current[index];
       if (!query) return [];
-      if (query.isError) errors[source] = sourceErrorFromUnknown(source, query.error).message;
       const result = query.data;
       const snapshot = result?.snapshot;
       const identityKey = identityKeys[source];
@@ -718,9 +705,6 @@ export function useNotificationsRuntime({
         })
       ];
     });
-    setSnapshotErrors((current) =>
-      notificationSources.every((source) => current[source] === errors[source]) ? current : errors
-    );
     if (writes.length) void Promise.allSettled(writes).then(() => runForegroundDelivery(deliveries));
   }, [identityKeys, runForegroundDelivery, snapshotRevision, snapshotSources, foregroundDeliveries]);
 
@@ -905,11 +889,9 @@ export function useNotificationsRuntime({
     identityKeys,
     identitySignature,
     enabledNotificationSources: enabledSources,
-    partialUnavailable: enabledSources.some((source) => Boolean(snapshotErrors[source])),
     permission,
     ready: runtimeReady,
     sessions,
-    snapshotErrors,
     state,
     unreadTotal,
     openSystemSettings: openNotificationSystemSettings,

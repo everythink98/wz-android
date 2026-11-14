@@ -339,7 +339,6 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     notify: jest.fn(),
     onNavigationReady: jest.fn(),
     openSystemSettings: jest.fn(),
-    partialUnavailable: false,
     permission: 'denied',
     ready: true,
     reconcileAccountStatus: jest.fn(async () => ({
@@ -351,7 +350,6 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     setCenterVisible: jest.fn(),
     setGlobalEnabled: jest.fn(async () => false),
     setSourceEnabled: jest.fn(async () => undefined),
-    snapshotErrors: {},
     state: defaultNotificationState(),
     unreadTotal: 0,
     initializationError: '',

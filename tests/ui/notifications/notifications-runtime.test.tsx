@@ -1045,7 +1045,6 @@ describe('notification runtime', () => {
     enabledNotificationSources = ['nodeseek', 'linuxdo'];
     await act(async () => hook.rerender({}));
     await waitFor(() => expect(hook.result.current.activeSources).toContain('linuxdo'));
-    await waitFor(() => expect(hook.result.current.snapshotErrors).toEqual({}));
     await waitFor(() => expect(hook.result.current.unreadTotal).toBe(3));
 
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -1103,12 +1102,10 @@ describe('notification runtime', () => {
     await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(2));
 
-    const snapshotErrors = hook.result.current.snapshotErrors;
     await act(async () => hook.result.current.refreshSnapshots());
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(3));
-    expect(hook.result.current.snapshotErrors).toBe(snapshotErrors);
     await settleStartedRuntimeTasks();
   });
 
@@ -1259,7 +1256,6 @@ describe('notification runtime', () => {
     remoteReady = true;
     await act(async () => hook.rerender({}));
     await waitFor(() => expect(fetcher).toHaveBeenCalled());
-    await waitFor(() => expect(hook.result.current.snapshotErrors).toEqual({}));
     await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1));
     sessions = nodeSeekSessions('confirmed', '84');
     await act(async () => hook.rerender({}));
@@ -1390,7 +1386,6 @@ describe('notification runtime', () => {
     fetcher.mockClear();
     jest.mocked(runNotificationBackgroundWorker).mockClear();
     jest.mocked(syncNotificationBackgroundRegistration).mockClear();
-    const snapshotErrors = hook.result.current.snapshotErrors;
 
     let finishDismiss!: () => void;
     const dismissPending = new Promise<void>((resolve) => {
@@ -1408,7 +1403,6 @@ describe('notification runtime', () => {
     );
     await expect(firstWorker.sourceAllowed('nodeseek')).resolves.toBe(false);
     expect(hook.result.current.activeSources).not.toContain('nodeseek');
-    expect(hook.result.current.snapshotErrors).toBe(snapshotErrors);
 
     enabledNotificationSources = ['nodeseek'];
     await act(async () => hook.rerender({}));
@@ -1454,7 +1448,13 @@ describe('notification runtime', () => {
     await act(async () => hook.rerender({}));
     await settleStartedRuntimeTasks(false);
 
-    await waitFor(() => expect(hook.result.current.snapshotErrors.nodeseek).toBe('dismiss failed'));
+    const failedDismissIndex = jest
+      .mocked(dismissSourceNotification)
+      .mock.calls.findIndex(([source]) => source === 'nodeseek');
+    expect(failedDismissIndex).toBeGreaterThanOrEqual(0);
+    await expect(jest.mocked(dismissSourceNotification).mock.results[failedDismissIndex]!.value).rejects.toThrow(
+      'dismiss failed'
+    );
     expect(hook.result.current.activeSources).not.toContain('nodeseek');
 
     enabledNotificationSources = ['nodeseek'];
@@ -1467,7 +1467,6 @@ describe('notification runtime', () => {
       ).toHaveLength(2)
     );
     await waitFor(() => expect(hook.result.current.activeSources).toContain('nodeseek'));
-    expect(hook.result.current.snapshotErrors.nodeseek).toBeUndefined();
     await settleStartedRuntimeTasks();
   });
 
@@ -1563,7 +1562,13 @@ describe('notification runtime', () => {
           }),
         { wrapper: QueryTestWrapper }
       );
-      await waitFor(() => expect(hook.result.current.snapshotErrors.nodeseek).toBeTruthy());
+      await waitFor(() =>
+        expect(
+          appQueryClient.getQueryState(
+            forumQueryKeys.notificationSnapshot({ source: 'nodeseek', identityKey: 'nodeseek:42' })
+          )
+        ).toMatchObject({ status: 'error', fetchStatus: 'idle' })
+      );
       expect(hook.result.current.unreadTotal).toBe(1);
       await hook.unmount();
       await settleStartedRuntimeTasks();
