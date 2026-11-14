@@ -755,6 +755,7 @@ describe('topic query controller', () => {
       await act(async () => requests[1].finish(page));
       await waitFor(() => expect(hook.result.current.controller.topicReplies[0]?.floor).toBe(181));
       expect(hook.result.current.controller.readingEntry.windowReady).toBe(true);
+      expect(hook.result.current.controller.readingEntry.positionReady).toBe(false);
       active = false;
       await act(async () => hook.rerender(undefined));
       active = true;
@@ -971,8 +972,8 @@ describe('topic query controller', () => {
     expect(getReplies.mock.calls.map(([request]) => request.position)).toEqual([
       { kind: 'target', target: { floor: 181, readingResume: true } }
     ]);
-    expect(getTopic).toHaveBeenCalledTimes(1);
     expect(getTopicReading).toHaveBeenCalledTimes(1);
+    expect(getTopic).toHaveBeenCalledTimes(1);
     await act(async () => hook.unmount());
     reading.dispose();
   });

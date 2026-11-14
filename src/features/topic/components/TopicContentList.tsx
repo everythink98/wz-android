@@ -1,5 +1,9 @@
+import { useTopicReplyOrder } from '../useTopicReplyOrder';
+import { useTopicAcceptedAnswer } from '../useTopicAcceptedAnswer';
+import { useTopicLocationCommand, useTopicFloorPositioning, useTopicAcceptedScroll } from '../useTopicListPosition';
+import { useTopicReplyEdgeLoad } from '../useTopicReplyEdgeLoad';
 import { recordUserInteraction } from '@/platform/network/userPresence';
-import { resolveTopicLocation, topicLocationForReply } from '@/domain/forum/topicLocation';
+import { topicLocationForReply } from '@/domain/forum/topicLocation';
 import { createTopicStyles, createTopicTableStyles, type TopicStyles } from '../styles';
 import {
   createContext,
@@ -23,7 +27,6 @@ import {
   type NativeTouchEvent,
   type ViewStyle,
   Keyboard,
-  PixelRatio,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -47,9 +50,7 @@ import {
 import { findReadingResumeReply } from '@/domain/forum/discourseReading';
 import type {
   Reply,
-  ReplyLocationTarget,
   TopicLocationTarget,
-  ReplyOrder,
   SourceErrorInfo,
   Topic,
   TopicDetail,
@@ -166,8 +167,7 @@ import {
 } from '../selection/TopicSelectionSurface';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
-const REPLY_START_REACHED_THRESHOLD = 3;
-const REPLY_END_REACHED_THRESHOLD = 0.55;
+
 const TOPIC_VISIBLE_CONTENT_POSITION = {
   shouldAnchorItem: (item: TopicListItem) =>
     item.type !== 'topicHeader' && item.type !== 'replyControls' && item.type !== 'replyWindowStart'
@@ -525,15 +525,10 @@ export const TopicContentList = memo(function TopicContentList({
   const onInteract = actions.interact;
   const onLockPoll = actions.lockNodeSeekPoll;
   const onVotePoll = actions.votePoll;
-  const pendingReplyOrderScrollRef = useRef(false);
-  const changeReplyOrder = useCallback(
-    (order: ReplyOrder) => {
-      if (order === replyOrder) return;
-      pendingReplyOrderScrollRef.current = true;
-      onReplyOrderChange(order);
-    },
-    [onReplyOrderChange, replyOrder]
-  );
+  const clearReplyFilters = useCallback(() => {
+    onCommentQueryChange('');
+    onReplyFilterChange('all');
+  }, [onCommentQueryChange, onReplyFilterChange]);
   const { settings, styles, theme } = useReaderThemeStyles(createTopicStyles);
   const htmlCustomElementModels = useMemo(
     () => createHtmlCustomElementModels(settings.lineHeight),
@@ -541,49 +536,6 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const { fontScale: systemFontScale, height: windowHeight, width: windowWidth } = useWindowDimensions();
   const replyOrderMenuTriggerRef = useRef<View>(null);
-  const replyOrderMenuRequestRef = useRef(0);
-  const [replyOrderMenuOpen, setReplyOrderMenuOpen] = useState(false);
-  const [replyOrderMenuPlacement, setReplyOrderMenuPlacement] = useState<ViewStyle>({
-    position: 'absolute',
-    right: 12,
-    top: 12,
-    minWidth: 104
-  });
-  const replyOrderLabel = replyOrder === 'newest' ? '倒序' : '正序';
-  const closeReplyOrderMenu = useCallback(() => {
-    replyOrderMenuRequestRef.current += 1;
-    setReplyOrderMenuOpen(false);
-  }, []);
-  useEffect(() => {
-    closeReplyOrderMenu();
-    return () => {
-      replyOrderMenuRequestRef.current += 1;
-    };
-  }, [active, closeReplyOrderMenu, windowHeight, windowWidth]);
-  const openReplyOrderMenu = useCallback(() => {
-    if (!active) return;
-    closeReplyOrderMenu();
-    const request = replyOrderMenuRequestRef.current;
-    replyOrderMenuTriggerRef.current?.measureInWindow((x, y, width, height) => {
-      if (replyOrderMenuRequestRef.current !== request) return;
-      const margin = 8;
-      const opensAbove = y + height / 2 > windowHeight / 2;
-      setReplyOrderMenuPlacement({
-        position: 'absolute',
-        right: Math.max(margin, windowWidth - x - width),
-        ...(opensAbove ? { bottom: Math.max(margin, windowHeight - y + 4) } : { top: y + height + 4 }),
-        minWidth: 104
-      });
-      setReplyOrderMenuOpen(true);
-    });
-  }, [active, closeReplyOrderMenu, windowHeight, windowWidth]);
-  const selectReplyOrder = useCallback(
-    (order: ReplyOrder) => {
-      closeReplyOrderMenu();
-      changeReplyOrder(order);
-    },
-    [changeReplyOrder, closeReplyOrderMenu]
-  );
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
@@ -645,30 +597,6 @@ export const TopicContentList = memo(function TopicContentList({
       ) : null,
     [retryReplies, styles]
   );
-  const listExtraData = useMemo(
-    () => ({
-      actionBusy,
-      quoteStateVersion,
-      replyCollectionComplete,
-      replyEndError,
-      replyOrder,
-      replyOrderMenuOpen,
-      replyStartError,
-      repliesError,
-      repliesLoading
-    }),
-    [
-      actionBusy,
-      quoteStateVersion,
-      replyCollectionComplete,
-      repliesError,
-      repliesLoading,
-      replyEndError,
-      replyOrder,
-      replyOrderMenuOpen,
-      replyStartError
-    ]
-  );
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const [primedReplyQuoteContent, setPrimedReplyQuoteContent] = useState<{
@@ -721,19 +649,6 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [detailTopicStateKey]
   );
-  const replyScroll = useRef({
-    phase: 'idle' as 'idle' | 'drag' | 'momentum',
-    momentum: false,
-    offset: 0,
-    correction: 0,
-    start: '',
-    end: ''
-  });
-  const replyLoadPending = useRef(false);
-  const stopReplyScroll = useCallback(() => {
-    replyScroll.current.phase = 'idle';
-    replyScroll.current.momentum = false;
-  }, []);
   const recordScrollCommand = useCallback(
     (
       scrollReason: NonNullable<DiagnosticFields['scrollReason']>,
@@ -933,18 +848,6 @@ export const TopicContentList = memo(function TopicContentList({
   }, [acceptedAnswerReply?.contentHtml]);
   const acceptedAnswerLoading = Boolean(acceptedAnswer && loadingQuotedFloors[acceptedAnswer.instanceKey]);
   const acceptedAnswerViewKey = acceptedAnswer ? `${detailTopicStateKey}:${acceptedAnswer.instanceKey}` : '';
-  const [acceptedAnswerView, setAcceptedAnswerView] = useState({
-    expanded: true,
-    full: false,
-    key: ''
-  });
-  const acceptedAnswerExpanded = acceptedAnswerView.key === acceptedAnswerViewKey ? acceptedAnswerView.expanded : true;
-  const acceptedAnswerFullVisible = acceptedAnswerView.key === acceptedAnswerViewKey ? acceptedAnswerView.full : false;
-  useEffect(() => {
-    setAcceptedAnswerView((current) =>
-      current.key === acceptedAnswerViewKey ? current : { expanded: true, full: false, key: acceptedAnswerViewKey }
-    );
-  }, [acceptedAnswerViewKey]);
   const acceptedAnswerSource = topic?.source;
   const acceptedAnswerContent = useMemo(
     () =>
@@ -957,29 +860,27 @@ export const TopicContentList = memo(function TopicContentList({
         : { fullItems: [] as TopicContentItem[], previewItems: [] as TopicContentItem[] },
     [acceptedAnswer?.floor, acceptedAnswerReply, acceptedAnswerSource]
   );
-  const acceptedAnswerLoadAttemptRef = useRef('');
-  const loadAcceptedAnswer = useCallback(() => {
-    if (!acceptedAnswer) {
-      return;
-    }
-    acceptedAnswerLoadAttemptRef.current = acceptedAnswer.instanceKey;
+  const requestAcceptedAnswer = useCallback(() => {
+    if (!acceptedAnswer) return;
     onToggleTopicBodyQuote({
       instanceKey: acceptedAnswer.instanceKey,
       prefetch: true,
       reference: acceptedAnswer.reference
     });
   }, [acceptedAnswer, onToggleTopicBodyQuote]);
-  useEffect(() => {
-    if (
-      !acceptedAnswer ||
-      acceptedAnswer.reply ||
-      acceptedAnswerLoading ||
-      acceptedAnswerLoadAttemptRef.current === acceptedAnswer.instanceKey
-    ) {
-      return;
-    }
-    loadAcceptedAnswer();
-  }, [acceptedAnswer, acceptedAnswerLoading, loadAcceptedAnswer]);
+  const {
+    expanded: acceptedAnswerExpanded,
+    fullVisible: acceptedAnswerFullVisible,
+    expand: changeAcceptedAnswerExpanded,
+    revealFull: revealAcceptedAnswerFull,
+    load: loadAcceptedAnswer
+  } = useTopicAcceptedAnswer({
+    viewKey: acceptedAnswerViewKey,
+    instanceKey: acceptedAnswer?.instanceKey,
+    hasReply: Boolean(acceptedAnswer?.reply),
+    loading: acceptedAnswerLoading,
+    requestReply: requestAcceptedAnswer
+  });
   const discourseTopicReactionStats = useMemo(
     () =>
       topic && isDiscourseSource(topic.source)
@@ -1082,17 +983,19 @@ export const TopicContentList = memo(function TopicContentList({
     topicShowsAccessNotice
   ]);
   const topicPostludeVisible = Boolean(legacyTopicPollsVisible || topicHasPostActions);
-  const replyLocationRequestIdRef = useRef(0);
-  const [replyLocationCommand, setReplyLocationCommand] = useState<{
-    requestId: number;
-    target: ReplyLocationTarget;
-  } | null>(null);
-  const targetReply = location?.kind === 'reply' ? location.target : undefined;
-  const activeLocation = resolveTopicLocation(
+  const {
+    activeLocation,
+    activeTargetReply,
+    commandKey: targetReplyCommandKey,
+    requestReplyLocation
+  } = useTopicLocationCommand({
     topic,
-    replyLocationCommand ? { kind: 'reply', target: replyLocationCommand.target } : location
-  );
-  const activeTargetReply = activeLocation?.kind === 'reply' ? activeLocation.target : undefined;
+    topicKey: detailTopicStateKey,
+    location,
+    locationRequestId,
+    clearFilters: clearReplyFilters,
+    locate: onLocateReply
+  });
   // A middle window has an unloaded gap before it; the opening is not its preceding content.
   const showOpening = !replyHasPrevious || activeLocation?.kind === 'opening';
   const unfilteredTopicListItems = useMemo<TopicListItem[]>(
@@ -1167,45 +1070,51 @@ export const TopicContentList = memo(function TopicContentList({
   const bodyMediaViewportRowKeySet = useMemo(() => new Set(bodyMediaViewportRowKeys), [bodyMediaViewportRowKeys]);
   const [loadedDetailKey, setLoadedDetailKey] = useState('');
   const onListLoad = useCallback(() => setLoadedDetailKey(detailTopicStateKey), [detailTopicStateKey]);
-  useEffect(() => {
-    if (
-      loadedDetailKey !== detailTopicStateKey ||
-      !pendingReplyOrderScrollRef.current ||
-      repliesLoading ||
-      repliesError
-    )
-      return;
-    const firstReplyIndex = topicListItems.findIndex(
-      (listItem) => listItem.type === 'reply' || listItem.type === 'replyStart'
-    );
-    if (firstReplyIndex < 0) return;
-    pendingReplyOrderScrollRef.current = false;
-    recordScrollCommand('reply-order', { targetIndex: firstReplyIndex });
-    topicScrollRef.current?.scrollToIndex({ animated: true, index: firstReplyIndex, viewPosition: 0 });
-  }, [
-    detailTopicStateKey,
-    loadedDetailKey,
-    recordScrollCommand,
-    repliesError,
+  const {
+    visible: replyOrderMenuOpen,
+    placement: replyOrderMenuPlacement,
+    open: openReplyOrderMenu,
+    close: closeReplyOrderMenu,
+    select: selectReplyOrder
+  } = useTopicReplyOrder({
+    active,
+    windowHeight,
+    windowWidth,
+    trigger: replyOrderMenuTriggerRef,
+    order: replyOrder,
+    changeOrder: onReplyOrderChange,
+    listReady: loadedDetailKey === detailTopicStateKey,
     repliesLoading,
-    topicListItems,
-    topicScrollRef
-  ]);
-  const targetReplyIdentity =
-    activeLocation?.kind === 'opening'
-      ? 'opening'
-      : typeof activeTargetReply?.commentId === 'number'
-        ? `comment:${activeTargetReply.commentId}:${activeTargetReply.expectedAuthorUsername ?? ''}`
-        : typeof activeTargetReply?.floor === 'number'
-          ? `floor:${activeTargetReply.floor}:${activeTargetReply.expectedAuthorUsername ?? ''}`
-          : '';
-  const targetReplyCommandKey = replyLocationCommand
-    ? `request:${replyLocationCommand.requestId}`
-    : targetReplyIdentity
-      ? typeof locationRequestId === 'number'
-        ? `route-request:${locationRequestId}`
-        : `route:${targetReplyIdentity}`
-      : '';
+    repliesError,
+    items: topicListItems,
+    list: topicScrollRef,
+    recordScroll: recordScrollCommand
+  });
+  const replyOrderLabel = replyOrder === 'newest' ? '倒序' : '正序';
+  const listExtraData = useMemo(
+    () => ({
+      actionBusy,
+      quoteStateVersion,
+      replyCollectionComplete,
+      replyEndError,
+      replyOrder,
+      replyOrderMenuOpen,
+      replyStartError,
+      repliesError,
+      repliesLoading
+    }),
+    [
+      actionBusy,
+      quoteStateVersion,
+      replyCollectionComplete,
+      repliesError,
+      repliesLoading,
+      replyEndError,
+      replyOrder,
+      replyOrderMenuOpen,
+      replyStartError
+    ]
+  );
   const resolvedTargetReplyKey = useMemo(() => {
     if (activeTargetReply?.readingResume && read.readingEntry?.windowReady === false) return null;
     const reply =
@@ -1226,14 +1135,6 @@ export const TopicContentList = memo(function TopicContentList({
       : -1;
   }, [resolvedTargetReplyKey, targetReplyCommandKey, topicListItems]);
   const targetIsOpeningPost = activeLocation?.kind === 'opening';
-  const handledTargetReplyRef = useRef('');
-  const pendingTargetPositionRef = useRef<{
-    topicKey: string;
-    commandKey: string;
-    rowKey?: string;
-    offset: number;
-    highlight: boolean;
-  } | null>(null);
   const nativeViewportRef = useRef({ topicKey: detailTopicStateKey, offset: 0, height: 0 });
   const revealCommentSearch = useCallback(() => {
     const request = ++commentSearchMeasureRequestRef.current;
@@ -1273,60 +1174,27 @@ export const TopicContentList = memo(function TopicContentList({
     const subscription = Keyboard.addListener('keyboardDidShow', revealCommentSearch);
     return () => subscription.remove();
   }, [revealCommentSearch]);
-  const targetHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [highlightedTargetKey, setHighlightedTargetKey] = useState('');
-  useEffect(() => {
-    handledTargetReplyRef.current = '';
-    pendingTargetPositionRef.current = null;
-    if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
-    setHighlightedTargetKey('');
-  }, [detailTopicStateKey, targetReplyCommandKey]);
-  const confirmTargetPosition = useCallback(() => {
-    const pending = pendingTargetPositionRef.current;
-    const viewport = nativeViewportRef.current;
-    if (
-      !active ||
-      loadedDetailKey !== detailTopicStateKey ||
-      !pending ||
-      pending.topicKey !== detailTopicStateKey ||
-      pending.commandKey !== targetReplyCommandKey ||
-      viewport.topicKey !== detailTopicStateKey ||
-      viewport.height <= 0
-    )
-      return;
-    let position = -viewport.offset;
-    if (pending.rowKey) {
-      const index = topicListItems.findIndex((item) => item.key === pending.rowKey);
-      if (index < 0) return;
-      const layout = topicScrollRef.current?.getLayout(index);
-      if (!layout || layout.height <= 0) return;
-      position =
-        (topicScrollRef.current?.getFirstItemOffset() || 0) +
-        layout.y +
-        Math.min(pending.offset, Math.max(0, layout.height - 1)) -
-        viewport.offset;
-    }
-    const roundedPosition = PixelRatio.roundToNearestPixel(position);
-    if (
-      roundedPosition < PixelRatio.roundToNearestPixel(-1) ||
-      roundedPosition >= PixelRatio.roundToNearestPixel(viewport.height)
-    )
-      return;
-    pendingTargetPositionRef.current = null;
-    if (pending.highlight) {
-      setHighlightedTargetKey(pending.commandKey);
-      targetHighlightTimerRef.current = setTimeout(() => setHighlightedTargetKey(''), 1800);
-    }
-    read.readingEntry?.positioned();
-  }, [
+  const {
+    confirm: confirmTargetPosition,
+    cancel: cancelTargetPosition,
+    highlightedKey: highlightedTargetKey
+  } = useTopicFloorPositioning({
     active,
-    detailTopicStateKey,
+    topicKey: detailTopicStateKey,
     loadedDetailKey,
-    read.readingEntry,
-    targetReplyCommandKey,
-    topicListItems,
-    topicScrollRef
-  ]);
+    commandKey: targetReplyCommandKey,
+    targetIsOpeningPost,
+    targetReply: activeTargetReply,
+    canShowReplies,
+    filtersActive: Boolean(commentQuery || replyFilter !== 'all'),
+    clearFilters: clearReplyFilters,
+    readingEntry: read.readingEntry,
+    items: topicListItems,
+    targetIndex: targetReplyListIndex,
+    viewport: nativeViewportRef,
+    list: topicScrollRef,
+    recordScroll: recordScrollCommand
+  });
   const onListViewportLayout = useCallback(
     (event: LayoutChangeEvent) => {
       const previous = nativeViewportRef.current;
@@ -1340,121 +1208,6 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [confirmTargetPosition, detailTopicStateKey, revealCommentSearch]
   );
-  useEffect(() => {
-    setReplyLocationCommand(null);
-  }, [
-    detailTopicStateKey,
-    location?.kind,
-    targetReply?.commentId,
-    targetReply?.floor,
-    targetReply?.pageHint,
-    targetReply?.expectedAuthorUsername,
-    locationRequestId
-  ]);
-  useEffect(
-    () => () => {
-      if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
-    },
-    []
-  );
-  const requestReplyLocation = useCallback(
-    (target: ReplyLocationTarget) => {
-      replyLocationRequestIdRef.current += 1;
-      const requestId = replyLocationRequestIdRef.current;
-      setReplyLocationCommand({ requestId, target });
-      onCommentQueryChange('');
-      onReplyFilterChange('all');
-      void onLocateReply(target);
-    },
-    [onCommentQueryChange, onLocateReply, onReplyFilterChange]
-  );
-  useEffect(() => {
-    if (!active || loadedDetailKey !== detailTopicStateKey || !targetReplyCommandKey || !canShowReplies) return;
-    if (handledTargetReplyRef.current === targetReplyCommandKey) {
-      confirmTargetPosition();
-      return;
-    }
-    if (commentQuery || replyFilter !== 'all') {
-      onCommentQueryChange('');
-      onReplyFilterChange('all');
-      return;
-    }
-    if (targetIsOpeningPost) {
-      handledTargetReplyRef.current = targetReplyCommandKey;
-      const anchor = read.readingEntry?.anchor;
-      const index = anchor?.rowKey
-        ? topicListItems.findIndex(
-            (item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision
-          )
-        : -1;
-      pendingTargetPositionRef.current = {
-        topicKey: detailTopicStateKey,
-        commandKey: targetReplyCommandKey,
-        rowKey: index >= 0 ? topicListItems[index].key : undefined,
-        offset: index >= 0 ? anchor?.offset || 0 : 0,
-        highlight: false
-      };
-      recordScrollCommand(anchor ? 'reading-resume' : 'opening', {
-        ...(index >= 0 ? { targetIndex: index } : {}),
-        offset: index >= 0 ? anchor?.offset || 0 : 0
-      });
-      if (index >= 0)
-        void topicScrollRef.current?.scrollToIndex({ animated: false, index, viewOffset: anchor?.offset || 0 });
-      else
-        void topicScrollRef.current?.scrollToIndex({
-          animated: false,
-          index: 0,
-          viewOffset: 0 - (topicScrollRef.current?.getFirstItemOffset() || 0)
-        });
-      confirmTargetPosition();
-      return;
-    }
-    if (targetReplyListIndex >= 0) {
-      handledTargetReplyRef.current = targetReplyCommandKey;
-      const anchor = activeTargetReply?.readingResume ? read.readingEntry?.anchor : undefined;
-      const rowIndex = anchor?.rowKey
-        ? topicListItems.findIndex(
-            (item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision
-          )
-        : -1;
-      pendingTargetPositionRef.current = {
-        topicKey: detailTopicStateKey,
-        commandKey: targetReplyCommandKey,
-        rowKey: topicListItems[rowIndex >= 0 ? rowIndex : targetReplyListIndex].key,
-        offset: rowIndex >= 0 ? anchor?.offset || 0 : 0,
-        highlight: !activeTargetReply?.readingResume
-      };
-      recordScrollCommand(activeTargetReply?.readingResume ? 'reading-resume' : 'reply-location', {
-        targetIndex: rowIndex >= 0 ? rowIndex : targetReplyListIndex,
-        offset: rowIndex >= 0 ? anchor?.offset || 0 : 0
-      });
-      void topicScrollRef.current?.scrollToIndex({
-        animated: !activeTargetReply?.readingResume,
-        index: rowIndex >= 0 ? rowIndex : targetReplyListIndex,
-        viewPosition: 0,
-        viewOffset: rowIndex >= 0 ? anchor?.offset || 0 : 0
-      });
-      confirmTargetPosition();
-    }
-  }, [
-    active,
-    activeTargetReply?.readingResume,
-    canShowReplies,
-    commentQuery,
-    confirmTargetPosition,
-    detailTopicStateKey,
-    loadedDetailKey,
-    onCommentQueryChange,
-    onReplyFilterChange,
-    read.readingEntry,
-    recordScrollCommand,
-    replyFilter,
-    targetIsOpeningPost,
-    targetReplyCommandKey,
-    targetReplyListIndex,
-    topicListItems,
-    topicScrollRef
-  ]);
   const acceptedAnswerListIndex = useMemo(() => {
     if (!acceptedAnswerReply) {
       return -1;
@@ -1468,34 +1221,6 @@ export const TopicContentList = memo(function TopicContentList({
   const acceptedAnswerIsInSourceReplies = Boolean(
     acceptedAnswer && sourceReplies.some((reply) => reply.floor === acceptedAnswer.floor)
   );
-  const pendingAcceptedAnswerScrollRef = useRef(false);
-  const scrollToAcceptedAnswer = useCallback(() => {
-    stopReplyScroll();
-    if (acceptedAnswerListIndex < 0) {
-      pendingAcceptedAnswerScrollRef.current = true;
-      onCommentQueryChange('');
-      onReplyFilterChange('all');
-      return;
-    }
-    recordScrollCommand('accepted-answer', { targetIndex: acceptedAnswerListIndex });
-    topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
-  }, [
-    acceptedAnswerListIndex,
-    onCommentQueryChange,
-    onReplyFilterChange,
-    recordScrollCommand,
-    stopReplyScroll,
-    topicScrollRef
-  ]);
-  useEffect(() => {
-    if (!pendingAcceptedAnswerScrollRef.current || acceptedAnswerListIndex < 0) {
-      return;
-    }
-    pendingAcceptedAnswerScrollRef.current = false;
-    stopReplyScroll();
-    recordScrollCommand('accepted-answer', { targetIndex: acceptedAnswerListIndex });
-    topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
-  }, [acceptedAnswerListIndex, recordScrollCommand, stopReplyScroll, topicScrollRef]);
   const readingSessionRef = useRef<ReadingSession | null>(null);
   const readingVisibleRef = useRef<{ index?: number | null; item: TopicListItem }[]>([]);
   const readingScrollOffset = useRef(0);
@@ -1590,92 +1315,32 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [confirmTargetPosition, observeViewableItems, reportReadingVisible]
   );
+  const {
+    stop: stopReplyScroll,
+    begin: beginEdgeScroll,
+    advance: advanceReplyScroll,
+    momentumBegin: beginEdgeMomentum,
+    momentumEnd: endEdgeMomentum,
+    dragEnd: endEdgeDrag,
+    phase: replyScrollPhase
+  } = useTopicReplyEdgeLoad({ active, read, startIndex: replyWindowStartIndex, list: topicScrollRef });
   const beginReplyScroll = useCallback(
     ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
-      handledTargetReplyRef.current = targetReplyCommandKey;
-      pendingTargetPositionRef.current = null;
+      cancelTargetPosition();
       onCancelReplyLocation();
       readingSessionRef.current?.interact();
-      const event: NativeScrollEvent & { contentOffsetCorrection?: { y: number } } = nativeEvent;
-      Object.assign(replyScroll.current, {
-        phase: 'drag',
-        momentum: true,
-        offset: event.contentOffset.y,
-        correction: event.contentOffsetCorrection?.y || 0,
-        start: '',
-        end: ''
-      });
+      beginEdgeScroll(nativeEvent);
     },
-    [onCancelReplyLocation, targetReplyCommandKey]
+    [beginEdgeScroll, cancelTargetPosition, onCancelReplyLocation]
   );
-  const advanceReplyScroll = useCallback(
-    (event: NativeScrollEvent & { contentOffsetCorrection?: { y: number } }) => {
-      const scroll = replyScroll.current;
-      const correction = event.contentOffsetCorrection?.y || 0;
-      const movement = Math.round(
-        (event.contentOffset.y - scroll.offset - (correction - scroll.correction)) * PixelRatio.get()
-      );
-      scroll.offset = event.contentOffset.y;
-      scroll.correction = correction;
-      if (
-        !active ||
-        scroll.phase === 'idle' ||
-        movement === 0 ||
-        replyLoadPending.current ||
-        loadingMoreReplies ||
-        loadingPreviousReplies
-      )
-        return;
-      const { contentOffset, contentSize, layoutMeasurement } = event;
-      if (layoutMeasurement.height <= 0) return;
-      let load: (() => ReturnType<typeof onLoadPreviousReplies>) | undefined;
-      if (movement < 0 && replyHasPrevious && !replyStartError && replyWindowStartIndex >= 0) {
-        const layout = topicScrollRef.current?.getLayout(replyWindowStartIndex);
-        if (!layout) return;
-        const boundary = (topicScrollRef.current?.getFirstItemOffset() || 0) + layout.y;
-        const cursor = `${read.replyPreviousCursor?.page}:${read.replyPreviousCursor?.offset}`;
-        if (
-          contentOffset.y + layoutMeasurement.height < boundary ||
-          contentOffset.y - boundary > REPLY_START_REACHED_THRESHOLD * layoutMeasurement.height ||
-          scroll.start === cursor
-        )
-          return;
-        scroll.start = cursor;
-        load = onLoadPreviousReplies;
-      } else if (movement > 0 && replyHasMore && !replyEndError) {
-        const cursor = `${read.replyNextPage}:${read.replyNextOffset}`;
-        if (
-          contentOffset.y + layoutMeasurement.height <
-            contentSize.height - REPLY_END_REACHED_THRESHOLD * layoutMeasurement.height ||
-          scroll.end === cursor
-        )
-          return;
-        scroll.end = cursor;
-        load = onLoadMoreReplies;
-      }
-      if (!load) return;
-      replyLoadPending.current = true;
-      void load().finally(() => {
-        replyLoadPending.current = false;
-      });
-    },
-    [
-      active,
-      loadingMoreReplies,
-      loadingPreviousReplies,
-      onLoadMoreReplies,
-      onLoadPreviousReplies,
-      read.replyNextOffset,
-      read.replyNextPage,
-      read.replyPreviousCursor,
-      replyEndError,
-      replyHasMore,
-      replyHasPrevious,
-      replyStartError,
-      replyWindowStartIndex,
-      topicScrollRef
-    ]
-  );
+  const scrollToAcceptedAnswer = useTopicAcceptedScroll({
+    topicKey: String(item?.source) + ':' + String(item?.id),
+    acceptedIndex: acceptedAnswerListIndex,
+    list: topicScrollRef,
+    stop: stopReplyScroll,
+    clearFilters: clearReplyFilters,
+    recordScroll: recordScrollCommand
+  });
   const requestWindowStartLoad = useCallback(() => {
     stopReplyScroll();
     void onLoadPreviousReplies();
@@ -1696,9 +1361,6 @@ export const TopicContentList = memo(function TopicContentList({
     stopReplyScroll,
     targetReplyCommandKey
   ]);
-  useEffect(() => {
-    pendingAcceptedAnswerScrollRef.current = false;
-  }, [item?.id, item?.source]);
   const tableStyles = useMemo(() => createTopicTableStyles(theme), [theme]);
   const tableRenderers = useMemo(
     () =>
@@ -2388,16 +2050,10 @@ export const TopicContentList = memo(function TopicContentList({
               reply={acceptedAnswerReply}
               styles={styles}
               theme={theme}
-              onExpandedChange={(expanded) =>
-                setAcceptedAnswerView((current) => ({
-                  expanded,
-                  full: current.key === acceptedAnswerViewKey ? current.full : false,
-                  key: acceptedAnswerViewKey
-                }))
-              }
+              onExpandedChange={changeAcceptedAnswerExpanded}
               onLoad={loadAcceptedAnswer}
               onReadMore={acceptedAnswerReply && acceptedAnswerIsInSourceReplies ? scrollToAcceptedAnswer : undefined}
-              onRevealFull={() => setAcceptedAnswerView({ expanded: true, full: true, key: acceptedAnswerViewKey })}
+              onRevealFull={revealAcceptedAnswerFull}
             >
               {listItem.content.length ? (
                 <TopicCopySurface onCopy={copyAcceptedAnswerToClipboard}>
@@ -2647,7 +2303,8 @@ export const TopicContentList = memo(function TopicContentList({
       acceptedAnswerIsInSourceReplies,
       acceptedAnswerLoading,
       acceptedAnswerReply,
-      acceptedAnswerViewKey,
+      changeAcceptedAnswerExpanded,
+      revealAcceptedAnswerFull,
       actionBusy,
       active,
       endedEmpty,
@@ -2823,7 +2480,7 @@ export const TopicContentList = memo(function TopicContentList({
                         contentHeight: nativeEvent.contentSize.height,
                         viewportHeight: nativeEvent.layoutMeasurement.height,
                         correction: nativeEvent.contentOffsetCorrection?.y || 0,
-                        scrollPhase: replyScroll.current.phase
+                        scrollPhase: replyScrollPhase()
                       };
                       const trace = beginDiagnosticTrace('topic', 'scroll-position', fields);
                       finishDiagnosticTrace(trace, 'success', fields);
@@ -2842,20 +2499,13 @@ export const TopicContentList = memo(function TopicContentList({
                     advanceReplyScroll(event.nativeEvent);
                   }}
                   scrollEventThrottle={16}
-                  onMomentumScrollBegin={() => {
-                    if (replyScroll.current.phase === 'idle' && replyScroll.current.momentum)
-                      replyScroll.current.phase = 'momentum';
-                  }}
+                  onMomentumScrollBegin={beginEdgeMomentum}
                   onMomentumScrollEnd={(event) => {
-                    if (replyScroll.current.phase === 'momentum') {
-                      replyScroll.current.phase = 'idle';
-                      replyScroll.current.momentum = false;
-                    }
+                    endEdgeMomentum();
                     onTopicScroll(event);
                   }}
                   onScrollEndDrag={(event) => {
-                    replyScroll.current.phase = 'idle';
-                    replyScroll.current.momentum = Boolean(event.nativeEvent.velocity?.y);
+                    endEdgeDrag(event.nativeEvent);
                     onTopicScroll(event);
                   }}
                   onScrollBeginDrag={beginReplyScroll}

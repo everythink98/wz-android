@@ -174,6 +174,19 @@ describe('Discourse reading lifecycle', () => {
     await advance(7000);
     expect(await resumed).toBe('completed');
     expect(send).toHaveBeenCalledTimes(2);
+    send.mockRejectedValueOnce({ reason: 'cloudflare', status: 403 });
+    const next = runtime.begin('2');
+    next.visible([4]);
+    next.active(true);
+    await advance(1000);
+    const current = verify.mock.calls.at(-1)![0];
+    expect(current).not.toBe(recovery);
+    expect(current.isCurrent()).toBe(true);
+    expect(recovery.isCurrent()).toBe(false);
+    expect(await recovery.resume()).toBe('stale');
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(await current.resume()).toBe('completed');
+    expect(send).toHaveBeenCalledTimes(4);
     runtime.dispose();
   });
 

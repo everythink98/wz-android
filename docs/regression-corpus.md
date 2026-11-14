@@ -4,6 +4,20 @@
 
 
 
+
+## `REG-TOPIC-222` 已排队的底部跟随帧越过后来的定位与离底意图
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03`，共享 FlashList 回复列表滚动 |
+| 历史症状与根因 | useBoundDetection 只在排队前检查当前 command 与 offset projection；底部跟随 RAF 已排队后出现新定位命令、关闭 projection 或用户离开底部时，旧回调仍执行 scrollToEnd。排队时允许不表示执行时仍有资格。 |
+| 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx#rechecks the queued auto-bottom intent before its native frame`；真实安装的 FlashList dist hook、source 及既有 `patches/@shopify+flash-list+2.3.2.patch`。 |
+| 修前 oracle | seed `646061`，受控 RAF 执行真实 dist：command、projection、away 三条应零次 scrollToEnd，实际各一次；correction 控制仍通过。不是正则匹配源码或复制实现测试。 |
+| 修复 | 具体 ready／queued 请求实例拥有底部跟随，回调执行前复核实例、当前命令、projection 和底部资格；旧帧失效，合法后续跟随仍恢复，correction 仍不动画。旧布尔和独立排队写入删除，不吞原生异常。 |
+| 自动与产物证据 | 同 seed 真实 hook 四条修后通过，相关 UI 428 项、单测 40 项按所属阶段保留。最终完整 Vitest 273 文件／4627 项（seed `1794655628410`）、UI 105 suites／3298 项（seed `-1763710769`）及 typecheck／verify 通过；外部驱动后续仅变 `.ad` 和工具测试，63/63（seed `646064`）与 typecheck 补验，编译输入不变。官方完整 FlashList 2.3.2 包校验 integrity 后实际 patch-package 正反重放通过，20 文件与安装树一致。普通 APK `215bee6f…` 与私有 APK `668a7e03…` 各绑定真实 source/map/Hermes；完整身份见 B06 执行记录。 |
+| 验收边界 | 匹配私有包最终 66/66 隔离设备场景通过，含真实冷／缓存窗口到位、同目标新命令、旧布局负控与正倒序菜单的像素/截图；普通包主模拟器的真实 NodeSeek 导航和排序只读通过。这些设备场景未定向注入本条三种 RAF 竞争，其精确证明仍是上述真实 SDK hook oracle。全部 Native 帧交错、相同坐标旧事件、真实 reading POST、论坛写入、全部来源矩阵与物理设备为 `NOT_VERIFIED`；历史保位与其它定位事故不由本条关闭。 |
+
 ## `REG-WRITE-140` 同一编辑文档的新提交被旧结算回调清空
 
 | 字段 | 内容 |

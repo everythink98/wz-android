@@ -1007,6 +1007,27 @@ describe('Android release evidence guards', () => {
     }
   });
 
+  it('binds the ongoing reading proof app before screenshots without restarting it', () => {
+    const replay = readProjectFile('dev', 'review-remediation-proof', 'reading-order.ad');
+    const commands = replay
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#') && !line.startsWith('context '));
+    const opens = commands.filter((line) => line.startsWith('open '));
+    expect(opens).toEqual(['open com.wz.reader']);
+    const openIndex = commands.indexOf(opens[0]);
+    const screenshots = commands.flatMap((line, index) => (line.startsWith('screenshot ') ? [index] : []));
+    expect(screenshots).toHaveLength(2);
+    expect(screenshots.every((index) => index > openIndex)).toBe(true);
+    expect(commands.some((line) => line.startsWith('close'))).toBe(false);
+    const selectIndex = commands.findIndex((line) => line.startsWith('press '));
+    expect(commands.slice(selectIndex - 1, selectIndex + 1)).toEqual([
+      'wait label="${TO}" 10000',
+      'press label="${TO}"'
+    ]);
+    expect(commands.slice(selectIndex + 1)).toEqual(['wait label="#${FIRST_FLOOR}" 15000', 'screenshot "${AFTER}"']);
+  });
+
   it('starts independent journeys from their own App tab', () => {
     const targets = {
       'account-readonly.ad': 'more',

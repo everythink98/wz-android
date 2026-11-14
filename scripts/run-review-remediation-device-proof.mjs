@@ -14,7 +14,8 @@ import {
   completeContentChainMetrics,
   completeDeepContentMetrics,
   completePendingPollMetrics,
-  completeReviewProofResults
+  completeReviewProofResults,
+  completeReadingEntryMetrics
 } from './review-content-chain-metrics.mjs';
 
 // Same dedicated storage AVD and ownership marker as the existing storage proof.
@@ -257,6 +258,7 @@ if (values.acceptance) {
           );
           mkdirSync(path.dirname(output), { recursive: true });
           let count = -1;
+          const readingActions = new Set();
           const deadline = Date.now() + 8 * 60000;
           for (;;) {
             let receipt;
@@ -266,6 +268,49 @@ if (values.acceptance) {
             if (receipt?.token === token) {
               writeFileSync(output, JSON.stringify({ ...context, ...receipt }, null, 2));
               if (receipt.checkpoint === 'grant-notifications') grantNotifications();
+              const action = receipt.readingAction;
+              if (action && !readingActions.has(action.id)) {
+                const known = /^(cold|cached)-(1|2)$/.exec(action.id || '');
+                const next = known?.[2] === '1' ? 'newest' : 'oldest';
+                if (!known || action.to !== next || action.from !== (next === 'newest' ? 'oldest' : 'newest'))
+                  throw new Error('Unknown controlled reading action');
+                readingActions.add(action.id);
+                runAgentDevice([
+                  'test',
+                  'dev/review-remediation-proof/reading-order.ad',
+                  '--retries',
+                  '0',
+                  '--artifacts-dir',
+                  path.join(path.dirname(output), `reading-${action.id}`),
+                  '--platform',
+                  'android',
+                  '--serial',
+                  values.serial,
+                  '--device',
+                  avd.replaceAll('_', ' '),
+                  '--session',
+                  `remediation-reading-${token}-${action.id}`,
+                  '-e',
+                  `FROM=${action.from === 'newest' ? '倒序' : '正序'}`,
+                  '-e',
+                  `TO=${action.to === 'newest' ? '倒序' : '正序'}`,
+                  '-e',
+                  `FIRST_FLOOR=${action.to === 'newest' ? 40 : 2}`,
+                  '-e',
+                  `BEFORE=${path.join(path.dirname(output), `reading-${action.id}-before.png`)}`,
+                  '-e',
+                  `AFTER=${path.join(path.dirname(output), `reading-${action.id}-after.png`)}`
+                ]);
+                const encoded = Buffer.from(JSON.stringify({ token, id: action.id, passed: true })).toString('base64');
+                adb(
+                  'shell',
+                  'run-as',
+                  pkg,
+                  'sh',
+                  '-c',
+                  `'echo ${encoded} | base64 -d > cache/reading-proof-action-${token}.json.tmp && mv cache/reading-proof-action-${token}.json.tmp cache/reading-proof-action-${token}.json'`
+                );
+              }
               if (count !== receipt.results.length) {
                 count = receipt.results.length;
                 console.log(`${receipt.checkpoint}: ${count} device checks`);
@@ -277,6 +322,7 @@ if (values.acceptance) {
                   !receipt.isHermes ||
                   receipt.isDev !== false ||
                   !completeReviewProofResults(receipt.results) ||
+                  !completeReadingEntryMetrics(receipt.results) ||
                   !completeContentChainMetrics(receipt.results) ||
                   !completePendingPollMetrics(receipt.results) ||
                   !completeDeepContentMetrics(receipt.results)

@@ -472,10 +472,10 @@ index 7717e3b..e488b41 100644
  //# sourceMappingURL=useBoundDetection.d.ts.map
 \ No newline at end of file
 diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
-index 034920b1..7141440c 100644
+index 034920b1..74849d76 100644
 --- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
 +++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
-@@ -11,7 +11,7 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
+@@ -11,13 +11,13 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
   * @param props - The RecyclerViewProps containing configuration and callbacks
   * @param scrollViewRef - Reference to the scrollable container component
   */
@@ -484,7 +484,14 @@ index 034920b1..7141440c 100644
      // Track whether we've already triggered the end reached callback to prevent duplicate calls
      const pendingEndReached = useRef(false);
      // Track whether we've already triggered the start reached callback to prevent duplicate calls
-@@ -90,22 +90,18 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+     const pendingStartReached = useRef(false);
+     // Track whether we should auto-scroll to bottom when new content is added
+-    const pendingAutoscrollToBottom = useRef(false);
++    const pendingAutoscrollToBottom = useRef(null);
+     const lastCheckBoundsTime = useRef(Date.now());
+     const { data } = recyclerViewManager.props;
+     const { requestAnimationFrame } = useUnmountAwareAnimationFrame();
+@@ -90,35 +90,49 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
                  const autoscrollToBottomThresholdDistance = autoscrollToBottomThreshold * visibleLength;
                  const isNearBottom = Math.ceil(lastScrollOffset + visibleLength) >=
                      contentLength - autoscrollToBottomThresholdDistance;
@@ -494,11 +501,15 @@ index 034920b1..7141440c 100644
 -                else {
 -                    pendingAutoscrollToBottom.current = false;
 -                }
-+                pendingAutoscrollToBottom.current = isNearBottom;
++                if (!isNearBottom)
++                    pendingAutoscrollToBottom.current = null;
++                else if (!pendingAutoscrollToBottom.current)
++                    pendingAutoscrollToBottom.current = { phase: "ready" };
              }
          }
      }, [recyclerViewManager]);
      const runAutoScrollToBottomCheck = useCallback(() => {
++        var _a;
          // Suppress MVCP autoscroll while a programmatic scrollToIndex is in
 -        // flight. FlashList disables offset projection at the start of
 -        // scrollToIndex and reenables it ~200-300ms after settling. Without
@@ -511,9 +522,21 @@ index 034920b1..7141440c 100644
 +            getPendingScroll() === "command") {
              return;
          }
-         if (pendingAutoscrollToBottom.current) {
-@@ -114,11 +110,16 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+-        if (pendingAutoscrollToBottom.current) {
+-            pendingAutoscrollToBottom.current = false;
++        if (((_a = pendingAutoscrollToBottom.current) === null || _a === void 0 ? void 0 : _a.phase) === "ready") {
++            const queued = { phase: "queued" };
++            pendingAutoscrollToBottom.current = queued;
+             requestAnimationFrame(() => {
                  var _a, _b, _c;
++                if (pendingAutoscrollToBottom.current !== queued)
++                    return;
++                if (!recyclerViewManager.isOffsetProjectionEnabled ||
++                    getPendingScroll() === "command") {
++                    pendingAutoscrollToBottom.current = { phase: "ready" };
++                    return;
++                }
++                pendingAutoscrollToBottom.current = null;
                  const shouldAnimate = (_b = (_a = recyclerViewManager.props.maintainVisibleContentPosition) === null || _a === void 0 ? void 0 : _a.animateAutoScrollToBottom) !== null && _b !== void 0 ? _b : true;
                  (_c = scrollViewRef.current) === null || _c === void 0 ? void 0 : _c.scrollToEnd({
 -                    animated: shouldAnimate && !recyclerViewManager.ignoreScrollEvents,
@@ -531,7 +554,7 @@ index 034920b1..7141440c 100644
      // Reset end reached state when data changes
      useMemo(() => {
          pendingEndReached.current = false;
-@@ -144,4 +145,3 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+@@ -144,4 +158,3 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
          checkBounds,
      };
  }
@@ -1751,10 +1774,19 @@ index a2ccc53..74e8a7c 100644
     * Syncs an individual item by assigning it an appropriate key.
     * Will use an existing key if available, or generate a new one.
 diff --git a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
-index dd0f21f2..f3762aa4 100644
+index dd0f21f2..deb060f4 100644
 --- a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
 +++ b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
-@@ -18,7 +18,8 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
+@@ -5,6 +5,8 @@ import { CompatScroller } from "../components/CompatScroller";
+ 
+ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
+ 
++type FollowBottomIntent = { phase: "ready" } | { phase: "queued" };
++
+ /**
+  * Hook to detect when the scroll position reaches near the start or end of the list
+  * and trigger the appropriate callbacks. This hook is responsible for:
+@@ -18,14 +20,15 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
   */
  export function useBoundDetection<T>(
    recyclerViewManager: RecyclerViewManager<T>,
@@ -1764,7 +1796,15 @@ index dd0f21f2..f3762aa4 100644
  ) {
    // Track whether we've already triggered the end reached callback to prevent duplicate calls
    const pendingEndReached = useRef(false);
-@@ -131,22 +132,21 @@ export function useBoundDetection<T>(
+   // Track whether we've already triggered the start reached callback to prevent duplicate calls
+   const pendingStartReached = useRef(false);
+   // Track whether we should auto-scroll to bottom when new content is added
+-  const pendingAutoscrollToBottom = useRef(false);
++  const pendingAutoscrollToBottom = useRef<FollowBottomIntent | null>(null);
+ 
+   const lastCheckBoundsTime = useRef(Date.now());
+ 
+@@ -131,36 +134,52 @@ export function useBoundDetection<T>(
            Math.ceil(lastScrollOffset + visibleLength) >=
            contentLength - autoscrollToBottomThresholdDistance;
  
@@ -1773,7 +1813,9 @@ index dd0f21f2..f3762aa4 100644
 -        } else {
 -          pendingAutoscrollToBottom.current = false;
 -        }
-+        pendingAutoscrollToBottom.current = isNearBottom;
++        if (!isNearBottom) pendingAutoscrollToBottom.current = null;
++        else if (!pendingAutoscrollToBottom.current)
++          pendingAutoscrollToBottom.current = { phase: "ready" };
        }
      }
    }, [recyclerViewManager]);
@@ -1793,8 +1835,22 @@ index dd0f21f2..f3762aa4 100644
 +    ) {
        return;
      }
-     if (pendingAutoscrollToBottom.current) {
-@@ -156,11 +156,16 @@ export function useBoundDetection<T>(
+-    if (pendingAutoscrollToBottom.current) {
+-      pendingAutoscrollToBottom.current = false;
++    if (pendingAutoscrollToBottom.current?.phase === "ready") {
++      const queued: FollowBottomIntent = { phase: "queued" };
++      pendingAutoscrollToBottom.current = queued;
+       requestAnimationFrame(() => {
++        if (pendingAutoscrollToBottom.current !== queued) return;
++        if (
++          !recyclerViewManager.isOffsetProjectionEnabled ||
++          getPendingScroll() === "command"
++        ) {
++          pendingAutoscrollToBottom.current = { phase: "ready" };
++          return;
++        }
++        pendingAutoscrollToBottom.current = null;
+         const shouldAnimate =
            recyclerViewManager.props.maintainVisibleContentPosition
              ?.animateAutoScrollToBottom ?? true;
          scrollViewRef.current?.scrollToEnd({

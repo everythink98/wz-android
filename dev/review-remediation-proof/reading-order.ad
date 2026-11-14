@@ -1,0 +1,12 @@
+context platform=android
+context timeout=60000
+context retries=0
+
+open com.wz.reader
+wait "label=\"回复排序，当前${FROM}\"" 15000
+screenshot "${BEFORE}"
+find "label=\"回复排序，当前${FROM}\"" click
+wait label="${TO}" 10000
+press label="${TO}"
+wait label="#${FIRST_FLOOR}" 15000
+screenshot "${AFTER}"

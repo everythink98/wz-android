@@ -7,6 +7,7 @@ import {
   completeDeepContentMetrics,
   completePendingPollMetrics,
   completeReviewProofResults,
+  completeReadingEntryMetrics,
   REVIEW_CHECK_NAMES,
   deepWorkLayouts,
   layouts
@@ -181,7 +182,8 @@ describe('body and poll chain device work receipts', () => {
       'webview-linuxdo-reinjected-pending-deadline'
     ];
     expect(REVIEW_CHECK_NAMES).toEqual(expect.arrayContaining(deadlineChecks));
-    expect(results).toHaveLength(64);
+    expect(results).toHaveLength(66);
+    expect(REVIEW_CHECK_NAMES).toEqual(expect.arrayContaining(['reading-native-cold', 'reading-native-cached']));
     expect(completeReviewProofResults(results.filter(({ name }) => !deadlineChecks.includes(name)))).toBe(false);
     expect(completeReviewProofResults(results)).toBe(true);
     expect(completeReviewProofResults(results.slice(1))).toBe(false);
@@ -191,6 +193,45 @@ describe('body and poll chain device work receipts', () => {
       results[1]
     ])
       expect(completeReviewProofResults([invalid, ...results.slice(1)])).toBe(false);
+  });
+  it('requires independent reading-window and real Native receipts for both entry modes', () => {
+    const valid = ['cold', 'cached'].map((mode) => ({
+      name: `reading-native-${mode}`,
+      passed: true,
+      metrics: {
+        reading: {
+          mode,
+          nativeHost: 10,
+          entry: { ready: true, windowReady: false, positionReady: false },
+          windowBeforeNative: { heldCommands: 1, positionReady: false },
+          obsoleteOffset: { completed: 0, currentPixel: 1000, height: 800 },
+          finalTarget: { command: 2, pixel: 0, height: 800 },
+          native: [{ timestamp: 10, offset: 200, height: 800 }],
+          positions: [{ command: 1 }, { command: 2 }],
+          orders: [
+            { order: 'newest', firstFloor: 40, nativeHost: 10, pixel: 0, height: 800, uiAcknowledged: true },
+            { order: 'oldest', firstFloor: 2, nativeHost: 10, pixel: 0, height: 800, uiAcknowledged: true }
+          ]
+        }
+      }
+    }));
+    expect(completeReadingEntryMetrics(valid)).toBe(true);
+    expect(completeReadingEntryMetrics(valid.slice(1))).toBe(false);
+    expect(completeReadingEntryMetrics([...valid, valid[0]])).toBe(false);
+    for (const corrupt of [
+      { native: [] },
+      { positions: [{ command: 1 }, { command: 2 }, { command: 2 }] },
+      { windowBeforeNative: { heldCommands: 1, positionReady: true } },
+      { obsoleteOffset: { completed: 1, currentPixel: 1000, height: 800 } },
+      { finalTarget: { command: 1, pixel: 0, height: 800 } },
+      { orders: [{ order: 'newest', firstFloor: 40, nativeHost: 99, pixel: 0, height: 800 }] }
+    ])
+      expect(
+        completeReadingEntryMetrics([
+          { ...valid[0], metrics: { reading: { ...valid[0].metrics.reading, ...corrupt } } },
+          valid[1]
+        ])
+      ).toBe(false);
   });
   it('requires exact materialization output, no remote creation, identity guards and linear string work', () => {
     const valid = {

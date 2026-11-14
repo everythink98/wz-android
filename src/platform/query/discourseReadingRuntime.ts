@@ -44,6 +44,15 @@ export interface ReadingSession {
 }
 
 type ReadingSealSchedule = { phase: 'first' } | { phase: 'paced'; at: number };
+type ReadingFlight = { batch: PendingBatch; controller: AbortController };
+type ReadingTransport =
+  | { phase: 'idle' }
+  | { phase: 'scheduled'; timer: ReturnType<typeof setTimeout> }
+  | { phase: 'sending'; flight: ReadingFlight };
+type RecoveryExecution = { phase: 'available' } | { phase: 'claimed' } | { phase: 'waiting'; cancel: () => void };
+type ReadingRecoveryAttempt = { batch: PendingBatch; handle: LinuxDoReadingRecovery; execution: RecoveryExecution };
+type ReadingRecoveryGate =
+  { phase: 'open' } | { phase: 'paused' } | { phase: 'verification'; attempt: ReadingRecoveryAttempt };
 
 /** Query owns observable facts; the bounded queue owns only unacknowledged increments. */
 export function createDiscourseReadingRuntime({
@@ -67,16 +76,27 @@ export function createDiscourseReadingRuntime({
   let backgroundAllowance = 0;
   let disposed = false;
   let appActive = true;
-  let paused = false;
-  let recovery: LinuxDoReadingRecovery | undefined;
-  let recoveryBatch: PendingBatch | undefined;
-  let cancelRecoveryWait: (() => void) | undefined;
+  let recoveryGate: ReadingRecoveryGate = { phase: 'open' };
   const deferredRecovery = Object.assign(new Error('阅读恢复等待前台或批次已过期'), { reason: 'canceled' });
   let currentScope = scope();
   let queue: PendingBatch[] = [];
   let sendNotBefore = 0;
-  let inFlight: { batch: PendingBatch; controller: AbortController } | undefined;
-  let wake: ReturnType<typeof setTimeout> | undefined;
+  let transport: ReadingTransport = { phase: 'idle' };
+  const activeFlight = () => (transport.phase === 'sending' ? transport.flight : undefined);
+  const paused = () => recoveryGate.phase !== 'open';
+  const recoveryAttempt = () => (recoveryGate.phase === 'verification' ? recoveryGate.attempt : undefined);
+  const cancelRecoveryWait = () => {
+    const current = recoveryAttempt();
+    if (current?.execution.phase === 'waiting') current.execution.cancel();
+  };
+  const clearWake = () => {
+    if (transport.phase !== 'scheduled') return;
+    clearTimeout(transport.timer);
+    transport = { phase: 'idle' };
+  };
+  const finishFlight = (flight: ReadingFlight) => {
+    if (transport.phase === 'sending' && transport.flight === flight) transport = { phase: 'idle' };
+  };
   const sessions = new Set<{
     topicId: string;
     totals: Map<number, number>;
@@ -96,9 +116,9 @@ export function createDiscourseReadingRuntime({
     }));
   };
   const pending = (topicId: string) =>
-    recoveryBatch?.topicId === topicId ||
+    recoveryAttempt()?.batch.topicId === topicId ||
     queue.some((batch) => batch.topicId === topicId) ||
-    inFlight?.batch.topicId === topicId ||
+    activeFlight()?.batch.topicId === topicId ||
     [...sessions].some((session) => session.topicId === topicId && session.pending());
   const startRequest = (): ReadingRequest => ({ scope: scope(), sequence: ++sequence, localVersion });
   const observe = (snapshot: DiscourseTopicReading, request: ReadingRequest) => {
@@ -130,10 +150,8 @@ export function createDiscourseReadingRuntime({
     );
   };
   const unpause = () => {
-    cancelRecoveryWait?.();
-    recovery = undefined;
-    recoveryBatch = undefined;
-    paused = false;
+    cancelRecoveryWait();
+    recoveryGate = { phase: 'open' };
     sessions.forEach((session) => session.foreground(foreground));
   };
   const deliver = async (batch: PendingBatch, controller: AbortController, recovering: boolean) => {
@@ -171,43 +189,37 @@ export function createDiscourseReadingRuntime({
       queue.push({ ...batch, attempts: batch.attempts + 1, due: now() + Math.max(delay, failure.retryAfterMs || 0) });
   };
   const requireVerification = (batch: PendingBatch, error: unknown) => {
-    paused = true;
-    recoveryBatch = batch;
-    sessions.forEach((session) => session.foreground(false));
-    const delay = (error as { retryAfterMs?: number }).retryAfterMs;
-    if (Number.isFinite(delay) && delay! > 0) sendNotBefore = Math.max(sendNotBefore, now() + delay!);
-    record(batch, 'paused');
-    let resuming = false;
     const ownRecovery: LinuxDoReadingRecovery = {
       kind: 'reading',
       batchId: batch.id,
-      isCurrent: () => !disposed && scope() === batch.scope && recovery === ownRecovery,
+      isCurrent: () => !disposed && scope() === batch.scope && recoveryAttempt() === attempt,
       isExpired: () => now() - batch.born > 100000,
       cancel: () => {
         if (!ownRecovery.isCurrent()) return;
         record(batch, 'canceled');
-        cancelRecoveryWait?.();
-        inFlight?.controller.abort();
+        cancelRecoveryWait();
+        activeFlight()?.controller.abort();
         queue = [];
         sessions.forEach((session) => session.discard());
-        recovery = undefined;
-        recoveryBatch = undefined;
+        recoveryGate = { phase: 'paused' };
         // Keep this reading session paused until a new entry or explicit verification.
       },
       resume: async () => {
-        if (!ownRecovery.isCurrent() || !appActive || inFlight || resuming) return 'stale';
-        resuming = true;
+        if (!ownRecovery.isCurrent() || !appActive || activeFlight() || attempt.execution.phase !== 'available')
+          return 'stale';
+        attempt.execution = { phase: 'claimed' };
         try {
           const remaining = sendNotBefore - now();
           if (remaining > 0)
             await new Promise<void>((resolve) => {
               const complete = () => {
                 clearTimeout(timer);
-                if (cancelRecoveryWait === complete) cancelRecoveryWait = undefined;
+                if (attempt.execution === waiting) attempt.execution = { phase: 'claimed' };
                 resolve();
               };
               const timer = setTimeout(complete, Math.min(remaining, Math.max(0, 100001 - (now() - batch.born))));
-              cancelRecoveryWait = complete;
+              const waiting: RecoveryExecution = { phase: 'waiting', cancel: complete };
+              attempt.execution = waiting;
             });
           if (!ownRecovery.isCurrent() || !appActive) return 'stale';
           if (now() - batch.born > 100000) {
@@ -218,7 +230,7 @@ export function createDiscourseReadingRuntime({
           }
           const controller = new AbortController();
           const flight = { batch, controller };
-          inFlight = flight;
+          transport = { phase: 'sending', flight };
           record(batch, 'resuming');
           try {
             await deliver(batch, controller, true);
@@ -246,29 +258,33 @@ export function createDiscourseReadingRuntime({
             unpause();
             return 'failed';
           } finally {
-            if (inFlight === flight) inFlight = undefined;
+            finishFlight(flight);
             pump();
           }
         } finally {
-          resuming = false;
+          attempt.execution = { phase: 'available' };
         }
       }
     };
-    recovery = ownRecovery;
+    const attempt: ReadingRecoveryAttempt = { batch, handle: ownRecovery, execution: { phase: 'available' } };
+    recoveryGate = { phase: 'verification', attempt };
+    sessions.forEach((session) => session.foreground(false));
+    const delay = (error as { retryAfterMs?: number }).retryAfterMs;
+    if (Number.isFinite(delay) && delay! > 0) sendNotBefore = Math.max(sendNotBefore, now() + delay!);
+    record(batch, 'paused');
     if (appActive) onVerificationRequired?.(ownRecovery);
   };
   const pump = () => {
-    if (wake) clearTimeout(wake);
-    wake = undefined;
+    clearWake();
     queue = queue.filter((batch) => {
       const current = now() - batch.born <= 100000 && batch.scope === scope();
       if (!current) record(batch, scope() !== batch.scope ? 'stale' : 'expired');
       return current;
     });
-    if (disposed || paused || inFlight || (!foreground && backgroundAllowance <= 0) || !queue.length) return;
+    if (disposed || paused() || activeFlight() || (!foreground && backgroundAllowance <= 0) || !queue.length) return;
     const nextDue = Math.max(sendNotBefore, Math.min(...queue.map((batch) => batch.due)));
     if (nextDue > now()) {
-      if (foreground) wake = setTimeout(pump, Math.max(1, nextDue - now()));
+      if (foreground) transport = { phase: 'scheduled', timer: setTimeout(pump, Math.max(1, nextDue - now())) };
       return;
     }
     const index = queue.findIndex((batch) => batch.due <= now());
@@ -276,7 +292,7 @@ export function createDiscourseReadingRuntime({
     if (!foreground) backgroundAllowance--;
     const controller = new AbortController();
     const flight = { batch, controller };
-    inFlight = flight;
+    transport = { phase: 'sending', flight };
     // The transport must not replay an ambiguous POST failure.
     void deliver(batch, controller, false)
       .then(
@@ -292,12 +308,12 @@ export function createDiscourseReadingRuntime({
         }
       )
       .finally(() => {
-        if (inFlight === flight) inFlight = undefined;
+        finishFlight(flight);
         pump();
       });
   };
   const begin = (topicId: string): ReadingSession => {
-    if (paused && !recovery) unpause();
+    if (recoveryGate.phase === 'paused') unpause();
     const identity = scope();
     let phase: 'inactive' | 'active' | 'ended' = 'inactive';
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -340,7 +356,7 @@ export function createDiscourseReadingRuntime({
       lastTick = time;
       if (
         !valid() ||
-        paused ||
+        paused() ||
         phase !== 'active' ||
         !foreground ||
         time - lastInteraction >= 180000 ||
@@ -472,11 +488,12 @@ export function createDiscourseReadingRuntime({
     scope,
     setAppActive(active: boolean) {
       appActive = active;
-      if (!active) cancelRecoveryWait?.();
-      if (active && recovery) onVerificationRequired?.(recovery);
+      if (!active) cancelRecoveryWait();
+      const recovery = recoveryAttempt();
+      if (active && recovery) onVerificationRequired?.(recovery.handle);
     },
     verified() {
-      if (paused && !recovery) {
+      if (recoveryGate.phase === 'paused') {
         unpause();
         pump();
       }
@@ -488,40 +505,38 @@ export function createDiscourseReadingRuntime({
           session.tick();
           session.seal();
         }
-        backgroundAllowance = paused ? 0 : 1;
+        backgroundAllowance = paused() ? 0 : 1;
       }
       foreground = active;
-      sessions.forEach((session) => session.foreground(active && !paused));
+      sessions.forEach((session) => session.foreground(active && !paused()));
       pump();
     },
     sessionChanged() {
       if (scope() === currentScope) return;
-      cancelRecoveryWait?.();
-      if (recoveryBatch) record(recoveryBatch, 'stale');
-      recovery = undefined;
-      recoveryBatch = undefined;
-      paused = false;
+      cancelRecoveryWait();
+      const recovery = recoveryAttempt();
+      if (recovery) record(recovery.batch, 'stale');
+      recoveryGate = { phase: 'open' };
       sessions.forEach((session) => session.stop());
       sessions.clear();
-      inFlight?.controller.abort();
+      activeFlight()?.controller.abort();
       queue = [];
       sendNotBefore = 0;
-      if (wake) clearTimeout(wake);
-      wake = undefined;
+      clearWake();
       if (currentScope) queryClient.removeQueries({ queryKey: discourseReadingQueryKey(currentScope), exact: true });
       currentScope = scope();
     },
     dispose() {
       disposed = true;
-      cancelRecoveryWait?.();
-      if (recoveryBatch) record(recoveryBatch, 'stale');
-      recovery = undefined;
-      recoveryBatch = undefined;
+      cancelRecoveryWait();
+      const recovery = recoveryAttempt();
+      if (recovery) record(recovery.batch, 'stale');
+      recoveryGate = { phase: 'open' };
       sessions.forEach((session) => session.stop());
       sessions.clear();
-      inFlight?.controller.abort();
+      activeFlight()?.controller.abort();
       queue = [];
-      if (wake) clearTimeout(wake);
+      clearWake();
     }
   };
 }

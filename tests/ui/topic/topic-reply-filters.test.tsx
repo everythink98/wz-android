@@ -33,7 +33,12 @@ import { useTopicSessionController, type TopicSessionController } from '@/featur
 import * as forumText from '@/domain/forum/text';
 import type { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import { discoursePollPlaceholder, prepareReplyContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
+import {
+  discoursePollPlaceholder,
+  prepareRepliesContent,
+  prepareReplyContent,
+  prepareTopicContent
+} from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -59,6 +64,10 @@ import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { createReadGateway } from '@/sources/readGateway';
+import { ReadingProbe } from '../../../dev/review-remediation-proof/readingEntryProof';
+import type { FlashListRef } from '@shopify/flash-list';
 import { RequestCanceledError } from '@/platform/network/request';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { renderHook } from '@testing-library/react-native';
@@ -2203,6 +2212,126 @@ describe('Topic reply filters', () => {
     }
   );
 
+  it.each(['cold', 'cached'] as const)(
+    'forwards the %s private reading probe resume target to the physical scroll boundary',
+    async (mode) => {
+      const detail = prepareTopicContent({
+        ...topic,
+        source: 'linuxdo',
+        id: `reading-probe-${mode}`,
+        contentHtml: '<p>probe opening</p>',
+        replies: [],
+        replyCount: 39,
+        replyCompleteness: 'partial'
+      });
+      const reading = createDiscourseReadingRuntime({
+        queryClient: appQueryClient,
+        scope: () => `reading-probe-${mode}`,
+        send: async () => undefined
+      });
+      const snapshot = { topicId: detail.id, lastReadPostNumber: 15, highestPostNumber: 40 };
+      const observeReading = () => reading.observe(snapshot, reading.startRequest());
+      let releaseWindow!: () => void;
+      const window = new Promise<void>((resolve) => {
+        releaseWindow = resolve;
+      });
+      const unexpectedTransport = async () => {
+        throw new Error('Unexpected reading probe transport');
+      };
+      const base = createReadGateway({
+        fetcher: unexpectedTransport,
+        anonymousFetcher: unexpectedTransport,
+        nodeSeekUserAgent: () => 'isolated-reading-probe',
+        getEnabledSources: () => ['linuxdo'],
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated: true,
+          authSurfaceOpen: false,
+          identityKey: `${source}:reading-probe`,
+          identityTrust: 'confirmed',
+          sessionEpoch: 0,
+          sourceEnabled: true
+        })
+      });
+      const getReplies = jest.fn<typeof base.getReplies>(async () => {
+        await window;
+        return prepareRepliesContent(
+          {
+            items: [{ author: 'probe', floor: 16, contentHtml: '<p>probe target</p>', createdAt: '' }],
+            hasMore: false,
+            nextPage: null,
+            previousPage: null,
+            currentPage: 1,
+            completeness: 'complete',
+            totalCount: 39
+          },
+          'linuxdo',
+          detail.id
+        );
+      });
+      const gateway = {
+        ...base,
+        reading,
+        getTopic: async () => {
+          observeReading();
+          return detail;
+        },
+        getTopicReading: async () => {
+          observeReading();
+          return snapshot;
+        },
+        getReplies
+      };
+      const queryKey = forumQueryKeys.topic({
+        source: 'linuxdo',
+        topicId: detail.id,
+        readPlanScope: gateway.getReadPlan('linuxdo', 'topic').cacheScope,
+        scope: initialForumSessionEpochs
+      });
+      if (mode === 'cached') {
+        observeReading();
+        appQueryClient.setQueryData(queryKey, detail);
+      }
+      let current: Parameters<React.ComponentProps<typeof ReadingProbe>['observe']>[0] | undefined;
+      const list = React.createRef<FlashListRef<TopicListItem>>();
+      mockScrollToIndex.mockReset();
+      const view = await render(
+        <ReadingProbe
+          observe={(value) => {
+            current = value;
+          }}
+          onPositioned={noop}
+          onNativeScroll={noop}
+          detail={detail}
+          gateway={gateway}
+          list={list}
+        />,
+        { wrapper: QueryTestWrapper }
+      );
+      try {
+        await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+        expect(current?.read.readingEntry.location).toEqual({
+          kind: 'reply',
+          target: { floor: 16, readingResume: true }
+        });
+        expect(current?.read.readingEntry.windowReady).toBe(false);
+        expect(mockScrollToIndex).not.toHaveBeenCalled();
+        await act(async () => releaseWindow());
+        await waitFor(() => expect(current?.read.readingEntry.windowReady).toBe(true));
+        await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(1));
+        expect(mockScrollToIndex).toHaveBeenCalledWith(
+          expect.objectContaining({ index: lastReplyListIndex(16), animated: false })
+        );
+      } finally {
+        releaseWindow();
+        await view.unmount();
+        reading.dispose();
+        await appQueryClient.cancelQueries({ queryKey });
+        appQueryClient.removeQueries({ queryKey });
+      }
+    }
+  );
+
   it.each([false, true])(
     'waits for the confirmed resume window before locating a deleted=%s target',
     async (deleted) => {
@@ -3145,6 +3274,68 @@ describe('Topic reply filters', () => {
       }
       await waitFor(() => expect(nativeEnd).toHaveBeenCalledWith({ animated: pending !== 'correction' }));
       expect(nativeEnd).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['command', 'projection', 'away', 'correction'] as const)(
+    'rechecks the queued auto-bottom intent before its native frame (%s)',
+    async (replacement) => {
+      const frames: FrameRequestCallback[] = [];
+      const requestFrame = jest
+        .spyOn(global, 'requestAnimationFrame')
+        .mockImplementation((callback) => frames.push(callback));
+      const cancelFrame = jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
+      const nativeEnd = jest.fn();
+      let pending: 'command' | 'correction' | undefined;
+      let offset = 200;
+      const getPending = () => pending;
+      const manager = {
+        props: { data: [1], maintainVisibleContentPosition: { autoscrollToBottomThreshold: 0.2 } },
+        hasLayout: () => true,
+        getWindowSize: () => ({ width: 320, height: 800 }),
+        getChildContainerDimensions: () => ({ width: 320, height: 1000 }),
+        getIsFirstLayoutComplete: () => true,
+        getAbsoluteLastScrollOffset: () => offset,
+        firstItemOffset: 0,
+        isOffsetProjectionEnabled: true
+      };
+      const hook = await renderHook(() =>
+        useBoundDetection(
+          manager as unknown as Parameters<typeof useBoundDetection>[0],
+          { current: { scrollToEnd: nativeEnd } } as unknown as Parameters<typeof useBoundDetection>[1],
+          getPending
+        )
+      );
+      try {
+        hook.result.current.checkBounds();
+        manager.props.data = [1, 2];
+        await hook.rerender(undefined);
+        expect(frames).toHaveLength(1);
+        if (replacement === 'command') pending = 'command';
+        if (replacement === 'correction') pending = 'correction';
+        if (replacement === 'projection') manager.isOffsetProjectionEnabled = false;
+        if (replacement === 'away') {
+          offset = 0;
+          hook.result.current.checkBounds();
+        }
+        await act(() => frames.splice(0).forEach((frame) => frame(16)));
+        if (replacement === 'correction') {
+          expect(nativeEnd).toHaveBeenCalledTimes(1);
+          expect(nativeEnd).toHaveBeenCalledWith({ animated: false });
+        } else {
+          expect(nativeEnd).not.toHaveBeenCalled();
+          pending = undefined;
+          manager.isOffsetProjectionEnabled = true;
+          manager.props.data = [1, 2, 3];
+          await hook.rerender(undefined);
+          await act(() => frames.splice(0).forEach((frame) => frame(32)));
+          expect(nativeEnd).toHaveBeenCalledTimes(replacement === 'away' ? 0 : 1);
+        }
+      } finally {
+        await hook.unmount();
+        requestFrame.mockRestore();
+        cancelFrame.mockRestore();
+      }
     }
   );
 
@@ -5696,6 +5887,11 @@ describe('Topic reply filters', () => {
       await act(() => measurements[1](220, y, 80, 36));
       await view.rerender(<TopicFilterHarness />);
       expect(view.queryByLabelText('关闭回复排序菜单')).toBeNull();
+      await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+      await act(() => measurements[1](220, y, 80, 36));
+      expect(view.queryByLabelText('关闭回复排序菜单')).toBeNull();
+      await act(() => measurements[2](220, y, 80, 36));
+      expect(view.getByLabelText('关闭回复排序菜单')).toBeTruthy();
     }
   );
 

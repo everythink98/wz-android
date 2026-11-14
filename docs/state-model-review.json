@@ -1155,7 +1155,19 @@
       "consumer": "src/features/account/useLinuxDoReadingRuntime.ts#createDiscourseReadingRuntime",
       "cannotDerive": "原runtime集中SchedulerState(idle/sending/backoff/paused/disposed)，把batch/controller/wake绑定阶段，保留数值预算和Query事实。",
       "tests": ["src/platform/query/discourseReadingRuntime.test.ts"],
-      "evidenceGap": "复用慢发送/scope/expiry/Retry-After/回滚测试；不能统一枚举吞掉计时数据。"
+      "evidenceGap": "复用慢发送/scope/expiry/Retry-After/回滚测试；不能统一枚举吞掉计时数据。",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "whole",
+        "delivered": "真实transport由idle/scheduled(timer)/sending(flight)唯一持有唤醒与当前发送，旧wake/inFlight写入删除；queue、Retry-After、前后台许可与disposed仍是独立事实。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": ["src/platform/query/discourseReadingRuntime.test.ts"],
+        "retainedIndependentFacts": [
+          "queue有效载荷、Retry-After截止、前后台发送许可、每session时钟及disposed各有消费者；网络发送未确认不能从transport idle推导。"
+        ]
+      }
     },
     {
       "id": "PL-JS-reading-verification-recovery",
@@ -1167,7 +1179,19 @@
       "consumer": "src/features/account/useLinuxDoReadingRuntime.ts#onVerificationRequired/recovery.resume",
       "cannotDerive": "在同reading runtime把paused/recovery/batch/cancelWait收敛为WaitingVerification/WaitingForeground/Retrying/Consumed，保留beforePost的scope/age检查。",
       "tests": ["src/platform/query/discourseReadingRuntime.test.ts"],
-      "evidenceGap": "需旧recovery不能消费新batch断言；不执行真实阅读登记写入。"
+      "evidenceGap": "需旧recovery不能消费新batch断言；不执行真实阅读登记写入。",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "whole",
+        "delivered": "真实gate拥有open/paused/verification(attempt)，恢复实例拥有available/claimed/waiting(cancel)；旧恢复句柄不能消费新batch，未知POST不自动重放，scope/age/beforePost保持。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": ["src/platform/query/discourseReadingRuntime.test.ts"],
+        "retainedIndependentFacts": [
+          "send scope、batch年龄、beforePost、明确拒绝increment与unknown POST策略独立保留；真实reading POST未执行。"
+        ]
+      }
     },
     {
       "id": "PL-JS-request-context-expiry",
@@ -1688,7 +1712,20 @@
       "cannotDerive": "pendingAutoscrollToBottom保留先前bounds事件；layout变更后的当前几何不能重建原意图。",
       "tests": ["tests/tooling/patch-artifacts.test.ts"],
       "evidenceGap": "原canonical仅patch-artifacts；需主题列表owner补命令竞争断言。",
-      "targetModel": "现有useRecyclerViewController的scrollInteraction拥有待follow-bottom命令，useBoundDetection只发边界观察，不造第二套scroll phase。"
+      "targetModel": "现有useRecyclerViewController的scrollInteraction拥有待follow-bottom命令，useBoundDetection只发边界观察，不造第二套scroll phase。",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "whole",
+        "delivered": "真实dist已证明旧RAF能越过新command、projection关闭或away状态。新ready/queued实例令旧帧失效并在执行前复核；correction仍不动画，恢复后合法follow继续，源/dist与所有补丁文件已官方pristine实重放。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": ["tests/tooling/patch-artifacts.test.ts", "tests/ui/topic/topic-reply-filters.test.tsx"],
+        "retainedIndependentFacts": [
+          "Native帧、offset projection、pending command/correction与物理滚动回执独立；三种竞争的精确oracle仍是实际SDK dist加受控RAF，不宣称设备注入。"
+        ],
+        "remainingEvidenceGap": "真实SDK dist的3种受控RAF竞争已修前失败/修后通过；设备未定向注入这些竞争，全部Native帧交错未验证。"
+      }
     },
     {
       "id": "PL-PATCH-flash-interaction",
@@ -2315,7 +2352,19 @@
       "consumer": "src/features/topic/TopicScreen.tsx :: <TopicContentList",
       "cannotDerive": "Native坐标异步到达，visible和request identity不等价；但open与placement可由同一nullable已定位菜单表达。",
       "tests": ["tests/ui/topic/topic-rich-text-selection.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "whole",
+        "delivered": "实际排序菜单只有closed/measuring(request)/open placement的本地owner；回调必须仍是本次测量对象，原可变menu request与可见setter旁路删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": ["tests/ui/topic/topic-rich-text-selection.test.tsx"],
+        "retainedIndependentFacts": [
+          "Native trigger.measureInWindow是实际异步能力；placement保留供Modal退场，不能由可见性布尔推导坐标。"
+        ]
+      }
     },
     {
       "id": "UI-NEW-012",
@@ -2339,7 +2388,18 @@
       "consumer": "src/features/topic/TopicScreen.tsx :: <TopicContentList",
       "cannotDerive": "改变排序的用户意图先于新数据，当前sort值和Query完成不能说明该意图是否已被消费。",
       "tests": ["tests/ui/topic/topic-rich-text-selection.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "partial",
+        "delivered": "菜单命令已集中，但pending order scroll仍是独立一位意图；排序、采纳答案和楼层定位尚无统一优先级流水线，按局部简化记。",
+        "residualControlAuthority": [
+          "pending order scroll仍是独立历史意图；排序重置、采纳答案与楼层命令没有统一优先级流水线。"
+        ],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": ["tests/ui/topic/topic-rich-text-selection.test.tsx"]
+      }
     },
     {
       "id": "UI-NEW-015",
@@ -2649,7 +2709,21 @@
       "consumer": "src/features/topic/TopicScreen.tsx :: <TopicContentList",
       "cannotDerive": "acceptedAnswerView包含预览/展开意图，loadAttempt防重复IO，scrollPending等布局；不能由答案是否存在推导三者。",
       "tests": ["tests/ui/topic/topic-reply-filters.test.tsx", "tests/ui/topic/topic-rich-text-selection.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "partial",
+        "delivered": "展开/全文UI快照收拢，lastRequested仍是已发I/O收据，等待采纳答案滚动仍是独立意图；原三维scope仅局部简化。",
+        "residualControlAuthority": [
+          "lastRequested保留已发I/O收据，等待采纳答案滚动仍由定位模块持有独立意图；本批未将原三维scope整体重建。"
+        ],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": [
+          "tests/ui/topic/topic-reply-filters.test.tsx",
+          "tests/ui/topic/topic-rich-text-selection.test.tsx"
+        ]
+      }
     },
     {
       "id": "ui.app-activity",
@@ -3102,7 +3176,23 @@
       "consumer": "src/features/topic/TopicScreen.tsx :: <TopicContentList",
       "cannotDerive": "目标id不能代替命令id，预计算offset不能代替getLayout+viewport实测；高亮timer是单次资源。",
       "tests": ["tests/ui/topic/topic-reply-filters.test.tsx", "tests/ui/topic/topic-rich-text-selection.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "whole",
+        "delivered": "position owner实际接管idle/handled/awaiting-viewport/positioned与命令身份；同目标新command重试。位置确认只消费当前topic/command、真实viewport和getLayout的可见像素，不把offset计算、窗口完成或scroll Promise当作到位。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": [
+          "tests/ui/topic/topic-reply-filters.test.tsx",
+          "tests/ui/topic/topic-rich-text-selection.test.tsx"
+        ],
+        "retainedIndependentFacts": [
+          "List保留实际Native viewport、layout和ref观测；计算offset、加载完成或scroll Promise不能代替到位回执。Native事件本身没有应用command ticket。"
+        ],
+        "remainingEvidenceGap": "受控设备cold/cached窗口和真实像素、排序通过；主设备未证明保存楼层续读，所有Native同坐标旧事件/全部来源矩阵及真实远端reading POST未验证。"
+      }
     },
     {
       "id": "ui.gallery-scope",
@@ -3736,7 +3826,22 @@
       "consumer": "src/features/topic/useTopicController.ts :: const readingEntry = useTopicReadingEntry({",
       "cannotDerive": "ready、windowReady、positioned是不同证据门，不能把收到正文当作实际到位，也不能把超时当作阅读登记成功。",
       "tests": ["tests/ui/topic/topic-session-controller.test.tsx", "tests/ui/topic/topic-route-verification.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "partial",
+        "delivered": "决策与window/position分开收敛到reducer；本地visit去重、异步registration、AbortController与1秒fallback仍各有协议，整体按partial。",
+        "residualControlAuthority": [
+          "本地visit去重、异步registration发布、AbortController与1秒fallback仍是独立hook级协议。"
+        ],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": [
+          "tests/ui/topic/topic-session-controller.test.tsx",
+          "tests/ui/topic/topic-route-verification.test.tsx"
+        ],
+        "remainingEvidenceGap": "受控设备cold/cached窗口和真实像素、排序通过；主设备未证明保存楼层续读，所有Native同坐标旧事件/全部来源矩阵及真实远端reading POST未验证。"
+      }
     },
     {
       "id": "ui.reply-edge",
@@ -3752,19 +3857,43 @@
         "tests/ui/topic/topic-components.test.tsx",
         "tests/ui/topic/topic-rich-text-selection.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "whole",
+        "delivered": "原phase加momentum标志收敛为idle/drag/awaiting-momentum/momentum，真实begin/end/advance/stop只走owner；物理load permit仍独立，手势结束不提前释放I/O。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": [
+          "tests/ui/topic/topic-reply-filters.test.tsx",
+          "tests/ui/topic/topic-components.test.tsx",
+          "tests/ui/topic/topic-rich-text-selection.test.tsx"
+        ],
+        "retainedIndependentFacts": [
+          "Query fetching与物理load permit独立于手势生命周期；换主题或停止手势不表示旧I/O已经结算。"
+        ]
+      }
     },
     {
       "id": "ui.reply-prime",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 6,
       "owner": "src/features/topic/components/TopicContentList.tsx",
       "invariant": "引用内容须在当前topic所需行完成布局后才预热，旧topic布局不放行新引用。",
       "consumer": "src/features/topic/TopicScreen.tsx :: <TopicContentList",
-      "cannotDerive": "逐row的layout progress是真实Native完成信息，不能从引用正文已加载或目标index估算。",
+      "cannotDerive": "现有per-token pending-frame/primed联合持有具体RAF，替换与topic清理取消旧帧；React token Map是已提交渲染事实，不能由layout是否发生推导。现有协议已明确，额外phase或搬Map没有消费者收益。",
       "tests": ["tests/ui/topic/topic-rich-text-selection.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "keep",
+        "delivered": "复核保留现有per-token pending-frame/primed联合、具体RAF owner与React已提交token Map；替换取消和topic清理已有唯一入口，不另造required-rows总流程，零实施信用。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.reply-window",
@@ -3781,7 +3910,25 @@
         "tests/ui/app/content-source-route-gates.test.tsx",
         "tests/ui/topic/topic-route-external-links.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "whole",
+        "delivered": "window owner真实接管read/location run、route request、按order缓存资格及error slots；旧generation/ref writer删除。Query仍拥有远端请求和数据；旧run不得安装新窗口或清新错误。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": [
+          "tests/ui/topic/topic-session-controller.test.tsx",
+          "tests/ui/topic/topic-reply-filters.test.tsx",
+          "tests/ui/app/content-source-route-gates.test.tsx",
+          "tests/ui/topic/topic-route-external-links.test.tsx"
+        ],
+        "retainedIndependentFacts": [
+          "来源/Query admission、网络请求数据与Query key是独立输入；缓存删除与取消操作保留实际controller执行。"
+        ],
+        "remainingEvidenceGap": "受控设备cold/cached窗口和真实像素、排序通过；主设备未证明保存楼层续读，所有Native同坐标旧事件/全部来源矩阵及真实远端reading POST未验证。"
+      }
     },
     {
       "id": "ui.scroll-controls",
@@ -4016,7 +4163,24 @@
         "tests/ui/topic/topic-route-external-links.test.tsx",
         "tests/ui/topic/topic-reply-filters.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B06",
+        "outcome": "partial",
+        "delivered": "visit的cached/started/settled归同一实例且保留合法重叠；unreadBaseline与recordedTopicUpdate仍在原controller，原完整scope仅局部转换。",
+        "residualControlAuthority": [
+          "unreadBaseline及recordedTopicUpdate去重仍由原controller管理；visit已尝试但取消后不自动重放。"
+        ],
+        "validation": "docs/state-model-refactor.md#b06",
+        "acceptance": "ACCEPTED_B06_BOUNDED_EVIDENCE",
+        "primaryTests": [
+          "tests/ui/topic/topic-session-controller.test.tsx",
+          "tests/ui/topic/topic-route-verification.test.tsx",
+          "tests/ui/app/content-source-route-gates.test.tsx",
+          "tests/ui/topic/topic-route-external-links.test.tsx",
+          "tests/ui/topic/topic-reply-filters.test.tsx"
+        ]
+      }
     },
     {
       "id": "ui.topic-mutation",

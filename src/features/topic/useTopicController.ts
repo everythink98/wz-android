@@ -75,7 +75,14 @@ import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/q
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
-import { useTopicReadingEntry, type TopicEntryVisit } from './useTopicReadingEntry';
+import { useTopicReadingEntry } from './useTopicReadingEntry';
+import { createTopicEntryVisit } from './model/topicEntryVisit';
+import {
+  useTopicReplyWindow,
+  type ReplyWindowRun,
+  type ReplyRetryMode,
+  type ReplyFailure
+} from './useTopicReplyWindow';
 import { findReadingResumeReply } from '@/domain/forum/discourseReading';
 
 type QuoteQueryProjection = Pick<
@@ -92,20 +99,6 @@ function combineQuoteQueryResults(results: QuoteQueryProjection[]): QuoteQueryPr
     isPending
   }));
 }
-
-type ReplyWindowErrorSlot = ReplyWindowEdge | 'refresh';
-
-type ReplyRetryMode = 'query' | 'whole' | 'none' | ReplyRefreshCommand;
-
-type ReplyFailure = {
-  error: SourceErrorInfo;
-  position: ReplyWindowPosition;
-  retryMode: ReplyRetryMode;
-};
-
-type ReplyWindowFailures = Record<ReplyWindowErrorSlot, ReplyFailure | null>;
-
-const EMPTY_REPLY_WINDOW_FAILURES: ReplyWindowFailures = { start: null, end: null, refresh: null };
 
 function replyFailure(
   source: Source,
@@ -191,10 +184,6 @@ export function useTopicController({
   const handledTopicErrorRef = useRef(0);
   const handledRepliesErrorRef = useRef(0);
   const handledQuoteErrorsRef = useRef<Record<string, number>>({});
-  const targetWindowCacheOwnedRef = useRef(new Map<ReplyOrder, readonly unknown[]>());
-  const handledRouteTargetRef = useRef<{ key: string; queryIdentity: string; pending: boolean } | null>(null);
-  const replyWindowGenerationRef = useRef(0);
-  const replyLocationOwnerRef = useRef<{ generation: number; queryKey: readonly unknown[] } | null>(null);
   const selectedSource = selectedTopic.source;
   const selectedTopicId = selectedTopic.id;
   const selectedTopicKey = topicKey(selectedTopic);
@@ -228,19 +217,11 @@ export function useTopicController({
     [repliesReadPlan.cacheScope, replyOrder, topicQueryKey]
   );
   const entryKey = JSON.stringify(topicQueryKey);
-  const entryVisitRef = useRef<TopicEntryVisit>({
-    key: entryKey,
-    started: false,
-    settled: false,
-    cached: Boolean(queryClient.getQueryData(topicQueryKey))
-  });
+  const [entryVisitRef] = useState(() => ({
+    current: createTopicEntryVisit(entryKey, Boolean(queryClient.getQueryData(topicQueryKey)))
+  }));
   if (entryVisitRef.current.key !== entryKey)
-    entryVisitRef.current = {
-      key: entryKey,
-      started: false,
-      settled: false,
-      cached: Boolean(queryClient.getQueryData(topicQueryKey))
-    };
+    entryVisitRef.current = createTopicEntryVisit(entryKey, Boolean(queryClient.getQueryData(topicQueryKey)));
   const entryVisit = entryVisitRef.current;
   const ordinaryLinuxDoTopic =
     selectedSource === 'linuxdo' &&
@@ -253,38 +234,17 @@ export function useTopicController({
   );
   const repliesQueryIdentity = JSON.stringify(repliesQueryKey);
   const activeRepliesQueryIdentityRef = useCommittedRef(enabled && !selectedReadBlocked ? repliesQueryIdentity : '');
-  const replyWindowGuard = useCallback(
-    (generation: number) => () =>
-      activeRepliesQueryIdentityRef.current === repliesQueryIdentity && replyWindowGenerationRef.current === generation,
-    [activeRepliesQueryIdentityRef, repliesQueryIdentity]
-  );
+  const {
+    lifecycle: replyWindows,
+    failures: replyWindowFailures,
+    recordFailure: recordReplyWindowFailure,
+    clearErrors: clearReplyWindowErrors,
+    clearAllErrors: clearAllReplyWindowErrors
+  } = useTopicReplyWindow(repliesQueryIdentity, () => activeRepliesQueryIdentityRef.current);
   const interactionActiveRef = useCommittedRef(active);
   const isReadRecoveryCurrent = useCallback(
     () => interactionActiveRef.current && activeRepliesQueryIdentityRef.current === repliesQueryIdentity,
     [activeRepliesQueryIdentityRef, interactionActiveRef, repliesQueryIdentity]
-  );
-  const [replyWindowFailuresByKey, setReplyWindowFailuresByKey] = useState<Record<string, ReplyWindowFailures>>({});
-  const replyWindowFailures = replyWindowFailuresByKey[repliesQueryIdentity] || EMPTY_REPLY_WINDOW_FAILURES;
-  const setReplyWindowFailure = useCallback(
-    (slot: ReplyWindowErrorSlot, failure: ReplyFailure | null) => {
-      setReplyWindowFailuresByKey((current) => {
-        const existing = current[repliesQueryIdentity] || EMPTY_REPLY_WINDOW_FAILURES;
-        return { ...current, [repliesQueryIdentity]: { ...existing, [slot]: failure } };
-      });
-    },
-    [repliesQueryIdentity]
-  );
-  const clearReplyWindowErrors = useCallback(
-    (edgesOnly = false) => {
-      setReplyWindowFailuresByKey((current) => {
-        const existing = current[repliesQueryIdentity] || EMPTY_REPLY_WINDOW_FAILURES;
-        return {
-          ...current,
-          [repliesQueryIdentity]: edgesOnly ? { ...existing, start: null, end: null } : EMPTY_REPLY_WINDOW_FAILURES
-        };
-      });
-    },
-    [repliesQueryIdentity]
   );
   const targetReplyQueryRoot = useMemo(() => [...repliesQueryKey, 'target-floor'] as const, [repliesQueryKey]);
   const loadingTargetReply = useIsFetching({ queryKey: targetReplyQueryRoot }) > 0;
@@ -313,10 +273,9 @@ export function useTopicController({
   useEffect(
     () => () => {
       activeRepliesQueryIdentityRef.current = '';
-      targetWindowCacheOwnedRef.current.forEach((queryKey) => queryClient.removeQueries({ queryKey, exact: true }));
-      targetWindowCacheOwnedRef.current.clear();
+      replyWindows.releaseCaches((queryKey) => queryClient.removeQueries({ queryKey, exact: true }));
     },
-    [activeRepliesQueryIdentityRef, queryClient]
+    [activeRepliesQueryIdentityRef, queryClient, replyWindows]
   );
 
   const detailQuery = useQuery({
@@ -324,8 +283,7 @@ export function useTopicController({
     enabled: enabled && (!ordinaryLinuxDoTopic || !entryVisit.settled),
     queryFn: async ({ signal }) => {
       const topic = selectedTopic;
-      const trackVisit = ordinaryLinuxDoTopic && !entryVisit.started;
-      if (trackVisit) entryVisit.started = true;
+      const trackVisit = ordinaryLinuxDoTopic && entryVisit.claimVisit();
       const trace = beginDiagnosticTrace('topic', 'open', {
         source: topic.source,
         topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`)
@@ -354,10 +312,10 @@ export function useTopicController({
           itemCount: detail.replies?.length || 0,
           hasContent: Boolean(detail.contentHtml?.trim())
         });
-        if (!signal.aborted) entryVisit.settled = true;
+        if (!signal.aborted) entryVisit.settleRequest();
         return detail;
       } catch (error) {
-        if (!signal.aborted && !isCanceledRequest(error)) entryVisit.settled = true;
+        if (!signal.aborted && !isCanceledRequest(error)) entryVisit.settleRequest();
         finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
           source: topic.source,
           reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
@@ -392,7 +350,7 @@ export function useTopicController({
     topic: selectedTopic,
     detail: topicDetail,
     location,
-    visitRef: entryVisitRef,
+    visit: entryVisit,
     gateway: readGateway,
     commit: commitReaderData
   });
@@ -402,9 +360,7 @@ export function useTopicController({
   const routeTargetKey = targetReply
     ? `${selectedTopicKey}:${targetSessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}:${targetReply.expectedAuthorUsername ?? ''}:request:${locationRequestId ?? ''}`
     : '';
-  const targetBelongsToPreviousWindow =
-    handledRouteTargetRef.current?.key === routeTargetKey &&
-    handledRouteTargetRef.current.queryIdentity !== repliesQueryIdentity;
+  const targetBelongsToPreviousWindow = replyWindows.routeQueryChanged(routeTargetKey, repliesQueryIdentity);
   useEffect(() => {
     if (ordinaryLinuxDoTopic || !topicDetail || unreadBaseline?.key === baselineKey) return;
     let active = true;
@@ -586,8 +542,8 @@ export function useTopicController({
   );
   const replyCollectionComplete = true;
   const rebuildRepliesFromDetail = useCallback(
-    async (detail: TopicDetail, generation: number, clearOtherOrder = false) => {
-      const ownsWindow = replyWindowGuard(generation);
+    async (detail: TopicDetail, windowRun: ReplyWindowRun, clearOtherOrder = false) => {
+      const ownsWindow = windowRun.isCurrent;
       const replyKeys = clearOtherOrder
         ? (['oldest', 'newest'] as const).map((order) =>
             forumQueryKeys.replies(topicQueryKey, order, repliesReadPlan.cacheScope)
@@ -630,22 +586,23 @@ export function useTopicController({
       }
       if (!ownsWindow()) return false;
       replyKeys.forEach((queryKey) => queryClient.removeQueries({ queryKey }));
-      if (clearOtherOrder) targetWindowCacheOwnedRef.current.clear();
-      else targetWindowCacheOwnedRef.current.delete(replyOrder);
+      if (clearOtherOrder) replyWindows.forgetAllCaches();
+      else replyWindows.forgetCache(replyOrder);
       queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, rebuilt);
-      if (clearOtherOrder) setReplyWindowFailuresByKey({});
+      if (clearOtherOrder) clearAllReplyWindowErrors();
       else clearReplyWindowErrors();
       return true;
     },
     [
-      replyWindowGuard,
+      replyWindows,
       clearReplyWindowErrors,
       commitReplySnapshot,
       loadReplyPage,
       queryClient,
       repliesQueryKey,
       replyOrder,
-      topicQueryKey
+      topicQueryKey,
+      clearAllReplyWindowErrors
     ]
   );
   const showYaohuoLoginForRead = useCallback(
@@ -910,10 +867,10 @@ export function useTopicController({
   useEffect(() => {
     if (!focused) {
       // Keep the route's target, but release an interrupted attempt so focus can resume it.
-      if (handledRouteTargetRef.current?.pending) handledRouteTargetRef.current = null;
+      replyWindows.abandonPendingRoute();
       cancelTopicQueries();
     }
-  }, [focused, cancelTopicQueries]);
+  }, [focused, cancelTopicQueries, replyWindows]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!interactionActiveRef.current) return 'stale';
@@ -936,8 +893,8 @@ export function useTopicController({
       return 'stale';
     }
     const runAttempt = async (notifySuccess: boolean): Promise<LinuxDoReadResumeOutcome> => {
-      const generation = ++replyWindowGenerationRef.current;
-      const ownsWindow = replyWindowGuard(generation);
+      const windowRun = replyWindows.beginRead(repliesQueryIdentity);
+      const ownsWindow = windowRun.isCurrent;
       try {
         const detailResult = await detailQuery.refetch();
         if (!ownsWindow()) return 'stale';
@@ -946,7 +903,7 @@ export function useTopicController({
           throw detailResult.error;
         }
         if (!detailResult.data) throw new Error('主题刷新未返回数据');
-        if (!(await rebuildRepliesFromDetail(detailResult.data, generation, true))) {
+        if (!(await rebuildRepliesFromDetail(detailResult.data, windowRun, true))) {
           return 'stale';
         }
         if (notifySuccess) notify('主题已更新');
@@ -959,7 +916,7 @@ export function useTopicController({
           resume: () => runAttempt(false)
         };
         const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
-        setReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, { kind: 'start' }, 'whole'));
+        recordReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, { kind: 'start' }, 'whole'));
         handleReadError(selectedTopic.source, error, recovery, (candidate) =>
           onNodeSeekTopicVerificationRequired(sourceError.message, candidate)
         );
@@ -974,7 +931,7 @@ export function useTopicController({
     };
     return runAttempt(true);
   }, [
-    replyWindowGuard,
+    replyWindows,
     handleReadError,
     interactionActiveRef,
     notify,
@@ -987,12 +944,13 @@ export function useTopicController({
     repliesReadPlan,
     selectedReadBlocked,
     selectedTopic,
-    setReplyWindowFailure,
+    recordReplyWindowFailure,
     showYaohuoLoginForRead,
     detailQuery.refetch,
     topicReadBlocked,
     topicReadPlan,
-    targetReply?.readingResume
+    targetReply?.readingResume,
+    repliesQueryIdentity
   ]);
 
   const refreshTopicReplies = useCallback(
@@ -1006,13 +964,13 @@ export function useTopicController({
         handledRepliesErrorRef.current = 0;
       }
 
-      const generation = ++replyWindowGenerationRef.current;
+      const windowRun = replyWindows.beginRead(repliesQueryIdentity);
       let createdTarget: ReplyLocationTarget | undefined;
       const targetedCreatedCommand =
         command.kind === 'created' && (selectedTopic.source === 'nodeseek' || isDiscourseSource(selectedTopic.source))
           ? command
           : null;
-      const ownsWindow = replyWindowGuard(generation);
+      const ownsWindow = windowRun.isCurrent;
       const recoveryFor = (queryKey: LinuxDoReadRecovery['queryKey']): LinuxDoReadRecovery => ({
         queryKey,
         isCurrent: ownsWindow,
@@ -1025,7 +983,7 @@ export function useTopicController({
         const result = await repliesQuery.refetch();
         if (!ownsWindow()) return 'stale';
         if (result.error) {
-          setReplyWindowFailure(
+          recordReplyWindowFailure(
             'refresh',
             replyFailure(selectedTopic.source, result.error, { kind: 'start' }, 'query')
           );
@@ -1215,14 +1173,14 @@ export function useTopicController({
               : { pages: filtered, pageParams };
           });
           if (reanchor && replyOrder === 'oldest') {
-            targetWindowCacheOwnedRef.current.set(replyOrder, repliesQueryKey);
+            replyWindows.recordCacheWrite(replyOrder, repliesQueryKey);
           }
           const replyCount =
             selectedTopic.source === 'nodeseek' && targetedCreatedCommand
               ? page.totalCount
               : (page.totalCount ?? refreshedDetail.replyCount);
           commitReplySnapshot(replyCount, page.replyWatermark);
-          setReplyWindowFailuresByKey({});
+          clearAllReplyWindowErrors();
           if (command.kind === 'created' && createdTarget)
             onReplyLocationResolved?.(topicLocationForReply(selectedTopic.source, createdTarget));
           if (ownsTrace) {
@@ -1250,7 +1208,7 @@ export function useTopicController({
               reason: normalizeDiagnosticReason(error)
             });
           const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
-          setReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, refreshPosition, command));
+          recordReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, refreshPosition, command));
           handleReadError(selectedTopic.source, error, recoveryFor(refreshKey), (recovery) =>
             onNodeSeekTopicVerificationRequired(sourceError.message, recovery)
           );
@@ -1261,7 +1219,7 @@ export function useTopicController({
       } catch (error) {
         if (!ownsWindow()) return 'stale';
         const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
-        setReplyWindowFailure(
+        recordReplyWindowFailure(
           'refresh',
           replyFailure(selectedTopic.source, error, capturedPosition || { kind: 'start' }, command)
         );
@@ -1272,7 +1230,7 @@ export function useTopicController({
       }
     },
     [
-      replyWindowGuard,
+      replyWindows,
       activeRepliesQueryIdentityRef,
       clearReplyWindowErrors,
       detailQuery.refetch,
@@ -1291,9 +1249,10 @@ export function useTopicController({
       replyOrder,
       repliesReadBlocked,
       selectedTopic,
-      setReplyWindowFailure,
+      recordReplyWindowFailure,
       topicDetail,
-      topicQueryKey
+      topicQueryKey,
+      clearAllReplyWindowErrors
     ]
   );
   const retryFailedReplies = useCallback(
@@ -1316,7 +1275,7 @@ export function useTopicController({
       if (typeof failure.retryMode === 'object') return refreshTopicReplies(failure.retryMode);
       if (slot !== 'refresh') {
         const result = slot === 'start' ? await repliesQuery.fetchPreviousPage() : await repliesQuery.fetchNextPage();
-        setReplyWindowFailure(
+        recordReplyWindowFailure(
           slot,
           result.error ? replyFailure(selectedTopic.source, result.error, failure.position, 'query') : null
         );
@@ -1336,7 +1295,7 @@ export function useTopicController({
       replyWindowFailures,
       repliesReadBlocked,
       selectedTopic,
-      setReplyWindowFailure
+      recordReplyWindowFailure
     ]
   );
 
@@ -1350,7 +1309,7 @@ export function useTopicController({
         : undefined;
     const slot = failedEdge || 'refresh';
     const sourceError = sourceErrorFromUnknown(selectedTopic.source, repliesQuery.error);
-    setReplyWindowFailure(
+    recordReplyWindowFailure(
       slot,
       replyFailure(
         selectedTopic.source,
@@ -1380,25 +1339,20 @@ export function useTopicController({
     repliesQueryKey,
     retryFailedReplies,
     selectedTopic,
-    setReplyWindowFailure,
+    recordReplyWindowFailure,
     topicCommands
   ]);
 
   const cancelReplyLocation = useCallback(() => {
-    const owner = replyLocationOwnerRef.current;
-    if (!owner) return;
-    replyLocationOwnerRef.current = null;
-    if (owner.generation === replyWindowGenerationRef.current) {
-      replyWindowGenerationRef.current += 1;
-    }
-    void queryClient.cancelQueries({ queryKey: owner.queryKey });
-  }, [queryClient]);
+    const queryKey = replyWindows.cancelLocation();
+    if (queryKey) void queryClient.cancelQueries({ queryKey });
+  }, [queryClient, replyWindows]);
 
   const locateReply = useCallback(
     async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
       if (!active || !topicDetail || repliesReadBlocked) return 'stale';
       if (topicLocationForReply(selectedTopic.source, target, topicDetail).kind === 'opening') {
-        replyWindowGenerationRef.current += 1;
+        replyWindows.invalidate();
         return 'completed';
       }
       const commentId =
@@ -1428,7 +1382,7 @@ export function useTopicController({
         findReplyLocation(topicReplies, normalizedTarget) &&
         (!target.readingResume || !queryClient.getQueryState(repliesQueryKey)?.isInvalidated)
       ) {
-        replyWindowGenerationRef.current += 1;
+        replyWindows.invalidate();
         return 'completed';
       }
       const targetQueryKey = [
@@ -1438,9 +1392,8 @@ export function useTopicController({
         pageHint ?? null,
         expectedAuthorUsername ?? null
       ] as const;
-      const generation = ++replyWindowGenerationRef.current;
-      replyLocationOwnerRef.current = { generation, queryKey: targetReplyQueryRoot };
-      const ownsTargetWindow = replyWindowGuard(generation);
+      const windowRun = replyWindows.beginLocation(repliesQueryIdentity, targetReplyQueryRoot);
+      const ownsTargetWindow = windowRun.isCurrent;
       const loadTargetWindow = async () => {
         if (!ownsTargetWindow()) {
           return 'stale' as const;
@@ -1494,9 +1447,9 @@ export function useTopicController({
           commitReplySnapshot(page.totalCount, page.replyWatermark);
           clearReplyWindowErrors(true);
           if (ordinaryLinuxDoTopic && target.readingResume) {
-            targetWindowCacheOwnedRef.current.delete(replyOrder);
+            replyWindows.forgetCache(replyOrder);
           } else {
-            targetWindowCacheOwnedRef.current.set(replyOrder, repliesQueryKey);
+            replyWindows.recordCacheWrite(replyOrder, repliesQueryKey);
           }
           queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
           finishDiagnosticTrace(trace, 'success', {
@@ -1540,7 +1493,7 @@ export function useTopicController({
     },
     [
       active,
-      replyWindowGuard,
+      replyWindows,
       clearReplyWindowErrors,
       handleReadError,
       commitReplySnapshot,
@@ -1556,22 +1509,21 @@ export function useTopicController({
       targetReplyQueryRoot,
       topicDetail,
       topicQueryKey,
-      topicReplies
+      topicReplies,
+      repliesQueryIdentity
     ]
   );
 
   useEffect(() => {
-    if (resolvedLocation?.kind === 'opening') replyWindowGenerationRef.current += 1;
-  }, [resolvedLocation?.kind, locationRequestId]);
+    if (resolvedLocation?.kind === 'opening') replyWindows.invalidate();
+  }, [resolvedLocation?.kind, locationRequestId, replyWindows]);
 
   useEffect(() => {
     if (!active || !targetReply || !topicDetail || repliesReadBlocked) return;
-    if (handledRouteTargetRef.current?.key === routeTargetKey) return;
-    const request = { key: routeTargetKey, queryIdentity: repliesQueryIdentity, pending: true };
-    handledRouteTargetRef.current = request;
+    if (replyWindows.hasRoute(routeTargetKey)) return;
+    const request = replyWindows.beginRoute(routeTargetKey, repliesQueryIdentity);
     void locateReply(targetReply, { silent: true }).then((outcome) => {
-      if (handledRouteTargetRef.current !== request) return;
-      request.pending = false;
+      if (!replyWindows.settleRoute(request)) return;
       if (outcome === 'completed') {
         if (!readingEntry.windowReady) readingEntry.windowLoaded();
       } else if (outcome !== 'stale') {
@@ -1585,6 +1537,7 @@ export function useTopicController({
     selectedTopic,
     repliesQueryIdentity,
     routeTargetKey,
+    replyWindows,
     targetReply,
     locationRequestId,
     active,
@@ -1600,13 +1553,13 @@ export function useTopicController({
       }
       const result = await repliesQuery.fetchPreviousPage();
       if (result.error) {
-        setReplyWindowFailure(
+        recordReplyWindowFailure(
           'start',
           replyFailure(selectedTopic.source, result.error, replyEdgePosition(result.data, 'start'), 'query')
         );
         return readOutcome(selectedTopic.source, result.error);
       }
-      setReplyWindowFailure('start', null);
+      recordReplyWindowFailure('start', null);
       const loaded = result.data?.pages[0]?.items.length || 0;
       if (!silent) notify(`已加载 ${loaded} 条${replyOrder === 'newest' ? '更新' : '更早'}回复`);
       return 'completed';
@@ -1620,7 +1573,7 @@ export function useTopicController({
       replyOrder,
       repliesReadBlocked,
       selectedTopic,
-      setReplyWindowFailure
+      recordReplyWindowFailure
     ]
   );
 
@@ -1632,13 +1585,13 @@ export function useTopicController({
       }
       const result = await repliesQuery.fetchNextPage();
       if (result.error) {
-        setReplyWindowFailure(
+        recordReplyWindowFailure(
           'end',
           replyFailure(selectedTopic.source, result.error, replyEdgePosition(result.data, 'end'), 'query')
         );
         return readOutcome(selectedTopic.source, result.error);
       }
-      setReplyWindowFailure('end', null);
+      recordReplyWindowFailure('end', null);
       const loaded = result.data?.pages.at(-1)?.items.length || 0;
       if (!silent) notify(`已加载 ${loaded} 条回复`);
       return 'completed';
@@ -1651,7 +1604,7 @@ export function useTopicController({
       repliesQueryKey,
       repliesReadBlocked,
       selectedTopic,
-      setReplyWindowFailure
+      recordReplyWindowFailure
     ]
   );
 

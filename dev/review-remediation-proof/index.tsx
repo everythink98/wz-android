@@ -84,6 +84,7 @@ import { verifyPendingPollMaterialization } from './pendingPollProof';
 import { acquireReviewProofEnvironment, finishReviewProofEnvironment, type ReviewProofFailure } from './environment';
 import { runReviewProofCheck, type ReviewProofCheck, type ReviewProofCheckResult } from './check';
 import { verificationRecoveryProofModes, verifyRecoveryProof } from './verificationRecoveryProof';
+import { readingEntryProofModes, verifyReadingEntryProof, type ReadingProofAction } from './readingEntryProof';
 
 // Isolated developer entry only. Synthetic payloads test boundaries, never upstream protocol claims.
 // HTTP fixtures use the supplied fetcher; the platform-export route uses an instrumentation-owned loopback server.
@@ -175,6 +176,7 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
   );
   let proofFailure: ReviewProofFailure = { kind: 'none' };
   const results: ReviewProofCheckResult[] = [];
+  let readingAction: ReadingProofAction | undefined;
   const write = (checkpoint: 'running' | 'grant-notifications' | 'passed' | 'failed') => {
     const file = new File(Paths.cache, 'review-remediation-proof.json');
     file.create({ overwrite: true });
@@ -185,7 +187,8 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         checkpoint,
         isDev: __DEV__,
         isHermes: 'HermesInternal' in globalThis,
-        results
+        results,
+        ...(readingAction ? { readingAction } : {})
       })
     );
     status(`${checkpoint}: ${results.length} checks`);
@@ -1406,6 +1409,37 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         );
       });
     }
+    for (const mode of readingEntryProofModes) {
+      const metrics: Record<string, unknown> = {};
+      await run(
+        `reading-native-${mode}`,
+        () =>
+          verifyReadingEntryProof(mode, {
+            mount,
+            until,
+            metrics,
+            baseGateway: userGateway('linuxdo', async () => {
+              throw new Error('Unexpected reading proof transport');
+            }),
+            requestOrder: async (action) => {
+              readingAction = action;
+              write('running');
+              if (!action) return;
+              const ack = new File(Paths.cache, `reading-proof-action-${token}.json`);
+              const deadline = Date.now() + 60000;
+              for (;;) {
+                if (ack.exists) {
+                  const result = JSON.parse(ack.textSync()) as { token?: string; id?: string; passed?: boolean };
+                  if (result.token === token && result.id === action.id && result.passed === true) return;
+                }
+                if (Date.now() > deadline) throw new Error('Production reading-order input did not acknowledge');
+                await delay();
+              }
+            }
+          }),
+        metrics
+      );
+    }
     for (const mode of verificationRecoveryProofModes) {
       await run(`verification-core-${mode}`, () =>
         verifyRecoveryProof(mode, { hook, unmount: () => mount(null), until })
@@ -1764,7 +1798,25 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
     throw error;
   } finally {
     try {
-      await finishReviewProofEnvironment(environment, proofFailure);
+      await finishReviewProofEnvironment(
+        {
+          release: async () => {
+            const released = await Promise.allSettled([
+              environment.release(),
+              Promise.resolve().then(() => {
+                for (const suffix of ['', '.tmp']) {
+                  const actionAck = new File(Paths.cache, `reading-proof-action-${token}.json${suffix}`);
+                  if (actionAck.exists) actionAck.delete();
+                }
+              })
+            ]);
+            const failures = released.filter((result) => result.status === 'rejected').map((result) => result.reason);
+            if (failures.length)
+              throw new AggregateError(failures, 'Proof environment or reading action cleanup failed');
+          }
+        },
+        proofFailure
+      );
     } finally {
       mount(null);
       appQueryClient.clear();

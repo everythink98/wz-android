@@ -13,7 +13,7 @@
 | B03 | 请求队列、代理与 Native generation | 已验收：7 项完整转换、3 项局部简化 |
 | B04 | 编辑器宿主与文档生命周期 | 已验收：8 项完整转换、5 项局部简化 |
 | B05 | 草稿、提交与互动写操作 | 已验收：11 项完整转换、2 项局部简化 |
-| B06 | 阅读入口、回复窗口与原生定位 | 待实施 |
+| B06 | 阅读入口、回复窗口与原生定位 | 已验收：7 项完整转换、4 项局部简化 |
 | B07 | 列表、搜索、用户与消息读取 | 待实施 |
 | B08 | 媒体、预览与原生资源归属 | 待实施 |
 | B09 | 本地存储、更新、后台与诊断 | 待实施 |
@@ -162,6 +162,55 @@ Native 未改，不新增 Native/Replay 通过结论。真实凭据填入、所�
 - `DEVICE_REPLAY_PASS`：匹配私有包在专用 AVD 完成 16/16 个既有隔离用例，退出 0，耗时 3m57s；三站发帖、编辑、enqueued／unknown、换站和进程恢复、富文本／源码提交后新稿、楼层回复及三站私信通过。UID 10209、首次安装时间 `2026-11-14 07:25:01` 与 versionCode 162 保持，安装 APK 与上述私有包 SHA 相同；Gboard 与动画设置恢复，运行窗口新增 AndroidRuntime fatal 为 0。专用设备为 API 35／WebView 124，主设备为 WebView 156，证据分开。业务写入由严格 Mock transport 接管，未匹配端点直接拒绝，没有真实论坛 POST 兜底。实际设备上传 begin／finish ACK 仍未验证，不外推真实远端写入或完整 82-case 矩阵。
 - 限定的 `LIVE_PASS`：普通包在可见主模拟器同签名覆盖安装，UID 10214、首次安装时间 `2026-07-26 16:51:37`、versionCode 162 保持；新 PID 22888 对应 22 条成功启动记录，真实首页有数据。安装前后实际刷新均确认妖火、NodeSeek 已登录，linux.do 保持「已验证」标签，身份仍为 `NOT_VERIFIED`。最终回到可见首页；主设备未安装私有入口，未运行真实编辑器提交或远端写入。
 
-生产代码按已验收 B04 字节逐文件统计 **+2670／−1497 行**，测试 **+266／−8 行**，整文件删除 **0**；新文件已包含，ignored 产物不计。局部代码增加换取实际归属和类型约束，不把移动、改名或增加阶段名计为删除或消除收益；文档另计。
+相对已验收 B04 提交，按 Git numstat 统计生产代码 **+3110／−1937 行**，测试 **+266／−8 行**，整文件删除 **0**；新文件已包含，ignored 产物不计。局部代码增加换取实际归属和类型约束，不把移动、改名或增加阶段名计为删除或消除收益；文档另计。
 
 实际设备上传 begin／finish ACK、全部 Native 转场交错、真实论坛写入、物理设备及数据库断电／跨进程持久性仍为 `NOT_VERIFIED`。现有 stress-image 只取消选择器，不能冒充完整上传；原协议／DOM／宿主跨层用例继续保留。Reaction、Stardust 与政策写入没有现成隔离设备场景，本批按原 UI／gateway／source 层证据验收，不追加真实远端写入。历史黑图、妖火掉线与空回复等异常未由本批关闭。日志、媒体、APK 与回执仅保留于 ignored 目录；本批不 push、不合并、不正式发布。设备与自有进程收尾按最终回执单列；不停止保留的模拟器、共享 MCP 或 ADB。
+
+## B06
+
+阅读入口、回复窗口、列表定位与相关 SDK 归属按原完整 scope 复核 30 项：**7 项完整转换、4 项局部简化、1 项重新判为保留，另 18 项原保留项维持原结论**。代码、完整门禁、普通包绑定继承、匹配私有包的 66 项设备验收和主模拟器只读流程均已通过；最终恢复及进程收尾按独立回执列明。
+
+完整转换的 7 项为 `PL-JS-reading-batch-transport`、`PL-JS-reading-verification-recovery`、`UI-NEW-011`、`ui.floor-position`、`ui.reply-edge`、`ui.reply-window`、`PL-PATCH-flash-follow-bottom`。真实调用方使用窗口、位置、边缘读取、排序菜单与阅读恢复的负责模块；原并行 ref、generation、缓存写入资格及分散 setter 已删除，未留下旧写入旁路。Query 仍负责远端数据、错误和请求生命周期，不复制网络状态。
+
+同一楼层的新命令有独立 command 身份。回复窗口读完只完成 windowReady，不能完成 positionReady；定位 owner 继续等待匹配主题与命令、实际 viewport 和列表 layout 的可见像素。已在视口内、原点或短页边界可直接确认，不强行要求额外滚动事件。计算 offset、scroll Promise 完成或目标数据存在都不能冒充到位。实际 Native 滚动事件没有应用 command ticket；本批不以 JS phase 声称能区分所有相同坐标的旧事件。
+
+边缘读取将原 phase 与 momentum 标志收敛为 idle／drag／awaiting-momentum／momentum，真实 begin/end/advance/stop 都经过 owner。物理 I/O 许可继续独立，停止手势不表示请求结束。窗口 run 与 Query key、路由命令、按排序保存的缓存资格及错误格各有明确消费者。阅读批次的 queue、Retry-After 截止、前后台许可、session 时钟及 disposed 保留独立含义；unknown POST 不自动重放，恢复仍复核 scope、batch 年龄与 beforePost。
+
+4 项局部收益与剩余职责分别为：
+
+| 原项 | 本批实际收益 | 保留的控制职责 |
+| --- | --- | --- |
+| `UI-NEW-013` | 排序菜单、选择与后续滚动命令集中到局部 owner | pending order scroll 仍是一位独立历史意图；排序、采纳答案与楼层命令未合并为统一优先级流程 |
+| `ui.accepted-answer` | 展开／全文展示收敛为当前 view 快照 | lastRequested 是已发 I/O 收据，等待采纳答案滚动仍是独立意图 |
+| `ui.topic-entry` | cached／started／settled 由同一 visit 实例拥有，保留合法重叠 | unreadBaseline 与 recordedTopicUpdate 去重仍在原 controller，已尝试但取消的 visit 不自动重放 |
+| `ui.reading-entry` | 选择续读目标、窗口就绪和位置就绪分别通过 reducer 表达 | 本地 visit 去重、异步 registration、AbortController 与 1 秒 fallback 仍有独立协议 |
+
+`ui.reply-prime` 经完整重审保留：现有 per-token pending-frame／primed 联合、具体 RAF owner、替换取消和 topic 清理已经明确；React token Map 是真实已提交渲染投影。这里没有待另造的「所有必需行完成」总流程，移动 Map 或增加 phase 不产生收益。只修正其当前分类与事实，不计实施信用；原 281 项分类从 94／183／4 调整为 **93 项计划重构、184 项保留、4 项待补证**。这些不是未完成数，原 375 项 CSV 与 ledger 保持。
+
+唯一新增产品缺陷是 FlashList 已排队的底部跟随帧越过新意图，记录为 `REG-TOPIC-222`。原代码只在排队前检查 command／projection；帧执行前若出现新命令、投影关闭或用户离开底部，旧回调仍 scrollToEnd。真实安装 dist hook 的受控 RAF oracle 在 seed `646061` 下精确 3 个失败，correction 控制通过；新 ready／queued 请求身份在执行前重核，旧帧失效，合法跟随仍恢复，correction 保持无动画。该断言证明 SDK 逻辑，不冒充真实设备已经注入三种帧竞争，也不替代既有保位、长回复对齐或旧楼层回调事故。
+
+首次官方干净重放还发现 patch 容器的 dist EOF marker 与 blob index 失配。官方 2.3.2 原文件没有末尾换行；只恢复缺失 marker 的隔离控制令 forward check 从 1 变为 0，随后修正真实 blob index。没有修改运行源码。最终 patch SHA-256 `38dd1b7fcbecc925fc89574e115a5887610a26ac0a2092768fddc811268dd402` 再经完整官方包重放通过，原失败与控制保留。
+
+设备 v1 是真实 **64/66**，两个新增阅读场景失败，不能写成通过。它们的 controller 已决定自动续读，但私有 ReadingProbe 给列表传原始 command.location（初始为空），没有像真实 TopicRoute 一样透传 readingEntry.location，导致零物理滚动命令。失败 receipt 的 entry 是窗口释放前快照，不能据此误判产品 windowReady 死锁。沿同一 ReadingProbe、真实 controller/List 和既有 Native mock 的 cold／cached canonical，seed `646063` 先证 windowReady=true 后 scroll 应 1 实 0，再将仅该 List prop 接对，2 项转绿、完整 filters 268 项通过。失败 live 标量回执补齐；未改产品、SDK、controller 输入或 command id，也未放宽 Native 像素和到位断言。既有私有类型工厂的静态校验失败与修正只记批内工具记录，均不申报产品 REG。
+
+设备 v2 后续已到达真实排序，但外部 `.ad` 缺少 session，随后核查出旧选择器把 menuitem 当 button、引用仅 mock 存在的 testID，并错误等待排序后已滚出视口的标题。最终驱动只补 plain open 复用当前 App，并按真实无障碍标签选择菜单和楼层；不 relaunch、不合成 Native 回执，也不修改生产逻辑。保留原失败和驱动契约红绿证据。v3 只改 `.ad` 与一项工具契约测试，均不在普通或私有实际 sourcemap 中；其余 1155 输入和全部编译逻辑不变，明确继承 v2 全量门禁与两份实际 APK绑定。当前 typecheck 和该工具文件 63/63（seed `646064`）补验通过，随后以新驱动真实重跑 66 项；没有虚报第三轮完整 verify、全量新增总数或重新构建。最终外部冻结 SHA-256 `02269d8ac9f73229629d2683afb1bb954db4e39cb96b626e6da10b78e0606454`。
+
+最终 v2 与 v1 源码仅差私有 helper 和该 canonical 两项输入。普通包的实际 sourcemap 不包含它们，其余 1155 个输入、10 个生产运行模块、2 个 SDK dist 与 4 个 DOM 输入及生成模块均不变，因此明确继承普通 v1 的实际构建；不宣称整个旧冻结或私有入口也未变化。
+
+本批已运行证据：
+
+- `STATIC_PASS`：最终 v2 typecheck 与完整 `npm run verify` 退出 0，绑定 1157 个输入，冻结 SHA-256 `535dc934f8bd0a6aa877f7d1851aadee780d68e21580649519ec66f037adb4fa`。verify 于 UTC 11:26:03.077–11:34:28.607 执行，日志 SHA-256 `3c4c184d4135b8685bd01be56a7eeabfeae48a6215ea2e20c6230415e661e3b8`。文档与审查数据收尾另做治理及文档检查，不冒充早先运行源码冻结的一部分。
+- `UNIT_PASS`：273 文件、4627 项，seed `1794655628410`；阅读恢复旧句柄与 receipt 负控沿原主要 owner 扩充。
+- `UI_PASS`：105 suites、3298 项，seed `-1763710769`；原 act 告警保留。最初主要 owner 428 项、fixture 接线 2 项及完整 filters 268 项按各自阶段保留证据，不与完整总数重复累加。
+- Native `UNIT_PASS`：原 SDK／键盘／WebView／picker 的 66 项按完全相同输入继承，不称为本批重跑。实际 APK 仍单独核对编译 class、R8/DEX 与 Hermes；这 66 项不能替代阅读设备流程。
+- SDK 干净重放：官方 npm FlashList 2.3.2 tarball 校验 lock integrity，完整解包 300 个文件，forward check →真实 patch-package 8.0.1→reverse check 全部退出 0；20 个补丁文件与安装树逐字相同，包含 source/dist。证据 SHA-256 `1a648728fb93cb96cc1f2f494a989746026eccffc8a58e5b30a3b1e0d3609061`。只证明这一包；17 套最终重放仍归 B10。
+- `APK_SANITY`：普通 v1 构建 4m03s，APK SHA-256 `215bee6f47d77f92a5c5f8edf177649654b13d5169ef373d5cbe9eb74a238dca`，buildId `271ba9aa4c7f4f52bdcc209ff0cd684a`；按上述实际 map 和输入复核继承。私有 v2 构建 3m43s，APK SHA-256 `668a7e0309d47a41ca0587fe26fd13f02b980c37bb1e6758cf74eea3cf56c5c5`，buildId `48a4c7c5e49f403ea04218817b33d7db`，17 个直接模块、4 个 DOM 输入、RNC 编译产物及 Hermes 另行绑定；专用设备保持其 158 版本码，不改源码 162 或主设备身份。
+- `DEVICE_REPLAY_PASS`：匹配私有 v2 APK 由最终外部 v3 驱动完成 66/66，退出 0，UTC 11:58:27.855–12:02:36.173（4m08s），日志 SHA-256 `d6a2c5b9e8ee1b82434b0d9c5ea63c4ba84f6b38746b957c2f82147d0faef3c1`。真实 controller→窗口→FlashList→Native 的 cold／cached 场景分别暂存物理命令，验证窗口完成不能结束定位，再放行并检查实际像素、同目标新命令和旧布局坐标负控。实际排序菜单的八张前后截图已逐张目视核对：冷／缓存均由正序首条 #2 切倒序首条 #40，再切回正序首条 #2。UID 10209、首次安装时间 `2026-09-10 04:04:05` 保持；Native 无 command ticket 的协议限制仍保留。
+- 设备 v1 恢复证据：失败后原九文件逻辑恢复完成，独立只读逐项核对 SHA 和实际 mode 666 均为 9/9。通知权限 v1 未保存前态，恢复前后相等为 `NOT_VERIFIED`；不能用期望配置或当前单次状态冒充 equality。v2 及最终 v3 均保存原始前后 POST_NOTIFICATIONS 行与 flags，逐字一致（granted=false），permissionRestored=true；它们不补写缺失的 v1 前态。
+- 限定的 `LIVE_PASS`：普通 215 包在可见主模拟器覆盖启动，UID 10214、首次安装时间 `2026-07-26 16:51:37`、versionCode 162 与 WebView 156 保持，PID 23908 对应 22 条成功启动记录。真实 NodeSeek 列表已加载，原生菜单切倒序首条 #6、切正序首条 #1，Back 返回原首页，缓存重开显示主题头部后再返回。安装前后实际刷新妖火、NodeSeek 均已登录，linux.do 标签保持「已验证」，身份仍未独立确认；最终可见首页。该段不宣称主设备验证了保存楼层续读、floor16 定位或真实写入。
+
+相对已验收 B05，按 Git numstat 分开统计：生产代码 **+1086／−727 行**（净增 359），测试 **+275／−3**，私有 fixture **+676／−2**，验证工具 **+93／−1**，patch 文本 **+69／−13**，整文件删除 **0**。安装 SDK 副本不重复计数，文档另计；不把移动或阶段名算作消除成果。B05 行数说明同时按 Git numstat 更正为生产 +3110／−1937，净增仍为 1173，原 difflib 回执保留。
+
+真实远端 reading POST、真实论坛写入、全部来源的动态导航／排序／缓存矩阵、所有 Native 帧交错和物理设备仍为 `NOT_VERIFIED`；当前 66 项受控设备场景也不代表这些范围全部覆盖。历史黑图、妖火掉线、空回复及其它定位事故未由本批关闭。日志、媒体、APK、数据库与权限回执仅在 ignored 目录保存；最终九文件恢复后由独立只读审计逐项核对 SHA 与实际 mode，9/9 一致；随后同版本覆盖回装原 C8 APK（SHA-256 `c8c60cf669254c81802c93bdeee8dfcab65beedf9847739a55b5946f46f8624c`），UID、首次安装时间、158／1.3.154 与原签名保持。任务拥有的 ReaderStorage 模拟器按 PID、父进程、出生时间和 AVD 核验后正常关闭，数据保留。中断后收尾发现主模拟器旧 PID 61344 已不存在，原因未建立；Reader 关闭命令已成功，收尾脚本在随后 Main 断言退出 1，不能据此把 Reader 关闭写成失败，也不能宣称 Main 原进程始终保留。未停止未知进程、共享 MCP 或 ADB。本批不 push、不合并、不正式发布。
+
+主模拟器按既有 AVD、无 snapshot load/save 重新可见打开，没有重装或清数据。重新核对仍为普通 215 包、UID 10214、首次安装时间 `2026-07-26 16:51:37`、162／1.3.158，当前 App PID 3043。重开初始 linux.do 标签为「匿名可用」，显式刷新后妖火与 NodeSeek 已登录、linux.do「已验证」；该标签仍不证明 linux.do 身份，也没有给初始变化归因。最终实际返回有数据首页，主窗口可见；未执行论坛写入。

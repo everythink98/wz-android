@@ -35,6 +35,7 @@ export const REVIEW_CHECK_NAMES = [
   'user-race-refresh-first',
   'feed-native-host-cold-success',
   'feed-native-host-cold-failure',
+  ...['cold', 'cached'].map((mode) => `reading-native-${mode}`),
   ...['cancel-reopen', 'inactive', 'scope-change', 'unmount'].map((sample) => `verification-core-${sample}`),
   ...['identity', 'epoch', 'source', 'surface'].map((sample) => `write-csrf-${sample}`),
   'write-native-proxy-preparation',
@@ -63,6 +64,51 @@ export function completeReviewProofResults(results) {
     new Set(results.map((result) => result?.name)).size === expectedChecks.size &&
     results.every((result) => expectedChecks.has(result?.name) && result.passed === true)
   );
+}
+
+export function completeReadingEntryMetrics(results) {
+  if (!Array.isArray(results)) return false;
+  return ['cold', 'cached'].every((mode) => {
+    const matches = results.filter((result) => result?.name === `reading-native-${mode}`);
+    if (matches.length !== 1 || matches[0].passed !== true) return false;
+    const reading = matches[0].metrics?.reading;
+    return (
+      reading?.mode === mode &&
+      Number.isInteger(reading.nativeHost) &&
+      reading.nativeHost > 0 &&
+      reading.entry?.ready === true &&
+      reading.entry.windowReady === false &&
+      reading.entry.positionReady === false &&
+      reading.windowBeforeNative?.heldCommands > 0 &&
+      reading.windowBeforeNative.positionReady === false &&
+      reading.obsoleteOffset?.completed === 0 &&
+      reading.obsoleteOffset.currentPixel >= reading.obsoleteOffset.height &&
+      reading.finalTarget?.command === 2 &&
+      reading.finalTarget.pixel >= -1 &&
+      reading.finalTarget.pixel < reading.finalTarget.height &&
+      Array.isArray(reading.native) &&
+      reading.native.length > 0 &&
+      reading.native.every(
+        (event) => Number.isFinite(event.offset) && event.height > 0 && Number.isFinite(event.timestamp)
+      ) &&
+      Array.isArray(reading.positions) &&
+      reading.positions.length === 2 &&
+      [1, 2].every((id) => reading.positions.filter((position) => position.command === id).length === 1) &&
+      Array.isArray(reading.orders) &&
+      reading.orders.length === 2 &&
+      reading.orders[0].order === 'newest' &&
+      reading.orders[0].firstFloor === 40 &&
+      reading.orders[1].order === 'oldest' &&
+      reading.orders[1].firstFloor === 2 &&
+      reading.orders.every(
+        (order) =>
+          order.uiAcknowledged === true &&
+          order.nativeHost === reading.nativeHost &&
+          order.pixel >= -1 &&
+          order.pixel < order.height
+      )
+    );
+  });
 }
 
 export const layouts = [
