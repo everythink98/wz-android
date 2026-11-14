@@ -13,6 +13,7 @@ import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame';
 import type { SearchStyles } from './styles';
+import { createSearchPickerSession } from './searchPickerSession';
 
 type SearchTagCandidatesRequest = {
   categoryId?: string;
@@ -129,14 +130,46 @@ export function useDiscourseFilterPickers({
     options: SearchUserCandidatesRequest & { signal?: AbortSignal }
   ) => Promise<DiscourseUserOption[]>;
 }) {
-  const [tagPickerVisible, setTagPickerVisible] = useState(false);
-  const [tagQuery, setTagQuery] = useState('');
-  const [debouncedTagQuery, setDebouncedTagQuery] = useState<string | null>(null);
+  const [tagSession] = useState(() => createSearchPickerSession('tags'));
+  const [tagView, setTagView] = useState(tagSession.snapshot);
+  const { visible: tagPickerVisible, query: tagQuery, submitted: debouncedTagQuery } = tagView;
+  const publishTags = useCallback(() => setTagView(tagSession.snapshot), [tagSession]);
+  const closeTags = useCallback(() => {
+    tagSession.close();
+    publishTags();
+  }, [publishTags, tagSession]);
+  const openTags = useCallback(() => {
+    tagSession.open();
+    publishTags();
+  }, [publishTags, tagSession]);
+  const changeTagQuery = useCallback(
+    (query: string) => {
+      tagSession.edit(query);
+      publishTags();
+    },
+    [publishTags, tagSession]
+  );
   const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
   const [categoryQuery, setCategoryQuery] = useState('');
-  const [userPickerVisible, setUserPickerVisible] = useState(false);
-  const [userQuery, setUserQuery] = useState('');
-  const [debouncedUserQuery, setDebouncedUserQuery] = useState<string | null>(null);
+  const [userSession] = useState(() => createSearchPickerSession('users'));
+  const [userView, setUserView] = useState(userSession.snapshot);
+  const { visible: userPickerVisible, query: userQuery, submitted: debouncedUserQuery } = userView;
+  const publishUsers = useCallback(() => setUserView(userSession.snapshot), [userSession]);
+  const closeUsers = useCallback(() => {
+    userSession.close();
+    publishUsers();
+  }, [publishUsers, userSession]);
+  const openUsers = useCallback(() => {
+    userSession.open();
+    publishUsers();
+  }, [publishUsers, userSession]);
+  const changeUserQuery = useCallback(
+    (query: string) => {
+      userSession.edit(query);
+      publishUsers();
+    },
+    [publishUsers, userSession]
+  );
   const discourseSource = discourseDraft?.source;
   const discourseCategories = useMemo(
     () => (discourseSource ? categories.filter((category) => category.source === discourseSource) : []),
@@ -155,29 +188,36 @@ export function useDiscourseFilterPickers({
   }, [categoryNames, categoryQuery, discourseCategories]);
 
   const closeAll = useCallback(() => {
-    setTagPickerVisible(false);
+    closeTags();
     setCategoryPickerVisible(false);
-    setUserPickerVisible(false);
-  }, []);
+    closeUsers();
+  }, [closeTags, closeUsers]);
 
   useEffect(() => {
     closeAll();
   }, [closeAll, discourseSource, filterSheetVisible]);
 
   useEffect(() => {
-    setDebouncedTagQuery(null);
-    if (!tagPickerVisible) return;
-    const timer = setTimeout(() => setDebouncedTagQuery(tagQuery), 300);
+    const ticket = tagSession.debounce();
+    publishTags();
+    if (!ticket) return;
+    const timer = setTimeout(() => {
+      tagSession.submitted(ticket);
+      publishTags();
+    }, 300);
     return () => clearTimeout(timer);
-  }, [tagPickerVisible, tagQuery]);
+  }, [tagPickerVisible, tagQuery, tagSession, publishTags]);
 
   useEffect(() => {
-    setDebouncedUserQuery(null);
-    const term = userQuery.trim();
-    if (!userPickerVisible || !term) return;
-    const timer = setTimeout(() => setDebouncedUserQuery(term), 300);
+    const ticket = userSession.debounce();
+    publishUsers();
+    if (!ticket) return;
+    const timer = setTimeout(() => {
+      userSession.submitted(ticket);
+      publishUsers();
+    }, 300);
     return () => clearTimeout(timer);
-  }, [userPickerVisible, userQuery]);
+  }, [userPickerVisible, userQuery, userSession, publishUsers]);
 
   const candidates = useSearchCandidateQueries({
     sessionEpochs,
@@ -222,31 +262,25 @@ export function useDiscourseFilterPickers({
       visible: categoryPickerVisible
     },
     tags: {
-      close: () => setTagPickerVisible(false),
+      close: closeTags,
       error: !tagDebouncing && candidates.tags.error ? '标签候选加载失败' : '',
       loading: tagDebouncing || candidates.tags.loading,
-      open: () => {
-        setTagQuery('');
-        setTagPickerVisible(true);
-      },
+      open: openTags,
       options: tagDebouncing ? [] : candidates.tags.options,
       query: tagQuery,
       retry: candidates.tags.retry,
-      setQuery: setTagQuery,
+      setQuery: changeTagQuery,
       visible: tagPickerVisible
     },
     users: {
-      close: () => setUserPickerVisible(false),
+      close: closeUsers,
       error: !userDebouncing && candidates.users.error ? '作者候选加载失败' : '',
       loading: userDebouncing || candidates.users.loading,
-      open: () => {
-        setUserQuery('');
-        setUserPickerVisible(true);
-      },
+      open: openUsers,
       options: userDebouncing ? [] : candidates.users.options,
       query: userQuery,
       retry: candidates.users.retry,
-      setQuery: setUserQuery,
+      setQuery: changeUserQuery,
       visible: userPickerVisible
     }
   };

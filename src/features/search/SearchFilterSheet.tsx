@@ -6,8 +6,6 @@ import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { sourceLabel } from '@/domain/forum/presentation';
 import {
-  defaultSearchFilterForSource,
-  discourseSearchFilterError,
   isDiscourseSearchFilter,
   searchFilterForSource,
   type DiscourseVisitedFilter,
@@ -20,6 +18,7 @@ import { ModalSheetFrame, ModalSheetHeader } from '@/ui/controls/ModalSheetFrame
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { DiscourseFilterPickers, useDiscourseFilterPickers } from './DiscourseFilterPickers';
 import { hasDiscourseAdvancedFilters, SearchFilterForm } from './SearchFilterForm';
+import { createSearchFilterEdit } from './searchFilterEdit';
 
 function sourceCategories(categories: Category[], source: Source) {
   return categories.filter((category) => category.source === source);
@@ -97,50 +96,49 @@ export function SearchFilterSheet({
 }) {
   const { height } = useWindowDimensions();
   const filterBodyStyle = { maxHeight: Math.max(320, Math.round(height * 0.58)) };
-  const [draftFilter, setDraftFilter] = useState<SourceSearchFilter>(() =>
-    searchFilterForSource(searchFilters, source)
+  const [editSession] = useState(() => createSearchFilterEdit(searchFilterForSource(searchFilters, source)));
+  const [editView, setEditView] = useState(editSession.snapshot);
+  const { draft: draftFilter, error: filterError, visible, more: moreVisible } = editView;
+  const publishEdit = useCallback(() => setEditView(editSession.snapshot), [editSession]);
+  const close = useCallback(() => {
+    editSession.close();
+    publishEdit();
+  }, [editSession, publishEdit]);
+  const moreChanged = useCallback(
+    (value: boolean) => {
+      editSession.moreChanged(value);
+      publishEdit();
+    },
+    [editSession, publishEdit]
   );
-  const [filterError, setFilterError] = useState('');
-  const [visible, setVisible] = useState(false);
-  const [moreVisible, setMoreVisible] = useState(false);
   const scrollOffsetRef = useRef({ x: 0, y: 0 });
   const nodeSeekCategoryItems = useMemo(() => categoryOptions(categories, 'nodeseek'), [categories]);
   const yaohuoCategoryItems = useMemo(() => categoryOptions(categories, 'yaohuo'), [categories]);
 
   useEffect(() => {
-    if (visible) {
-      const filter = searchFilterForSource(searchFilters, source);
-      setDraftFilter(
-        isDiscourseSearchFilter(filter)
-          ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
-          : { ...filter }
-      );
-      setFilterError('');
-      setMoreVisible(hasDiscourseAdvancedFilters(filter));
-    }
-  }, [searchFilters, source, visible]);
-
-  const updateDraft = useCallback((partial: Partial<SourceSearchFilter>) => {
-    setFilterError('');
-    setDraftFilter((current) => ({ ...current, ...partial }) as SourceSearchFilter);
-  }, []);
-
+    const filter = searchFilterForSource(searchFilters, source);
+    editSession.observe(filter, hasDiscourseAdvancedFilters(filter));
+    publishEdit();
+  }, [editSession, publishEdit, searchFilters, source]);
+  const updateDraft = useCallback(
+    (partial: Partial<SourceSearchFilter>) => {
+      editSession.edit(partial);
+      publishEdit();
+    },
+    [editSession, publishEdit]
+  );
   const resetDraft = useCallback(() => {
-    setDraftFilter(defaultSearchFilterForSource(source));
-    setFilterError('');
-  }, [source]);
-
+    editSession.reset(source);
+    publishEdit();
+  }, [editSession, publishEdit, source]);
   const applyDraft = useCallback(() => {
-    if (isDiscourseSearchFilter(draftFilter)) {
-      const error = discourseSearchFilterError(draftFilter);
-      if (error) {
-        setFilterError(error);
-        return;
-      }
-    }
-    onApply(source, draftFilter);
-    setVisible(false);
-  }, [draftFilter, onApply, source]);
+    const filter = editSession.validate();
+    publishEdit();
+    if (!filter) return;
+    onApply(source, filter);
+    close();
+  }, [close, editSession, onApply, publishEdit, source]);
+
   const discourseDraft = isDiscourseSearchFilter(draftFilter) ? draftFilter : null;
   const pickers = useDiscourseFilterPickers({
     categories,
@@ -153,39 +151,27 @@ export function SearchFilterSheet({
     searchDiscourseUsers: onSearchDiscourseUsers
   });
 
-  const toggleTag = useCallback((name: string) => {
-    setFilterError('');
-    setDraftFilter((current) => {
-      if (!isDiscourseSearchFilter(current)) {
-        return current;
-      }
-      const tags = current.tags.includes(name) ? current.tags.filter((tag) => tag !== name) : [...current.tags, name];
-      return { ...current, tags };
-    });
-  }, []);
-
-  const toggleVisited = useCallback((value: DiscourseVisitedFilter) => {
-    setFilterError('');
-    setDraftFilter((current) => {
-      if (!isDiscourseSearchFilter(current)) {
-        return current;
-      }
-      const visited = current.visited.includes(value)
-        ? current.visited.filter((item) => item !== value)
-        : [...current.visited, value];
-      return { ...current, visited };
-    });
-  }, []);
-
-  const updateLinuxDoExpertResponse = useCallback((expertResponse: boolean) => {
-    setFilterError('');
-    setDraftFilter((current) => {
-      if (!isDiscourseSearchFilter(current)) {
-        return current;
-      }
-      return { ...current, expertResponse };
-    });
-  }, []);
+  const toggleTag = useCallback(
+    (name: string) => {
+      editSession.toggleTag(name);
+      publishEdit();
+    },
+    [editSession, publishEdit]
+  );
+  const toggleVisited = useCallback(
+    (value: DiscourseVisitedFilter) => {
+      editSession.toggleVisited(value);
+      publishEdit();
+    },
+    [editSession, publishEdit]
+  );
+  const updateLinuxDoExpertResponse = useCallback(
+    (value: boolean) => {
+      editSession.expertResponseChanged(value);
+      publishEdit();
+    },
+    [editSession, publishEdit]
+  );
 
   return (
     <>
@@ -196,7 +182,9 @@ export function SearchFilterSheet({
         style={[styles.searchFilterEntry, summary !== '默认' && styles.searchFilterEntryActive]}
         onPress={() => {
           scrollOffsetRef.current = { x: 0, y: 0 };
-          setVisible(true);
+          const filter = searchFilterForSource(searchFilters, source);
+          editSession.open(filter, hasDiscourseAdvancedFilters(filter));
+          publishEdit();
         }}
       >
         <View style={styles.searchFilterEntryIcon}>
@@ -211,13 +199,13 @@ export function SearchFilterSheet({
         </Text>
         <ChevronDown size={16} color={theme.muted} strokeWidth={1.7} />
       </Pressable>
-      <ModalSheetFrame backdropLabel="关闭筛选" visible={visible} onRequestClose={() => setVisible(false)}>
+      <ModalSheetFrame backdropLabel="关闭筛选" visible={visible} onRequestClose={close}>
         <ModalSheetHeader
           title="筛选"
           subtitle={sourceLabel(source)}
           closeLabel="关闭筛选"
           closeTestID="search-filter-close"
-          onClose={() => setVisible(false)}
+          onClose={close}
         />
         <SearchFilterBody
           scrollOffsetRef={scrollOffsetRef}
@@ -230,7 +218,7 @@ export function SearchFilterSheet({
             filterSheetVisible={visible}
             moreVisible={moreVisible}
             nodeSeekCategoryItems={nodeSeekCategoryItems}
-            onMoreVisibleChange={setMoreVisible}
+            onMoreVisibleChange={moreChanged}
             openCategoryPicker={pickers.category.open}
             openTagPicker={pickers.tags.open}
             openUserPicker={pickers.users.open}

@@ -1,4 +1,5 @@
 import { ActivityIndicator, Button } from 'react-native-paper';
+import { createUserListInteraction } from './userListInteraction';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -234,60 +235,56 @@ export const UserScreen = memo(function UserScreen({
   const replyItems = useMemo(() => createUserListItems('replies', EMPTY_TOPICS, replies), [replies]);
   const listItems = profile ? (userTab === 'topics' ? topicItems : replyItems) : EMPTY_LIST_ITEMS;
   const listRef = useRef<FlatList<UserListItem> | null>(null);
-  const autoLoadArmedRef = useRef(false);
-  const pendingScrollTopRef = useRef(false);
+  const [listInteraction] = useState(createUserListInteraction);
   const userAuthNotice = useMemo(() => (error ? authNoticeForSourceError(error) : null), [error]);
   useEffect(() => {
     setBioExpanded(false);
   }, [userIdentity]);
   useEffect(() => {
-    autoLoadArmedRef.current = false;
+    listInteraction.disarm();
     setUserTab(initialTab);
-  }, [initialTab, user?.id, user?.source, user?.username]);
+  }, [initialTab, user?.id, user?.source, user?.username, listInteraction]);
   const scrollListToTop = useCallback(() => {
     if (!listRef.current) {
-      pendingScrollTopRef.current = true;
+      listInteraction.requestReset();
       return;
     }
     listRef.current.scrollToOffset({ offset: 0, animated: false });
-    pendingScrollTopRef.current = false;
-  }, []);
+    listInteraction.resetCompleted();
+  }, [listInteraction]);
   const completePendingScrollReset = useCallback(() => {
-    if (pendingScrollTopRef.current) {
+    if (listInteraction.needsReset) {
       scrollListToTop();
     }
-  }, [scrollListToTop]);
+  }, [scrollListToTop, listInteraction]);
   useEffect(() => {
-    autoLoadArmedRef.current = false;
-    pendingScrollTopRef.current = true;
+    listInteraction.requestReset();
     const frame = requestAnimationFrame(completePendingScrollReset);
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [completePendingScrollReset, user?.id, user?.source, user?.username, userTab]);
+  }, [completePendingScrollReset, user?.id, user?.source, user?.username, userTab, listInteraction]);
   const armAutoLoad = useCallback(() => {
-    pendingScrollTopRef.current = false;
-    autoLoadArmedRef.current = true;
-  }, []);
+    listInteraction.dragged();
+  }, [listInteraction]);
   const changeUserTab = useCallback(
     (value: string) => {
       const nextTab: UserActivityTab = value === 'replies' ? 'replies' : 'topics';
       if (nextTab === userTab) {
         return;
       }
-      autoLoadArmedRef.current = false;
-      pendingScrollTopRef.current = true;
+      listInteraction.requestReset();
       setUserTab(nextTab);
     },
-    [userTab]
+    [userTab, listInteraction]
   );
   const handleEndReached = useCallback(() => {
     const hasMore = userTab === 'replies' ? profile?.hasMoreReplies : profile?.hasMoreTopics;
     const loadingMore = userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics;
-    if (!hasMore || busy || loadingMore || !autoLoadArmedRef.current) {
+    if (!hasMore || busy || loadingMore) {
       return;
     }
-    autoLoadArmedRef.current = false;
+    if (!listInteraction.consumePage()) return;
     if (userTab === 'replies') {
       onLoadMoreReplies();
     } else {
@@ -301,16 +298,17 @@ export const UserScreen = memo(function UserScreen({
     onLoadMoreTopics,
     profile?.hasMoreReplies,
     profile?.hasMoreTopics,
-    userTab
+    userTab,
+    listInteraction
   ]);
   const requestUserTopicLoadMore = useCallback(() => {
-    autoLoadArmedRef.current = false;
+    listInteraction.disarm();
     if (userTab === 'replies') {
       onLoadMoreReplies();
     } else {
       onLoadMoreTopics();
     }
-  }, [onLoadMoreReplies, onLoadMoreTopics, userTab]);
+  }, [onLoadMoreReplies, onLoadMoreTopics, userTab, listInteraction]);
   const profileHeader = useMemo(() => {
     const isNodeSeek = user?.source === 'nodeseek';
     const actionMinWidth = Math.round((isNodeSeek ? 72 : 88) * settings.fontScale * fontScale);

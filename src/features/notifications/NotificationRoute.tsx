@@ -4,6 +4,10 @@ import {
   type PolicyOperationSnapshot
 } from '@/domain/forum/discoursePolicyOperation';
 import { useNotificationReplyOperation } from './useNotificationReplyOperation';
+import { createNotificationRecoveryOwner } from './notificationRecoveryOwner';
+import { createNotificationListReads } from './notificationListReads';
+import { createNotificationReadReceipt } from './notificationReadReceipt';
+import { createNotificationConversationHistory } from './notificationConversationHistory';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert } from 'react-native';
@@ -18,7 +22,7 @@ import type { SourceErrorInfo, Topic, TopicLocationTarget, UserReference } from 
 import { isRecord } from '@/domain/forum/html';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource, sourceCatalog } from '@/domain/forum/sourceCatalog';
-import type { ForumNotification, NotificationMessage } from '@/domain/notifications/models';
+import type { ForumNotification } from '@/domain/notifications/models';
 import { notificationPageError } from '@/domain/notifications/notificationQuality';
 
 import type {
@@ -73,10 +77,6 @@ type NotificationMarkAllRun = {
   controller: AbortController;
 };
 
-type NotificationMarkState =
-  | { phase: 'idle' | 'confirmed' | 'retryable' }
-  | { phase: 'pending'; attempt: { controller: AbortController; messageIds: string[] } };
-
 export function NotificationsRoute({
   navigation,
   route
@@ -98,10 +98,10 @@ export function NotificationsRoute({
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [markAllBusy, setMarkAllBusy] = useState(false);
   const markAllRef = useRef<{ phase: 'idle' } | NotificationMarkAllRun>({ phase: 'idle' });
-  const [refreshing, setRefreshing] = useState(false);
-  const refreshRequestRef = useRef<object | undefined>(undefined);
-  const retryControllerRef = useRef<AbortController | undefined>(undefined);
-  const recoveryIntentRef = useRef<{ controller: AbortController; pending: boolean } | undefined>(undefined);
+  const [listReads] = useState(createNotificationListReads);
+  const [refreshing, setRefreshing] = useState(listReads.refreshing);
+  const publishRefresh = useCallback(() => setRefreshing(listReads.refreshing), [listReads]);
+  const [listRecoveries] = useState(createNotificationRecoveryOwner);
   const latestRuntimeRef = useCommittedRef(runtime);
   const cancelMarkAll = useCallback(() => {
     const current = markAllRef.current;
@@ -120,12 +120,11 @@ export function NotificationsRoute({
   useEffect(() => {
     if (source === 'all' || runtime.enabledNotificationSources.includes(source)) return;
     cancelMarkAll();
-    retryControllerRef.current?.abort();
-    retryControllerRef.current = undefined;
+    listReads.cancelRetry();
     void queryClient.cancelQueries({ queryKey: forumQueryKeys.notifications(source) });
     setCategoryId('');
     setSource('all');
-  }, [cancelMarkAll, enabledSourcesKey, queryClient, runtime.enabledNotificationSources, source]);
+  }, [cancelMarkAll, enabledSourcesKey, queryClient, runtime.enabledNotificationSources, source, listReads]);
   useFocusEffect(
     useCallback(() => {
       setCenterVisible(true);
@@ -172,8 +171,7 @@ export function NotificationsRoute({
   useEffect(
     () => () => {
       cancelMarkAll();
-      retryControllerRef.current?.abort();
-      retryControllerRef.current = undefined;
+      listReads.cancelRetry();
     },
     [
       cancelMarkAll,
@@ -184,22 +182,22 @@ export function NotificationsRoute({
       unreadOnly,
       isFocused,
       runtime.ready,
-      sourceAvailable
+      sourceAvailable,
+      listReads
     ]
   );
   useEffect(
     () => () => {
-      refreshRequestRef.current = undefined;
-      setRefreshing(false);
+      listReads.invalidateRefresh();
+      publishRefresh();
     },
-    [identityKey, source, categoryId, unreadOnly, isFocused, runtime.ready, sourceAvailable]
+    [identityKey, source, categoryId, unreadOnly, isFocused, runtime.ready, sourceAvailable, listReads, publishRefresh]
   );
   useEffect(
     () => () => {
-      recoveryIntentRef.current?.controller.abort();
-      recoveryIntentRef.current = undefined;
+      listRecoveries.cancel();
     },
-    [source, categoryId, unreadOnly, isFocused]
+    [source, categoryId, unreadOnly, isFocused, listRecoveries]
   );
   const listQueryKey = forumQueryKeys.notificationList({
     source,
@@ -323,7 +321,7 @@ export function NotificationsRoute({
       !runtime.ready ||
       !sourceAvailable ||
       !hasNextPage ||
-      refreshRequestRef.current ||
+      listReads.refreshing ||
       (source !== 'all' && !categoryId)
     )
       return;
@@ -399,14 +397,13 @@ export function NotificationsRoute({
   }, [errors, listQuery.data, runtime.activeSources, source]);
   const refetch = listQuery.refetch;
   const refresh = useLatestCallback(() => {
-    if (!isFocused || !runtime.ready || !sourceAvailable || refreshRequestRef.current) return;
-    const request = {};
-    refreshRequestRef.current = request;
-    setRefreshing(true);
+    if (!isFocused || !runtime.ready || !sourceAvailable || listReads.refreshing) return;
+    const request = listReads.beginRefresh();
+    if (!request) return;
+    publishRefresh();
     void Promise.allSettled([refetch(), refreshSnapshots()]).finally(() => {
-      if (refreshRequestRef.current !== request) return;
-      refreshRequestRef.current = undefined;
-      setRefreshing(false);
+      listReads.finishRefresh(request);
+      publishRefresh();
     });
   });
   const retryReadSource = useCallback(
@@ -414,11 +411,9 @@ export function NotificationsRoute({
       const expectedIdentityKey = runtime.identityKeys[candidate];
       const epoch = runtime.sessionEpochs[candidate];
       if (!expectedIdentityKey || !runtime.activeSources.includes(candidate)) return 'stale';
-      const controller = new AbortController();
-      retryControllerRef.current?.abort();
-      retryControllerRef.current = controller;
+      const controller = listReads.beginRetry();
       const current = () =>
-        !controller.signal.aborted &&
+        listReads.ownsRetry(controller) &&
         latestRuntimeRef.current.identityKeys[candidate] === expectedIdentityKey &&
         latestRuntimeRef.current.sessionEpochs[candidate] === epoch &&
         latestRuntimeRef.current.enabledNotificationSources.includes(candidate);
@@ -514,7 +509,7 @@ export function NotificationsRoute({
           );
         return info.kind === 'verification-required' ? 'verification-required' : 'failed';
       } finally {
-        if (retryControllerRef.current === controller) retryControllerRef.current = undefined;
+        listReads.finishRetry(controller);
       }
     },
     [
@@ -526,19 +521,18 @@ export function NotificationsRoute({
       queryClient,
       runtime,
       source,
-      unreadOnly
+      unreadOnly,
+      listReads
     ]
   );
   const retrySource = useCallback(
     (candidate: NotificationSource) => {
-      if (!isFocused || !runtime.enabledNotificationSources.includes(candidate) || recoveryIntentRef.current?.pending)
-        return;
-      recoveryIntentRef.current?.controller.abort();
-      const intent = { controller: new AbortController(), pending: true };
-      recoveryIntentRef.current = intent;
+      if (!isFocused || !runtime.enabledNotificationSources.includes(candidate) || listRecoveries.pending) return;
+      const intent = listRecoveries.begin();
+      if (!intent) return;
       const epoch = runtime.sessionEpochs[candidate];
       const current = () =>
-        !intent.controller.signal.aborted &&
+        listRecoveries.current(intent) &&
         latestRuntimeRef.current.enabledNotificationSources.includes(candidate) &&
         latestRuntimeRef.current.sessionEpochs[candidate] === epoch;
       const recovery: LinuxDoReadRecovery = {
@@ -580,7 +574,7 @@ export function NotificationsRoute({
           if (current()) runtime.notify(errorMessage(error));
         })
         .finally(() => {
-          if (recoveryIntentRef.current === intent) intent.pending = false;
+          listRecoveries.settled(intent);
         });
     },
     [
@@ -592,7 +586,8 @@ export function NotificationsRoute({
       listQueryKey,
       retryReadSource,
       runtime,
-      source
+      source,
+      listRecoveries
     ]
   );
   const markAll = useCallback(() => {
@@ -770,11 +765,9 @@ function EnabledNotificationDetailRoute({
   const gateway = runtime.gateway;
   const notify = runtime.notify;
   const refreshSnapshots = runtime.refreshSnapshots;
-  const markStateRef = useRef<NotificationMarkState>({ phase: 'idle' });
-  const markAttemptedThisVisit = useRef(false);
-  const attemptedMessageIds = useRef(new Set<string>());
-  const confirmedMessageIds = useRef(new Set<string>());
-  const [markPhase, setMarkPhase] = useState(markStateRef.current.phase);
+  const [readReceipt] = useState(createNotificationReadReceipt);
+  const [markPhase, setMarkPhase] = useState(readReceipt.phase);
+  const publishMark = useCallback(() => setMarkPhase(readReceipt.phase), [readReceipt]);
 
   const composerControllersRef = useRef(new Set<AbortController>());
   const routeFocused = useIsFocused();
@@ -815,38 +808,24 @@ function EnabledNotificationDetailRoute({
   const [policyError, setPolicyError] = useState('');
   const [policyStatus, setPolicyStatus] = useState('');
 
-  const [messageHistory, setMessageHistory] = useState<{
-    sessionEpoch: number;
-    messages: NotificationMessage[];
-    olderCursor: string | null;
-    consumedCursors: string[];
-    blocked?: boolean;
-  }>();
-  const historyRef = useCommittedRef(messageHistory);
-  const historyControllerRef = useRef<
-    | { controller: AbortController; resetting: true }
-    | { controller: AbortController; resetting: false; cursor: string }
-    | undefined
-  >(undefined);
+  const [historyFlow] = useState(createNotificationConversationHistory);
+  const [historyView, setHistoryView] = useState(historyFlow.snapshot);
+  const { history: messageHistory, busy: historyBusy, error: historyError } = historyView;
+  const publishHistory = useCallback(() => setHistoryView(historyFlow.snapshot), [historyFlow]);
   const historyScopeRef = useCommittedRef({ canAccessSource, routeFocused, sessionEpoch: replySessionEpoch });
-  const [historyBusy, setHistoryBusy] = useState(false);
-  const [historyError, setHistoryError] = useState('');
   useLayoutEffect(() => {
-    const request = historyControllerRef.current;
-    if (!request || request.resetting || messageHistory?.consumedCursors.at(-1) !== request.cursor) return;
-    historyControllerRef.current = undefined;
-    setHistoryBusy(false);
-  }, [messageHistory]);
+    historyFlow.observedCommit(messageHistory);
+    publishHistory();
+  }, [historyFlow, messageHistory, publishHistory]);
   const cancelHistory = useCallback(() => {
-    historyControllerRef.current?.controller.abort();
-    historyControllerRef.current = undefined;
-    setHistoryBusy(false);
-  }, []);
+    historyFlow.cancel();
+    publishHistory();
+  }, [historyFlow, publishHistory]);
   useEffect(() => {
-    setMessageHistory(undefined);
-    setHistoryError('');
+    historyFlow.resetScope();
+    publishHistory();
     return cancelHistory;
-  }, [cancelHistory, replySessionEpoch]);
+  }, [cancelHistory, historyFlow, publishHistory, replySessionEpoch]);
   useEffect(() => {
     if (!routeFocused || !canAccessSource) cancelHistory();
   }, [canAccessSource, cancelHistory, routeFocused]);
@@ -897,29 +876,26 @@ function EnabledNotificationDetailRoute({
       return detail;
     }
   });
-  const detailRecoveryRef = useRef<{ controller: AbortController; pending: boolean } | undefined>(undefined);
+  const [detailRecoveries] = useState(createNotificationRecoveryOwner);
   const detailRecoveryScopeRef = useCommittedRef({ runtime, routeFocused });
   useEffect(
     () => () => {
-      detailRecoveryRef.current?.controller.abort();
-      detailRecoveryRef.current = undefined;
+      detailRecoveries.cancel();
     },
-    [routeFocused]
+    [routeFocused, detailRecoveries]
   );
   useEffect(
     () =>
       focusManager.subscribe((focused) => {
         if (focused) return;
-        detailRecoveryRef.current?.controller.abort();
-        detailRecoveryRef.current = undefined;
+        detailRecoveries.cancel();
       }),
-    []
+    [detailRecoveries]
   );
   useEffect(() => {
     if (!currentIdentityKey || currentIdentityKey === identityKey) return;
-    detailRecoveryRef.current?.controller.abort();
-    detailRecoveryRef.current = undefined;
-  }, [currentIdentityKey, identityKey]);
+    detailRecoveries.cancel();
+  }, [currentIdentityKey, identityKey, detailRecoveries]);
   const needsLogin = !currentIdentityKey && !runtime.sessions[item.source].isLoggedIn;
   const detailReadError = detailQuery.error ? sourceErrorFromUnknown(item.source, detailQuery.error) : undefined;
   const retryDetail = useLatestCallback(async () => {
@@ -929,20 +905,19 @@ function EnabledNotificationDetailRoute({
       generation: replySessionEpoch,
       hasReadError: Boolean(detailReadError)
     });
-    if (!routeFocused || !focusManager.isFocused() || detailRecoveryRef.current?.pending) {
+    if (!routeFocused || !focusManager.isFocused() || detailRecoveries.pending) {
       finishDiagnosticTrace(trace, 'blocked', {
         source: item.source,
-        reason: detailRecoveryRef.current?.pending ? 'busy' : 'not_ready'
+        reason: detailRecoveries.pending ? 'busy' : 'not_ready'
       });
       return;
     }
-    const intent = { controller: new AbortController(), pending: true };
-    detailRecoveryRef.current?.controller.abort();
-    detailRecoveryRef.current = intent;
+    const intent = detailRecoveries.begin();
+    if (!intent) return;
     const surfaceCurrent = () => {
       const latest = detailRecoveryScopeRef.current;
       return (
-        !intent.controller.signal.aborted &&
+        detailRecoveries.current(intent) &&
         latest.routeFocused &&
         focusManager.isFocused() &&
         latest.runtime.enabledNotificationSources.includes(item.source) &&
@@ -1060,7 +1035,7 @@ function EnabledNotificationDetailRoute({
         source: item.source,
         reason: intent.controller.signal.aborted ? 'canceled' : current() ? 'not_ready' : 'stale'
       });
-      if (detailRecoveryRef.current === intent) intent.pending = false;
+      detailRecoveries.settled(intent);
     }
   });
   const policy = detailQuery.data?.policy;
@@ -1089,33 +1064,8 @@ function EnabledNotificationDetailRoute({
       detailReadEpochRef.current !== replySessionEpoch
     )
       return;
-    const previous = historyRef.current;
-    const current = previous?.sessionEpoch === replySessionEpoch ? previous : undefined;
-    const latestIds = new Set(messages.map((message) => message.id));
-    const overlap = current?.messages.some((message) => latestIds.has(message.id));
-    const latestStartIndex = current?.messages.findIndex((message) => message.id === messages[0]?.id) ?? -1;
-    const resetting = historyControllerRef.current?.resetting;
-    if (current && latestStartIndex >= 0 && !resetting) {
-      setMessageHistory({
-        ...current,
-        messages: [...current.messages.slice(0, latestStartIndex), ...messages]
-      });
-      return;
-    }
-    if (current?.messages.length && !resetting) {
-      cancelHistory();
-      setHistoryError(
-        overlap
-          ? '最新消息范围已变化，已重新从最新消息开始；可继续加载更早消息。'
-          : '最新消息与已加载历史不连续，已重新从最新消息开始；可继续加载更早消息。'
-      );
-    }
-    setMessageHistory({
-      sessionEpoch: replySessionEpoch,
-      messages,
-      olderCursor: pagination.olderCursor,
-      consumedCursors: []
-    });
+    historyFlow.latest(replySessionEpoch, messages, pagination.olderCursor);
+    publishHistory();
   }, [
     canAccessSource,
     cancelHistory,
@@ -1123,92 +1073,77 @@ function EnabledNotificationDetailRoute({
     detailQuery.dataUpdatedAt,
     detailQuery.isFetching,
     detailQuery.isSuccess,
-    historyRef,
-    replySessionEpoch
+    historyFlow,
+    replySessionEpoch,
+    publishHistory
   ]);
   const historyRequestCurrent = useCallback(
     (controller: AbortController, sessionEpoch: number) =>
-      historyControllerRef.current?.controller === controller &&
+      historyFlow.owns(controller) &&
       !controller.signal.aborted &&
       historyScopeRef.current.canAccessSource &&
       historyScopeRef.current.routeFocused &&
       historyScopeRef.current.sessionEpoch === sessionEpoch &&
       focusManager.isFocused(),
-    [historyScopeRef]
+    [historyScopeRef, historyFlow]
   );
   const loadEarlierMessages = useLatestCallback(async () => {
-    const history = historyRef.current;
+    const history = historyFlow.committed;
     if (
       !history?.olderCursor ||
       history.blocked ||
       history.sessionEpoch !== replySessionEpoch ||
       !canAccessSource ||
       !routeFocused ||
-      !focusManager.isFocused() ||
-      historyControllerRef.current
+      !focusManager.isFocused()
     )
       return;
-    const controller = new AbortController();
-    historyControllerRef.current = { controller, resetting: false, cursor: history.olderCursor };
-    setHistoryBusy(true);
-    setHistoryError('');
-    let waitingForCommit = false;
+    const request = historyFlow.beginEarlier(history.sessionEpoch);
+    if (!request) return;
+    const controller = request.controller;
+    publishHistory();
     try {
-      const page = await gateway.loadEarlierMessages(item, history.olderCursor, identityKey, controller.signal);
+      const page = await gateway.loadEarlierMessages(item, request.cursor, identityKey, controller.signal);
       if (!historyRequestCurrent(controller, history.sessionEpoch)) return;
-      const consumedCursors = [...history.consumedCursors, history.olderCursor];
-      const repeated = page.olderCursor !== null && consumedCursors.includes(page.olderCursor);
-      if (repeated) setHistoryError('原站历史游标重复，已停止加载；请重新读取会话后重试。');
-      waitingForCommit = true;
-      setMessageHistory(
-        (current) =>
-          current && {
-            ...current,
-            messages: Array.from(
-              new Map([...page.messages, ...current.messages].map((message) => [message.id, message])).values()
-            ),
-            olderCursor: repeated ? history.olderCursor : page.olderCursor,
-            blocked: repeated,
-            consumedCursors
-          }
-      );
+      historyFlow.receivedEarlier(controller, page);
+      publishHistory();
     } catch (error) {
-      if (historyRequestCurrent(controller, history.sessionEpoch))
-        setHistoryError(`更早消息读取失败：${errorMessage(error)}`);
-    } finally {
-      if (!waitingForCommit && historyControllerRef.current?.controller === controller) {
-        historyControllerRef.current = undefined;
-        setHistoryBusy(false);
+      if (historyRequestCurrent(controller, history.sessionEpoch)) {
+        historyFlow.failed(controller, '更早消息读取失败：' + errorMessage(error));
+        publishHistory();
       }
+    } finally {
+      historyFlow.finished(controller);
+      publishHistory();
     }
   });
   const resetMessageHistory = useLatestCallback(async () => {
-    if (!canAccessSource || !routeFocused || !focusManager.isFocused() || historyControllerRef.current) return;
-    const controller = new AbortController();
-    historyControllerRef.current = { controller, resetting: true };
-    setHistoryBusy(true);
-    setHistoryError('');
+    if (!canAccessSource || !routeFocused || !focusManager.isFocused()) return;
+    const request = historyFlow.beginReset();
+    if (!request) return;
+    const controller = request.controller;
+    publishHistory();
     try {
       const result = await detailQuery.refetch();
       if (!historyRequestCurrent(controller, replySessionEpoch)) return;
       if (result.error) throw result.error;
       if (result.data?.messages && result.data.messageHistory) {
-        setMessageHistory({
-          sessionEpoch: replySessionEpoch,
-          messages: result.data.messages,
-          olderCursor: result.data.messageHistory.olderCursor,
-          consumedCursors: []
-        });
-        setHistoryError('');
+        historyFlow.receivedReset(
+          controller,
+          replySessionEpoch,
+          result.data.messages,
+          result.data.messageHistory.olderCursor
+        );
+        publishHistory();
       }
     } catch (error) {
-      if (historyRequestCurrent(controller, replySessionEpoch))
-        setHistoryError(`重新读取会话失败：${errorMessage(error)}`);
-    } finally {
-      if (historyControllerRef.current?.controller === controller) {
-        historyControllerRef.current = undefined;
-        setHistoryBusy(false);
+      if (historyRequestCurrent(controller, replySessionEpoch)) {
+        historyFlow.failed(controller, '重新读取会话失败：' + errorMessage(error));
+        publishHistory();
       }
+    } finally {
+      historyFlow.finished(controller);
+      publishHistory();
     }
   });
   const displayDetail = useMemo(() => {
@@ -1338,74 +1273,49 @@ function EnabledNotificationDetailRoute({
     setReplyStatus('');
     setReplyVisible(false);
   }, [cancelReply, canAccessSource, currentIdentityKey, identityKey, forgetUncertainReplies]);
-  const updateMarkState = useCallback((state: NotificationMarkState) => {
-    markStateRef.current = state;
-    setMarkPhase(state.phase);
-  }, []);
   useEffect(() => {
-    markAttemptedThisVisit.current = false;
-    setMarkPhase(markStateRef.current.phase);
-    const cancelMark = () => {
-      const state = markStateRef.current;
-      if (state.phase === 'pending') {
-        state.attempt.controller.abort();
-        state.attempt.messageIds.forEach((id) => {
-          if (!confirmedMessageIds.current.has(id)) attemptedMessageIds.current.delete(id);
-        });
-        markStateRef.current = { phase: 'retryable' };
-      }
-      markAttemptedThisVisit.current = false;
-    };
+    readReceipt.beginVisit();
+    publishMark();
+    const cancelMark = () => readReceipt.cancel();
     const unsubscribe = focusManager.subscribe((focused) => {
       if (!focused) {
         cancelMark();
-        setMarkPhase(markStateRef.current.phase);
+        publishMark();
       }
     });
     return () => {
       unsubscribe();
       cancelMark();
     };
-  }, [routeFocused, canAccessSource]);
+  }, [canAccessSource, publishMark, readReceipt, routeFocused]);
   const markRead = useLatestCallback(async (refreshDetail: boolean) => {
     if (
       !routeFocused ||
       !focusManager.isFocused() ||
       !canAccessSource ||
-      markStateRef.current.phase === 'pending' ||
-      (!nodeSeekConversation && (!item.unread || markStateRef.current.phase === 'confirmed'))
+      readReceipt.phase === 'pending' ||
+      (!nodeSeekConversation && (!item.unread || readReceipt.phase === 'confirmed'))
     )
       return;
-    markAttemptedThisVisit.current = true;
-    const controller = new AbortController();
-    let unreadMessageIds: string[] = [];
-    const attempt = { controller, messageIds: unreadMessageIds };
-    updateMarkState({ phase: 'pending', attempt });
-    const current = () => {
-      const state = markStateRef.current;
-      return (
-        state.phase === 'pending' && state.attempt === attempt && !controller.signal.aborted && focusManager.isFocused()
-      );
-    };
+    const attempt = readReceipt.begin();
+    if (!attempt) return;
+    const controller = attempt.controller;
+    publishMark();
+    const current = () => readReceipt.owns(attempt) && focusManager.isFocused();
     try {
       const refreshed = refreshDetail ? await detailQuery.refetch() : undefined;
       if (!current()) return;
       if (refreshed?.error) throw refreshed.error;
       const detail = refreshed ? refreshed.data : detailQuery.data;
       if (!detail) throw new Error('消息详情暂不可用');
-      unreadMessageIds = (detail.unreadMessageIds || []).filter(
-        (id) => !confirmedMessageIds.current.has(id) && (refreshDetail || !attemptedMessageIds.current.has(id))
-      );
-      attempt.messageIds = unreadMessageIds;
+      const unreadMessageIds = readReceipt.select(attempt, detail.unreadMessageIds, refreshDetail);
       if (nodeSeekConversation && !unreadMessageIds.length) {
-        const phase = detail.unreadMessageIds?.some((id) => !confirmedMessageIds.current.has(id))
-          ? 'retryable'
-          : 'confirmed';
-        updateMarkState({ phase });
+        const phase = readReceipt.noMessages(attempt, detail.unreadMessageIds);
+        publishMark();
         if (phase === 'confirmed') setMarkMessage('');
         return;
       }
-      unreadMessageIds.forEach((id) => attemptedMessageIds.current.add(id));
+      readReceipt.willSend(attempt);
       const result = await gateway.markRead(
         item,
         nodeSeekConversation ? { ...detail, unreadMessageIds } : detail,
@@ -1413,10 +1323,12 @@ function EnabledNotificationDetailRoute({
         controller.signal
       );
       if (current()) {
-        if (result.confirmed) unreadMessageIds.forEach((id) => confirmedMessageIds.current.add(id));
-        const remainingUnread =
-          nodeSeekConversation && detail.unreadMessageIds?.some((id) => !confirmedMessageIds.current.has(id));
-        updateMarkState({ phase: result.confirmed && !remainingUnread ? 'confirmed' : 'retryable' });
+        const remainingUnread = readReceipt.completed(
+          attempt,
+          result.confirmed,
+          nodeSeekConversation ? detail.unreadMessageIds : undefined
+        );
+        publishMark();
         setMarkMessage(
           result.confirmed
             ? remainingUnread
@@ -1427,7 +1339,8 @@ function EnabledNotificationDetailRoute({
       }
     } catch (error) {
       if (current()) {
-        updateMarkState({ phase: 'retryable' });
+        readReceipt.failed(attempt);
+        publishMark();
         setMarkMessage(`已读状态未更新：${errorMessage(error)}`);
       }
     } finally {
@@ -1447,11 +1360,8 @@ function EnabledNotificationDetailRoute({
       detailQuery.data &&
       !detailQuery.isFetching &&
       !detailQuery.isError &&
-      (!markAttemptedThisVisit.current ||
-        (nodeSeekConversation &&
-          detailQuery.data.unreadMessageIds?.some(
-            (id) => !attemptedMessageIds.current.has(id) && !confirmedMessageIds.current.has(id)
-          )))
+      (!readReceipt.attemptedThisVisit ||
+        (nodeSeekConversation && readReceipt.hasNewMessages(detailQuery.data.unreadMessageIds)))
     ) {
       void markRead(false);
     }
@@ -1464,7 +1374,8 @@ function EnabledNotificationDetailRoute({
     markPhase,
     markRead,
     nodeSeekConversation,
-    routeFocused
+    routeFocused,
+    readReceipt
   ]);
   const fallbackTopic =
     item.target.type === 'topic' || item.target.type === 'topic-post' ? parseForumTopicLink(item.target.url) : null;

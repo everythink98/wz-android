@@ -41,8 +41,9 @@ import {
   markDiagnosticStage,
   recordDiagnosticError
 } from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { notificationErrorAction } from './notificationPresentation';
+import { createNotificationOpenIntent } from './notificationOpenIntent';
 import {
   createNotificationSourceLifecycleRegistry,
   markNotificationSourcesCleaning,
@@ -225,8 +226,7 @@ export function useNotificationsRuntime({
   const pendingForegroundDeliveriesRef = useRef(new Map<NotificationSource, ForegroundDelivery>());
   const foregroundGenerationRef = useRef(0);
   const snapshotResultRevisionRef = useRef(0);
-  const pendingOpenSourceRef = useRef<{ source: NotificationSource; trace: DiagnosticTrace } | undefined>(undefined);
-  const lastResponseRef = useRef('');
+  const [openIntent] = useState(createNotificationOpenIntent);
   const [state, setState] = useState(stateRef.current);
   const [ready, setReady] = useState(false);
   const storageRestoredRef = useRef(false);
@@ -256,13 +256,11 @@ export function useNotificationsRuntime({
       if (markNotificationSourcesCleaning(sourceLifecyclesRef.current, removedSources)) {
         setSourceLifecycleSnapshot({ ...sourceLifecyclesRef.current });
       }
-      if (pendingOpenSourceRef.current && removedSources.includes(pendingOpenSourceRef.current.source)) {
-        finishDiagnosticTrace(pendingOpenSourceRef.current.trace, 'canceled', { reason: 'source_disabled' });
-        pendingOpenSourceRef.current = undefined;
-      }
+      const removedOpen = openIntent.removedSources(removedSources);
+      if (removedOpen) finishDiagnosticTrace(removedOpen.trace, 'canceled', { reason: 'source_disabled' });
       previousEnabledSourcesRef.current = enabledSources;
     }
-  }, [contentSourcesReady, enabledSources, runtimeReady]);
+  }, [contentSourcesReady, enabledSources, runtimeReady, openIntent]);
 
   const commitState = useCallback((next: NotificationState) => {
     stateRef.current = next;
@@ -301,13 +299,12 @@ export function useNotificationsRuntime({
       mountedRef.current = false;
       foregroundGenerationRef.current += 1;
       pendingDeliveries.clear();
-      const pending = pendingOpenSourceRef.current;
-      pendingOpenSourceRef.current = undefined;
+      const pending = openIntent.cancel();
       if (pending) {
         finishDiagnosticTrace(pending.trace, 'canceled', { reason: 'canceled' });
       }
     };
-  }, []);
+  }, [openIntent]);
 
   const retryInitialization = useCallback(() => {
     if (initializationRef.current) return initializationRef.current;
@@ -810,30 +807,30 @@ export function useNotificationsRuntime({
         return;
       }
       const key = `${response.notification.request.identifier}:${response.notification.date}`;
-      if (lastResponseRef.current === key) {
+      const request = { source, trace };
+      const received = openIntent.receive(key, request);
+      if (received.kind === 'duplicate') {
         finishDiagnosticTrace(trace, 'noop', { reason: 'duplicate' });
         return;
       }
-      lastResponseRef.current = key;
-      const previous = pendingOpenSourceRef.current;
-      pendingOpenSourceRef.current = undefined;
+      const previous = received.previous;
       if (previous) {
         finishDiagnosticTrace(previous.trace, 'canceled', { reason: 'superseded' });
       }
       try {
         if (!openSource(source)) {
-          pendingOpenSourceRef.current = { source, trace };
-          markDiagnosticStage(trace, 'apply', { source, state: 'queued' });
-        } else {
+          if (openIntent.waiting(request)) markDiagnosticStage(trace, 'apply', { source, state: 'queued' });
+        } else if (openIntent.opened(request)) {
           finishDiagnosticTrace(trace, 'success', { source, state: 'open' });
         }
       } catch (error) {
+        openIntent.cancel(request);
         finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
         throw error;
       }
       clearLastNotificationResponse();
     },
-    [openSource, sourceIsOperational]
+    [openSource, sourceIsOperational, openIntent]
   );
 
   useEffect(() => {
@@ -850,25 +847,24 @@ export function useNotificationsRuntime({
 
   const onNavigationReady = useCallback(() => {
     if (!mountedRef.current) return;
-    const pending = pendingOpenSourceRef.current;
+    const pending = openIntent.dispatchPending();
     if (!pending) return;
     const { source, trace } = pending;
     if (!contentSourcesReadyRef.current || !sourceIsOperational(source)) {
       finishDiagnosticTrace(trace, 'canceled', { source, reason: 'not_ready' });
-      pendingOpenSourceRef.current = undefined;
+      openIntent.cancel(pending);
       return;
     }
     try {
-      if (openSource(source) && pendingOpenSourceRef.current === pending) {
-        pendingOpenSourceRef.current = undefined;
-        finishDiagnosticTrace(trace, 'success', { source, state: 'open' });
-      }
+      if (openSource(source)) {
+        if (openIntent.opened(pending)) finishDiagnosticTrace(trace, 'success', { source, state: 'open' });
+      } else openIntent.waiting(pending);
     } catch (error) {
-      if (pendingOpenSourceRef.current === pending) pendingOpenSourceRef.current = undefined;
+      openIntent.cancel(pending);
       finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
       throw error;
     }
-  }, [openSource, sourceIsOperational]);
+  }, [openSource, sourceIsOperational, openIntent]);
 
   const setGlobalEnabled = useCallback(
     async (enabled: boolean) => {

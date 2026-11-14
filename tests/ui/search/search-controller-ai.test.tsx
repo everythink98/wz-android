@@ -659,7 +659,7 @@ describe('linux.do AI search controller', () => {
         hasMore: false,
         nextPage: null
       })
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         items: [standardTopic],
         errors: {},
         hasMore: false,
@@ -676,6 +676,7 @@ describe('linux.do AI search controller', () => {
     await prepareLinuxDoSearch(hook, 'codex');
 
     await act(async () => {
+      hook.result.current.applySearchFilter('linuxdo', { ...DEFAULT_SEARCH_FILTERS.linuxdo, order: 'latest' });
       await hook.result.current.runSearch({
         filters: {
           ...DEFAULT_SEARCH_FILTERS,
@@ -690,10 +691,29 @@ describe('linux.do AI search controller', () => {
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
     expect(recovery.queryKey.slice(0, 3)).toEqual(['forum', 'linuxdo', 'search']);
     await act(async () => {
+      const filter = hook.result.current.searchFilters.linuxdo;
+      hook.result.current.applySearchFilter('linuxdo', {
+        ...filter,
+        tags: [...filter.tags],
+        visited: [...filter.visited]
+      });
+    });
+    expect(searchTopics).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    await act(async () => {
       await expect(recovery.resume()).resolves.toBe('completed');
     });
     expect(searchTopics).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'replacement', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(3));
+    const reads = searchTopics.mock.calls.length;
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('stale');
+    });
+    expect(searchTopics).toHaveBeenCalledTimes(reads);
   });
 
   it('reports an ordinary search recovery failure instead of completed', async () => {

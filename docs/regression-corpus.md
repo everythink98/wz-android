@@ -5,6 +5,19 @@
 
 
 
+
+## `REG-SEARCH-040` 旧认证恢复在查询替换后仍报告完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-01/02`，共享来源认证恢复 |
+| 历史症状与根因 | 单来源搜索返回需要验证，当前 recovery 被保留；用户提交另一查询后，旧 recovery 没有核对其原提交范围，仍沿可更新的 QueryObserver 调用并返回 completed。启用来源检查不能替代同一来源内的当前搜索意图。 |
+| 当前 owner | `tests/ui/search/search-controller-ai.test.tsx#resumes the exact foreground search without recursively reopening verification`；真实 `useSearchController` 与 `searchRecoveryOwner`。 |
+| 修前 oracle | 实际已验收 B06 实现上只安装 canonical 增强，seed `647071`：查询替换后的旧 resume 预期 stale，实际 completed。第一次失败发生在结果断言，不推断未运行的后续读取次数断言已经失败。 |
+| 修复 | 恢复 ticket 绑定 committed singleSearchKey 和意图实例；恢复前及 awaited 结果后都核对当前 owner，实际新提交同步撤销旧意图。等值筛选 Apply 保留原 ticket，不在没有新 Query 读取时孤立地废弃恢复。 |
+| 当前证据与边界 | 最终完整 typecheck／verify、Vitest 273 文件／4628 项（seed `1794666845555`）、UI 105 suites／3299 项（seed `-1249148741`）及普通／私有 APK sanity 通过。等值 Apply 基底 PASS、候选 RED、修正 GREEN 与 replacement-query 修前 RED 均保留；精确旧 callback 资格由该真实 controller canonical 证明。匹配私有包 66/66 及主设备已有 Android 搜索／等值筛选／返回保持通过，但设备未定向注入已过期 recovery；完整手势／边界矩阵受原站验证遮罩阻断，中断刷新不满足 pending 前提，均不作全通过结论。 本条不称为 AI 模型整体转换，不改变 Query 参数、存储格式或来源协议；候选等值 Apply 的批内回归与通知导航保行为控制不单列既有产品事故。 |
+
 ## `REG-TOPIC-222` 已排队的底部跟随帧越过后来的定位与离底意图
 
 | 字段 | 内容 |

@@ -14,7 +14,7 @@
 | B04 | 编辑器宿主与文档生命周期 | 已验收：8 项完整转换、5 项局部简化 |
 | B05 | 草稿、提交与互动写操作 | 已验收：11 项完整转换、2 项局部简化 |
 | B06 | 阅读入口、回复窗口与原生定位 | 已验收：7 项完整转换、4 项局部简化 |
-| B07 | 列表、搜索、用户与消息读取 | 待实施 |
+| B07 | 列表、搜索、用户与消息读取 | 已验收：5 项完整转换、6 项局部简化 |
 | B08 | 媒体、预览与原生资源归属 | 待实施 |
 | B09 | 本地存储、更新、后台与诊断 | 待实施 |
 | B10 | SDK 补丁、验证工具与整体验收 | 待实施 |
@@ -214,3 +214,57 @@ Native 未改，不新增 Native/Replay 通过结论。真实凭据填入、所�
 真实远端 reading POST、真实论坛写入、全部来源的动态导航／排序／缓存矩阵、所有 Native 帧交错和物理设备仍为 `NOT_VERIFIED`；当前 66 项受控设备场景也不代表这些范围全部覆盖。历史黑图、妖火掉线、空回复及其它定位事故未由本批关闭。日志、媒体、APK、数据库与权限回执仅在 ignored 目录保存；最终九文件恢复后由独立只读审计逐项核对 SHA 与实际 mode，9/9 一致；随后同版本覆盖回装原 C8 APK（SHA-256 `c8c60cf669254c81802c93bdeee8dfcab65beedf9847739a55b5946f46f8624c`），UID、首次安装时间、158／1.3.154 与原签名保持。任务拥有的 ReaderStorage 模拟器按 PID、父进程、出生时间和 AVD 核验后正常关闭，数据保留。中断后收尾发现主模拟器旧 PID 61344 已不存在，原因未建立；Reader 关闭命令已成功，收尾脚本在随后 Main 断言退出 1，不能据此把 Reader 关闭写成失败，也不能宣称 Main 原进程始终保留。未停止未知进程、共享 MCP 或 ADB。本批不 push、不合并、不正式发布。
 
 主模拟器按既有 AVD、无 snapshot load/save 重新可见打开，没有重装或清数据。重新核对仍为普通 215 包、UID 10214、首次安装时间 `2026-07-26 16:51:37`、162／1.3.158，当前 App PID 3043。重开初始 linux.do 标签为「匿名可用」，显式刷新后妖火与 NodeSeek 已登录、linux.do「已验证」；该标签仍不证明 linux.do 身份，也没有给初始变化归因。最终实际返回有数据首页，主窗口可见；未执行论坛写入。
+
+## B07
+
+列表、搜索、用户与消息读取按原完整 scope 复核 28 项：**5 项完整转换、6 项局部简化、17 项合理保留**。本批完整门禁、匹配 APK 与受影响设备流程按下列实际证据验收。
+
+完整转换的 5 项为 `ui.feed-page`、`ui.search-filters`、`ui.notify-detail-read`、`ui.notify-history`、`ui.notify-list-refresh`。实际 Screen、Route 与 runtime 改用分页申请、筛选编辑、消息已读收据、会话历史和列表读取 owner；被替代的可变 ref、独立 setter 与旧收尾写入均已删除。Query 继续独占远端数据、错误和 cursor，首页保留快照只用于展示，不能用旧快照 cursor 发起新分页。
+
+消息历史区分 owner 当前数据与已由 layout 提交的历史。earlier 结果按当前历史合并，保持 awaiting-commit，直到实际 layout 消费对应 cursor 才释放；晚到结果不能覆盖后来读取。已读请求实例、同次访问尝试许可、逐消息 attempted／confirmed 收据分别保留，发送前继续由真实 gateway 检查来源及身份。`readReceipt.owns + focus` 保留原 passive cleanup 时机，不把本次提取描述为新增 commit 边界的同步取消。
+
+6 项局部收益与保留职责如下：
+
+| 原项 | 本批实际收益 | 保留的职责 |
+| --- | --- | --- |
+| `ui.feed-refresh` | 同步刷新 owner 贯穿取消与 refetch，React spinner 只有一个发布入口 | 原妖火登录提示与消费回执仍在 controller |
+| `ui.search-candidates` | tags／users 的 opening、输入与 debounce ticket 集中归属，相同文字的新输入不复用旧票据 | Query 取消键、category picker 和 source／sheet 的原 passive 清理时机 |
+| `ui.search-run` | 当前搜索恢复按 committed scope 与实际 intent 认领，旧 resume 在查询替换后失效 | 原始输入、SubmittedSearch、source／filters、AI 选择与串行搜索历史 |
+| `ui.user-page` | reset-pending 与 auto-page-armed 明确互斥，一次 drag 只消费一次分页 | userTab、initialTab／身份的原 passive 更新以及 Native list／RAF |
+| `ui.notify-detail-recover` | preparing／settled 恢复票据同步认领、防重和替换收尾 | detail trace、epoch、committed runtime／focus 与 Query detail |
+| `ui.notify-open` | 实际 response receive／dispatch／waiting／opened／cancel 收敛到请求 owner | runtimeReady、source operational／cleaning 门禁与实际导航回调 |
+
+`ui.search-ai` 与 `ui.notify-snapshot` 经完整重审保留，不给实施信用。AI 结果由 Query 持有，visible 为派生条件，enabled 是用户选择，semantic read plan 为独立输入；恢复 helper 属于 search-run 的局部收益。通知 Query 结果、发送前分配的 revision、持久化消费收据和 source lifecycle 有不同用途，当前结果不能证明副作用已经落盘。本结论不把所有本地错误投影永久必要化：`snapshotErrors/partialUnavailable` 的无消费者删除候选留待 B10 集中处理。
+
+原始 B07 清单是 **13 项计划重构、15 项保留**；准备文件的 `rows.action` 含候选处置，不能当作原始分类。实际更新 11 项实施与 2 项重审，共 13 行；原 15 个保留项对象不变。当前 281 项分类由 93／184／4 调整为 **91 项计划重构、186 项保留、4 项待补证**，不等同于未完成或未修复问题数量，原 375 项历史文件保持。
+
+实际修前断言在原共享搜索 canonical 建立：seed `647071`，替换已提交查询后，保留的旧认证 recovery 应返回 stale，实际 completed，记录为 `REG-SEARCH-040`。修后同一主要用例先证明等值筛选 Apply 不增加读取、原 recovery 仍 completed，再替换查询并证明旧 recovery 返回 stale 且不增加读取。修前第一次失败阻止了后续计数断言，不能把未观察到的额外请求数写成复现结果。
+
+候选曾无条件使等值 Apply 的 recovery 失效，却没有产生新 Query 请求。该候选回归按 seed `647072` 留下基底 PASS→候选 RED→修正 GREEN：只有当前提交过滤值的 hashKey 实际变化才产生新 intent，没有放宽 stale／completed 断言。它不申报既有产品 REG。通知导航新增 deferred 分支与原 success／error 分支在实际 B06 和最终 B07 均为 3/3 PASS（seed `647074`），是保行为控制，不虚构修前失败或新 Bug。B05 的 submitReply、uploadReplyImage、setPolicyAcceptance 三处真实 Promise 返回链经独立 AST/emit 逐一核对相同，未被旧候选 whole-file 覆盖。
+
+本批已运行证据：
+
+- `STATIC_PASS`：完整 typecheck 退出 0；完整 `npm run verify` 退出 0，UTC 14:33:00.951–14:41:31.681，日志 SHA-256 `3dfab3e8caeae2cdeaf9f9053cef59663821c65f40cde2d9c7783b6a8dfc77d1`。本轮冻结 1168 个输入，SHA-256 `40f88cd07e30a596b7d8ecb2d4b4e28bac49ac23d4480e4505d5f13a9e9fddf9`；文档与审查数据收尾另做治理和文档检查，不冒充早先源码门禁的一部分。
+- `UNIT_PASS`：273 文件、4628 项，seed `1794666845555`。
+- `UI_PASS`：105 suites、3299 项，seed `-1249148741`；现有 act 告警保留。先前 14 个相关 suite 的 601 项及三个导航基底／最终控制分别保留，不与全量总数重复相加。
+
+- Native `UNIT_PASS`：既有键盘／prewarm／picker 的 66 项按六个实际输入 SHA 完全相同而明确继承，未重跑，也不代替列表、搜索和消息 JS 流程。两个新 APK 分别核对 Native producer／class、R8／DEX 与 Hermes。
+- `APK_SANITY`：普通 Release 构建 6m15s，APK SHA-256 `fb898d5f0a0f7597e3ffc4753e0fb46ce0a6a510c6c22dcbc8da4772ce5956c1`，buildId `76a42650c96741c08803d2d8a80b9a7e`；私有 reading Release 构建 5m14s，APK SHA-256 `fb803aeb4e944a1a746cd244387ec3138719e534ec6eba7b1ac43b7a3ff1513e`，buildId `a08519f23d934c1794a21ed3449dc1fb`。真实 map 分别绑定 21／26 个直接模块与 4 个 DOM 输入／生成关系，普通与私有入口分开。普通包在主设备同签名覆盖安装后 UID 10214、首次安装时间 `2026-07-26 16:51:37` 与 162／1.3.158 保持；初始 PID 4458 对应 22 条成功启动记录。
+- `DEVICE_REPLAY_PASS`（私有受控范围）：专用 ReaderStorage AVD 实际 66/66，退出 0，UTC 14:50:14.464–14:54:26.829，日志 SHA-256 `48018d975cab4a116e191615acf8198eaae828e2de88d5bda3a27ec9508b80d8`。实际安装 private SHA 与上述 APK 相同，Hermes=true、dev=false；UID 10209、首次安装时间 `2026-09-10 04:04:05`、158／1.3.154 保持。九个数据库／WAL／SHM 已恢复，并由独立只读审计逐项核对字节、mode 与 owner；通知权限前后原始行和 flags 逐字一致。截图的六张与已目视复核 B06 PNG SHA 相同，两张变化的缓存 before 图另行直接查看，正／倒序首条 #2／#40 符合实际原生列表；不把未执行的真实写入算作该回放。
+- 限定的 `LIVE_PASS`：普通 B07 包实际显式刷新后，妖火与 NodeSeek 已登录，linux.do 标签「已验证」，身份仍未独立确认。安装后的显式刷新回执单独保存；较早观察在页面加载时尚未匹配到点击，只能证明自动页面读取，不能混写为显式刷新。
+
+主设备 gesture-priority `.ad` 已通过；独立 fling 样本 draggedFraction=0.1047278、coastedFraction=0.1172546，通过保留惯性断言；pull 六种行为通过。两次完整 gesture matrix 均只完成同样的 6 个 settling-vertical 控制后遇到验证遮罩，不相加为 12 项；边界 matrix 通过 13 个控制后同样无法取得 Feed 无障碍观测，三次命令均真实退出 1。没有完整 matrix verdict，不能汇总为 72/72 或全通过。首次摘要不足确认站点；第二次候选的 full Native snapshot 确认 linux.do 安全验证，但不据此推断两次遮罩的原因相同。正常「检测并继续」约 1480 ms 返回 Feed，也不将后来仍被遮罩阻断的重放写成通过。
+
+专用 ReaderStorage 重开时发生原 C8 包 codePath 缺失／PM 异常，UID、首次安装时间、CE／DE 目录与九文件仍保留。经用户当次明确授权，只覆盖补回同一份 C8 包，修复回执核对原身份、目录 inode 与九文件一致，随后才安装匹配私有包执行上述回放。回放后正常覆盖回装原 C8，PM wait／sync 后再次核对原 APK SHA、身份及九文件一致；单次冷启动复核按下文实际结果界定，不把 wait／sync 与之后成功的先后关系写成 flush 根因已经成立。
+
+主设备补充的限定 `LIVE_PASS`／`DEVICE_REPLAY_PASS`：真实消息列表取消刷新后指示器收回，下一次刷新正常结算；NodeSeek 使用已有最近搜索 Android，结果完成且可打开，原默认筛选打开后不变确认，切首页再返回搜索仍保留 Android 输入和完成结果。真实 NodeSeek 用户主页已加载，回复活动与主题两个 Tab 均观察到实际卡片，返回原页面。筛选按钮和用户页文字定位中的驱动误操作已按真实 Native 控件更正，未修改产品来迁就测试。这些场景不证明 HTTP 次数、已过期恢复 callback 的设备注入、消息详情已读写入或真实用户分页。
+
+为区分本批引入的回归，主设备以同版本 162、同签名且保持 UID／首次安装时间覆盖安装已验收 B06 普通 215 包。旧包直接 linux.do 读取有数据，但水平控制仅通过两个 120ms 场景，350ms 阶段同样遇到 full Native snapshot 明确显示的 linux.do 安全验证（日志 SHA-256 `b8afb11d9ffb3cb95d49c743054b64f651b28ba1a530812014f035dc52908a6f`）。这证明验证 surface 在基底也存在，不证明两次遮罩的全部原因相同，也不证明所有手势等价。已覆盖回装 B07 普通 fb898 包并重新核对原身份。
+
+`NOT_VERIFIED`：两次 72 项 gesture matrix、完整边界 matrix，以及刷新中断场景。刷新中断时网络过快，1 秒后已无 pending 圈，前置断言失败；没有改变网络或设置来制造等待，也没有降低断言。上述失败原记录全部保留，受影响的定向产品断言、完整门禁及受控设备回放通过，不扩成所有设备流程均通过。
+
+相对已验收 B06，按 Git numstat（新增文件按实际 LF 行数计入）统计：生产代码 **19 文件，+985／−455 行**（净增 530，其中 11 个新文件）；测试 **4 文件，+36／−5 行**（净增 31）；私有 fixture、验证工具与 patch 本批 **0 行变化**；整文件删除 **0**。文档独立统计，不重复计安装 SDK 或 ignored 证据，不将移动、分类和新增阶段名当作完整转换。
+
+原 C8 回装后实际做了一次无 snapshot load/save 的专用 AVD 冷启动复核，UTC 15:19:24.419–15:19:58.169：APK SHA、签名、UID 10209、首次安装时间、CE／DE 目录 inode、九个数据库／WAL／SHM 字节、mode 与 owner 均与关机前一致。它证明本次冷启动保持，不推断长期耐久或此前 codePath 异常根因；本任务两次启动的 Reader 进程均在精确身份核对后正常关闭。最终主模拟器仍可见响应，普通 B07 APK SHA 与原 UID／首次安装时间／162 保持，当前 App PID 10924；实际显式刷新妖火、NodeSeek 已登录，linux.do「已验证」仍不等同于独立身份确认，原 NodeSeek 账号中心选择已恢复，最终有数据的 All／default 首页。主模拟器、共享 MCP 与 ADB 保留。
+
+真实论坛写入、真实系统通知交付、全部来源和 Native 导航帧交错、物理设备及历史黑图／妖火异常／Search 慢帧因果仍为 `NOT_VERIFIED`；不因普通启动或受控数据通过关闭历史问题。日志、截图、APK、数据库及回执只保存在 ignored 目录。本批只保存本地提交，不 push、不合并、不正式发布。

@@ -35,7 +35,8 @@ import {
   shouldUseFeedFilter,
   shouldUseReadingFilter
 } from '@/domain/forum/feedOptions';
-import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll } from './floatingActions';
+import { shouldLoadMoreFeedFromScroll } from './floatingActions';
+import { createFeedPageRequests } from './feedPageRequests';
 import type { ReadingFilter } from '@/domain/forum/feed';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -127,9 +128,7 @@ export const FeedScreen = memo(function FeedScreen({
   if (renderedSourceRef.current.source !== feedSource)
     renderedSourceRef.current = { source: feedSource, phase: 'waiting' };
   const { width: pagerWidth } = useWindowDimensions();
-  const requestedFeedPageRef = useRef<{ page: number } | null>(null);
-  const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
-  const autoLoadPausedAfterFailureRef = useRef(false);
+  const [pageRequests] = useState(createFeedPageRequests);
   const {
     hidden: createActionHidden,
     animatedStyle: createActionAnimation,
@@ -222,44 +221,15 @@ export const FeedScreen = memo(function FeedScreen({
       if (!feedHasMore || busy || loadingMore) {
         return;
       }
-      if (source === 'scroll') {
-        if (
-          !shouldAllowFeedAutoLoadRequest({
-            pausedAfterFailure: autoLoadPausedAfterFailureRef.current,
-            lastOffset: lastAutoLoadMoreOffsetRef.current,
-            offsetY,
-            minStep: AUTO_LOAD_SCROLL_STEP
-          })
-        ) {
-          return;
-        }
-      }
-      const nextPage = feedPage + 1;
-      if (requestedFeedPageRef.current?.page === nextPage) {
-        return;
-      }
-      const request = { page: nextPage };
-      requestedFeedPageRef.current = request;
-      if (source === 'button') {
-        autoLoadPausedAfterFailureRef.current = false;
-      }
-      if (source === 'scroll') {
-        lastAutoLoadMoreOffsetRef.current = offsetY;
-      }
-      const settle = (failed: boolean) => {
-        if (requestedFeedPageRef.current !== request) return;
-        requestedFeedPageRef.current = null;
-        if (failed) {
-          autoLoadPausedAfterFailureRef.current = true;
-          lastAutoLoadMoreOffsetRef.current = null;
-        }
-      };
+      const request = pageRequests.begin(feedPage + 1, source, offsetY, AUTO_LOAD_SCROLL_STEP);
+      if (!request) return;
+      const settle = (failed: boolean) => pageRequests.settle(request, failed);
       void Promise.resolve(onLoadMore()).then(
         (outcome) => settle(outcome === 'failed'),
         () => settle(true)
       );
     },
-    [busy, feedHasMore, feedPage, loadingMore, onLoadMore]
+    [busy, feedHasMore, feedPage, loadingMore, onLoadMore, pageRequests]
   );
 
   const handleScroll = useCallback(
@@ -274,22 +244,20 @@ export const FeedScreen = memo(function FeedScreen({
   );
 
   const handleScrollBeginDrag = useCallback(() => {
-    autoLoadPausedAfterFailureRef.current = false;
-    lastAutoLoadMoreOffsetRef.current = null;
-  }, []);
+    pageRequests.dragged();
+  }, [pageRequests]);
 
   useEffect(() => {
     if (!busy && !loadingMore) {
-      requestedFeedPageRef.current = null;
+      pageRequests.observedIdle();
     }
-  }, [busy, loadingMore]);
+  }, [busy, loadingMore, pageRequests]);
 
   useEffect(() => {
     if (loadMoreFailureSignal > 0) {
-      autoLoadPausedAfterFailureRef.current = true;
-      lastAutoLoadMoreOffsetRef.current = null;
+      pageRequests.failureObserved();
     }
-  }, [loadMoreFailureSignal]);
+  }, [loadMoreFailureSignal, pageRequests]);
 
   const scrollFeedToTop = useCallback(
     (animated = true) => {
@@ -309,10 +277,8 @@ export const FeedScreen = memo(function FeedScreen({
   );
 
   useEffect(() => {
-    requestedFeedPageRef.current = null;
-    lastAutoLoadMoreOffsetRef.current = null;
-    autoLoadPausedAfterFailureRef.current = false;
-  }, [categoryFilter, feedFilter, feedSource, readingFilter]);
+    pageRequests.reset();
+  }, [categoryFilter, feedFilter, feedSource, readingFilter, pageRequests]);
 
   useEffect(() => {
     if (!showFeedFilter) {

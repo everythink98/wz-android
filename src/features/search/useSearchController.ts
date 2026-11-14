@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createSearchRecoveryOwner } from './searchRecoveryOwner';
 import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import {
   hashKey,
@@ -208,7 +209,7 @@ export function useSearchController({
     writer: createKeyedSerialRunner<null>('after-reaction'),
     removedKeys: new Set<string>()
   });
-  const handledSearchActionsRef = useRef(new WeakSet<RemoteSearchSourceResult>());
+  const [searchRecovery] = useState(createSearchRecoveryOwner);
   const yaohuoLoginHandledRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchSource, setSearchSourceState] = useState<FeedSource>('all');
@@ -838,6 +839,7 @@ export function useSearchController({
   const retrySearchSource = useCallback(
     (source: Source) => {
       if (!searchActive || !enabledSearchSourcesRef.current.includes(source)) return;
+      searchRecovery.newIntent();
       if (source === 'yaohuo') yaohuoLoginHandledRef.current = false;
       const plan = readGateway.getReadPlan(source, 'search');
       if (
@@ -870,7 +872,8 @@ export function useSearchController({
       singleSearchQuery.isFetchNextPageError,
       singleSearchQuery.refetch,
       submittedSearch?.source,
-      submittedSource
+      submittedSource,
+      searchRecovery
     ]
   );
 
@@ -908,6 +911,18 @@ export function useSearchController({
     ]
   );
 
+  const recoveryScope =
+    searchActive &&
+    submittedSearch &&
+    submittedSearchSourceIncluded &&
+    submittedSearch.source !== 'all' &&
+    searchQuery.trim() === submittedSearch.query
+      ? JSON.stringify(singleSearchKey)
+      : null;
+  useLayoutEffect(() => {
+    searchRecovery.observe(recoveryScope);
+    return () => searchRecovery.observe(null);
+  }, [recoveryScope, searchRecovery]);
   useEffect(() => {
     if (
       !searchActive ||
@@ -928,25 +943,27 @@ export function useSearchController({
         return;
       }
       if (!result || result.kind !== 'action-required') return;
-      if (handledSearchActionsRef.current.has(result)) return;
-      handledSearchActionsRef.current.add(result);
+      if (!searchRecovery.accept(result)) return;
+      const recoveryTicket = searchRecovery.capture();
       if (result.action.type === 'linuxdo-verification') {
         if (submittedSearch?.source !== 'linuxdo') return;
         const loadMore = singleSearchQuery.isFetchNextPageError;
         const recovery: LinuxDoReadRecovery = {
           queryKey: singleSearchKey,
           resume: async () => {
-            if (!enabledSearchSourcesRef.current.includes('linuxdo')) return 'stale';
+            if (!searchRecovery.current(recoveryTicket) || !enabledSearchSourcesRef.current.includes('linuxdo'))
+              return 'stale';
             const resumed = loadMore
               ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
               : await singleSearchQuery.refetch({ cancelRefetch: false });
+            if (!searchRecovery.current(recoveryTicket)) return 'stale';
             if (resumed.isError) {
               if (
                 resumed.error instanceof SearchPageError &&
                 resumed.error.result.kind === 'action-required' &&
                 resumed.error.result.action.type === 'linuxdo-verification'
               ) {
-                handledSearchActionsRef.current.add(resumed.error.result);
+                searchRecovery.remember(resumed.error.result);
                 return 'verification-required';
               }
               return sourceReadRecoveryOutcome('linuxdo', resumed.error);
@@ -961,17 +978,19 @@ export function useSearchController({
         requireNodeSeekSearchVerification(result.action.message, {
           queryKey: singleSearchKey,
           resume: async () => {
-            if (!enabledSearchSourcesRef.current.includes('nodeseek')) return 'stale';
+            if (!searchRecovery.current(recoveryTicket) || !enabledSearchSourcesRef.current.includes('nodeseek'))
+              return 'stale';
             const resumed = loadMore
               ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
               : await singleSearchQuery.refetch({ cancelRefetch: false });
+            if (!searchRecovery.current(recoveryTicket)) return 'stale';
             if (resumed.isError) {
               if (
                 resumed.error instanceof SearchPageError &&
                 resumed.error.result.kind === 'action-required' &&
                 resumed.error.result.action.type === 'nodeseek-verification'
               ) {
-                handledSearchActionsRef.current.add(resumed.error.result);
+                searchRecovery.remember(resumed.error.result);
                 return 'verification-required';
               }
               return sourceReadRecoveryOutcome('nodeseek', resumed.error);
@@ -1000,7 +1019,8 @@ export function useSearchController({
     searchQuery,
     searchActive,
     submittedSearch,
-    submittedSearchSourceIncluded
+    submittedSearchSourceIncluded,
+    searchRecovery
   ]);
 
   const runSearch = useCallback(
@@ -1019,6 +1039,7 @@ export function useSearchController({
       }
       const source = runOptions.source ?? searchSource;
       if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return 'stale';
+      searchRecovery.newIntent();
       if (source === 'yaohuo') yaohuoLoginHandledRef.current = false;
       const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
       if (runOptions.query !== undefined) setSearchQuery(query);
@@ -1073,7 +1094,8 @@ export function useSearchController({
       searchQuery,
       searchSource,
       singleSearchQuery.refetch,
-      submittedSearch
+      submittedSearch,
+      searchRecovery
     ]
   );
 
@@ -1091,6 +1113,7 @@ export function useSearchController({
   const setSearchSource = useCallback(
     (source: FeedSource) => {
       if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return;
+      searchRecovery.newIntent();
       if (source !== 'all') promoteAggregateSearchPage(source);
       setSearchSourceState(() => source);
       setLinuxDoAiEnabled(false);
@@ -1100,12 +1123,18 @@ export function useSearchController({
           : current
       );
     },
-    [promoteAggregateSearchPage, searchFilters, searchQuery]
+    [promoteAggregateSearchPage, searchFilters, searchQuery, searchRecovery]
   );
 
   const applySearchFilter = useCallback(
     (source: Source, filter: SourceSearchFilter) => {
       if (!enabledSearchSourcesRef.current.includes(source)) return;
+      if (
+        submittedSearch?.source === source &&
+        submittedSearch.query === searchQuery.trim() &&
+        hashKey([submittedSearch.filters[source]]) !== hashKey([filter])
+      )
+        searchRecovery.newIntent();
       const next = { ...searchFilters, [source]: filter };
       setSearchFilters(next);
       setSubmittedSearch((submitted) =>
@@ -1115,7 +1144,7 @@ export function useSearchController({
       );
       setLinuxDoAiEnabled(false);
     },
-    [searchFilters, searchQuery]
+    [searchFilters, searchQuery, searchRecovery, submittedSearch]
   );
 
   const searchDiscourseTags = useCallback(
@@ -1176,13 +1205,14 @@ export function useSearchController({
     searchActive
   ]);
   const abortSearchRequests = useCallback(() => {
+    searchRecovery.observe(null);
     void queryClient.cancelQueries({
       predicate: ({ queryKey }) =>
         queryKey[0] === 'forum' &&
         typeof queryKey[2] === 'string' &&
         (queryKey[2].startsWith('search') || queryKey[2] === 'semantic-search')
     });
-  }, [queryClient]);
+  }, [queryClient, searchRecovery]);
   useEffect(() => {
     if (!searchActive) abortSearchRequests();
   }, [abortSearchRequests, searchActive]);

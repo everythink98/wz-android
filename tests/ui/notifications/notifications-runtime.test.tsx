@@ -1725,7 +1725,7 @@ describe('notification runtime', () => {
     }
   );
 
-  it.each(['success', 'error'] as const)(
+  it.each(['success', 'deferred', 'error'] as const)(
     'keeps a newer queued response when the previous navigation returns %s reentrantly',
     async (completion) => {
       const openSource = jest.fn(() => true).mockReturnValueOnce(false);
@@ -1741,7 +1741,7 @@ describe('notification runtime', () => {
           openSource.mockReturnValueOnce(false);
           listener(notificationResponse('linuxdo', 'new-queued', 2));
           if (completion === 'error') throw new Error('previous navigation failed');
-          return true;
+          return completion !== 'deferred';
         });
         if (completion === 'error') {
           expect(() => hook.result.current.onNavigationReady()).toThrow('previous navigation failed');

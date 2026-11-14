@@ -1264,7 +1264,11 @@ describe('Feed loading', () => {
 
   it('requests each next page once and unlocks only after the page advances', async () => {
     const request = Promise.withResolvers<void>();
-    const onLoadMore = jest.fn(() => request.promise);
+    const nextRequest = Promise.withResolvers<void>();
+    const onLoadMore = jest
+      .fn<() => Promise<void>>()
+      .mockReturnValueOnce(request.promise)
+      .mockReturnValueOnce(nextRequest.promise);
     const view = await render(
       renderFeed(false, [topic], {
         feedHasMore: true,
@@ -1297,6 +1301,9 @@ describe('Feed loading', () => {
     await fireEvent.press(view.getByText('加载第 3 页'));
     expect(onLoadMore).toHaveBeenCalledTimes(2);
     await act(async () => request.resolve());
+    await fireEvent.press(view.getByText('加载第 3 页'));
+    expect(onLoadMore).toHaveBeenCalledTimes(2);
+    await act(async () => nextRequest.resolve());
   });
 
   it.each(['failure', 'cancellation', 'success'] as const)(

@@ -154,7 +154,8 @@ describe('User screen behavior', () => {
 
   it('lets a new drag supersede a tab reset before its first frame', async () => {
     jest.useFakeTimers();
-    const view = await render(userScreen());
+    const onLoadMoreReplies = jest.fn();
+    const view = await render(userScreen({ onLoadMoreReplies }));
     try {
       await act(async () => jest.advanceTimersByTime(100));
       await fireEvent.press(view.getByLabelText('回复'));
@@ -163,6 +164,9 @@ describe('User screen behavior', () => {
       await fireEvent(view.getByTestId('user-screen-loaded'), 'contentSizeChange', 360, 1800);
       await act(async () => jest.advanceTimersByTime(100));
       expect(mockListOffset).toBe(240);
+      await fireEvent(view.getByTestId('user-screen-loaded'), 'endReached');
+      await fireEvent(view.getByTestId('user-screen-loaded'), 'endReached');
+      expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
     } finally {
       await view.unmount();
       jest.useRealTimers();

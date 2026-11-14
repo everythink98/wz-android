@@ -41,6 +41,7 @@ import type {
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import { createFeedRefreshIntent } from './feedRefreshIntent';
 
 type FeedPageParam = { cursor?: string; page: number };
 type FeedPage = FeedResponse & FeedPageParam;
@@ -441,15 +442,14 @@ export function useFeedController({
   }, [feedData, feedQueryKey]);
   const pages = feedData?.pages || [];
   const refreshFeedScope = JSON.stringify([feedActive, feedQueryKey]);
-  const refreshFeedGenerationRef = useRef(0);
-  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [refreshIntent] = useState(createFeedRefreshIntent);
+  const [manualRefreshing, setManualRefreshing] = useState(refreshIntent.refreshing);
+  const publishRefresh = useCallback(() => setManualRefreshing(refreshIntent.refreshing), [refreshIntent]);
   useLayoutEffect(() => {
-    refreshFeedGenerationRef.current += 1;
-    setManualRefreshing(false);
-    return () => {
-      refreshFeedGenerationRef.current += 1;
-    };
-  }, [refreshFeedScope]);
+    refreshIntent.invalidate();
+    publishRefresh();
+    return () => refreshIntent.invalidate();
+  }, [publishRefresh, refreshFeedScope, refreshIntent]);
   const mergedFeed = useMemo(() => mergeFeedPages(pages), [pages]);
   const lastPage = pages.at(-1);
   const nextPage = feedSourceRequestEnabled && feedQuery.data && lastPage ? nextFeedPage(lastPage) : undefined;
@@ -667,19 +667,30 @@ export function useFeedController({
   const refreshFeed = useCallback(async () => {
     if (!feedActive || !feedSourceRequestEnabled) return;
     if (feedSource === 'yaohuo') yaohuoLoginPromptedRef.current = false;
-    const refreshGeneration = ++refreshFeedGenerationRef.current;
-    setManualRefreshing(true);
+    const refresh = refreshIntent.begin();
+    publishRefresh();
     notify('正在更新列表');
     try {
       await queryClient.cancelQueries({ queryKey: feedQueryKey, exact: true });
-      if (refreshFeedGenerationRef.current !== refreshGeneration) return;
+      if (!refreshIntent.owns(refresh)) return;
       const result = await feedQuery.refetch({ cancelRefetch: true });
-      if (refreshFeedGenerationRef.current !== refreshGeneration) return;
+      if (!refreshIntent.owns(refresh)) return;
       if (!result.isError) notify('列表已更新');
     } finally {
-      if (refreshFeedGenerationRef.current === refreshGeneration) setManualRefreshing(false);
+      refreshIntent.finished(refresh);
+      publishRefresh();
     }
-  }, [feedActive, feedQuery.refetch, feedQueryKey, feedSource, feedSourceRequestEnabled, notify, queryClient]);
+  }, [
+    feedActive,
+    feedQuery.refetch,
+    feedQueryKey,
+    feedSource,
+    feedSourceRequestEnabled,
+    notify,
+    queryClient,
+    refreshIntent,
+    publishRefresh
+  ]);
 
   const changeFeedSource = useCallback(
     (source: FeedSource) => {

@@ -3128,7 +3128,19 @@
       "consumer": "src/features/feed/FeedRoute.tsx :: <FeedScreen ; dev/review-remediation-proof/index.tsx :: <FeedScreen",
       "cannotDerive": "requested page身份、失败暂停和最近滚动offset分别编码单飞、重试资格与滚动阈值；不能只用Query.isFetching替代同步防重。",
       "tests": ["tests/ui/feed/feed-screen.test.tsx", "tests/ui/feed/feed-navigation-motion.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "whole",
+        "delivered": "原同页 request、last auto offset、failure pause 全由实际 pageRequests.begin/settle/dragged/observedIdle/failureObserved/reset 接管，Screen 所有旧 ref 写入已删。Query 页/错误仍作为外部观测，实际旧 settlement 只匹配自身对象。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": ["tests/ui/feed/feed-screen.test.tsx", "tests/ui/feed/feed-navigation-motion.test.tsx"],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "Native offset 与 props busy/hasMore 仍是输入；原 scope reset passive 时机保留，不扩称新 commit 取消。"
+        ]
+      }
     },
     {
       "id": "ui.feed-refresh",
@@ -3146,7 +3158,24 @@
         "tests/ui/feed/feed-screen.test.tsx",
         "src/features/feed/useFeedController.test.ts"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "partial",
+        "delivered": "真实 refresh generation+manual display 迁入 synchronous intent+唯一 publish，取消前和 refetch 后都核 owner。",
+        "residualControlAuthority": [
+          "原 full scope 的妖火登录提示/处理回执仍由 controller 的 yaohuoLoginPromptedRef 独立承担，未闭合整个刷新与认证恢复流程。"
+        ],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/feed/feed-controller-session.test.tsx",
+          "tests/ui/app/content-source-navigation.test.tsx",
+          "tests/ui/app/app-runtime-startup.test.tsx",
+          "tests/ui/feed/feed-screen.test.tsx",
+          "src/features/feed/useFeedController.test.ts"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.feed-snapshot",
@@ -3418,7 +3447,24 @@
         "tests/ui/app/content-source-route-gates.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "whole",
+        "delivered": "原 phase/visit attempted/attempted IDs/confirmed IDs 均由实际 readReceipt owner 独占，markRead/auto-read/cancel/select/willSend/completed/failed 都已迁走旧写入。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/notifications/notifications-route.test.tsx",
+          "tests/ui/app/content-source-route-gates.test.tsx",
+          "tests/ui/notifications/notifications-runtime.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "keyed route、真实 gateway、focus 与 passive cancel 时机维持原边界；不把真实确认写降回失败，不宣称新增 identity commit gate。"
+        ],
+        "remainingEvidenceGap": "保留既有focus/epoch/route门禁和passive取消时机；没有新增所有commit/Native交错的同步取消协议，真实已读写入与全部设备时序未验证。"
+      }
     },
     {
       "id": "ui.notify-detail-recover",
@@ -3434,7 +3480,23 @@
         "tests/ui/app/content-source-route-gates.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "partial",
+        "delivered": "preparing/settled ticket owner 真接 retry/resume/finally，settled 保留认证后可 resume 的能力，begin 同步防重且替换取消前 owner。",
+        "residualControlAuthority": [
+          "原 full scope 的 detailReadTraceRef、detailReadEpochRef、committed runtime/focus 判定与 Query detail 仍由 Route 承担，只有 recovery request 子流程收拢。"
+        ],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/notifications/notifications-route.test.tsx",
+          "tests/ui/app/content-source-route-gates.test.tsx",
+          "tests/ui/notifications/notifications-runtime.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
+        "remainingEvidenceGap": "保留既有focus/epoch/route门禁和passive取消时机；没有新增所有commit/Native交错的同步取消协议，真实已读写入与全部设备时序未验证。"
+      }
     },
     {
       "id": "ui.notify-history",
@@ -3450,7 +3512,24 @@
         "tests/ui/app/content-source-route-gates.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "whole",
+        "delivered": "原 controller/history/busy/error 真迁入 historyFlow，committed history 与待发布 snapshot 明确分离；latest/earlier/reset/error/cancel/finally 无残留 setter，实际 layout consume 后才放行。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/notifications/notifications-route.test.tsx",
+          "tests/ui/app/content-source-route-gates.test.tsx",
+          "tests/ui/notifications/notifications-runtime.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "真实 Query、keyed route、epoch、focus 是外部事实。保留原 last consumed cursor 的 commit 协议，不夸大为新 request-token 协议。"
+        ],
+        "remainingEvidenceGap": "保留既有focus/epoch/route门禁和passive取消时机；没有新增所有commit/Native交错的同步取消协议，真实已读写入与全部设备时序未验证。"
+      }
     },
     {
       "id": "ui.notify-init",
@@ -3482,7 +3561,23 @@
         "tests/ui/app/content-source-route-gates.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "whole",
+        "delivered": "原 refreshRequest/retryController/recoveryIntent/refreshing 实际被 listReads+listRecoveries 接管；同步 claim、旧 finally 比较 owner，UI spinner 只有唯一 publish。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/notifications/notifications-route.test.tsx",
+          "tests/ui/app/content-source-route-gates.test.tsx",
+          "tests/ui/notifications/notifications-runtime.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "Query/分类/cursor 仍唯一；B05 mark-all 独立保留，原 passive scope cleanup 没提前。必要外部 admission 不应再并成 busy。"
+        ]
+      }
     },
     {
       "id": "ui.notify-message-upload",
@@ -3541,7 +3636,22 @@
         "tests/ui/notifications/notifications-route.test.tsx",
         "tests/ui/notifications/notifications-performance-stress.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "partial",
+        "delivered": "lastResponse 与 pendingOpen 的真实 receive/dispatch/waiting/opened/cancel/removal 已交 openIntent，重入新请求由对象身份保护。",
+        "residualControlAuthority": [
+          "原 full scope 中 runtimeReadyRef、content-source operational/cleaning admission 与实际 openSource 回调仍在 Runtime；只是打开意图子流程闭合，非整个通知准备与导航 full scope。"
+        ],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/notifications/notifications-runtime.test.tsx",
+          "tests/ui/notifications/notifications-route.test.tsx",
+          "tests/ui/notifications/notifications-performance-stress.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.notify-policy",
@@ -3588,19 +3698,33 @@
     },
     {
       "id": "ui.notify-snapshot",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 7,
       "owner": "src/features/notifications/useNotificationsRuntime.ts",
       "invariant": "未读快照在发送前分配revision，只消费当前来源/身份且尚未处理的结果，关闭来源先标记cleaning再清理数据。",
       "consumer": "src/app/useAppRuntime.tsx :: const notificationsRuntime = useNotificationsRuntime({ ; dev/review-remediation-proof/index.tsx :: return useNotificationsRuntime(notificationOptions);",
-      "cannotDerive": "Query数据身份、snapshot发布版本、source lifecycle是不同职责；当前错误数组不能判断旧结果是否已被处理。",
+      "cannotDerive": "Query数据身份、发送前分配的revision、已落盘副作用消费收据及source lifecycle是独立事实；当前网络结果不能推导副作用已经保存。此保留理由不涵盖无产品消费者的snapshotErrors/partialUnavailable，后者留待B10删除。",
       "tests": [
         "tests/ui/notifications/notifications-performance-stress.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx",
         "tests/ui/notifications/notifications-route.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "keep",
+        "delivered": "复核保留Query权威数据/错误、发送前分配revision及handledSnapshotUpdate持久化消费收据、来源清理/交付边界。不能从Query当前结果推导副作用已经落盘；仅针对这些必要职责保留，不声称全部本地投影字段必要。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/notifications/notifications-performance-stress.test.tsx",
+          "tests/ui/notifications/notifications-runtime.test.tsx",
+          "tests/ui/notifications/notifications-route.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
+        "remainingEvidenceGap": "B10将单独删除已证明无消费者的重复错误投影；本项KEEP不代表整个文件不能再减法。"
+      }
     },
     {
       "id": "ui.post-interactions",
@@ -3944,19 +4068,32 @@
     },
     {
       "id": "ui.search-ai",
-      "kind": "workflow",
-      "action": "refactor",
+      "kind": "explicit",
+      "action": "keep",
       "batch": 7,
       "owner": "src/features/search/useSearchController.ts",
-      "invariant": "AI恢复只恢复当前已提交搜索，对同一结果动作只处置一次；普通搜索结果仍独立可见。",
+      "invariant": "AI结果由Query拥有，可见条件派生，用户enabled选择与semantic read plan保留各自职责；有结果不代表用户选择展示。",
       "consumer": "src/features/search/SearchRoute.tsx :: const controller = useSearchController({",
-      "cannotDerive": "AI开关是偏好，运行参数是SubmittedSearch快照，恢复回执有独立identity；不能从现有结果数组还原。",
+      "cannotDerive": "Query是远端结果，visible是eligibility投影，enabled是用户偏好，semantic read plan是权限和来源计划；它们不能互相推导。实际恢复ticket只改善search-run，不算本项转换。",
       "tests": [
         "src/features/search/aiSearch.test.ts",
         "tests/ui/search/search-controller-ai.test.tsx",
         "tests/ui/app/content-source-navigation.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "keep",
+        "delivered": "原四字段 Query/派生 visible/用户 enabled/semantic read-plan 的实现未转换。远端结果已由 Query，enabled 是独立显示选择，不能从有结果推导用户选择；新恢复 helper 不属于本条原 full scope。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "src/features/search/aiSearch.test.ts",
+          "tests/ui/search/search-controller-ai.test.tsx",
+          "tests/ui/app/content-source-navigation.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.search-candidates",
@@ -3972,7 +4109,22 @@
         "tests/ui/search/search-performance-stress.test.tsx",
         "tests/ui/search/search-controller-ai.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "partial",
+        "delivered": "tags/users 的开闭、输入和 debounce submission 真正迁入两个 session，ticket 同时绑定 opening 与 input object；关闭/改字及 A→B→A 拒旧 timer。",
+        "residualControlAuthority": [
+          "原 full scope 的 activeTagKey/activeUserKey 仍由 useSearchCandidateQueries 持有实际 Query 取消范围；source/sheet 变化后的 closeAll 仍是 passive，category 维度也未迁移。保留必要 Query 资源，不强并阶段，但只计局部。"
+        ],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/search/search-screen.test.tsx",
+          "tests/ui/search/search-performance-stress.test.tsx",
+          "tests/ui/search/search-controller-ai.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.search-filters",
@@ -3984,7 +4136,19 @@
       "consumer": "src/features/search/SearchScreen.tsx :: <SearchFilterSheet ; tests/ui/visual/scenarios/search/manifest.tsx :: <SearchFilterSheet",
       "cannotDerive": "draftFilter和已提交filter含不同用户意图，moreVisible是已打开编辑session内的局部展示，不能复用外部Query状态。",
       "tests": ["tests/ui/search/search-screen.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "whole",
+        "delivered": "draft/error/visible 与 advanced disclosure 全部由 editSession 语义命令接管；open 同步安装当前克隆 draft，validate 失败保留编辑，onApply 抛错前不关闭。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": ["tests/ui/search/search-screen.test.tsx"],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "scrollOffsetRef 是真实 Native 位置历史，属于必要输入；原表单 Partial 强转契约保持，不以此宣称消除了类型风险。"
+        ]
+      }
     },
     {
       "id": "ui.search-run",
@@ -3996,7 +4160,21 @@
       "consumer": "src/features/search/SearchRoute.tsx :: const controller = useSearchController({",
       "cannotDerive": "searchQuery是草稿而submittedSearch是请求参数快照；history写入许可与正在排队的持久化目标是另一条时序。",
       "tests": ["tests/ui/search/search-controller-ai.test.tsx", "tests/ui/app/content-source-navigation.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "partial",
+        "delivered": "实际 handledSearchActions/verification continuation 归入 searchRecovery，scope/intent 的 commit 与命令失效都接真实 hook 调用。",
+        "residualControlAuthority": [
+          "SubmittedSearch、原始输入、source/filters、AI preference、串行 RecentSearchHistoryOwner 仍明确独立。等值 Apply 具体风险 B07-R1 必须在应用前裁决，不能给整个搜索 full scope whole。"
+        ],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": [
+          "tests/ui/search/search-controller-ai.test.tsx",
+          "tests/ui/app/content-source-navigation.test.tsx"
+        ],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.selection-document",
@@ -4313,7 +4491,18 @@
       "consumer": "src/features/user/UserRoute.tsx :: <UserScreen ; tests/ui/visual/scenarios/user/manifest.tsx :: <UserScreen",
       "cannotDerive": "回顶意图可能先于listRef挂载，autoLoadArmed是显式手势资格；都不能从当前页数或loading值推导。",
       "tests": ["tests/ui/user/user-screen.test.tsx", "tests/ui/user/user-route.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B07",
+        "outcome": "partial",
+        "delivered": "pending reset 与 auto-page armed 的合法互斥关系由 listInteraction 接管，真实 drag 覆盖旧 RAF reset，一次 drag 只消费一次 page。",
+        "residualControlAuthority": [
+          "原 full scope 的 userTab 仍为 Screen React 状态；initialTab/user identity 的 passive 变更和 list handle/RAF 归属仍在 Screen，未把整个 tab/reset/page 生命周期完全转入一个负责模块。"
+        ],
+        "validation": "docs/state-model-refactor.md#b07",
+        "primaryTests": ["tests/ui/user/user-screen.test.tsx", "tests/ui/user/user-route.test.tsx"],
+        "acceptance": "ACCEPTED_B07_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.user-resolution",
