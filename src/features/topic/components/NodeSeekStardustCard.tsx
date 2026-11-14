@@ -63,6 +63,62 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   });
 }
 
+type PaymentRequest = { readonly receive: NodeSeekStardustReceive };
+type PaymentState =
+  | { phase: 'idle' | 'unknown' | 'paid'; receive: NodeSeekStardustReceive }
+  | { phase: 'paying'; receive: NodeSeekStardustReceive; request: PaymentRequest };
+function useStardustPaymentState(receive: NodeSeekStardustReceive) {
+  const [snapshot, setSnapshot] = useRecyclingState<PaymentState>({ phase: 'idle', receive }, [receive]);
+  const current = useRef(snapshot);
+  const publish = useCallback(
+    (next: PaymentState) => {
+      current.current = next;
+      setSnapshot(next);
+    },
+    [setSnapshot]
+  );
+  const begin = useCallback(
+    (scope: NodeSeekStardustReceive) => {
+      if (current.current.receive === scope && current.current.phase !== 'idle') return null;
+      const request: PaymentRequest = { receive: scope };
+      publish({ phase: 'paying', receive: scope, request });
+      return request;
+    },
+    [publish]
+  );
+  const settle = useCallback(
+    (
+      request: PaymentRequest,
+      outcome: Awaited<ReturnType<TopicActionsController['payNodeSeekStardust']>>,
+      oneTime: boolean
+    ) => {
+      if (current.current.phase !== 'paying' || current.current.request !== request) return false;
+      publish({
+        receive: request.receive,
+        phase: outcome === 'unknown' ? 'unknown' : outcome === 'submitted' && oneTime ? 'paid' : 'idle'
+      });
+      return true;
+    },
+    [publish]
+  );
+  const release = useCallback(
+    (request: PaymentRequest) => {
+      if (current.current.phase === 'paying' && current.current.request === request)
+        publish({ phase: 'idle', receive: request.receive });
+    },
+    [publish]
+  );
+  return {
+    paying: snapshot.phase === 'paying',
+    paymentUnknown: snapshot.phase === 'unknown',
+    oneTimePaid: snapshot.phase === 'paid',
+    paymentNotice: snapshot.phase === 'unknown' ? '付款结果未知，请先在原站确认，切勿直接重复付款。' : '',
+    begin,
+    settle,
+    release
+  };
+}
+
 export function NodeSeekStardustCard({
   actions,
   receive
@@ -78,12 +134,18 @@ export function NodeSeekStardustCard({
     [amount, description, oneTime, receiverMemberId, refId]
   );
   const currentReceive = useCommittedRef(stableReceive);
+  const {
+    paying,
+    paymentUnknown,
+    oneTimePaid,
+    paymentNotice,
+    begin: beginPayment,
+    settle: settlePayment,
+    release: releasePayment
+  } = useStardustPaymentState(stableReceive);
   const requestRef = useRef(0);
   const [status, setStatus] = useRecyclingState<NodeSeekStardustStatus | null>(null, [stableReceive]);
-  const [paying, setPaying] = useRecyclingState(false, [stableReceive]);
-  const [paymentNotice, setPaymentNotice] = useRecyclingState('', [stableReceive]);
-  const [paymentUnknown, setPaymentUnknown] = useRecyclingState(false, [stableReceive]);
-  const [oneTimePaid, setOneTimePaid] = useRecyclingState(false, [stableReceive]);
+
   const loadStatus = useCallback(async () => {
     const request = ++requestRef.current;
     const nextStatus = await loadNodeSeekStardustStatus(stableReceive).catch(() => null);
@@ -106,16 +168,13 @@ export function NodeSeekStardustCard({
   });
   const pay = useCallback(async () => {
     if (!validRef || oneTimeClosed || paymentUnknown || !decision.allowed) return;
-    setPaying(true);
-    setPaymentNotice('');
+    const request = beginPayment(stableReceive);
+    if (!request) return;
     try {
       const outcome = await payNodeSeekStardust(stableReceive);
       if (currentReceive.current !== stableReceive) return;
-      if (outcome === 'unknown') {
-        setPaymentUnknown(true);
-        setPaymentNotice('付款结果未知，请先在原站确认，切勿直接重复付款。');
-      } else if (outcome === 'submitted' && oneTime) {
-        setOneTimePaid(true);
+      if (!settlePayment(request, outcome, oneTime)) return;
+      if (outcome === 'submitted' && oneTime) {
         setStatus((current) => ({
           participantCount: current?.participantCount || 0,
           totalAmount: current?.totalAmount || 0,
@@ -125,7 +184,7 @@ export function NodeSeekStardustCard({
       }
       if (outcome !== 'canceled') void loadStatus();
     } finally {
-      if (currentReceive.current === stableReceive) setPaying(false);
+      if (currentReceive.current === stableReceive) releasePayment(request);
     }
   }, [
     currentReceive,
@@ -135,11 +194,10 @@ export function NodeSeekStardustCard({
     oneTimeClosed,
     payNodeSeekStardust,
     paymentUnknown,
-    setOneTimePaid,
-    setPaying,
-    setPaymentNotice,
-    setPaymentUnknown,
     setStatus,
+    beginPayment,
+    settlePayment,
+    releasePayment,
     stableReceive,
     validRef
   ]);

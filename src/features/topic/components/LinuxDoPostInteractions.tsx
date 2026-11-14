@@ -513,6 +513,41 @@ export function LinuxDoBoostButton({
   );
 }
 
+type ReactionPickerSelection = { postId: number; x: number; y: number };
+type ReactionPickerRequest = { selection: ReactionPickerSelection };
+type ReactionPickerState = { picker: ReactionPickerSelection | null; request: ReactionPickerRequest | null };
+function useReactionPicker() {
+  const current = useRef<ReactionPickerState>({ picker: null, request: null });
+  const [snapshot, setSnapshot] = useState(current.current);
+  const publish = useCallback((next: ReactionPickerState) => {
+    current.current = next;
+    setSnapshot(next);
+  }, []);
+  const open = useCallback(
+    (selection: ReactionPickerSelection) => publish({ ...current.current, picker: selection }),
+    [publish]
+  );
+  const close = useCallback(() => publish({ ...current.current, picker: null }), [publish]);
+  const choose = useCallback(
+    async (id: string, react: TopicActionsController['reactToPost']) => {
+      const selected = current.current.picker;
+      if (!selected || current.current.request) return;
+      const request = { selection: selected };
+      publish({ picker: selected, request });
+      try {
+        if (await react(selected.postId, id)) {
+          if (current.current.request === request && current.current.picker === selected)
+            publish({ ...current.current, picker: null });
+        }
+      } finally {
+        if (current.current.request === request) publish({ ...current.current, request: null });
+      }
+    },
+    [publish]
+  );
+  return { picker: snapshot.picker, reactionBusy: snapshot.request !== null, open, close, choose };
+}
+
 export function LinuxDoPostInteractionsProvider({
   active,
   scopeKey,
@@ -536,10 +571,16 @@ export function LinuxDoPostInteractionsProvider({
   const { width, height } = useWindowDimensions();
   const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
-  const [picker, setPicker] = useState<{ postId: number; x: number; y: number } | null>(null);
+  const {
+    picker,
+    reactionBusy,
+    open: openReactionPicker,
+    close: closeReactionPicker,
+    choose: choosePickerReaction
+  } = useReactionPicker();
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiQuery, setEmojiQuery] = useState('');
-  const [reactionBusy, setReactionBusy] = useState(false);
+
   const [expandedBoosts, setExpandedBoosts] = useState<ReadonlySet<number>>(() => new Set());
   useEffect(() => {
     setExpandedBoosts(new Set());
@@ -590,20 +631,24 @@ export function LinuxDoPostInteractionsProvider({
     refetch
   } = useQuery({ ...actions.linuxDoInteractionConfigQuery, enabled, retry: false });
   useEffect(() => {
-    setPicker(null);
+    closeReactionPicker();
     setEmojiPickerOpen(false);
     setEmojiQuery('');
-  }, [active, scopeKey]);
+  }, [active, scopeKey, closeReactionPicker]);
   useEffect(() => {
     setEmojiPickerOpen(false);
     setEmojiQuery('');
   }, [actions.boostComposer?.postId]);
   const openReactions = useCallback(
     (postId: number, event?: GestureResponderEvent) => {
-      setPicker({ postId, x: event?.nativeEvent.pageX ?? width / 2, y: event?.nativeEvent.pageY ?? height / 2 });
+      openReactionPicker({
+        postId,
+        x: event?.nativeEvent.pageX ?? width / 2,
+        y: event?.nativeEvent.pageY ?? height / 2
+      });
       Vibration.vibrate(15);
     },
-    [height, width]
+    [height, width, openReactionPicker]
   );
   const overlayOpen = Boolean(picker || actions.boostComposer);
   const { decisionFor, reactToPost, openBoostComposer, deleteBoost } = actions;
@@ -643,17 +688,7 @@ export function LinuxDoPostInteractionsProvider({
   const boostDecision = boostTarget ? actions.decisionFor({ action: 'boost', target: boostTarget }) : null;
   const unknown = boostTarget?.siteExtension?.interactionUnconfirmed === true;
   const canReact = currentPost && actions.decisionFor({ action: 'like', target: currentPost }).allowed;
-  const chooseReaction = async (id: string) => {
-    if (!picker || reactionBusy) return;
-    const selected = picker;
-    setReactionBusy(true);
-    try {
-      if (await actions.reactToPost(selected.postId, id))
-        setPicker((current) => (current === selected ? null : current));
-    } finally {
-      setReactionBusy(false);
-    }
-  };
+  const chooseReaction = (id: string) => choosePickerReaction(id, actions.reactToPost);
   const addEmoji = (id: string) => {
     const next = content + (content ? ' ' : '') + `:${id}:`;
     if (!discourseBoostStats(next, emojiNames).valid) return;
@@ -667,7 +702,7 @@ export function LinuxDoPostInteractionsProvider({
       <PopupMenu
         visible={active && !!picker}
         accessibilityLabel="关闭表情反应"
-        onRequestClose={() => setPicker(null)}
+        onRequestClose={() => closeReactionPicker()}
         placementStyle={{
           position: 'absolute',
           width: Math.min(300, width - 32),

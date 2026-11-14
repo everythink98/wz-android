@@ -1,3 +1,4 @@
+import { createComposerWriteOperations } from './composerWriteOperations';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PortalHost } from '@gorhom/portal';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -272,8 +273,7 @@ export const StructuredReplyComposer = forwardRef<
       [documentLifecycle]
     );
     const [localError, setLocalError] = useState('');
-    const [submitting, setSubmitting] = useState(false);
-    const submissionRef = useRef<object | null>(null);
+
     const [handoffs] = useState(createComposerHandoffs);
     const [handoffView, setHandoffView] = useState(handoffs.snapshot);
     const { imagePending: imageHandoffPending, panelPending: panelHandoffPending } = handoffView;
@@ -295,15 +295,10 @@ export const StructuredReplyComposer = forwardRef<
     const lastContentPropRef = useRef(content);
     const lastRevisionRef = useRef(0);
     const documentEpochRef = useRef(initialMode ? 0 : -1);
-    const imageUploadRef = useRef<{ id: string; epoch: number } | null>(null);
-    const uploadCommandRef = useRef<{
-      id: string;
-      epoch: number;
-      command: string;
-      resolve: () => void;
-      reject: (error: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    } | null>(null);
+    const [submissionSnapshot, publishSubmission] = useState<{ readonly epoch: number } | null>(null);
+    const [writes] = useState(() => createComposerWriteOperations(publishSubmission));
+    const submitting = submissionSnapshot !== null;
+
     const modePreferenceRef = useRef<ComposerMode>(initialMode ?? 'rich');
     const initKeyRef = useRef(initialMode ? intentKey : '');
     const sentThemeRef = useRef(editorTheme);
@@ -399,25 +394,19 @@ export const StructuredReplyComposer = forwardRef<
       },
       [intent.site, ready, visible]
     );
-    const cancelUploadCommand = useCallback(() => {
-      const pending = uploadCommandRef.current;
-      if (!pending) return;
-      clearTimeout(pending.timer);
-      uploadCommandRef.current = null;
-      pending.reject(new Error('编辑文档已变化'));
-    }, []);
+    const cancelUploadCommand = useCallback(() => writes.cancelCommand(), [writes]);
     const invalidateImageHandoff = useCallback(() => {
       const handoff = handoffs.image;
       if (!handoff) return;
       handoffs.invalidateImage();
-      const pending = uploadCommandRef.current;
+      const pending = writes.pendingCommand;
       if (
         pending?.command === 'begin-image-upload' &&
         pending.id === handoff.uploadId &&
         pending.epoch === handoff.epoch
       )
         cancelUploadCommand();
-    }, [cancelUploadCommand, handoffs]);
+    }, [cancelUploadCommand, handoffs, writes]);
     const invalidatePanelHandoff = useCallback(() => {
       handoffs.invalidatePanel();
       publishHandoffs();
@@ -460,8 +449,7 @@ export const StructuredReplyComposer = forwardRef<
       if (!modeLoaded) return;
       documentEpochRef.current++;
       setToolbarState(null);
-      submissionRef.current = null;
-      setSubmitting(false);
+      writes.cancelSubmission();
       cancelUploadCommand();
       transitionDocument('initialize');
       snapshotResolversRef.current.forEach(({ reject, timer, trace }) => {
@@ -496,7 +484,8 @@ export const StructuredReplyComposer = forwardRef<
       modeLoaded,
       send,
       transitionDocument,
-      watchInitialization
+      watchInitialization,
+      writes
     ]);
 
     useEffect(() => {
@@ -605,36 +594,16 @@ export const StructuredReplyComposer = forwardRef<
           uploadId: string;
           documentEpoch: number;
         }
-      ) =>
-        new Promise<void>((resolve, reject) => {
-          if (uploadCommandRef.current) {
-            reject(new Error('请等待当前上传准备完成'));
-            return;
-          }
-          const timer = setTimeout(() => {
-            uploadCommandRef.current = null;
-            reject(new Error('编辑器未确认上传位置，请重试'));
-          }, 1500);
-          uploadCommandRef.current = {
-            id: payload.uploadId,
-            epoch: payload.documentEpoch,
-            command: payload.name,
-            resolve,
-            reject,
-            timer
-          };
-          send({ type: 'COMMAND', payload });
-        }),
-      [send]
+      ) => writes.sendCommand(payload, send),
+      [send, writes]
     );
 
     const beginImageUpload = useCallback(async () => {
       if (!ready || documentLifecycle.initializing) throw new Error('编辑器尚未就绪');
       if (readOnly) throw new Error('请先退出预览');
-      if (handoffs.panel || handoffs.image || imageUploadRef.current?.epoch === documentEpochRef.current)
+      if (handoffs.panel || handoffs.image || writes.upload?.epoch === documentEpochRef.current)
         throw new Error('请等待当前上传完成');
-      const upload = { id: requestId(), epoch: documentEpochRef.current };
-      imageUploadRef.current = upload;
+      const upload = writes.claimUpload(requestId(), documentEpochRef.current);
       try {
         await sendUploadCommand({ name: 'begin-image-upload', uploadId: upload.id, documentEpoch: upload.epoch });
         // Preserve current IME text; an ACK never replaces the document.
@@ -646,14 +615,14 @@ export const StructuredReplyComposer = forwardRef<
           type: 'COMMAND',
           payload: { name: 'finish-image-upload', uploadId: upload.id, documentEpoch: upload.epoch }
         });
-        if (imageUploadRef.current === upload) imageUploadRef.current = null;
+        writes.releaseUpload(upload);
         throw error;
       }
-    }, [documentLifecycle, readOnly, ready, requestSnapshot, send, sendUploadCommand, handoffs]);
+    }, [documentLifecycle, readOnly, ready, requestSnapshot, send, sendUploadCommand, handoffs, writes]);
 
     const finishImageUpload = useCallback(
       async (uploadId: string, markdown?: string) => {
-        const upload = imageUploadRef.current;
+        const upload = writes.upload;
         if (!upload || upload.id !== uploadId || upload.epoch !== documentEpochRef.current)
           throw new Error('编辑文档已变化');
         try {
@@ -670,11 +639,11 @@ export const StructuredReplyComposer = forwardRef<
           send({ type: 'COMMAND', payload: { name: 'finish-image-upload', uploadId, documentEpoch: upload.epoch } });
           throw error;
         } finally {
-          if (imageUploadRef.current === upload) imageUploadRef.current = null;
+          writes.releaseUpload(upload);
         }
         await requestSnapshot();
       },
-      [documentLifecycle, readOnly, ready, requestSnapshot, send, sendUploadCommand]
+      [documentLifecycle, readOnly, ready, requestSnapshot, send, sendUploadCommand, writes]
     );
 
     useImperativeHandle(
@@ -718,7 +687,7 @@ export const StructuredReplyComposer = forwardRef<
 
     useEffect(
       () => () => {
-        submissionRef.current = null;
+        writes.cancelSubmission();
         cancelUploadCommand();
         if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
         if (initializationTraceRef.current)
@@ -731,7 +700,7 @@ export const StructuredReplyComposer = forwardRef<
         snapshotResolversRef.current.clear();
         send({ type: 'DESTROY' });
       },
-      [cancelUploadCommand, send]
+      [cancelUploadCommand, send, writes]
     );
 
     const handleMessage = useCallback(
@@ -764,18 +733,7 @@ export const StructuredReplyComposer = forwardRef<
           }
         }
         if (message.type === 'UPLOAD_COMMAND_RESULT') {
-          const pending = uploadCommandRef.current;
-          if (
-            !pending ||
-            pending.id !== message.payload.uploadId ||
-            pending.epoch !== message.payload.documentEpoch ||
-            pending.command !== message.payload.command
-          )
-            return;
-          clearTimeout(pending.timer);
-          uploadCommandRef.current = null;
-          if (message.payload.accepted && pending.epoch === documentEpochRef.current) pending.resolve();
-          else pending.reject(new Error('编辑器未接受上传位置，请退出预览后重试'));
+          writes.commandResult(message.payload, documentEpochRef.current);
           return;
         }
         // Revisions restart on INIT. A previous document can still have bridge messages in flight.
@@ -912,8 +870,7 @@ export const StructuredReplyComposer = forwardRef<
               } else if (message.payload.action === 'prepare-panel') {
                 const epoch = (message.payload.data as { documentEpoch?: unknown } | undefined)?.documentEpoch;
                 if (!awaitKeyboardSettled) throw new Error('当前入口尚未准备好编辑工具');
-                if (handoffs.panel || handoffs.image || submissionRef.current)
-                  throw new Error('正在准备编辑操作，请稍候');
+                if (handoffs.panel || handoffs.image || writes.submitting) throw new Error('正在准备编辑操作，请稍候');
                 const request = handoffs.claimPanel();
                 panelRequest = request;
                 const assertCurrent = () => {
@@ -940,7 +897,7 @@ export const StructuredReplyComposer = forwardRef<
               } else if (message.payload.action === 'upload-image') {
                 if (!onUploadImage) throw new Error('当前入口不支持上传图片');
                 if (!awaitKeyboardSettled) throw new Error('当前入口尚未准备好图片选择');
-                if (handoffs.panel || handoffs.image || imageUploadRef.current?.epoch === documentEpochRef.current)
+                if (handoffs.panel || handoffs.image || writes.upload?.epoch === documentEpochRef.current)
                   throw new Error('正在准备选择，请稍候');
                 const data = message.payload.data as { uploadId?: unknown; documentEpoch?: unknown } | undefined;
                 const uploadId = data?.uploadId;
@@ -1065,7 +1022,8 @@ export const StructuredReplyComposer = forwardRef<
         visible,
         uploadAvailable,
         handoffs,
-        publishHandoffs
+        publishHandoffs,
+        writes
       ]
     );
 
@@ -1098,15 +1056,14 @@ export const StructuredReplyComposer = forwardRef<
     };
 
     const submit = useCallback(() => {
-      if (submissionRef.current || handoffs.image || handoffs.panel || actionBusy) return;
-      const submission = {};
+      if (writes.submitting || handoffs.image || handoffs.panel || actionBusy) return;
       const documentEpoch = documentEpochRef.current;
-      submissionRef.current = submission;
-      setSubmitting(true);
+      const submission = writes.claimSubmission(documentEpoch);
+      if (!submission) return;
       setLocalError('');
       void requestSnapshot()
         .then((snapshot) => {
-          if (submissionRef.current !== submission || handoffs.image) return;
+          if (!writes.ownsSubmission(submission) || handoffs.image) return;
           if (snapshot.validationIssues.length) {
             setLocalError(snapshot.validationIssues[0]!.message);
             return;
@@ -1116,33 +1073,35 @@ export const StructuredReplyComposer = forwardRef<
             return;
           }
           const settleSubmission: ComposerSubmissionSettlement = async (complete) => {
-            if (documentEpochRef.current !== documentEpoch) return false;
+            if (!writes.ownsSubmission(submission) || documentEpochRef.current !== documentEpoch) return false;
             let completed = false;
             try {
               const current = await requestSnapshot({ documentEpoch, revision: snapshot.revision });
-              if (documentEpochRef.current === documentEpoch && current.revision === snapshot.revision)
+              if (
+                writes.ownsSubmission(submission) &&
+                documentEpochRef.current === documentEpoch &&
+                current.revision === snapshot.revision
+              )
                 completed = complete();
               return completed;
             } catch {
               return false;
             } finally {
               // A successful React settlement keeps the old document locked until its replacement INIT.
-              if (!completed && documentEpochRef.current === documentEpoch)
+              if (!completed && writes.ownsSubmission(submission) && documentEpochRef.current === documentEpoch)
                 send({ type: 'SET_READ_ONLY', payload: { readOnly: Boolean(currentReadOnly.current) } });
             }
           };
           return onSubmit?.(snapshot, settleSubmission);
         })
         .catch((snapshotError) => {
-          if (submissionRef.current === submission)
+          if (writes.ownsSubmission(submission))
             setLocalError(snapshotError instanceof Error ? snapshotError.message : '无法取得最新正文');
         })
         .finally(() => {
-          if (submissionRef.current !== submission) return;
-          submissionRef.current = null;
-          setSubmitting(false);
+          writes.releaseSubmission(submission);
         });
-    }, [actionBusy, currentReadOnly, onSubmit, requestSnapshot, send, handoffs]);
+    }, [actionBusy, currentReadOnly, onSubmit, requestSnapshot, send, handoffs, writes]);
 
     const displayError = localError || error || disabledReason;
     const fullscreenFeedback = displayError || status;

@@ -3,6 +3,8 @@ import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 import {
   topicDraftTarget,
+  topicSubmissionWithReceipt,
+  type TopicSubmissionReceipt,
   type TopicEditResult,
   type TopicEditableFields,
   CreateTopicResult,
@@ -125,7 +127,7 @@ const { enqueue, transaction, assertUsable } = createSqliteExecutor(
   '草稿事务无法确认，未清理原记录。'
 );
 const activeAttempts = new Set<string>();
-const attemptKey = (attempt: TopicSubmissionAttempt) =>
+const attemptKey = (attempt: Pick<TopicSubmissionAttempt, 'source' | 'identityKey' | 'target' | 'id'>) =>
   `${attempt.source}\u0000${attempt.identityKey}\u0000${attempt.target || 'create'}\u0000${attempt.id}`;
 
 function account(source: TopicCreationSource, identityKey: string) {
@@ -183,13 +185,51 @@ async function database() {
   return db;
 }
 
-async function read<T extends TopicDraft | TopicSubmissionAttempt>(
+function decodeReceipt(value: unknown): TopicSubmissionReceipt {
+  const result = resultSchema.parse(value);
+  switch (result.status) {
+    case 'posted':
+      return { ...result, status: 'posted' };
+    case 'enqueued':
+      return { ...result, status: 'enqueued' };
+    case 'rejected':
+      return { ...result, status: 'rejected' };
+    case 'unknown':
+      return { ...result, status: 'unknown' };
+    case 'saved':
+      return { ...result, status: 'saved' };
+    case 'partial':
+      return { ...result, status: 'partial' };
+    case 'conflict':
+      return { ...result, status: 'conflict' };
+    default: {
+      const exhausted: never = result.status;
+      return exhausted;
+    }
+  }
+}
+
+function read(
+  db: SQLiteDatabase,
+  table: 'topic_drafts',
+  source: TopicCreationSource,
+  identityKey: string,
+  target?: string
+): Promise<TopicDraft | null>;
+function read(
+  db: SQLiteDatabase,
+  table: 'topic_submission_attempts',
+  source: TopicCreationSource,
+  identityKey: string,
+  target?: string
+): Promise<TopicSubmissionAttempt | null>;
+async function read(
   db: SQLiteDatabase,
   table: 'topic_drafts' | 'topic_submission_attempts',
   source: TopicCreationSource,
   identityKey: string,
   target = 'create'
-): Promise<T | null> {
+): Promise<TopicDraft | TopicSubmissionAttempt | null> {
   account(source, identityKey);
   targetSchema.parse(target);
   const row = await db.getFirstAsync<{ payload: string }>(
@@ -204,12 +244,15 @@ async function read<T extends TopicDraft | TopicSubmissionAttempt>(
     if (value.source !== source || value.identityKey !== identityKey) throw new Error('identity mismatch');
     if (('status' in value ? value.target || 'create' : topicDraftTarget(value)) !== target)
       throw new Error('target mismatch');
-    if (
-      'status' in value &&
-      (value.status === 'sending' ? value.result : !value.result || value.status !== value.result.status)
-    )
-      throw new Error('status mismatch');
-    return value as T;
+    if ('status' in value) {
+      if (value.status === 'sending') {
+        if (value.result) throw new Error('status mismatch');
+        return { ...value, status: 'sending', result: undefined };
+      }
+      if (!value.result || value.status !== value.result.status) throw new Error('status mismatch');
+      return topicSubmissionWithReceipt(value, decodeReceipt(value.result));
+    }
+    return value;
   } catch {
     throw new Error('本机发帖记录已损坏，已保留原记录并阻止发送。');
   }
@@ -232,7 +275,7 @@ async function removeDraft(db: SQLiteDatabase, draft: TopicDraft) {
 }
 
 export function loadTopicDraft(source: TopicCreationSource, identityKey: string, target = 'create') {
-  return enqueue(async () => read<TopicDraft>(await database(), 'topic_drafts', source, identityKey, target));
+  return enqueue(async () => read(await database(), 'topic_drafts', source, identityKey, target));
 }
 
 export function saveTopicDraft(draft: TopicDraft) {
@@ -243,7 +286,7 @@ export function saveTopicDraft(draft: TopicDraft) {
     const db = await database();
     return transaction(db, true, async () => {
       const target = topicDraftTarget(saved);
-      const previous = await read<TopicDraft>(db, 'topic_drafts', saved.source, saved.identityKey, target);
+      const previous = await read(db, 'topic_drafts', saved.source, saved.identityKey, target);
       const discarded = await db.getFirstAsync(
         'SELECT draft_id FROM discarded_topic_drafts WHERE source=? AND identity_key=? AND target=? AND draft_id=?',
         saved.source,
@@ -275,7 +318,7 @@ export function discardTopicDraft(
   return enqueue(async () => {
     const db = await database();
     return transaction(db, true, async () => {
-      const draft = await read<TopicDraft>(db, 'topic_drafts', source, identityKey, target);
+      const draft = await read(db, 'topic_drafts', source, identityKey, target);
       if (!draft || draft.id !== draftId || (revision !== undefined && revision !== draft.revision)) return false;
       await removeDraft(db, draft);
       return true;
@@ -285,19 +328,12 @@ export function discardTopicDraft(
 
 export function readTopicSubmissionAttempt(source: TopicCreationSource, identityKey: string, target = 'create') {
   return enqueue(async () => {
-    const attempt = await read<TopicSubmissionAttempt>(
-      await database(),
-      'topic_submission_attempts',
-      source,
-      identityKey,
-      target
-    );
+    const attempt = await read(await database(), 'topic_submission_attempts', source, identityKey, target);
     if (attempt?.status !== 'sending' || activeAttempts.has(attemptKey(attempt))) return attempt;
-    return {
-      ...attempt,
-      status: 'unknown' as const,
-      result: { status: 'unknown' as const, message: '上次发布结果尚未确认，请先到原站核实。' }
-    };
+    return topicSubmissionWithReceipt(attempt, {
+      status: 'unknown',
+      message: '上次发布结果尚未确认，请先到原站核实。'
+    });
   });
 }
 
@@ -308,7 +344,7 @@ export function beginTopicSubmissionAttempt(attempt: TopicSubmissionAttempt) {
   return enqueue(async () => {
     const db = await database();
     await transaction(db, true, async () => {
-      const previous = await read<TopicSubmissionAttempt>(
+      const previous = await read(
         db,
         'topic_submission_attempts',
         saved.source,
@@ -317,13 +353,7 @@ export function beginTopicSubmissionAttempt(attempt: TopicSubmissionAttempt) {
       );
       if (previous && (previous.id === saved.id || previous.status === 'sending' || previous.status === 'unknown'))
         throw new Error('上次发布结果尚未确认，请先到原站核实，勿重复发送。');
-      const draft = await read<TopicDraft>(
-        db,
-        'topic_drafts',
-        saved.source,
-        saved.identityKey,
-        saved.target || 'create'
-      );
+      const draft = await read(db, 'topic_drafts', saved.source, saved.identityKey, saved.target || 'create');
       if (!draft || draft.id !== saved.draftId || draft.revision !== saved.revision)
         throw new Error('草稿已变化或尚未保存，请重试。');
       await db.runAsync(
@@ -334,7 +364,7 @@ export function beginTopicSubmissionAttempt(attempt: TopicSubmissionAttempt) {
         JSON.stringify(saved)
       );
     });
-    activeAttempts.add(attemptKey(saved as TopicSubmissionAttempt));
+    activeAttempts.add(attemptKey(saved));
   });
 }
 
@@ -342,13 +372,13 @@ export function settleTopicSubmissionAttempt(
   attempt: TopicSubmissionAttempt,
   result: CreateTopicResult | TopicEditResult
 ) {
-  const savedResult = resultSchema.parse(result) as CreateTopicResult | TopicEditResult;
+  const savedResult = decodeReceipt(result);
   if (savedResult.status === 'posted' && savedResult.topic && savedResult.topic.source !== attempt.source)
     throw new Error('发布结果来源不匹配，未清理草稿。');
   return enqueue(async () => {
     const db = await database();
     const settled = await transaction(db, true, async () => {
-      const previous = await read<TopicSubmissionAttempt>(
+      const previous = await read(
         db,
         'topic_submission_attempts',
         attempt.source,
@@ -370,12 +400,7 @@ export function settleTopicSubmissionAttempt(
         savedResult.status !== 'saved'
       )
         return false;
-      const updated = {
-        ...previous,
-        status: savedResult.status,
-        result: savedResult,
-        ...('confirmed' in savedResult && savedResult.confirmed ? { confirmed: savedResult.confirmed } : {})
-      };
+      const updated = topicSubmissionWithReceipt(previous, savedResult);
       await db.runAsync(
         'UPDATE topic_submission_attempts SET payload=? WHERE source=? AND identity_key=? AND target=?',
         JSON.stringify(updated),
@@ -384,13 +409,7 @@ export function settleTopicSubmissionAttempt(
         attempt.target || 'create'
       );
       if (savedResult.status === 'posted' || savedResult.status === 'enqueued' || savedResult.status === 'saved') {
-        const draft = await read<TopicDraft>(
-          db,
-          'topic_drafts',
-          attempt.source,
-          attempt.identityKey,
-          attempt.target || 'create'
-        );
+        const draft = await read(db, 'topic_drafts', attempt.source, attempt.identityKey, attempt.target || 'create');
         if (draft?.id === attempt.draftId && draft.revision === attempt.revision) await removeDraft(db, draft);
       }
       return true;
@@ -412,7 +431,7 @@ export function acknowledgeTopicSubmissionAttempt(
   return enqueue(async () => {
     const db = await database();
     return transaction(db, true, async () => {
-      const attempt = await read<TopicSubmissionAttempt>(db, 'topic_submission_attempts', source, identityKey, target);
+      const attempt = await read(db, 'topic_submission_attempts', source, identityKey, target);
       if (!attempt || attempt.id !== attemptId) return false;
       if (activeAttempts.has(attemptKey(attempt))) throw new Error('发布仍在进行中，请等待结果。');
       await db.runAsync(
@@ -431,13 +450,7 @@ export function checkpointTopicEdit(attempt: TopicSubmissionAttempt, confirmed: 
   return enqueue(async () => {
     const db = await database();
     await transaction(db, true, async () => {
-      const current = await read<TopicSubmissionAttempt>(
-        db,
-        'topic_submission_attempts',
-        attempt.source,
-        attempt.identityKey,
-        attempt.target
-      );
+      const current = await read(db, 'topic_submission_attempts', attempt.source, attempt.identityKey, attempt.target);
       if (!current || current.id !== attempt.id || current.status !== 'sending')
         throw new Error('保存记录已变化，请先核对原站');
       await db.runAsync(

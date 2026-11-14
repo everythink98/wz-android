@@ -95,7 +95,12 @@ export type CreateTopicResult =
   | { status: 'enqueued'; message: string }
   | { status: 'rejected'; message: string }
   | { status: 'unknown'; message: string };
-export type TopicSubmissionAttempt = {
+// A durable receipt needs only the fields accepted by the existing on-disk schema.
+export type TopicSubmissionReceipt =
+  | { status: 'posted'; message: string; topic?: Pick<Topic, 'id' | 'source' | 'title'> }
+  | Exclude<CreateTopicResult, { status: 'posted' }>
+  | TopicEditResult;
+type TopicSubmissionFields = {
   target?: string;
   confirmed?: Partial<TopicEditableFields>;
   id: string;
@@ -104,9 +109,42 @@ export type TopicSubmissionAttempt = {
   draftId: string;
   revision: number;
   startedAt: number;
-  status: 'sending' | CreateTopicResult['status'] | TopicEditResult['status'];
-  result?: CreateTopicResult | TopicEditResult;
 };
+type SettledTopicSubmissionAttempt = {
+  [Status in TopicSubmissionReceipt['status']]: TopicSubmissionFields & {
+    readonly status: Status;
+    readonly result: Readonly<TopicSubmissionReceipt & { status: Status }>;
+  };
+}[TopicSubmissionReceipt['status']];
+export type TopicSubmissionAttempt =
+  (TopicSubmissionFields & { readonly status: 'sending'; readonly result?: never }) | SettledTopicSubmissionAttempt;
+
+export function topicSubmissionWithReceipt(
+  attempt: TopicSubmissionFields,
+  result: TopicSubmissionReceipt
+): TopicSubmissionAttempt {
+  const fields = { ...attempt, ...('confirmed' in result && result.confirmed ? { confirmed: result.confirmed } : {}) };
+  switch (result.status) {
+    case 'posted':
+      return { ...fields, status: 'posted', result: { ...result, status: 'posted' } };
+    case 'enqueued':
+      return { ...fields, status: 'enqueued', result: { ...result, status: 'enqueued' } };
+    case 'rejected':
+      return { ...fields, status: 'rejected', result: { ...result, status: 'rejected' } };
+    case 'unknown':
+      return { ...fields, status: 'unknown', result: { ...result, status: 'unknown' } };
+    case 'saved':
+      return { ...fields, status: 'saved', result: { ...result, status: 'saved' } };
+    case 'partial':
+      return { ...fields, status: 'partial', result: { ...result, status: 'partial' } };
+    case 'conflict':
+      return { ...fields, status: 'conflict', result: { ...result, status: 'conflict' } };
+    default: {
+      const exhausted: never = result;
+      return exhausted;
+    }
+  }
+}
 
 export function emptyTopicDraft(source: TopicCreationSource, identityKey: string): TopicDraft {
   const now = Date.now();

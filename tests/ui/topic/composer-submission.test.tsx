@@ -6,6 +6,7 @@ import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals
 import { act, fireEvent, render, waitFor } from '../render';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { appQueryClient } from '@/platform/query/serverState';
+import { focusManager } from '@tanstack/react-query';
 import {
   COMPOSER_DRAFT,
   composerProofState,
@@ -555,7 +556,12 @@ describe('composer submission through the production controller and sheet', () =
       expect(sheetOpen(view)).toBe(true);
       expect(transport.requests.map((request) => request.body)).toEqual([COMPOSER_DRAFT]);
       expect(transport.confirmations).toBe(0);
-      expect(alert).toHaveBeenCalledWith('私信可能已发送', expect.any(String), expect.any(Array));
+      expect(alert).toHaveBeenCalledWith(
+        '私信可能已发送',
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({ onDismiss: expect.any(Function) })
+      );
       const confirm = alert.mock.calls.at(-1)?.[2]?.find((button) => button.text === '仍要重发');
       expect(confirm).toBeDefined();
       await act(async () => confirm?.onPress?.());
@@ -567,6 +573,65 @@ describe('composer submission through the production controller and sheet', () =
     expect(transport.requests.map((request) => request.body)).toEqual([COMPOSER_DRAFT, COMPOSER_DRAFT]);
     expect(transport.confirmations).toBe(1);
   });
+  it.each(['cancel', 'review', 'dismiss', 'focus', 'scope'] as const)(
+    'settles a private-message resend confirmation after %s without dispatching stale actions',
+    async (exit) => {
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const wasFocused = focusManager.isFocused();
+      const { view, transport } = await openMessage('nodeseek', 'unconfirmed');
+      try {
+        await submit(view);
+        await waitFor(() => expect(view.getByText('Mock unconfirmed')).toBeTruthy());
+        await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
+        transport.outcome = 'success';
+        await submit(view);
+        await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+        expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
+        expect(transport.requests).toHaveLength(1);
+        const buttons = alert.mock.calls[0]?.[2];
+        const staleResend = buttons?.find((button) => button.text === '仍要重发')?.onPress;
+        expect(staleResend).toBeDefined();
+        if (exit === 'scope') {
+          await view.rerender(<MessageSubmissionFixture transport={transport} conversationId="10" />);
+          await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
+          await fireEvent.press(view.getByLabelText('发私信'));
+          await ready(view);
+          await bridge(view, 'SNAPSHOT', {
+            snapshot: {
+              revision: 1,
+              markdown: 'new conversation',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          });
+        } else {
+          await act(async () => {
+            if (exit === 'focus') focusManager.setFocused(false);
+            else if (exit === 'dismiss') alert.mock.calls[0]?.[3]?.onDismiss?.();
+            else buttons?.find((button) => button.text === (exit === 'cancel' ? '取消' : '核对会话'))?.onPress?.();
+          });
+          if (exit === 'review') {
+            await waitFor(() => expect(sheetOpen(view)).toBe(false));
+            await fireEvent.press(view.getByLabelText('继续编辑私信草稿'));
+          }
+        }
+        await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
+        await act(async () => {
+          if (exit === 'focus') focusManager.setFocused(true);
+          staleResend?.();
+        });
+        expect(transport.requests).toHaveLength(1);
+        expect(transport.confirmations).toBe(0);
+        expect(sheetOpen(view)).toBe(true);
+        if (exit !== 'scope') expect(view.getByText(`${COMPOSER_DRAFT.length} 字符`)).toBeTruthy();
+      } finally {
+        await act(async () => focusManager.setFocused(wasFocused));
+        await view.unmount();
+      }
+    }
+  );
   it('isolates a pending private message when its conversation changes', async () => {
     const { view, transport } = await openMessage('nodeseek', 'success', true);
     await submit(view);

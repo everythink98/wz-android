@@ -4,21 +4,19 @@ import * as DocumentPicker from 'expo-document-picker';
 import type { Topic } from '@/domain/forum/models';
 import {
   applyTopicCategory,
+  topicSubmissionWithReceipt,
   emptyTopicDraft,
   validateTopicDraft,
   type CreateTopicResult,
-  type TopicCreationContext,
   type TopicCreationSource,
   type TopicDraft,
   type TopicDraftAttachment,
   type TopicSubmissionAttempt,
-  draftFromTopicEdit,
   hasTopicEditChanges,
   topicDraftTarget,
   topicEditChanges,
   validateTopicEdit,
   type TopicComposerIntent,
-  type TopicEditContext,
   type TopicEditResult,
   type TopicEditableFields
 } from '@/domain/forum/topicComposer';
@@ -40,14 +38,9 @@ import {
   readLastTopicCreationSource,
   readTopicSubmissionAttempt,
   saveLastTopicCreationSource,
-  saveTopicDraft,
   settleTopicSubmissionAttempt
 } from '@/platform/persistence/topicDrafts';
-import {
-  persistTopicDraftAttachment,
-  verifyTopicDraftAttachments,
-  removeTopicDraftAttachmentFile
-} from '@/platform/media/topicDraftAttachments';
+import { persistTopicDraftAttachment, removeTopicDraftAttachmentFile } from '@/platform/media/topicDraftAttachments';
 import { createNodeSeekTopic, loadNodeSeekTopicCreationContext } from '@/sources/nodeseek/topicCreation';
 import { createLinuxDoTopic, searchLinuxDoTopicTags } from '@/sources/linuxdo/topicCreation';
 import { createYaohuoTopic, loadYaohuoTopicCreationContext } from '@/sources/yaohuo/topicCreation';
@@ -59,12 +52,15 @@ import { fetchLinuxDoTemplates } from '@/sources/linuxdo/templates';
 import { resolveLinuxDoUpload } from '@/sources/linuxdo/uploadUrls';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { forumResponseAccountFailure } from '@/sources/sessionFailure';
-import { retryEmojiCatalog } from '@/sources/discourse/retryEmojiCatalog';
 import { normalizeReplyImageAsset } from '@/sources/imageUpload';
 import type { StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import type { TopicComposerRouteRuntimeValue } from './TopicComposerRouteRuntime';
 import { uploadTopicAttachment, validateTopicAttachment } from './topicCreationActions';
+import { useTopicDraftPersistence } from './useTopicDraftPersistence';
+import { useTopicComposerOperation } from './useTopicComposerOperation';
+import { useTopicDraftHydration } from './useTopicDraftHydration';
+import { useTopicDraftContext } from './useTopicDraftContext';
 
 type UploadJob = { abort: AbortController; promise: Promise<string | undefined> };
 type AttachmentWork =
@@ -123,32 +119,44 @@ export function useTopicComposerController({
   const sourceRef = useCommittedRef(source);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
   const draftRef = useRef<TopicDraft | null>(null);
-  const [context, setContext] = useState<TopicCreationContext | null>(null);
-  const [editContext, setEditContext] = useState<TopicEditContext | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [contextLoading, setContextLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const operationRef = useRef<'idle' | 'submitting' | 'travel'>('idle');
+
   const [uploading, setUploading] = useState(false);
   const attachmentWork = useRef<AttachmentWork>({ kind: 'idle' });
   const [error, setError] = useState('');
-  const [contextFailure, setContextFailure] = useState<
-    { kind: 'none' } | { kind: 'error' | 'verification'; message: string }
-  >({ kind: 'none' });
+
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [saveStatus, setSaveStatus] = useState('');
+
   const [attempt, setAttempt] = useState<TopicSubmissionAttempt | null>(null);
   const [draftSites, setDraftSites] = useState<Partial<Record<TopicCreationSource, boolean>>>({});
-  const [emojiUrls, setEmojiUrls] = useState<Record<string, string>>({});
-  const [contextReload, setContextReload] = useState(0);
-  const [draftReload, setDraftReload] = useState(0);
-  const categoryRequest = useRef(0);
-  const completedContext = useRef('');
-  const completedEmojis = useRef('');
+
   const mounted = useRef(true);
-  const saving = useRef<Promise<unknown>>(Promise.resolve());
-  const savedRevision = useRef<{ id: string; revision: number } | null>(null);
-  const snapshotIssues = useRef<{ draftId: string; issues: ComposerSnapshot['validationIssues'] } | null>(null);
+  const {
+    busy,
+    isIdle: operationIdle,
+    isSubmitting: operationSubmitting,
+    travel: beginTravel,
+    create: beginCreate,
+    edit: beginEdit,
+    release: releaseOperation
+  } = useTopicComposerOperation(() => mounted.current);
+  const {
+    saveStatus,
+    persist,
+    flush: flushDraft,
+    edited: markDraftEdited,
+    restored: restoreDraftPersistence,
+    restorationFailed: reportDraftRestorationFailure,
+    retire: retireDraft,
+    fresh: markFreshDraft,
+    discarded: markDraftDiscarded,
+    recordSnapshot,
+    snapshotIssue
+  } = useTopicDraftPersistence({
+    getDraft: () => draftRef.current,
+    isMounted: () => mounted.current,
+    onSaved: (site) => setDraftSites((previous) => ({ ...previous, [site]: true }))
+  });
+
   const session = source ? runtime.sessions[source] : null;
   const identityKey = session ? siteSessionIdentityKey(session) : '';
   const enabled = Boolean(source && runtime.enabledSources.includes(source));
@@ -195,56 +203,32 @@ export function useTopicComposerController({
 
   const installDraft = useCallback((value: TopicDraft | null) => {
     draftRef.current = value;
-    setDraft(value);
+    if (mounted.current) setDraft(value);
   }, []);
   const change = useCallback(
     (update: (current: TopicDraft) => TopicDraft) => {
       const current = draftRef.current;
       if (
         !current ||
-        operationRef.current !== 'idle' ||
+        !operationIdle() ||
         siteSessionIdentityKey(runtimeRef.current.sessions[current.source]) !== current.identityKey
       )
         return;
       const next = update(current);
       if (next === current) return;
       installDraft({ ...next, revision: current.revision + 1, updatedAt: Date.now() });
-      setSaveStatus('正在保存…');
+      markDraftEdited(current.id);
       setErrors({});
     },
-    [installDraft, runtimeRef]
+    [installDraft, runtimeRef, operationIdle, markDraftEdited]
   );
-
-  const persist = useCallback(async (value: TopicDraft) => {
-    if (savedRevision.current?.id === value.id && savedRevision.current.revision >= value.revision) return;
-    const operation = saving.current
-      .catch(() => undefined)
-      .then(async () => {
-        // A queued autosave can become stale while a newer explicit flush is committing.
-        if (savedRevision.current?.id === value.id && savedRevision.current.revision >= value.revision) return;
-        const accepted = await saveTopicDraft(value);
-        if (!accepted) throw new Error('草稿已在其他页面更新，请重新进入后继续编辑');
-        if (draftRef.current?.id === value.id) savedRevision.current = { id: value.id, revision: value.revision };
-        if (mounted.current && draftRef.current?.id === value.id && draftRef.current.revision === value.revision) {
-          setSaveStatus('已保存到本机');
-          setDraftSites((previous) => ({ ...previous, [value.source]: true }));
-        }
-      });
-    saving.current = operation;
-    try {
-      await operation;
-    } catch (cause) {
-      if (mounted.current && draftRef.current?.id === value.id) setSaveStatus(`保存失败：${errorMessage(cause)}`);
-      throw cause;
-    }
-  }, []);
 
   const acceptSnapshot = useCallback(
     (snapshot: ComposerSnapshot, draftId?: string) => {
       const current = draftRef.current;
       if (!current || (draftId && current.id !== draftId) || current.source === 'yaohuo') return;
       if (current.edit && snapshot.revision === 0) return;
-      snapshotIssues.current = { draftId: current.id, issues: snapshot.validationIssues };
+      recordSnapshot(current.id, snapshot.validationIssues);
       const contentChanged =
         current.body !== snapshot.markdown ||
         JSON.stringify(current.pendingNodeSeekPolls) !== JSON.stringify(snapshot.pendingNodeSeekPolls);
@@ -258,41 +242,19 @@ export function useTopicComposerController({
         updatedAt: Date.now()
       };
       installDraft(next);
-      setSaveStatus('正在保存…');
+      markDraftEdited(current.id);
       if (contentChanged)
         setErrors((previous) =>
           Object.fromEntries(Object.entries(previous).filter(([key]) => key !== 'body' && key !== 'poll'))
         );
     },
-    [installDraft]
+    [installDraft, markDraftEdited, recordSnapshot]
   );
 
-  const flush = useCallback(async () => {
-    const before = draftRef.current;
-    if (!before) return null;
-    setSaveStatus('正在保存…');
-    try {
-      if (before.source !== 'yaohuo' && editorRef.current) {
-        const snapshot = await editorRef.current.requestSnapshot();
-        if (draftRef.current?.id !== before.id) throw new Error('草稿已切换，请重试');
-        acceptSnapshot(snapshot, before.id);
-      }
-      let latest = draftRef.current;
-      while (latest) {
-        await persist(latest);
-        if (draftRef.current?.id !== before.id) throw new Error('草稿已切换，请重试');
-        if (draftRef.current.revision === latest.revision) {
-          if (mounted.current) setSaveStatus('已保存到本机');
-          return latest;
-        }
-        latest = draftRef.current;
-      }
-      return null;
-    } catch (cause) {
-      if (mounted.current && draftRef.current?.id === before.id) setSaveStatus(`保存失败：${errorMessage(cause)}`);
-      throw cause;
-    }
-  }, [acceptSnapshot, persist]);
+  const flush = useCallback(() => {
+    const editor = draftRef.current?.source === 'yaohuo' ? null : editorRef.current;
+    return flushDraft({ capture: editor ? () => editor.requestSnapshot() : undefined, accept: acceptSnapshot });
+  }, [acceptSnapshot, flushDraft]);
 
   useEffect(() => {
     mounted.current = true;
@@ -319,84 +281,7 @@ export function useTopicComposerController({
       alive = false;
     };
   }, [initialSource, runtimeRef]);
-  useEffect(() => {
-    if (!source) return;
-    const abort = new AbortController();
-    setLoading(true);
-    setError('');
-    completedContext.current = '';
-    completedEmojis.current = '';
-    setEmojiUrls({});
-    setContext(null);
-    setEditContext(null);
-    setContextFailure({ kind: 'none' });
-    setErrors({});
-    void (async () => {
-      const previous = draftRef.current;
-      // Keep the old owner installed until its in-flight upload has recorded its result.
-      // Do not abort an already dispatched request solely because the account changed:
-      // its authoritative response still belongs to the original draft.
-      const pending = getUploadJob(attachmentWork.current);
-      if (pending) await pending.promise;
-      if (abort.signal.aborted) return;
-      // Explicit site switches already flush before changing source; account changes still need it.
-      if (previous?.source === source) await flush();
-      if (abort.signal.aborted) return;
-      if (!identityKey || identityKey.endsWith(':anonymous')) {
-        installDraft(null);
-        setAttempt(null);
-        return;
-      }
-      const [stored, submission] = await Promise.all([
-        loadTopicDraft(source, identityKey, target),
-        readTopicSubmissionAttempt(source, identityKey, target)
-      ]);
-      const editing =
-        editTopicId && !stored ? await readEditContext(source, identityKey, editTopicId, abort.signal) : null;
-      let restored = stored
-        ? await verifyTopicDraftAttachments(stored)
-        : editing
-          ? draftFromTopicEdit(editing)
-          : emptyTopicDraft(source, identityKey);
-      if (restored.edit && submission?.draftId === restored.id && submission.confirmed) {
-        const original = { ...restored.edit.original, ...submission.confirmed };
-        if (JSON.stringify(original) !== JSON.stringify(restored.edit.original))
-          restored = {
-            ...restored,
-            ...(submission.revision === restored.revision ? submission.confirmed : {}),
-            edit: { ...restored.edit, original },
-            revision: restored.revision + 1,
-            updatedAt: Date.now()
-          } as TopicDraft;
-      }
-      if (stored && JSON.stringify(restored.attachments) !== JSON.stringify(stored.attachments))
-        restored = { ...restored, revision: stored.revision + 1, updatedAt: Date.now() };
-      if (abort.signal.aborted) return;
-      savedRevision.current = stored ? { id: stored.id, revision: stored.revision } : null;
-      installDraft(restored);
-      if (editing) {
-        setEditContext(editing);
-        setContext(editing.rules);
-      }
-      setAttempt(submission?.status === 'saved' && submission.draftId !== restored.id ? null : submission);
-      if (submission?.status === 'partial' && submission.draftId === restored.id)
-        setError(submission.result?.message || '部分修改已保存，请核对剩余修改后继续');
-      setSaveStatus(stored ? '已恢复本机草稿' : '自动保存到本机');
-      if (stored && restored.revision !== stored.revision) await persist(restored);
-    })()
-      .catch((cause) => {
-        if (!abort.signal.aborted) {
-          setError(errorMessage(cause));
-          setSaveStatus(`保存或恢复失败：${errorMessage(cause)}`);
-        }
-      })
-      .finally(() => {
-        if (!abort.signal.aborted) setLoading(false);
-      });
-    return () => {
-      abort.abort();
-    };
-  }, [source, identityKey, target, editTopicId, draftReload, flush, installDraft, persist, readEditContext]);
+
   useEffect(() => {
     let alive = true;
     void Promise.all(
@@ -413,23 +298,7 @@ export function useTopicComposerController({
       alive = false;
     };
   }, [runtime.sessions]);
-  useEffect(() => {
-    if (!draft || loading) return;
-    const timer = setTimeout(() => {
-      void persist(draft).catch(() => undefined);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [draft, loading, persist]);
-  useEffect(() => {
-    if (editTopicId || !source || !enabled || loading || draft?.source !== source) return;
-    let alive = true;
-    void saveLastTopicCreationSource(source).catch((cause) => {
-      if (alive) setError(`无法保存上次使用的网站：${errorMessage(cause)}`);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [source, enabled, loading, draft?.source, editTopicId]);
+
   useEffect(() => {
     const listener = AppState.addEventListener('change', (state) => {
       const value = draftRef.current;
@@ -505,7 +374,6 @@ export function useTopicComposerController({
     [assertOwner, runtimeRef]
   );
 
-  const draftId = draft?.id;
   const readWithVerification = useCallback(
     async <T>(value: TopicDraft, signal: AbortSignal, key: readonly unknown[], read: () => Promise<T>): Promise<T> => {
       const epoch = runtimeRef.current.sessionEpochs[value.source];
@@ -579,110 +447,113 @@ export function useTopicComposerController({
     },
     [assertOwner, runtimeRef]
   );
-  const sessionEpoch = source ? runtime.sessionEpochs[source] : 0;
-  const contextKey = JSON.stringify([draftId, sessionEpoch, contextReload]);
-  useEffect(() => {
-    if (!draftId || loading || !active || !runtime.appActive || !enabled || !session?.canWrite) return;
-    if (completedContext.current === contextKey) return;
-    const value = draftRef.current!;
-    const abort = new AbortController();
-    setContext(null);
-    setContextLoading(true);
-    setContextFailure({ kind: 'none' });
-    void (async () => {
+  const { loading, retry: retryDraft } = useTopicDraftHydration({
+    scope: { source, identityKey, target, editTopicId },
+    getDraft: () => draftRef.current,
+    waitForPendingUpload: () => getUploadJob(attachmentWork.current)?.promise,
+    flush,
+    persist,
+    readEditContext,
+    started: () => {
+      setError('');
+      resetDraftContext();
+      setErrors({});
+    },
+    restored: (result) => {
+      if (!result.draft) {
+        installDraft(null);
+        setAttempt(null);
+        return;
+      }
+      restoreDraftPersistence(result.stored, result.draft);
+      installDraft(result.draft);
+      if (result.editing) installRestoredEdit(result.editing);
+      setAttempt(result.attempt);
+      if (result.attempt?.status === 'partial' && result.attempt.draftId === result.draft.id)
+        setError(result.attempt.result?.message || '部分修改已保存，请核对剩余修改后继续');
+    },
+    failed: (cause) => {
+      setError(errorMessage(cause));
+      reportDraftRestorationFailure(cause);
+    }
+  });
+  const {
+    context,
+    editContext,
+    contextLoading,
+    failure: contextFailure,
+    emojiUrls,
+    reload: reloadContext,
+    reset: resetDraftContext,
+    installRestoredEdit,
+    reviewedEdit: reviewEditContext,
+    beginCategory: beginCategoryChange,
+    ownsCategory: ownsCategoryChange
+  } = useTopicDraftContext({
+    source,
+    identityKey,
+    target,
+    draft,
+    sessionEpoch: source ? runtime.sessionEpochs[source] : 0,
+    canRead: !loading && active && runtime.appActive && enabled && Boolean(session?.canWrite),
+    getDraft: () => draftRef.current,
+    readRules: async (value, signal) => {
       const read = async () => {
         const access = await requestAccess(value);
-        const options = { ...access, signal: abort.signal };
+        const options = { ...access, signal };
         if (value.edit) {
           const editing = await runtimeRef.current.getTopicEditContext({
             source: value.source,
             topicId: value.edit.topicId,
             identityKey: value.identityKey,
             userAgent: access.userAgent,
-            signal: abort.signal
+            signal
           });
           assertOwner(value, access.ticket);
-          if (!abort.signal.aborted) setEditContext(editing);
-          return editing.rules;
+          return { context: editing.rules, editing };
         }
-        const result =
+        const context =
           value.source === 'nodeseek'
             ? await loadNodeSeekTopicCreationContext(options)
             : value.source === 'linuxdo'
-              ? await runtimeRef.current.getLinuxDoTopicCreationContext({ source: 'linuxdo', signal: abort.signal })
+              ? await runtimeRef.current.getLinuxDoTopicCreationContext({ source: 'linuxdo', signal })
               : await loadYaohuoTopicCreationContext(options);
         assertOwner(value, access.ticket);
-        return result;
+        return { context, editing: null };
       };
-      const result = await readWithVerification(value, abort.signal, ['rules'], read);
-      if (!abort.signal.aborted) {
-        completedContext.current = contextKey;
-        setContext(result);
-        if (
-          !value.edit &&
-          !draftRef.current?.categoryId &&
-          result.defaultCategoryId &&
-          result.categories.some((item) => item.id === result.defaultCategoryId && item.canCreate !== false)
-        ) {
-          change((current) => applyTopicCategory(current, result.defaultCategoryId!, result));
-        }
-      }
-    })()
-      .catch((cause) => {
-        if (!abort.signal.aborted) {
-          const message = errorMessage(cause);
-          setContextFailure({ kind: 'error', message });
-          const kind = sourceErrorFromUnknown(value.source, cause).kind;
-          if (['verification-required', 'login-required', 'login-expired'].includes(kind))
-            setContextFailure({ kind: 'verification', message });
-        }
-      })
-      .finally(() => {
-        if (!abort.signal.aborted) setContextLoading(false);
-      });
-    return () => abort.abort();
-  }, [
-    draftId,
-    loading,
-    active,
-    runtime.appActive,
-    enabled,
-    session?.canWrite,
-    contextKey,
-    requestAccess,
-    readWithVerification,
-    assertOwner,
-    runtimeRef,
-    change
-  ]);
+      return readWithVerification(value, signal, ['rules'], read);
+    },
+    readEmojis: (signal) => runtimeRef.current.getEmojiUrls({ source: 'linuxdo', signal }),
+    rulesReady: (value, rules) => {
+      const current = draftRef.current;
+      const defaultCategoryId = rules.defaultCategoryId;
+      if (
+        !value.edit &&
+        current?.id === value.id &&
+        !current.categoryId &&
+        defaultCategoryId &&
+        rules.categories.some((item) => item.id === defaultCategoryId && item.canCreate !== false)
+      )
+        change((draft) => applyTopicCategory(draft, defaultCategoryId, rules));
+    }
+  });
   useEffect(() => {
-    if (
-      context?.source !== 'linuxdo' ||
-      !active ||
-      !runtime.appActive ||
-      !enabled ||
-      !session?.canWrite ||
-      completedContext.current !== contextKey ||
-      completedEmojis.current === contextKey
-    )
-      return;
-    const abort = new AbortController();
-    void retryEmojiCatalog(
-      () => runtimeRef.current.getEmojiUrls({ source: 'linuxdo', signal: abort.signal }),
-      abort.signal
-    ).then(
-      (urls) => {
-        if (abort.signal.aborted) return;
-        completedEmojis.current = contextKey;
-        setEmojiUrls(urls);
-      },
-      () => {
-        if (abort.signal.aborted) return;
-        setEmojiUrls({});
-      }
-    );
-    return () => abort.abort();
-  }, [active, context, contextKey, enabled, runtime.appActive, runtimeRef, session?.canWrite]);
+    if (!draft || loading) return;
+    const timer = setTimeout(() => {
+      void persist(draft).catch(() => undefined);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [draft, loading, persist]);
+  useEffect(() => {
+    if (editTopicId || !source || !enabled || loading || draft?.source !== source) return;
+    let alive = true;
+    void saveLastTopicCreationSource(source).catch((cause) => {
+      if (alive) setError(`无法保存上次使用的网站：${errorMessage(cause)}`);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [source, enabled, loading, draft?.source, editTopicId]);
 
   const waitForUploads = useCallback(async () => {
     const pending = getUploadJob(attachmentWork.current);
@@ -706,8 +577,9 @@ export function useTopicComposerController({
   }, []);
   const switchSource = useCallback(
     async (next: TopicCreationSource) => {
-      if (editTopicId || operationRef.current !== 'idle' || next === source) return;
-      operationRef.current = 'travel';
+      if (editTopicId || !operationIdle() || next === source) return;
+      const run = beginTravel('switch');
+      if (!run) return;
       try {
         if (!(await waitForUploads())) return;
         await flush();
@@ -715,17 +587,18 @@ export function useTopicComposerController({
       } catch (cause) {
         setError(errorMessage(cause));
       } finally {
-        operationRef.current = 'idle';
+        releaseOperation(run);
       }
     },
-    [flush, source, waitForUploads, editTopicId]
+    [flush, source, waitForUploads, editTopicId, operationIdle, beginTravel, releaseOperation]
   );
   const leave = useCallback(async () => {
-    if (operationRef.current !== 'idle') {
+    if (!operationIdle()) {
       setError('正在保存或发布，请等待结果');
       return false;
     }
-    operationRef.current = 'travel';
+    const run = beginTravel('leave');
+    if (!run) return false;
     try {
       if (!(await waitForUploads())) return false;
       await flush();
@@ -734,9 +607,9 @@ export function useTopicComposerController({
       setError(errorMessage(cause));
       return false;
     } finally {
-      operationRef.current = 'idle';
+      releaseOperation(run);
     }
-  }, [flush, waitForUploads]);
+  }, [flush, waitForUploads, operationIdle, beginTravel, releaseOperation]);
 
   const applyConfirmedEdit = useCallback(
     async (value: TopicDraft, confirmed?: Partial<TopicEditableFields>, sentRevision = value.revision) => {
@@ -761,20 +634,18 @@ export function useTopicComposerController({
 
   const submitEdit = useCallback(async () => {
     if (
-      operationRef.current !== 'idle' ||
+      !operationIdle() ||
       getUploadJob(attachmentWork.current) ||
       loading ||
       !editContext ||
       (attempt?.status === 'saved' && attempt.draftId === draftRef.current?.id)
     )
       return;
-    operationRef.current = 'submitting';
-    setBusy(true);
+    const run = beginEdit();
+    if (!run) return;
     setError('');
     let value: TopicDraft | null = null;
-    let submission: TopicSubmissionAttempt | undefined;
-    let result: TopicEditResult | undefined;
-    const dispatchState: RequestDispatchState = { mayHaveSent: false };
+    const dispatchState = run.dispatchState;
     try {
       value = await flush();
       if (!value?.edit) return;
@@ -784,8 +655,8 @@ export function useTopicComposerController({
       }
       if (attempt?.status === 'unknown' || attempt?.status === 'sending') throw new Error('请先核对上次保存结果');
       const validation = validateTopicEdit(value, editContext);
-      if (snapshotIssues.current?.draftId === value.id && snapshotIssues.current.issues.length)
-        validation.body = snapshotIssues.current.issues[0]!.message;
+      const issue = snapshotIssue(value.id);
+      if (issue) validation.body = issue;
       setErrors(validation);
       if (Object.keys(validation).length) return;
       const access = await requestAccess(value, dispatchState);
@@ -812,7 +683,7 @@ export function useTopicComposerController({
           ? await readEditContext(value.source, value.identityKey, value.edit.topicId)
           : editContext;
       assertCurrent();
-      submission = {
+      const submission: TopicSubmissionAttempt = {
         id: identifier(),
         source: value.source,
         identityKey: value.identityKey,
@@ -822,7 +693,9 @@ export function useTopicComposerController({
         startedAt: Date.now(),
         status: 'sending'
       };
+      run.prepare(submission);
       await beginTopicSubmissionAttempt(submission);
+      run.claim(submission);
       setAttempt(submission);
       let body = value.body;
       if (value.source === 'nodeseek' && value.pendingNodeSeekPolls.length) {
@@ -850,7 +723,7 @@ export function useTopicComposerController({
         fetcher: withRequestBeforeSend(access.fetcher, assertCurrent),
         userAgent: access.userAgent
       };
-      result =
+      const result =
         value.source === 'nodeseek'
           ? await editNodeSeekTopic(options)
           : value.source === 'yaohuo'
@@ -858,11 +731,12 @@ export function useTopicComposerController({
             : await editLinuxDoTopic({
                 ...options,
                 context: fresh,
-                checkpoint: (fields) => checkpointTopicEdit(submission!, fields)
+                checkpoint: (fields) => checkpointTopicEdit(submission, fields)
               });
+      run.received(result);
       if (!(await settleTopicSubmissionAttempt(submission, result))) throw new Error('保存记录已变化，请先到原站核对');
       if (result.status === 'saved') {
-        savedRevision.current = { id: value.id, revision: Number.MAX_SAFE_INTEGER };
+        retireDraft(value.id);
         await Promise.allSettled(value.attachments.map((file) => removeTopicDraftAttachmentFile(value!, file)));
       } else await applyConfirmedEdit(value, result.confirmed);
       if (
@@ -871,35 +745,38 @@ export function useTopicComposerController({
         siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) !== value.identityKey
       )
         return;
-      setAttempt({ ...submission, status: result.status, result, confirmed: result.confirmed });
+      setAttempt(topicSubmissionWithReceipt(submission, result));
       if (result.status === 'saved') {
         runtimeRef.current.notify(result.message);
       } else setError(result.message);
     } catch (cause) {
+      const submission = run.attempt;
+      const result = run.result;
       if (submission && !result) {
-        result = {
+        let failure: TopicEditResult = {
           status: dispatchState.mayHaveSent ? 'unknown' : 'rejected',
           message: dispatchState.mayHaveSent ? '保存结果未知，请到原站核对，勿重复提交' : errorMessage(cause)
         };
         try {
-          await settleTopicSubmissionAttempt(submission, result);
+          await settleTopicSubmissionAttempt(submission, failure);
         } catch {
-          result = { status: 'unknown', message: '保存记录写入失败，请到原站核对' };
+          failure = { status: 'unknown', message: '保存记录写入失败，请到原站核对' };
         }
+        run.received(failure);
       } else if (result)
-        result = { ...result, status: 'unknown', message: '原站已返回结果，但本机记录未完成保存，请先核对' };
+        run.received({ ...result, status: 'unknown', message: '原站已返回结果，但本机记录未完成保存，请先核对' });
+      const failure = run.result;
       if (
         mounted.current &&
         value &&
         draftRef.current?.id === value.id &&
         siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) === value.identityKey
       ) {
-        if (submission && result) setAttempt({ ...submission, status: result.status, result });
-        setError(result?.message || errorMessage(cause));
+        if (submission && failure) setAttempt(topicSubmissionWithReceipt(submission, failure));
+        setError(failure?.message || errorMessage(cause));
       }
     } finally {
-      operationRef.current = 'idle';
-      if (mounted.current) setBusy(false);
+      releaseOperation(run);
     }
   }, [
     loading,
@@ -910,24 +787,28 @@ export function useTopicComposerController({
     requestAccess,
     assertOwner,
     readEditContext,
-    applyConfirmedEdit
+    applyConfirmedEdit,
+    operationIdle,
+    beginEdit,
+    releaseOperation,
+    retireDraft,
+    snapshotIssue
   ]);
 
   const submit = useCallback(async () => {
     if (editTopicId) return submitEdit();
-    if (operationRef.current !== 'idle' || getUploadJob(attachmentWork.current) || loading) return;
-    operationRef.current = 'submitting';
-    setBusy(true);
+    if (!operationIdle() || getUploadJob(attachmentWork.current) || loading) return;
+    const run = beginCreate();
+    if (!run) return;
     setError('');
-    let submission: TopicSubmissionAttempt | undefined;
-    const dispatchState: RequestDispatchState = { mayHaveSent: false };
-    let result: CreateTopicResult | undefined;
+    const dispatchState = run.dispatchState;
+    const owner = draftRef.current;
     try {
       const value = await flush();
       if (!value || !context || context.source !== value.source) throw new Error('请先加载当前站点的发帖设置');
       const validation = validateTopicDraft(value, context);
-      if (snapshotIssues.current?.draftId === value.id && snapshotIssues.current.issues.length)
-        validation.body = snapshotIssues.current.issues[0]!.message;
+      const issue = snapshotIssue(value.id);
+      if (issue) validation.body = issue;
       setErrors(validation);
       if (Object.keys(validation).length) return;
       const access = await requestAccess(value, dispatchState);
@@ -986,7 +867,8 @@ export function useTopicComposerController({
         status: 'sending'
       };
       await beginTopicSubmissionAttempt(candidate);
-      submission = candidate;
+      run.claim(candidate);
+      const submission = candidate;
       setAttempt(submission);
       let body = value.body;
       if (value.source === 'nodeseek') {
@@ -1017,12 +899,13 @@ export function useTopicComposerController({
         fetcher: withRequestBeforeSend(access.fetcher, assertSubmissionCurrent),
         userAgent: access.userAgent
       };
-      result =
+      const result =
         value.source === 'nodeseek'
           ? await createNodeSeekTopic(options)
           : value.source === 'linuxdo'
             ? await createLinuxDoTopic(options)
             : await createYaohuoTopic(options);
+      run.received(result);
       if (!(await settleTopicSubmissionAttempt(submission, result)))
         throw new Error('本机发布记录已变化，请到原站核对发布结果');
       if (result.status === 'posted' || result.status === 'enqueued')
@@ -1033,14 +916,14 @@ export function useTopicComposerController({
         siteSessionIdentityKey(runtimeRef.current.sessions[value.source]) !== value.identityKey
       )
         return;
-      setAttempt({ ...submission, status: result.status, result });
+      setAttempt(topicSubmissionWithReceipt(submission, result));
       if (result.status === 'posted' || result.status === 'enqueued') {
         const canNavigate = activeRef.current && runtimeRef.current.enabledSources.includes(value.source);
         if (draftRef.current.revision === value.revision) {
-          savedRevision.current = { id: value.id, revision: Number.MAX_SAFE_INTEGER };
+          retireDraft(value.id);
           if (!canNavigate) {
             installDraft(emptyTopicDraft(value.source, value.identityKey));
-            setSaveStatus('自动保存到本机');
+            markFreshDraft();
             setDraftSites((previous) => ({ ...previous, [value.source]: false }));
           }
         }
@@ -1050,6 +933,8 @@ export function useTopicComposerController({
         else onAccepted();
       } else setError(result.message);
     } catch (cause) {
+      const submission = run.attempt;
+      const result = run.result;
       const message = errorMessage(cause);
       if (submission && !result) {
         let failure: CreateTopicResult = dispatchState.mayHaveSent
@@ -1061,18 +946,24 @@ export function useTopicComposerController({
         } catch {
           failure = { status: 'unknown', message: '发布记录保存失败，请先到原站核对，勿直接重发' };
         }
+        run.received(failure);
         if (
           mounted.current &&
           draftRef.current?.id === submission.draftId &&
           siteSessionIdentityKey(runtimeRef.current.sessions[submission.source]) === submission.identityKey
         ) {
-          setAttempt({ ...submission, status: failure.status, result: failure });
+          setAttempt(topicSubmissionWithReceipt(submission, failure));
           setError(failure.message);
         }
-      } else setError(result ? '原站已返回发布结果，但本机记录保存失败。请先到原站核对，勿重复发布。' : message);
+      } else if (
+        mounted.current &&
+        owner &&
+        draftRef.current?.id === owner.id &&
+        siteSessionIdentityKey(runtimeRef.current.sessions[owner.source]) === owner.identityKey
+      )
+        setError(result ? '原站已返回发布结果，但本机记录保存失败。请先到原站核对，勿重复发布。' : message);
     } finally {
-      operationRef.current = 'idle';
-      if (mounted.current) setBusy(false);
+      releaseOperation(run);
     }
   }, [
     activeRef,
@@ -1086,12 +977,18 @@ export function useTopicComposerController({
     requestAccess,
     runtimeRef,
     editTopicId,
-    submitEdit
+    submitEdit,
+    operationIdle,
+    beginCreate,
+    releaseOperation,
+    retireDraft,
+    markFreshDraft,
+    snapshotIssue
   ]);
 
   const acknowledgeUnknown = useCallback(async () => {
     if (
-      operationRef.current === 'submitting' ||
+      operationSubmitting() ||
       !attempt ||
       !(await confirm(
         editTopicId ? '确认未保存的部分' : '确认没有发布成功',
@@ -1102,8 +999,9 @@ export function useTopicComposerController({
       ))
     )
       return;
-    if (operationRef.current !== 'idle') return;
-    operationRef.current = 'travel';
+    if (!operationIdle()) return;
+    const run = beginTravel('acknowledge');
+    if (!run) return;
     try {
       if (
         draftRef.current?.source !== attempt.source ||
@@ -1135,13 +1033,25 @@ export function useTopicComposerController({
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      operationRef.current = 'idle';
+      releaseOperation(run);
     }
-  }, [attempt, runtimeRef, editTopicId, target, flush, applyConfirmedEdit]);
+  }, [
+    attempt,
+    runtimeRef,
+    editTopicId,
+    target,
+    flush,
+    applyConfirmedEdit,
+    operationIdle,
+    operationSubmitting,
+    beginTravel,
+    releaseOperation
+  ]);
   const discard = useCallback(async () => {
-    if (operationRef.current !== 'idle' || getUploadJob(attachmentWork.current) || !draftRef.current) return;
+    if (!operationIdle() || getUploadJob(attachmentWork.current) || !draftRef.current) return;
     const owner = draftRef.current;
-    operationRef.current = 'travel';
+    const run = beginTravel('discard');
+    if (!run) return;
     try {
       if (!(await confirm('丢弃当前草稿', '只删除当前站点当前账号的本机草稿。', '丢弃'))) return;
       if (
@@ -1155,22 +1065,32 @@ export function useTopicComposerController({
         !(await discardTopicDraft(value.source, value.identityKey, value.id, value.revision, topicDraftTarget(value)))
       )
         throw new Error('草稿已更新，请重试');
-      savedRevision.current = { id: value.id, revision: Number.MAX_SAFE_INTEGER };
+      retireDraft(value.id);
       if (draftRef.current?.id === value.id) {
         if (value.edit) {
           installDraft(null);
           onAccepted();
         } else installDraft(emptyTopicDraft(value.source, value.identityKey));
-        setSaveStatus('草稿已丢弃');
+        markDraftDiscarded();
         setDraftSites((previous) => ({ ...previous, [value.source]: false }));
       }
       for (const file of value.attachments) await removeTopicDraftAttachmentFile(value, file);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      operationRef.current = 'idle';
+      releaseOperation(run);
     }
-  }, [flush, installDraft, runtimeRef, onAccepted]);
+  }, [
+    flush,
+    installDraft,
+    runtimeRef,
+    onAccepted,
+    operationIdle,
+    beginTravel,
+    releaseOperation,
+    retireDraft,
+    markDraftDiscarded
+  ]);
 
   const insertMarkup = useCallback(
     async (markup: string) => {
@@ -1186,7 +1106,7 @@ export function useTopicComposerController({
 
   const uploadFiles = useCallback(
     (files: TopicDraftAttachment[], insert = true) => {
-      if (getUploadJob(attachmentWork.current) || operationRef.current !== 'idle') return Promise.resolve(undefined);
+      if (getUploadJob(attachmentWork.current) || !operationIdle()) return Promise.resolve(undefined);
       const value = draftRef.current;
       if (!value || !context || context.source !== value.source) return Promise.resolve(undefined);
       if (value.edit && !editContext?.permissions.body) return Promise.resolve(undefined);
@@ -1205,8 +1125,7 @@ export function useTopicComposerController({
           };
           // Account restoration waits for this promise. Persist the original owner's confirmed
           // result even if its session was replaced or this screen has already unmounted.
-          draftRef.current = next;
-          if (mounted.current) setDraft(next);
+          installDraft(next);
           await persist(next);
         };
         try {
@@ -1319,17 +1238,12 @@ export function useTopicComposerController({
         : { kind: 'upload', upload };
       return promise;
     },
-    [assertOwner, context, installDraft, persist, requestAccess, runtimeRef, editContext]
+    [assertOwner, context, installDraft, persist, requestAccess, runtimeRef, editContext, operationIdle]
   );
 
   const pickAttachments = useCallback(
     async (kind: TopicDraftAttachment['kind'], hostInsert = false) => {
-      if (
-        !context ||
-        isPicking(attachmentWork.current) ||
-        operationRef.current !== 'idle' ||
-        getUploadJob(attachmentWork.current)
-      )
+      if (!context || isPicking(attachmentWork.current) || !operationIdle() || getUploadJob(attachmentWork.current))
         return;
       attachmentWork.current = { kind: 'picking' };
       setError('');
@@ -1347,7 +1261,7 @@ export function useTopicComposerController({
         });
         assertLocalOwner(value, ticket);
         if (selected.canceled) return;
-        if (operationRef.current !== 'idle') throw new Error('正在保存或发布，请稍后重新选择文件');
+        if (!operationIdle()) throw new Error('正在保存或发布，请稍后重新选择文件');
         if (
           kind === 'yaohuo-file' &&
           value.attachments.filter((file) => file.kind === kind).length + selected.assets.length > 9
@@ -1371,7 +1285,7 @@ export function useTopicComposerController({
               continue;
             }
             assertLocalOwner(value, ticket);
-            if (operationRef.current !== 'idle') throw new Error('正在保存或发布，请稍后重新选择文件');
+            if (!operationIdle()) throw new Error('正在保存或发布，请稍后重新选择文件');
             added.push(file);
             change((current) => ({ ...current, attachments: [...current.attachments, file] }));
           } catch (cause) {
@@ -1393,13 +1307,24 @@ export function useTopicComposerController({
         if (rejected.length) setError((current) => [rejected.join('\n'), current].filter(Boolean).join('\n'));
       }
     },
-    [assertLocalOwner, assertOwner, change, context, flush, persist, runtimeRef, uploadFiles, editContext]
+    [
+      assertLocalOwner,
+      assertOwner,
+      change,
+      context,
+      flush,
+      persist,
+      runtimeRef,
+      uploadFiles,
+      editContext,
+      operationIdle
+    ]
   );
 
   const removeAttachment = useCallback(
     async (file: TopicDraftAttachment) => {
       const value = draftRef.current;
-      if (!value || getUploadJob(attachmentWork.current) || operationRef.current !== 'idle') return;
+      if (!value || getUploadJob(attachmentWork.current) || !operationIdle()) return;
       change((current) => ({ ...current, attachments: current.attachments.filter((item) => item.id !== file.id) }));
       try {
         if (draftRef.current) await persist(draftRef.current);
@@ -1408,7 +1333,7 @@ export function useTopicComposerController({
         setError(errorMessage(cause));
       }
     },
-    [change, persist]
+    [change, persist, operationIdle]
   );
 
   const searchTags = useCallback(
@@ -1500,27 +1425,22 @@ export function useTopicComposerController({
     removeAttachment,
     insertMarkup,
     editorServices,
-    reloadContext: () => setContextReload((value) => value + 1),
-    retryDraft: () => setDraftReload((value) => value + 1),
+    reloadContext,
+    retryDraft,
     reviewLatest: async () => {
       try {
         const value = await flush();
         if (!value?.edit) return;
         const fresh = await readEditContext(value.source, value.identityKey, value.edit.topicId);
         assertOwner(value);
-        setEditContext(fresh);
+        reviewEditContext(fresh);
         return fresh.original;
       } catch (cause) {
         setError(errorMessage(cause));
       }
     },
     rebaseEdit: async () => {
-      if (
-        !editContext ||
-        operationRef.current === 'submitting' ||
-        attempt?.status === 'unknown' ||
-        attempt?.status === 'sending'
-      )
+      if (!editContext || operationSubmitting() || attempt?.status === 'unknown' || attempt?.status === 'sending')
         return;
       try {
         const value = await flush();
@@ -1550,13 +1470,13 @@ export function useTopicComposerController({
       }
     },
     changeCategory: async (categoryId: string) => {
-      if (!context || operationRef.current === 'submitting') return;
-      const request = ++categoryRequest.current;
+      if (!context || operationSubmitting()) return;
+      const request = beginCategoryChange();
       if (draftRef.current?.categoryId === categoryId) return;
       const before = draftRef.current;
       try {
         await flush();
-        if (request !== categoryRequest.current || draftRef.current?.id !== before?.id) return;
+        if (!ownsCategoryChange(request, before?.id)) return;
         change((value) => (value.edit ? { ...value, categoryId } : applyTopicCategory(value, categoryId, context)));
       } catch (cause) {
         setError(errorMessage(cause));

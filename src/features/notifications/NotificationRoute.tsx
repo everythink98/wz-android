@@ -1,3 +1,9 @@
+import {
+  createDiscoursePolicyOperation,
+  policyRequestBusy,
+  type PolicyOperationSnapshot
+} from '@/domain/forum/discoursePolicyOperation';
+import { useNotificationReplyOperation } from './useNotificationReplyOperation';
 import { topicLocationForReply } from '@/domain/forum/topicLocation';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert } from 'react-native';
@@ -27,7 +33,6 @@ import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { errorMessage } from '@/platform/network/errors';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import type { RequestDispatchState } from '@/platform/network/request';
 import { openHttpUrl } from '@/ui/navigation/openHttpUrl';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { syncDiscoursePolicyCaches } from '@/platform/query/discoursePolicyCache';
@@ -71,10 +76,6 @@ type NotificationMarkAllRun = {
 type NotificationMarkState =
   | { phase: 'idle' | 'confirmed' | 'retryable' }
   | { phase: 'pending'; attempt: { controller: AbortController; messageIds: string[] } };
-
-type NotificationReplyOperation =
-  | { phase: 'uploading' | 'confirmed'; controller: AbortController }
-  | { phase: 'sending'; controller: AbortController; content: string; dispatchState: RequestDispatchState };
 
 export function NotificationsRoute({
   navigation,
@@ -774,16 +775,14 @@ function EnabledNotificationDetailRoute({
   const attemptedMessageIds = useRef(new Set<string>());
   const confirmedMessageIds = useRef(new Set<string>());
   const [markPhase, setMarkPhase] = useState(markStateRef.current.phase);
-  const replyOperationRef = useRef<NotificationReplyOperation | undefined>(undefined);
-  const uncertainRepliesRef = useRef(new Set<string>());
-  const replyConfirmationRef = useRef<AbortController | undefined>(undefined);
+
   const composerControllersRef = useRef(new Set<AbortController>());
   const routeFocused = useIsFocused();
   const appFocused = useSyncExternalStore(focusManager.subscribe, () => focusManager.isFocused());
   const replySessionEpoch = runtime.sessionEpochs[item.source];
   const nodeSeekConversation = item.source === 'nodeseek' && item.target.type === 'private-conversation';
   const [markMessage, setMarkMessage] = useState('');
-  const [replyBusy, setReplyBusy] = useState(false);
+
   const [replyContent, setReplyContent] = useState('');
   const replyDraftRevisionRef = useRef(0);
   const changeReplyContent = useCallback((content: string) => {
@@ -795,11 +794,27 @@ function EnabledNotificationDetailRoute({
   const [replyStatus, setReplyStatus] = useState('');
   const [replyVisible, setReplyVisible] = useState(false);
   const replyScopeRef = useCommittedRef({ canAccessSource, identityKey, itemId: item.id, replySessionEpoch });
-  const policyControllerRef = useRef<AbortController | undefined>(undefined);
-  const [policyBusy, setPolicyBusy] = useState(false);
+  const {
+    busy: replyBusy,
+    hasOperation: hasReplyOperation,
+    isSending: isReplySending,
+    owns: ownsReply,
+    beginSend: beginReplySend,
+    beginUpload: beginReplyUpload,
+    confirmed: confirmReply,
+    finish: finishReply,
+    markUncertain: markReplyUncertain,
+    isUncertain: isReplyUncertain,
+    forgetUncertain: forgetUncertainReplies,
+    beginConfirmation: beginReplyConfirmation,
+    consumeConfirmation: consumeReplyConfirmation,
+    cancelConfirmation: cancelReplyConfirmation,
+    cancel: cancelReply
+  } = useNotificationReplyOperation(() => replyScopeRef.current);
+
   const [policyError, setPolicyError] = useState('');
   const [policyStatus, setPolicyStatus] = useState('');
-  const [policySubmittedAcceptance, setPolicySubmittedAcceptance] = useState<boolean | undefined>(undefined);
+
   const [messageHistory, setMessageHistory] = useState<{
     sessionEpoch: number;
     messages: NotificationMessage[];
@@ -842,18 +857,7 @@ function EnabledNotificationDetailRoute({
       }),
     [cancelHistory]
   );
-  const cancelReplyConfirmation = useCallback(() => {
-    replyConfirmationRef.current?.abort();
-    replyConfirmationRef.current = undefined;
-  }, []);
-  const cancelReply = useCallback(() => {
-    const operation = replyOperationRef.current;
-    if (operation?.phase === 'sending' && operation.dispatchState.mayHaveSent)
-      uncertainRepliesRef.current.add(operation.content);
-    operation?.controller.abort();
-    replyOperationRef.current = undefined;
-    cancelReplyConfirmation();
-  }, [cancelReplyConfirmation]);
+
   useEffect(
     () => cancelReplyConfirmation,
     [cancelReplyConfirmation, replyContent, routeFocused, canAccessSource, identityKey, replySessionEpoch]
@@ -863,12 +867,11 @@ function EnabledNotificationDetailRoute({
       focusManager.subscribe((focused) => {
         if (focused) return;
         cancelReplyConfirmation();
-        if (replyOperationRef.current?.phase === 'sending') {
+        if (isReplySending()) {
           cancelReply();
-          setReplyBusy(false);
         }
       }),
-    [cancelReply, cancelReplyConfirmation]
+    [cancelReply, cancelReplyConfirmation, isReplySending]
   );
   const detailQueryKey = forumQueryKeys.notificationDetail({
     source: item.source,
@@ -1061,6 +1064,19 @@ function EnabledNotificationDetailRoute({
     }
   });
   const policy = detailQuery.data?.policy;
+  const policyScope = JSON.stringify([identityKey, item.id, policy?.postId, policy?.version, replySessionEpoch]);
+  const policyScopeRef = useCommittedRef(policyScope);
+  const [policyState, setPolicyState] = useState<PolicyOperationSnapshot>({ request: null, submissions: {} });
+  const [policies] = useState(() =>
+    createDiscoursePolicyOperation({
+      isCurrentScope: (scope) => policyScopeRef.current === scope,
+      publish: setPolicyState
+    })
+  );
+  const policyBusy = policyRequestBusy(policyState.request);
+  const policyMarker = policy ? policyState.submissions[policy.postId] : undefined;
+  const policySubmittedAcceptance =
+    policyMarker?.scope === policyScope && policyMarker.version === policy?.version ? policyMarker.accepted : undefined;
   useEffect(() => {
     const messages = detailQuery.data?.messages;
     const pagination = detailQuery.data?.messageHistory;
@@ -1237,36 +1253,27 @@ function EnabledNotificationDetailRoute({
   });
   const policyAwaitingRead = policySubmittedAcceptance !== undefined && policy?.accepted !== policySubmittedAcceptance;
   useEffect(() => {
-    setPolicyBusy(false);
+    policies.reset();
     setPolicyError('');
     setPolicyStatus('');
-    setPolicySubmittedAcceptance(undefined);
-    return () => {
-      policyControllerRef.current?.abort();
-      policyControllerRef.current = undefined;
-    };
-  }, [identityKey, item.id, policy?.postId, policy?.version, replySessionEpoch]);
+    return policies.cancel;
+  }, [identityKey, item.id, policy?.postId, policy?.version, replySessionEpoch, policies]);
   useEffect(() => {
     if (routeFocused && canAccessSource) return;
-    policyControllerRef.current?.abort();
-    policyControllerRef.current = undefined;
-    setPolicyBusy(false);
-  }, [canAccessSource, routeFocused]);
+    policies.cancel();
+  }, [canAccessSource, routeFocused, policies]);
   useEffect(() => {
     if (policySubmittedAcceptance !== undefined && policy?.accepted === policySubmittedAcceptance) {
-      setPolicySubmittedAcceptance(undefined);
+      policies.observe(policyScope, [policy]);
       setPolicyStatus('');
     }
-  }, [policy?.accepted, policySubmittedAcceptance]);
+  }, [policy?.accepted, policySubmittedAcceptance, policies, policyScope, policy]);
   useEffect(
     () =>
       focusManager.subscribe((focused) => {
-        if (focused) return;
-        policyControllerRef.current?.abort();
-        policyControllerRef.current = undefined;
-        setPolicyBusy(false);
+        if (!focused) policies.cancel();
       }),
-    []
+    [policies]
   );
   const discourseEmojiSource =
     appFocused && routeFocused && canAccessSource && detailQuery.data?.reply && isDiscourseSource(item.source)
@@ -1315,7 +1322,6 @@ function EnabledNotificationDetailRoute({
     cancelReply();
     composerControllersRef.current.forEach((controller) => controller.abort());
     composerControllersRef.current.clear();
-    setReplyBusy(false);
     void queryClient.cancelQueries({ queryKey: detailQueryKey });
   }, [cancelReply, detailQueryKey, queryClient, routeFocused]);
   useEffect(() => {
@@ -1323,16 +1329,15 @@ function EnabledNotificationDetailRoute({
     cancelReply();
     composerControllersRef.current.forEach((controller) => controller.abort());
     composerControllersRef.current.clear();
-    setReplyBusy(false);
     if (currentIdentityKey !== identityKey) {
-      uncertainRepliesRef.current.clear();
+      forgetUncertainReplies();
       setReplyContent('');
       setReplyPendingNodeSeekPolls([]);
     }
     setReplyError('');
     setReplyStatus('');
     setReplyVisible(false);
-  }, [cancelReply, canAccessSource, currentIdentityKey, identityKey]);
+  }, [cancelReply, canAccessSource, currentIdentityKey, identityKey, forgetUncertainReplies]);
   const updateMarkState = useCallback((state: NotificationMarkState) => {
     markStateRef.current = state;
     setMarkPhase(state.phase);
@@ -1507,25 +1512,23 @@ function EnabledNotificationDetailRoute({
       !canAccessSource ||
       detailQuery.isError ||
       policyAwaitingRead ||
-      policyControllerRef.current ||
+      policies.hasRequest() ||
       (accepted ? !policy.canAccept : !policy.canRevoke)
     )
       return;
-    const controller = new AbortController();
-    policyControllerRef.current = controller;
-    const current = () => policyControllerRef.current === controller && !controller.signal.aborted;
-    let submitted = false;
+    const run = policies.claim({ scope: policyScope, policy, accepted, busyDuringConfirmation: false });
+    if (!run) return;
+    const controller = run.controller;
+    const current = () => policies.owns(run);
     const submit = async () => {
-      if (!current() || submitted) return;
-      submitted = true;
-      setPolicyBusy(true);
+      if (!policies.beginSend(run)) return;
       setPolicyError('');
       setPolicyStatus('');
       try {
         const result = await gateway.setPolicyAcceptance(item, policy, accepted, identityKey, controller.signal);
         if (!current()) return;
         if (result.confirmed) {
-          setPolicySubmittedAcceptance(accepted);
+          policies.confirmed(run);
           setPolicyStatus(accepted ? '阅读确认已提交，正在核对原站状态。' : '撤销确认已提交，正在核对原站状态。');
         } else setPolicyError(result.message || '原站未确认操作结果，请先重试读取消息核对状态。');
         const refreshed = await detailQuery.refetch();
@@ -1538,15 +1541,12 @@ function EnabledNotificationDetailRoute({
         ) {
           setPolicyError('');
           setPolicyStatus('');
-          setPolicySubmittedAcceptance(undefined);
+          policies.observe(policyScope, [refreshed.data.policy]);
         }
       } catch (error) {
         if (current()) setPolicyError(errorMessage(error));
       } finally {
-        if (current()) {
-          policyControllerRef.current = undefined;
-          setPolicyBusy(false);
-        }
+        policies.finish(run);
       }
     };
     if (accepted) void submit();
@@ -1557,8 +1557,7 @@ function EnabledNotificationDetailRoute({
           style: 'cancel',
           onPress: () => {
             if (current()) {
-              controller.abort();
-              policyControllerRef.current = undefined;
+              policies.cancelRun(run);
             }
           }
         },
@@ -1580,7 +1579,7 @@ function EnabledNotificationDetailRoute({
         !routeFocused ||
         !focusManager.isFocused() ||
         !canAccessSource ||
-        replyOperationRef.current ||
+        hasReplyOperation() ||
         !submittedContent.trim() ||
         submittedSnapshot?.validationIssues.length ||
         detailQuery.data?.reply?.disabledReason
@@ -1589,26 +1588,24 @@ function EnabledNotificationDetailRoute({
       }
       const contentKey = submittedContent.trim();
       const send = () => {
-        const controller = new AbortController();
-        const dispatchState: RequestDispatchState = { mayHaveSent: false };
-        replyOperationRef.current = { phase: 'sending', controller, content: contentKey, dispatchState };
-        setReplyBusy(true);
+        const run = beginReplySend(contentKey, { identityKey, itemId: item.id, replySessionEpoch });
+        if (!run) return Promise.resolve();
+        const { controller, dispatchState } = run;
         setReplyError('');
         setReplyStatus('');
-        void gateway
+        return gateway
           .replyToConversation(item, submittedContent, identityKey, controller.signal, dispatchState)
           .then(async (result) => {
-            if (controller.signal.aborted || replyOperationRef.current?.controller !== controller) return;
+            if (!ownsReply(controller)) return;
             if (!result.confirmed) {
-              uncertainRepliesRef.current.add(contentKey);
+              markReplyUncertain(contentKey);
               setReplyError(result.message || '原站未确认发送成功，请刷新会话后确认。');
               return;
             }
-            uncertainRepliesRef.current.delete(contentKey);
-            replyOperationRef.current = { phase: 'confirmed', controller };
+            confirmReply(controller, contentKey);
             const isCurrent = () =>
               !controller.signal.aborted &&
-              replyOperationRef.current?.controller === controller &&
+              ownsReply(controller) &&
               replyScopeRef.current.canAccessSource &&
               replyScopeRef.current.identityKey === identityKey &&
               replyScopeRef.current.itemId === item.id &&
@@ -1636,7 +1633,7 @@ function EnabledNotificationDetailRoute({
             ]);
           })
           .catch((error) => {
-            if (controller.signal.aborted || replyOperationRef.current?.controller !== controller) return;
+            if (!ownsReply(controller)) return;
             const rejected =
               isRecord(error) &&
               (error.serverRejected === true ||
@@ -1644,7 +1641,7 @@ function EnabledNotificationDetailRoute({
                 (error.serverRejected !== false &&
                   typeof error.status === 'number' &&
                   [400, 401, 403, 404, 405, 413, 422, 429].includes(error.status)));
-            if (dispatchState.mayHaveSent && !rejected) uncertainRepliesRef.current.add(contentKey);
+            if (dispatchState.mayHaveSent && !rejected) markReplyUncertain(contentKey);
             setReplyError(
               dispatchState.mayHaveSent && !rejected
                 ? `发送结果未确认，可能已发送，请先核对会话。${errorMessage(error)}`
@@ -1652,47 +1649,46 @@ function EnabledNotificationDetailRoute({
             );
           })
           .finally(() => {
-            if (replyOperationRef.current?.controller !== controller) return;
-            replyOperationRef.current = undefined;
-            setReplyBusy(false);
+            finishReply(controller);
           });
       };
-      if (!uncertainRepliesRef.current.has(contentKey)) {
-        send();
-        return;
+      if (!isReplyUncertain(contentKey)) {
+        return send();
       }
-      if (replyConfirmationRef.current) return;
-      const confirmation = new AbortController();
-      replyConfirmationRef.current = confirmation;
-      const confirmCurrent = () => {
-        if (confirmation.signal.aborted || replyConfirmationRef.current !== confirmation) return false;
-        replyConfirmationRef.current = undefined;
-        confirmation.abort();
-        return true;
+      const confirmation = beginReplyConfirmation();
+      if (!confirmation) return;
+      const confirmCurrent = () => consumeReplyConfirmation(confirmation);
+      const dismissConfirmation = () => {
+        if (confirmCurrent()) confirmation.complete();
       };
-      Alert.alert('私信可能已发送', '上次发送结果尚未确认，请先核对会话；仍要重发可能造成重复消息。', [
-        {
-          text: '取消',
-          style: 'cancel',
-          onPress: () => {
-            confirmCurrent();
+      Alert.alert(
+        '私信可能已发送',
+        '上次发送结果尚未确认，请先核对会话；仍要重发可能造成重复消息。',
+        [
+          {
+            text: '取消',
+            style: 'cancel',
+            onPress: dismissConfirmation
+          },
+          {
+            text: '核对会话',
+            onPress: () => {
+              if (!confirmCurrent()) return;
+              setReplyVisible(false);
+              void detailQuery.refetch();
+              confirmation.complete();
+            }
+          },
+          {
+            text: '仍要重发',
+            onPress: () => {
+              if (confirmCurrent()) void send().then(confirmation.complete, confirmation.fail);
+            }
           }
-        },
-        {
-          text: '核对会话',
-          onPress: () => {
-            if (!confirmCurrent()) return;
-            setReplyVisible(false);
-            void detailQuery.refetch();
-          }
-        },
-        {
-          text: '仍要重发',
-          onPress: () => {
-            if (confirmCurrent()) send();
-          }
-        }
-      ]);
+        ],
+        { onDismiss: dismissConfirmation }
+      );
+      return confirmation.completed;
     },
     [
       canAccessSource,
@@ -1707,22 +1703,31 @@ function EnabledNotificationDetailRoute({
       replySessionEpoch,
       routeFocused,
       detailQuery,
-      runtime
+      runtime,
+      hasReplyOperation,
+      ownsReply,
+      beginReplySend,
+      confirmReply,
+      finishReply,
+      markReplyUncertain,
+      isReplyUncertain,
+      beginReplyConfirmation,
+      consumeReplyConfirmation
     ]
   );
   const uploadReplyImage = useCallback(async () => {
     if (
       !canAccessSource ||
-      replyOperationRef.current ||
+      hasReplyOperation() ||
       detailQuery.data?.reply?.format !== 'markdown' ||
       detailQuery.data.reply.disabledReason ||
       item.source === 'yaohuo'
     ) {
       return undefined;
     }
-    const controller = new AbortController();
-    replyOperationRef.current = { phase: 'uploading', controller };
-    setReplyBusy(true);
+    const run = beginReplyUpload({ identityKey, itemId: item.id, replySessionEpoch });
+    if (!run) return undefined;
+    const { controller } = run;
     setReplyError('');
     setReplyStatus('');
     try {
@@ -1779,12 +1784,21 @@ function EnabledNotificationDetailRoute({
       );
       return undefined;
     } finally {
-      if (replyOperationRef.current?.controller === controller) {
-        replyOperationRef.current = undefined;
-        setReplyBusy(false);
-      }
+      finishReply(controller);
     }
-  }, [canAccessSource, detailQuery.data?.reply, gateway, identityKey, item.source, runtime.composer]);
+  }, [
+    canAccessSource,
+    detailQuery.data?.reply,
+    gateway,
+    identityKey,
+    item.source,
+    runtime.composer,
+    hasReplyOperation,
+    beginReplyUpload,
+    finishReply,
+    item.id,
+    replySessionEpoch
+  ]);
   const openTopic = useLatestCallback((linkedTopic?: Topic, linkedLocation?: TopicLocationTarget) => {
     if (!navigation.isFocused()) return;
     const topic = linkedTopic || targetTopic;

@@ -1,3 +1,8 @@
+import {
+  createDiscoursePolicyOperation,
+  policyRequestBusy,
+  type PolicyOperationSnapshot
+} from '@/domain/forum/discoursePolicyOperation';
 import { resolveLinuxDoUpload as fetchLinuxDoUploadUrl } from '@/sources/linuxdo/uploadUrls';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
@@ -40,7 +45,7 @@ import {
 } from '@/sources/discourse/actionRequest';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
-import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
+import { runYaohuoAction } from '@/sources/yaohuo/actionClient';
 import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
@@ -140,6 +145,12 @@ type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unkno
 
 const REPLY_ORDERS = ['oldest', 'newest'] as const;
 
+type MutationCompletion = {
+  applyResult?: (variables: MutationVariables) => void | Promise<void>;
+  afterSuccess?: (variables: MutationVariables) => Promise<boolean>;
+  successMessage?: string | ((refreshed: boolean | undefined) => string);
+};
+
 type MutationVariables = {
   actionKey: string;
   busy: boolean;
@@ -149,18 +160,13 @@ type MutationVariables = {
   replyKeys: readonly QueryKey[];
   repliesKey: QueryKey;
   source: Source;
-  task: (ticket: WritableSessionTicket) => Promise<unknown>;
+  task: (ticket: WritableSessionTicket) => Promise<MutationCompletion>;
   topicId: string;
   trace: DiagnosticTrace;
   isCurrent?: () => boolean;
   editTarget?: ReplyEditTarget;
   applyOptimistic?: () => void | (() => void);
-  applyResult?: (result: unknown, variables: MutationVariables) => void | Promise<void>;
-  afterSuccess?: (result: unknown, variables: MutationVariables) => Promise<boolean>;
-  successMessage?: string | ((result: unknown, refreshed: boolean | undefined) => string);
 };
-
-type PolicySubmission = { scope: string; postId: string; version: string; accepted: boolean };
 
 const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE = 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
 
@@ -348,6 +354,833 @@ function replyEditTargetIsCurrent(
   return Boolean(matchingReply);
 }
 
+type TopicActionsRuntime = {
+  active: boolean;
+  sessionEpochs: ForumSessionEpochs;
+  linuxDoUserAgent: () => string;
+  showLinuxDoVerification: (message?: string) => void;
+  ensureNodeImageApiKey: () => Promise<string | null>;
+  ensureWritableSession: (source: SessionSite) => Promise<WritableSessionTicket>;
+  fetcher: Fetcher;
+  isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
+  getNodeSeekUserAgent: () => string;
+  notify: (message: string) => void;
+  onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
+  requestAccountRecheck: RequestAccountRecheck;
+  readGateway: Pick<ReadGateway, 'getReadPlan' | 'getReply' | 'getLinuxDoInteractionConfig' | 'getEmojiUrls'>;
+  refreshTopicReplies: (command?: ReplyRefreshCommand, trace?: DiagnosticTrace) => Promise<unknown>;
+  refreshWholeTopic: () => Promise<unknown>;
+  siteSessionViewModels: SiteSessionViewModels;
+  topicDetail: TopicDetail | null;
+  topicReplies: Reply[];
+  topicSession: TopicSessionController;
+};
+type TopicActionExecutor = (
+  topic: TopicDetail,
+  variables: Omit<MutationVariables, 'ticket' | 'detailKey' | 'replyKeys' | 'repliesKey' | 'source' | 'topicId'>
+) => Promise<boolean>;
+type TopicActionRequests = {
+  runNodeSeekRequest(
+    request: NodeSeekActionRequest,
+    trace: DiagnosticTrace,
+    ticket: WritableSessionTicket,
+    notifyFailure?: boolean
+  ): Promise<unknown>;
+  runLinuxDoRequest(
+    request: DiscourseAction,
+    trace: DiagnosticTrace,
+    ticket: WritableSessionTicket,
+    beforeSend?: () => void
+  ): Promise<unknown>;
+  runYaohuoRequest(
+    request: (cookieHeader: string) => YaohuoActionRequest,
+    trace: DiagnosticTrace,
+    ticket: WritableSessionTicket
+  ): Promise<unknown>;
+};
+type PollResultApplication = {
+  actionTopic: TopicDetail;
+  confirmedPoll?: TopicPoll;
+  optionIds: string[];
+  poll: TopicPoll;
+  preserveUnknownCounts?: boolean;
+};
+type TopicPollActionsInput = Pick<TopicActionsRuntime, 'topicDetail' | 'getNodeSeekUserAgent' | 'notify'> &
+  TopicActionRequests & {
+    selectedTopic: TopicSessionController['state']['selectedTopic'];
+    executeMutation: TopicActionExecutor;
+    decisionFor: TopicActionDecisionFor;
+    assertWritableTicket(ticket: WritableSessionTicket, serverConfirmed?: boolean): void;
+    authenticatedFetcher: Fetcher;
+    applyPollResult(input: PollResultApplication): void;
+  };
+type TopicReplyActionsInput = Pick<
+  TopicActionsRuntime,
+  | 'active'
+  | 'sessionEpochs'
+  | 'ensureWritableSession'
+  | 'isWritableSessionTicketCurrent'
+  | 'notify'
+  | 'siteSessionViewModels'
+  | 'topicDetail'
+  | 'topicReplies'
+  | 'topicSession'
+> &
+  TopicActionRequests & {
+    executeMutation: TopicActionExecutor;
+    decisionFor: TopicActionDecisionFor;
+    getReplyComposerIntent(): TopicSessionController['state']['replyComposerIntent'];
+    assertReplyNotEnded(): void;
+    cacheKeys(
+      topic: TopicDetail,
+      ticket?: WritableSessionTicket
+    ): Pick<MutationVariables, 'detailKey' | 'replyKeys' | 'repliesKey'>;
+    queryClient: ReturnType<typeof useQueryClient>;
+    refreshRepliesAfterWrite(
+      topic: TopicDetail,
+      trace: DiagnosticTrace,
+      command: ReplyRefreshCommand
+    ): Promise<boolean>;
+    materializeNodeSeekPolls(input: {
+      content: string;
+      polls: PendingNodeSeekPoll[];
+      ticket: WritableSessionTicket;
+      trace: DiagnosticTrace;
+    }): Promise<string>;
+  };
+
+function useTopicPollActions({
+  topicDetail,
+  selectedTopic,
+  getNodeSeekUserAgent,
+  notify,
+  executeMutation,
+  decisionFor,
+  assertWritableTicket,
+  authenticatedFetcher,
+  applyPollResult,
+  runNodeSeekRequest,
+  runLinuxDoRequest,
+  runYaohuoRequest
+}: TopicPollActionsInput) {
+  const votePoll = useCallback(
+    async (poll: TopicPoll, optionIds: string[]) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      const trace = beginDiagnosticTrace('topic', 'vote', {
+        ...(actionTopic ? { source: actionTopic.source } : {}),
+        selectedCount: optionIds.length
+      });
+      if (!canVotePollOnTopic(actionTopic) || !optionIds.length) {
+        if (!optionIds.length) notify('请选择投票选项');
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        return;
+      }
+      const submit = async () => {
+        await executeMutation(actionTopic as TopicDetail, {
+          actionKey: topicPollVoteActionKey(topicKey(actionTopic), poll),
+          busy: true,
+          decision: { action: 'vote', poll, targetPresent: optionIds.length > 0 },
+          trace,
+          task: async (ticket) => {
+            const result = await (async () => {
+              if (isNodeSeekActionTopic(actionTopic)) {
+                await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace, ticket);
+                try {
+                  if (!poll.id) throw new Error('投票 id 不正确');
+                  assertWritableTicket(ticket);
+                  const confirmedPoll = await fetchNodeSeekVoteInfo({
+                    pollId: poll.id,
+                    fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+                    userAgent: getNodeSeekUserAgent()
+                  });
+                  return { confirmedPoll, refreshFailed: false };
+                } catch (error) {
+                  if (isRawUnauthorized(error)) throw error;
+                  hintDiagnosticOutcome(trace, 'partial', {
+                    source: 'nodeseek',
+                    reason: 'refresh_failed'
+                  });
+                  return { confirmedPoll: undefined, refreshFailed: true };
+                }
+              }
+              if (isDiscourseSource(actionTopic.source)) {
+                if (!poll.postId || !poll.name) {
+                  throw new HandledMutationError('当前投票信息不完整，刷新主题后再试。', 'blocked', 'not_ready');
+                }
+                await runLinuxDoRequest(
+                  {
+                    type: 'vote',
+                    postId: poll.postId,
+                    pollName: poll.name,
+                    optionIds
+                  },
+                  trace,
+                  ticket
+                );
+              } else {
+                await runYaohuoRequest(
+                  () =>
+                    buildYaohuoVoteRequest({
+                      topicId: actionTopic.id,
+                      classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+                      voteIds: optionIds
+                    }),
+                  trace,
+                  ticket
+                );
+              }
+              return { confirmedPoll: undefined, refreshFailed: false };
+            })();
+            return {
+              applyResult: () => {
+                const voteResult = result;
+                applyPollResult({
+                  actionTopic: actionTopic as TopicDetail,
+                  confirmedPoll: voteResult.confirmedPoll,
+                  optionIds,
+                  poll,
+                  preserveUnknownCounts: voteResult.refreshFailed
+                });
+                if (voteResult.refreshFailed) notify('提交成功但结果刷新失败，请手动刷新。');
+              },
+              successMessage: () => (result.refreshFailed ? '' : '投票已提交')
+            };
+          }
+        });
+      };
+      if (!isNodeSeekActionTopic(actionTopic)) {
+        await submit();
+        return;
+      }
+      confirmNodeSeekPollAction('确认提交投票？', '提交后不可修改。', '提交', submit, () =>
+        finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' })
+      );
+    },
+    [
+      applyPollResult,
+      executeMutation,
+      authenticatedFetcher,
+      getNodeSeekUserAgent,
+      notify,
+      runLinuxDoRequest,
+      runNodeSeekRequest,
+      runYaohuoRequest,
+      selectedTopic,
+      topicDetail
+    ]
+  );
+  const lockNodeSeekPoll = useCallback(
+    async (poll: TopicPoll) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      const trace = beginDiagnosticTrace('topic', 'manage-poll', {
+        ...(actionTopic ? { source: actionTopic.source } : {})
+      });
+      if (!isNodeSeekActionTopic(actionTopic) || !poll.id) {
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        return;
+      }
+      const actionDetail = actionTopic as TopicDetail;
+      const pollId = poll.id;
+      const initialDecision = decisionFor({ action: 'manage-poll', poll });
+      if (!initialDecision.allowed) {
+        const message = topicActionDecisionMessage(initialDecision);
+        if (message) notify(message);
+        finishDiagnosticTrace(trace, 'blocked', {
+          source: 'nodeseek',
+          reason: normalizeDiagnosticReason({ reason: initialDecision.reason })
+        });
+        return;
+      }
+      const submit = async () => {
+        await executeMutation(actionDetail, {
+          actionKey: `lock:${topicPollVoteActionKey(topicKey(actionTopic), poll)}`,
+          busy: true,
+          decision: { action: 'manage-poll', poll },
+          trace,
+          task: async (ticket) => {
+            const result = await (async () => {
+              try {
+                await runNodeSeekRequest(buildNodeSeekPollLockRequest({ pollId }), trace, ticket, false);
+              } catch (error) {
+                if (
+                  isRawUnauthorized(error) ||
+                  (error instanceof HandledMutationError && (error.serverConfirmed || error.serverRejected))
+                ) {
+                  if (error instanceof HandledMutationError && error.serverRejected) notify(error.message);
+                  throw error;
+                }
+                try {
+                  assertWritableTicket(ticket);
+                  const reconciledPoll = await fetchNodeSeekVoteInfo({
+                    pollId,
+                    fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+                    userAgent: getNodeSeekUserAgent()
+                  });
+                  assertWritableTicket(ticket);
+                  if (reconciledPoll.closed) return { confirmedPoll: reconciledPoll, refreshFailed: false };
+                } catch (reconcileError) {
+                  if (isRawUnauthorized(reconcileError)) throw reconcileError;
+                }
+                notify('投票锁定结果未知，请刷新原站确认，切勿重复提交。');
+                throw error;
+              }
+              try {
+                assertWritableTicket(ticket, true);
+                const confirmedPoll = await fetchNodeSeekVoteInfo({
+                  pollId,
+                  fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+                  userAgent: getNodeSeekUserAgent()
+                });
+                assertWritableTicket(ticket, true);
+                return { confirmedPoll, refreshFailed: false };
+              } catch (error) {
+                if (error instanceof HandledMutationError && error.reason === 'stale') throw error;
+                hintDiagnosticOutcome(trace, 'partial', { source: 'nodeseek', reason: 'refresh_failed' });
+                return { confirmedPoll: { ...poll, closed: true }, refreshFailed: true };
+              }
+            })();
+            return {
+              applyResult: () => {
+                const lockResult = result;
+                applyPollResult({
+                  actionTopic: actionDetail,
+                  confirmedPoll: lockResult.confirmedPoll,
+                  optionIds: [],
+                  poll
+                });
+                if (lockResult.refreshFailed) notify('锁定成功但结果刷新失败，请手动刷新。');
+              },
+              successMessage: () => (result.refreshFailed ? '' : '投票已锁定')
+            };
+          }
+        });
+      };
+      confirmNodeSeekPollAction('锁定投票？', '锁定后普通作者无法重新开启，且不能继续投票。', '锁定', submit, () =>
+        finishDiagnosticTrace(trace, 'canceled', { source: 'nodeseek', reason: 'canceled' })
+      );
+    },
+    [
+      assertWritableTicket,
+      applyPollResult,
+      authenticatedFetcher,
+      decisionFor,
+      executeMutation,
+      getNodeSeekUserAgent,
+      notify,
+      runNodeSeekRequest,
+      selectedTopic,
+      topicDetail
+    ]
+  );
+  return { votePoll, lockNodeSeekPoll };
+}
+
+function useTopicReplyActions({
+  active,
+  sessionEpochs,
+  ensureWritableSession,
+  isWritableSessionTicketCurrent,
+  notify,
+  siteSessionViewModels,
+  topicDetail,
+  topicReplies,
+  topicSession,
+  executeMutation,
+  decisionFor,
+  getReplyComposerIntent,
+  assertReplyNotEnded,
+  cacheKeys,
+  queryClient,
+  refreshRepliesAfterWrite,
+  materializeNodeSeekPolls,
+  runNodeSeekRequest,
+  runLinuxDoRequest,
+  runYaohuoRequest
+}: TopicReplyActionsInput) {
+  const {
+    state: { replyComposerIntent, replyContent, replyFace, selectedTopic },
+    commands: { composer: topicComposer, topic: topicCommands }
+  } = topicSession;
+  const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+  const detachReplyEdit = topicComposer.detachEdit;
+  const openReplyEditor = topicComposer.editReply;
+  const editReply = useCallback(
+    async (reply: Reply) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      if (!actionTopic) {
+        notify('主题尚未加载');
+        return;
+      }
+      if (!reply.commentId) {
+        notify('当前回复缺少评论 id，刷新主题后再试。');
+        return;
+      }
+      if (!reply.canEdit) {
+        notify('当前回复不能编辑');
+        return;
+      }
+      if (!reply.contentMarkdown) {
+        notify('当前回复缺少原文，刷新主题后再试。');
+        return;
+      }
+      if (!isSessionSource(actionTopic.source)) {
+        notify('当前来源不支持写操作');
+        return;
+      }
+      try {
+        const ticket = await ensureWritableSession(actionTopic.source);
+        if (!isWritableSessionTicketCurrent(ticket)) {
+          throw new WritableSessionBlockedError('登录状态已变化，请重试', 'stale');
+        }
+        openReplyEditor({
+          commentId: reply.commentId,
+          contentMarkdown: reply.contentMarkdown,
+          floor: reply.floor,
+          topicId: actionTopic.id,
+          ticket
+        });
+      } catch (error) {
+        notify(errorMessage(error));
+      }
+    },
+    [ensureWritableSession, isWritableSessionTicketCurrent, notify, selectedTopic, openReplyEditor, topicDetail]
+  );
+  const submitReply = useCallback(
+    async (snapshot?: ComposerSnapshot, settleSubmission?: ComposerSubmissionSettlement) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      const submittedContent = snapshot?.markdown ?? replyContent;
+      const submittedDraftRevision = topicComposer.getDraftRevision();
+      const submittedNodeSeekPolls = snapshot?.pendingNodeSeekPolls || [];
+      const trace = beginDiagnosticTrace('reply', replyComposerIntent.kind === 'edit' ? 'edit' : 'submit', {
+        ...(actionTopic ? { source: actionTopic.source } : {}),
+        contentLength: submittedContent.length
+      });
+      if (getReplyComposerIntent().kind === 'closed') {
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        return;
+      }
+      const canEditDiscourseReply = Boolean(
+        actionTopic && isDiscourseSource(actionTopic.source) && replyComposerIntent.kind === 'edit'
+      );
+      if (!actionTopic || (!canEditDiscourseReply && !canSubmitReplyToTopic(actionTopic))) {
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        return;
+      }
+      if (snapshot?.validationIssues.length) {
+        notify(snapshot.validationIssues[0]!.message);
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+        return;
+      }
+      if (!submittedContent.trim()) {
+        notify('请输入回复内容');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+        return;
+      }
+      if (isNodeSeekActionTopic(actionTopic)) {
+        const currentMemberId = String(siteSessionViewModels.nodeseek.currentUser?.id || '').trim();
+        const foreignReceive = nodeSeekStardustMarkerRanges(submittedContent).find(
+          (range) => range.receive && range.receive.receiverMemberId !== currentMemberId
+        );
+        if (foreignReceive) {
+          notify('收款卡片属于其他账号，请替换为当前账号或移除');
+          finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'permission_denied' });
+          return;
+        }
+      }
+      const actionTopicKey = topicKey(actionTopic);
+      const settleReply = async (ticket: WritableSessionTicket) => {
+        const complete = () => {
+          if (
+            !isWritableSessionTicketCurrent(ticket) ||
+            topicCommands.getCurrentKey() !== actionTopicKey ||
+            getReplyComposerIntent() !== replyComposerIntent
+          )
+            return false;
+          return topicComposer.completeSubmission(settleSubmission ? undefined : submittedDraftRevision);
+        };
+        if (
+          !isWritableSessionTicketCurrent(ticket) ||
+          topicCommands.getCurrentKey() !== actionTopicKey ||
+          getReplyComposerIntent() !== replyComposerIntent
+        )
+          return;
+        if (settleSubmission) await settleSubmission(complete);
+        else complete();
+      };
+      if (replyComposerIntent.kind === 'edit') {
+        const editTarget = replyComposerIntent.target;
+        if (!isNodeSeekActionTopic(actionTopic) && !isDiscourseSource(actionTopic.source)) {
+          notify('当前来源暂不支持编辑回复');
+          finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
+          return;
+        }
+        const edit = { ...editTarget, contentMarkdown: submittedContent };
+        await executeMutation(actionTopic as TopicDetail, {
+          actionKey: topicEditReplyActionKey(actionTopicKey, editTarget.commentId),
+          busy: true,
+          decision: {
+            action: 'edit',
+            objectAllowed: true,
+            targetPresent: Boolean(editTarget.commentId && editTarget.contentMarkdown)
+          },
+          editTarget,
+          trace,
+          task: async (ticket) => {
+            let sentEditContent = edit.contentMarkdown;
+            const completion: MutationCompletion = {
+              applyResult: async ({ replyKeys, ticket }) => {
+                replyKeys.forEach((repliesKey) => {
+                  updateReplyCache(queryClient, repliesKey, (replies) =>
+                    applyEditedReplyContent(replies, { ...edit, contentMarkdown: sentEditContent }, actionTopic.source)
+                  );
+                  void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' });
+                });
+                await settleReply(ticket);
+              },
+              afterSuccess: () =>
+                refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+                  kind: 'edited',
+                  silent: true,
+                  target: { kind: 'comment-id', commentId: editTarget.commentId },
+                  contentMarkdown: sentEditContent
+                }),
+              successMessage: '回复已更新'
+            };
+            if (isNodeSeekActionTopic(actionTopic)) {
+              sentEditContent = await materializeNodeSeekPolls({
+                content: edit.contentMarkdown,
+                polls: submittedNodeSeekPolls,
+                ticket,
+                trace
+              });
+              await runNodeSeekRequest(
+                buildNodeSeekEditReplyRequest({
+                  commentId: edit.commentId,
+                  content: sentEditContent,
+                  csrfToken: ''
+                }),
+                trace,
+                ticket
+              );
+              return completion;
+            }
+            const editRepliesKey = cacheKeys(actionTopic as TopicDetail, ticket).repliesKey;
+            await runLinuxDoRequest(
+              {
+                type: 'edit-post',
+                postId: edit.commentId,
+                content: edit.contentMarkdown
+              },
+              trace,
+              ticket,
+              () => {
+                if (
+                  replyEditTargetIsCurrent(
+                    editTarget,
+                    ticket,
+                    actionTopic.source,
+                    actionTopic.id,
+                    queryClient.getQueryData<ReplyCache>(editRepliesKey)
+                  )
+                ) {
+                  return;
+                }
+                detachReplyEdit();
+                notify('编辑权限已变化，请刷新主题后重试');
+                throw new HandledMutationError('编辑权限已变化，请刷新主题后重试', 'blocked', 'permission_denied');
+              }
+            );
+            return completion;
+          }
+        });
+        return;
+      }
+      const floorTarget = replyComposerIntent.kind === 'floor' ? replyComposerIntent.target : null;
+      if (isYaohuoActionTopic(actionTopic) && floorTarget && !floorTarget.authorId) {
+        notify('当前楼层缺少用户 id，刷新主题后再试。');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+        return;
+      }
+      const content = submittedContent;
+      const face = replyFace;
+      const target = floorTarget;
+      await executeMutation(actionTopic as TopicDetail, {
+        actionKey: topicReplyActionKey(actionTopicKey),
+        busy: true,
+        decision: { action: 'reply' },
+        trace,
+        task: async (ticket) => {
+          let sentContent = content;
+          const result = await (async () => {
+            if (isYaohuoActionTopic(actionTopic)) {
+              return runYaohuoRequest(
+                (cookieHeader) =>
+                  buildYaohuoReplyRequest({
+                    topicId: actionTopic.id,
+                    classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+                    content,
+                    face,
+                    sid: extractYaohuoSid(cookieHeader),
+                    replyFloor: target?.floor,
+                    toUserId: target?.authorId
+                  }),
+                trace,
+                ticket
+              );
+            }
+            if (isDiscourseSource(actionTopic.source)) {
+              return runLinuxDoRequest(
+                {
+                  type: 'reply',
+                  topicId: actionTopic.id,
+                  content,
+                  replyToPostNumber: target?.floor
+                },
+                trace,
+                ticket,
+                assertReplyNotEnded
+              );
+            }
+            sentContent = await materializeNodeSeekPolls({
+              content,
+              polls: submittedNodeSeekPolls,
+              ticket,
+              trace
+            });
+            return runNodeSeekRequest(
+              buildNodeSeekReplyRequest({
+                postId: actionTopic.id,
+                content: sentContent,
+                replyTarget: target,
+                csrfToken: ''
+              }),
+              trace,
+              ticket
+            );
+          })();
+          return {
+            applyResult: async ({ detailKey, replyKeys, ticket }) => {
+              await settleReply(ticket);
+              void queryClient.invalidateQueries({ queryKey: detailKey, exact: true, refetchType: 'none' });
+              replyKeys.forEach(
+                (repliesKey) =>
+                  void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' })
+              );
+            },
+            afterSuccess: () =>
+              refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+                kind: 'created',
+                createdTarget: isNodeSeekActionTopic(actionTopic)
+                  ? nodeSeekCreatedReplyTarget(result, actionTopic.id)
+                  : isDiscourseSource(actionTopic.source)
+                    ? discourseCreatedReplyTarget(result, actionTopic.id)
+                    : undefined,
+                silent: true
+              }),
+            successMessage: (refreshed) =>
+              (isNodeSeekActionTopic(actionTopic) || isDiscourseSource(actionTopic.source)) && refreshed === false
+                ? '回复已提交，但暂未能显示；请手动刷新，勿重复发送'
+                : '回复已提交'
+          };
+        }
+      });
+    },
+    [
+      assertReplyNotEnded,
+      cacheKeys,
+      detachReplyEdit,
+      executeMutation,
+      materializeNodeSeekPolls,
+      notify,
+      queryClient,
+      refreshRepliesAfterWrite,
+      replyComposerIntent,
+      getReplyComposerIntent,
+      replyContent,
+      replyFace,
+      runLinuxDoRequest,
+      runNodeSeekRequest,
+      runYaohuoRequest,
+      selectedTopic,
+      siteSessionViewModels.nodeseek.currentUser?.id,
+      topicCommands,
+      topicComposer,
+      topicDetail,
+      isWritableSessionTicketCurrent
+    ]
+  );
+  const deleteReplyConfirmed = useCallback(
+    async (reply: Reply, trace: DiagnosticTrace) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      if (!actionTopic || !reply.canDelete) {
+        notify(actionTopic ? '当前回复不能删除' : '主题尚未加载');
+        finishDiagnosticTrace(trace, 'blocked', { reason: actionTopic ? 'permission_denied' : 'not_ready' });
+        return;
+      }
+      if (isNodeSeekActionTopic(actionTopic)) {
+        notify('NodeSeek 原站没有删除评论入口');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
+        return;
+      }
+      if (isYaohuoActionTopic(actionTopic) && !reply.deletePath) {
+        notify('当前回复缺少删除链接，刷新主题后再试。');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+        return;
+      }
+      if (isDiscourseSource(actionTopic.source) && !reply.commentId) {
+        notify('当前回复缺少评论 id，刷新主题后再试。');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+        return;
+      }
+      const refreshTarget: ReplyRefreshTarget = isYaohuoActionTopic(actionTopic)
+        ? { kind: 'delete-path', deletePath: reply.deletePath! }
+        : { kind: 'comment-id', commentId: reply.commentId! };
+      const actionTopicKey = topicKey(actionTopic);
+      const targetPosition = replyCursorFor(
+        queryClient.getQueryData<ReplyCache>(cacheKeys(actionTopic as TopicDetail).repliesKey),
+        refreshTarget
+      );
+      const patch = () => {
+        const { detailKey, replyKeys } = cacheKeys(actionTopic as TopicDetail);
+        replyKeys.forEach((repliesKey) =>
+          updateReplyCache(queryClient, repliesKey, (replies) => removeRepliesForRefresh(replies, refreshTarget))
+        );
+        queryClient.setQueryData<TopicDetail>(detailKey, (current) =>
+          current
+            ? {
+                ...current,
+                ...(typeof current.replyCount === 'number' ? { replyCount: Math.max(0, current.replyCount - 1) } : {}),
+                replies: removeRepliesForRefresh(current.replies, refreshTarget)
+              }
+            : current
+        );
+      };
+      await executeMutation(actionTopic as TopicDetail, {
+        actionKey: topicDeleteReplyActionKey(actionTopicKey, refreshTarget),
+        busy: true,
+        decision: { action: 'delete', reply },
+        trace,
+        task: async (ticket) => {
+          await (isYaohuoActionTopic(actionTopic)
+            ? runYaohuoRequest(
+                (cookieHeader) =>
+                  buildYaohuoDeleteReplyRequest({
+                    deletePath: reply.deletePath || '',
+                    sid: extractYaohuoSid(cookieHeader)
+                  }),
+                trace,
+                ticket
+              )
+            : runLinuxDoRequest(
+                {
+                  type: 'delete-post',
+                  postId: reply.commentId || 0
+                },
+                trace,
+                ticket
+              ));
+          return {
+            applyResult: ({ replyKeys }) => {
+              patch();
+              replyKeys.forEach(
+                (repliesKey) =>
+                  void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' })
+              );
+            },
+            afterSuccess: () =>
+              refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+                kind: 'deleted',
+                silent: true,
+                target: refreshTarget,
+                ...(targetPosition ? { position: targetPosition } : {})
+              }),
+            successMessage: '回复已删除'
+          };
+        }
+      });
+    },
+    [
+      cacheKeys,
+      executeMutation,
+      notify,
+      queryClient,
+      refreshRepliesAfterWrite,
+      runLinuxDoRequest,
+      runYaohuoRequest,
+      selectedTopic,
+      topicDetail
+    ]
+  );
+  const deleteReply = useCallback(
+    (reply: Reply) => {
+      const trace = beginDiagnosticTrace('reply', 'delete', detail ? { source: detail.source } : {});
+      if (!reply.canDelete) {
+        notify('当前回复不能删除');
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'permission_denied' });
+        return;
+      }
+      let handled = false;
+      Alert.alert(
+        '删除回复',
+        '确认删除这条回复？',
+        [
+          {
+            text: '取消',
+            style: 'cancel',
+            onPress: () => {
+              handled = true;
+              finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+            }
+          },
+          {
+            text: '删除',
+            style: 'destructive',
+            onPress: () => {
+              handled = true;
+              void deleteReplyConfirmed(reply, trace);
+            }
+          }
+        ],
+        {
+          cancelable: true,
+          onDismiss: () => {
+            if (!handled) finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+          }
+        }
+      );
+    },
+    [deleteReplyConfirmed, detail, notify]
+  );
+  useEffect(() => {
+    if (active && detail?.closed && replyComposerIntent.kind !== 'closed' && replyComposerIntent.kind !== 'edit') {
+      detachReplyEdit();
+      notify(topicActionDecisionMessage(decisionFor({ action: 'reply' })));
+    }
+  }, [active, detail?.closed, decisionFor, detachReplyEdit, notify, replyComposerIntent.kind]);
+  useEffect(() => {
+    if (replyComposerIntent.kind !== 'edit') return;
+    const target = replyComposerIntent.target;
+    if (
+      !selectedTopic ||
+      target.topicId !== selectedTopic.id ||
+      target.ticket.source !== selectedTopic.source ||
+      !isWritableSessionTicketCurrent(target.ticket) ||
+      !topicReplies.some((reply) => reply.commentId === target.commentId && reply.canEdit === true)
+    ) {
+      detachReplyEdit();
+    }
+  }, [
+    isWritableSessionTicketCurrent,
+    replyComposerIntent,
+    selectedTopic,
+    sessionEpochs,
+    siteSessionViewModels,
+    topicReplies,
+    detachReplyEdit
+  ]);
+  return { editReply, submitReply, deleteReply };
+}
+
 export function useTopicActionsController({
   active,
   sessionEpochs,
@@ -368,40 +1201,25 @@ export function useTopicActionsController({
   topicDetail,
   topicReplies,
   topicSession
-}: {
-  active: boolean;
-  sessionEpochs: ForumSessionEpochs;
-  linuxDoUserAgent: () => string;
-  showLinuxDoVerification: (message?: string) => void;
-  ensureNodeImageApiKey: () => Promise<string | null>;
-  ensureWritableSession: (source: SessionSite) => Promise<WritableSessionTicket>;
-  fetcher: Fetcher;
-  isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
-  getNodeSeekUserAgent: () => string;
-  notify: (message: string) => void;
-  onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
-  requestAccountRecheck: RequestAccountRecheck;
-  readGateway: Pick<ReadGateway, 'getReadPlan' | 'getReply' | 'getLinuxDoInteractionConfig' | 'getEmojiUrls'>;
-  refreshTopicReplies: (command?: ReplyRefreshCommand, trace?: DiagnosticTrace) => Promise<unknown>;
-  refreshWholeTopic: () => Promise<unknown>;
-  siteSessionViewModels: SiteSessionViewModels;
-  topicDetail: TopicDetail | null;
-  topicReplies: Reply[];
-  topicSession: TopicSessionController;
-}) {
+}: TopicActionsRuntime) {
   const queryClient = useQueryClient();
   const pendingActionReservationsRef = useRef(new Set<string>());
   const activeRef = useCommittedRef(active);
   const sessionEpochsRef = useCommittedRef(sessionEpochs);
   const writableTicketCurrentRef = useCommittedRef(isWritableSessionTicketCurrent);
   const {
-    state: { replyComposerIntent, replyContent, replyFace, replyOrder, selectedTopic },
+    state: { replyComposerIntent, replyOrder, selectedTopic },
     commands: { composer: topicComposer, topic: topicCommands }
   } = topicSession;
   const replyOrderRef = useCommittedRef(replyOrder);
   const refreshTopicRepliesRef = useCommittedRef(refreshTopicReplies);
   const refreshWholeTopicRef = useCommittedRef(refreshWholeTopic);
   const replyComposerIntentRef = useCommittedRef(replyComposerIntent);
+  const getReplyComposerIntent = useCallback(() => replyComposerIntentRef.current, [replyComposerIntentRef]);
+  const currentWritableTicket = useCallback(
+    (ticket: WritableSessionTicket) => writableTicketCurrentRef.current(ticket),
+    [writableTicketCurrentRef]
+  );
   const authenticatedFetcher = useMemo(() => rejectUnauthorizedResponse(fetcher), [fetcher]);
   const reportAccountError = useCallback(
     (error: unknown, ticket: WritableSessionTicket | undefined, trace: DiagnosticTrace) => {
@@ -414,15 +1232,21 @@ export function useTopicActionsController({
   );
   const nodeSeekUserId = nodeSeekUserIdForSession(siteSessionViewModels.nodeseek);
   const detachReplyEdit = topicComposer.detachEdit;
-  const openReplyEditor = topicComposer.editReply;
+
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
   const policyContentRef = useCommittedRef({ topicDetail, topicReplies });
-  const policyActionRef = useRef<AbortController | null>(null);
-  const [policyBusy, setPolicyBusy] = useState(false);
-  const [policySubmissions, setPolicySubmissions] = useState<Record<string, PolicySubmission>>({});
-  const policySubmissionsRef = useRef<Record<string, PolicySubmission>>({});
+
   const policyScope = `${detail?.source}:${detail?.id}:${sessionEpochs.linuxdo}:${siteSessionViewModels.linuxdo.currentUser?.id}`;
   const policyScopeRef = useCommittedRef(policyScope);
+  const [policyState, setPolicyState] = useState<PolicyOperationSnapshot>({ request: null, submissions: {} });
+  const [policies] = useState(() =>
+    createDiscoursePolicyOperation({
+      isCurrentScope: (scope) => policyScopeRef.current === scope,
+      publish: setPolicyState
+    })
+  );
+  const policyBusy = policyRequestBusy(policyState.request);
+  const policySubmissions = policyState.submissions;
   const [boostComposer, setBoostComposer] = useState<{ postId: number; content: string } | null>(null);
   const boostDraftsRef = useRef(new Map<number, string>());
   useLayoutEffect(() => {
@@ -433,29 +1257,12 @@ export function useTopicActionsController({
     if (!active) setBoostComposer(null);
   }, [active]);
   useLayoutEffect(() => {
-    setPolicyBusy(false);
-    return () => {
-      policyActionRef.current?.abort();
-      policyActionRef.current = null;
-    };
-  }, [active, policyScope, siteSessionViewModels.linuxdo.canWrite]);
+    policies.cancel();
+    return policies.cancel;
+  }, [active, policyScope, siteSessionViewModels.linuxdo.canWrite, policies]);
   useLayoutEffect(() => {
-    const submissions = Object.values(policySubmissionsRef.current);
-    if (!submissions.length) return;
-    const policies = [topicDetail?.policy, ...topicReplies.map((reply) => reply.policy)];
-    const remaining = submissions.filter((submitted) => {
-      const current = policies.find((policy) => policy?.postId === submitted.postId);
-      return (
-        submitted.scope === policyScope &&
-        (!current || (current.version === submitted.version && current.accepted !== submitted.accepted))
-      );
-    });
-    if (remaining.length !== submissions.length) {
-      const next = Object.fromEntries(remaining.map((submission) => [submission.postId, submission]));
-      policySubmissionsRef.current = next;
-      setPolicySubmissions(next);
-    }
-  }, [policyScope, topicDetail, topicReplies]);
+    policies.observe(policyScope, [topicDetail?.policy, ...topicReplies.map((reply) => reply.policy)]);
+  }, [policyScope, topicDetail, topicReplies, policies]);
   const mutationSource = detail?.source || 'nodeseek';
   const mutationTopicId = detail?.id || 'global';
   const mutationKey = useMemo(
@@ -520,7 +1327,7 @@ export function useTopicActionsController({
     },
     [nodeSeekUserId, selectedTopic, siteSessionViewModels, topicDetail]
   );
-  const mutation = useMutation<unknown, unknown, MutationVariables>({
+  const mutation = useMutation<MutationCompletion, unknown, MutationVariables>({
     mutationKey,
     scope: { id: mutationScope },
     mutationFn: async (variables) => {
@@ -595,7 +1402,7 @@ export function useTopicActionsController({
         throw error;
       }
     },
-    onSuccess: async (result, variables) => {
+    onSuccess: async (completion, variables) => {
       if (!writableTicketCurrentRef.current(variables.ticket) || variables.isCurrent?.() === false) {
         finishDiagnosticTrace(variables.trace, 'stale', {
           source: variables.source,
@@ -604,10 +1411,10 @@ export function useTopicActionsController({
         });
         return;
       }
-      await variables.applyResult?.(result, variables);
+      await completion.applyResult?.(variables);
       const refreshed =
         writableTicketCurrentRef.current(variables.ticket) && variables.isCurrent?.() !== false
-          ? await variables.afterSuccess?.(result, variables)
+          ? await completion.afterSuccess?.(variables)
           : undefined;
       if (!writableTicketCurrentRef.current(variables.ticket) || variables.isCurrent?.() === false) {
         finishDiagnosticTrace(variables.trace, 'stale', {
@@ -618,9 +1425,9 @@ export function useTopicActionsController({
         return;
       }
       const message =
-        typeof variables.successMessage === 'function'
-          ? variables.successMessage(result, refreshed)
-          : variables.successMessage;
+        typeof completion.successMessage === 'function'
+          ? completion.successMessage(refreshed)
+          : completion.successMessage;
       if (message) notify(message);
       finishDiagnosticTrace(variables.trace, refreshed === false ? 'partial' : 'success', {
         source: variables.source,
@@ -679,12 +1486,7 @@ export function useTopicActionsController({
     [baseDecisionFor, pendingVariables, selectedTopic, topicDetail]
   );
   const decisionForRef = useCommittedRef(decisionFor);
-  useEffect(() => {
-    if (active && detail?.closed && replyComposerIntent.kind !== 'closed' && replyComposerIntent.kind !== 'edit') {
-      detachReplyEdit();
-      notify(topicActionDecisionMessage(decisionFor({ action: 'reply' })));
-    }
-  }, [active, detail?.closed, decisionFor, detachReplyEdit, notify, replyComposerIntent.kind]);
+
   const assertReplyNotEnded = useCallback(() => {
     const decision = decisionForRef.current({ action: 'reply' });
     if (decision.reason === 'topic-ended' || decision.reason === 'topic-closed') {
@@ -715,19 +1517,7 @@ export function useTopicActionsController({
   );
 
   const applyPollResult = useCallback(
-    ({
-      actionTopic,
-      confirmedPoll,
-      optionIds,
-      poll,
-      preserveUnknownCounts
-    }: {
-      actionTopic: TopicDetail;
-      confirmedPoll?: TopicPoll;
-      optionIds: string[];
-      poll: TopicPoll;
-      preserveUnknownCounts?: boolean;
-    }) => {
+    ({ actionTopic, confirmedPoll, optionIds, poll, preserveUnknownCounts }: PollResultApplication) => {
       const patch = {
         pollId: poll.id,
         pollName: poll.name,
@@ -749,70 +1539,6 @@ export function useTopicActionsController({
     },
     [cacheKeys, queryClient]
   );
-
-  const editReply = useCallback(
-    async (reply: Reply) => {
-      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-      if (!actionTopic) {
-        notify('主题尚未加载');
-        return;
-      }
-      if (!reply.commentId) {
-        notify('当前回复缺少评论 id，刷新主题后再试。');
-        return;
-      }
-      if (!reply.canEdit) {
-        notify('当前回复不能编辑');
-        return;
-      }
-      if (!reply.contentMarkdown) {
-        notify('当前回复缺少原文，刷新主题后再试。');
-        return;
-      }
-      if (!isSessionSource(actionTopic.source)) {
-        notify('当前来源不支持写操作');
-        return;
-      }
-      try {
-        const ticket = await ensureWritableSession(actionTopic.source);
-        if (!isWritableSessionTicketCurrent(ticket)) {
-          throw new WritableSessionBlockedError('登录状态已变化，请重试', 'stale');
-        }
-        openReplyEditor({
-          commentId: reply.commentId,
-          contentMarkdown: reply.contentMarkdown,
-          floor: reply.floor,
-          topicId: actionTopic.id,
-          ticket
-        });
-      } catch (error) {
-        notify(errorMessage(error));
-      }
-    },
-    [ensureWritableSession, isWritableSessionTicketCurrent, notify, selectedTopic, openReplyEditor, topicDetail]
-  );
-
-  useEffect(() => {
-    if (replyComposerIntent.kind !== 'edit') return;
-    const target = replyComposerIntent.target;
-    if (
-      !selectedTopic ||
-      target.topicId !== selectedTopic.id ||
-      target.ticket.source !== selectedTopic.source ||
-      !isWritableSessionTicketCurrent(target.ticket) ||
-      !topicReplies.some((reply) => reply.commentId === target.commentId && reply.canEdit === true)
-    ) {
-      detachReplyEdit();
-    }
-  }, [
-    isWritableSessionTicketCurrent,
-    replyComposerIntent,
-    selectedTopic,
-    sessionEpochs,
-    siteSessionViewModels,
-    topicReplies,
-    detachReplyEdit
-  ]);
 
   const refreshRepliesAfterWrite = useCallback(
     async (actionTopic: TopicDetail, trace: DiagnosticTrace, command: ReplyRefreshCommand) => {
@@ -1344,7 +2070,6 @@ export function useTopicActionsController({
       });
       const scope = policyScopeRef.current;
       const isCurrent = () => activeRef.current && scope === policyScopeRef.current;
-      let resultPatch: DiscourseInteractionPatch = {};
       const dispatchState: RequestDispatchState = { mayHaveSent: false };
       const success = await executeMutation(opening, {
         actionKey: topicActionStateKey({ topicKey: topicKey(opening), targetId: postId, action }),
@@ -1353,6 +2078,8 @@ export function useTopicActionsController({
         trace,
         isCurrent,
         task: async (ticket) => {
+          let resultPatch: DiscourseInteractionPatch = {};
+
           interactionReadsRef.current.get(postId)?.controller.abort();
           interactionReadsRef.current.delete(postId);
           let request: DiscourseAction;
@@ -1478,7 +2205,30 @@ export function useTopicActionsController({
                 { siteExtension: { ...target.siteExtension, interactionUnconfirmed: true } },
                 keys
               );
-            return result;
+            await result;
+            return {
+              applyResult: (variables) => {
+                patchLinuxDoPost(postId, resultPatch, variables);
+                if (intent.kind === 'create-boost' && boostDraftsRef.current.get(postId) === intent.content) {
+                  boostDraftsRef.current.delete(postId);
+                  setBoostComposer((current) =>
+                    current?.postId === postId && current.content === intent.content ? null : current
+                  );
+                }
+              },
+              afterSuccess:
+                intent.kind === 'reaction'
+                  ? undefined
+                  : (variables) => recheckLinuxDoPost(postId, variables.ticket, trace),
+              successMessage: (refreshed) =>
+                refreshed === false
+                  ? '操作已提交，请刷新核对最新状态'
+                  : intent.kind === 'reaction'
+                    ? '反应已更新'
+                    : intent.kind === 'create-boost'
+                      ? '加电已提交'
+                      : '加电已删除'
+            };
           } catch (error) {
             const rejected = error instanceof HandledMutationError && error.serverRejected;
             if (
@@ -1514,28 +2264,7 @@ export function useTopicActionsController({
             }
             throw error;
           }
-        },
-        applyResult: (_result, variables) => {
-          patchLinuxDoPost(postId, resultPatch, variables);
-          if (intent.kind === 'create-boost' && boostDraftsRef.current.get(postId) === intent.content) {
-            boostDraftsRef.current.delete(postId);
-            setBoostComposer((current) =>
-              current?.postId === postId && current.content === intent.content ? null : current
-            );
-          }
-        },
-        afterSuccess:
-          intent.kind === 'reaction'
-            ? undefined
-            : (_result, variables) => recheckLinuxDoPost(postId, variables.ticket, trace),
-        successMessage: (_result, refreshed) =>
-          refreshed === false
-            ? '操作已提交，请刷新核对最新状态'
-            : intent.kind === 'reaction'
-              ? '反应已更新'
-              : intent.kind === 'create-boost'
-                ? '加电已提交'
-                : '加电已删除'
+        }
       });
       return success && isCurrent();
     },
@@ -1589,404 +2318,6 @@ export function useTopicActionsController({
       ]);
     },
     [mutateLinuxDoPost]
-  );
-
-  const submitReply = useCallback(
-    async (snapshot?: ComposerSnapshot, settleSubmission?: ComposerSubmissionSettlement) => {
-      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-      const submittedContent = snapshot?.markdown ?? replyContent;
-      const submittedDraftRevision = topicComposer.getDraftRevision();
-      const submittedNodeSeekPolls = snapshot?.pendingNodeSeekPolls || [];
-      const trace = beginDiagnosticTrace('reply', replyComposerIntent.kind === 'edit' ? 'edit' : 'submit', {
-        ...(actionTopic ? { source: actionTopic.source } : {}),
-        contentLength: submittedContent.length
-      });
-      if (replyComposerIntentRef.current.kind === 'closed') {
-        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-        return;
-      }
-      const canEditDiscourseReply = Boolean(
-        actionTopic && isDiscourseSource(actionTopic.source) && replyComposerIntent.kind === 'edit'
-      );
-      if (!actionTopic || (!canEditDiscourseReply && !canSubmitReplyToTopic(actionTopic))) {
-        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-        return;
-      }
-      if (snapshot?.validationIssues.length) {
-        notify(snapshot.validationIssues[0]!.message);
-        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
-        return;
-      }
-      if (!submittedContent.trim()) {
-        notify('请输入回复内容');
-        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
-        return;
-      }
-      if (isNodeSeekActionTopic(actionTopic)) {
-        const currentMemberId = String(siteSessionViewModels.nodeseek.currentUser?.id || '').trim();
-        const foreignReceive = nodeSeekStardustMarkerRanges(submittedContent).find(
-          (range) => range.receive && range.receive.receiverMemberId !== currentMemberId
-        );
-        if (foreignReceive) {
-          notify('收款卡片属于其他账号，请替换为当前账号或移除');
-          finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'permission_denied' });
-          return;
-        }
-      }
-      const actionTopicKey = topicKey(actionTopic);
-      const settleReply = async (ticket: WritableSessionTicket) => {
-        const complete = () => {
-          if (
-            !writableTicketCurrentRef.current(ticket) ||
-            topicCommands.getCurrentKey() !== actionTopicKey ||
-            replyComposerIntentRef.current !== replyComposerIntent
-          )
-            return false;
-          return topicComposer.completeSubmission(settleSubmission ? undefined : submittedDraftRevision);
-        };
-        if (
-          !writableTicketCurrentRef.current(ticket) ||
-          topicCommands.getCurrentKey() !== actionTopicKey ||
-          replyComposerIntentRef.current !== replyComposerIntent
-        )
-          return;
-        if (settleSubmission) await settleSubmission(complete);
-        else complete();
-      };
-      if (replyComposerIntent.kind === 'edit') {
-        const editTarget = replyComposerIntent.target;
-        if (!isNodeSeekActionTopic(actionTopic) && !isDiscourseSource(actionTopic.source)) {
-          notify('当前来源暂不支持编辑回复');
-          finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
-          return;
-        }
-        const edit = { ...editTarget, contentMarkdown: submittedContent };
-        let sentEditContent = edit.contentMarkdown;
-        await executeMutation(actionTopic as TopicDetail, {
-          actionKey: topicEditReplyActionKey(actionTopicKey, editTarget.commentId),
-          busy: true,
-          decision: {
-            action: 'edit',
-            objectAllowed: true,
-            targetPresent: Boolean(editTarget.commentId && editTarget.contentMarkdown)
-          },
-          editTarget,
-          trace,
-          task: async (ticket) => {
-            if (isNodeSeekActionTopic(actionTopic)) {
-              sentEditContent = await materializeNodeSeekPolls({
-                content: edit.contentMarkdown,
-                polls: submittedNodeSeekPolls,
-                ticket,
-                trace
-              });
-              return runNodeSeekRequest(
-                buildNodeSeekEditReplyRequest({
-                  commentId: edit.commentId,
-                  content: sentEditContent,
-                  csrfToken: ''
-                }),
-                trace,
-                ticket
-              );
-            }
-            const editRepliesKey = cacheKeys(actionTopic as TopicDetail, ticket).repliesKey;
-            return runLinuxDoRequest(
-              {
-                type: 'edit-post',
-                postId: edit.commentId,
-                content: edit.contentMarkdown
-              },
-              trace,
-              ticket,
-              () => {
-                if (
-                  replyEditTargetIsCurrent(
-                    editTarget,
-                    ticket,
-                    actionTopic.source,
-                    actionTopic.id,
-                    queryClient.getQueryData<ReplyCache>(editRepliesKey)
-                  )
-                ) {
-                  return;
-                }
-                detachReplyEdit();
-                notify('编辑权限已变化，请刷新主题后重试');
-                throw new HandledMutationError('编辑权限已变化，请刷新主题后重试', 'blocked', 'permission_denied');
-              }
-            );
-          },
-          applyResult: async (_result, { replyKeys, ticket }) => {
-            replyKeys.forEach((repliesKey) => {
-              updateReplyCache(queryClient, repliesKey, (replies) =>
-                applyEditedReplyContent(replies, { ...edit, contentMarkdown: sentEditContent }, actionTopic.source)
-              );
-              void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' });
-            });
-            await settleReply(ticket);
-          },
-          afterSuccess: () =>
-            refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
-              kind: 'edited',
-              silent: true,
-              target: { kind: 'comment-id', commentId: editTarget.commentId },
-              contentMarkdown: sentEditContent
-            }),
-          successMessage: '回复已更新'
-        });
-        return;
-      }
-      const floorTarget = replyComposerIntent.kind === 'floor' ? replyComposerIntent.target : null;
-      if (isYaohuoActionTopic(actionTopic) && floorTarget && !floorTarget.authorId) {
-        notify('当前楼层缺少用户 id，刷新主题后再试。');
-        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
-        return;
-      }
-      const content = submittedContent;
-      let sentContent = content;
-      const face = replyFace;
-      const target = floorTarget;
-      await executeMutation(actionTopic as TopicDetail, {
-        actionKey: topicReplyActionKey(actionTopicKey),
-        busy: true,
-        decision: { action: 'reply' },
-        trace,
-        task: async (ticket) => {
-          if (isYaohuoActionTopic(actionTopic)) {
-            return runYaohuoRequest(
-              (cookieHeader) =>
-                buildYaohuoReplyRequest({
-                  topicId: actionTopic.id,
-                  classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-                  content,
-                  face,
-                  sid: extractYaohuoSid(cookieHeader),
-                  replyFloor: target?.floor,
-                  toUserId: target?.authorId
-                }),
-              trace,
-              ticket
-            );
-          }
-          if (isDiscourseSource(actionTopic.source)) {
-            return runLinuxDoRequest(
-              {
-                type: 'reply',
-                topicId: actionTopic.id,
-                content,
-                replyToPostNumber: target?.floor
-              },
-              trace,
-              ticket,
-              assertReplyNotEnded
-            );
-          }
-          sentContent = await materializeNodeSeekPolls({
-            content,
-            polls: submittedNodeSeekPolls,
-            ticket,
-            trace
-          });
-          return runNodeSeekRequest(
-            buildNodeSeekReplyRequest({
-              postId: actionTopic.id,
-              content: sentContent,
-              replyTarget: target,
-              csrfToken: ''
-            }),
-            trace,
-            ticket
-          );
-        },
-        applyResult: async (_result, { detailKey, replyKeys, ticket }) => {
-          await settleReply(ticket);
-          void queryClient.invalidateQueries({ queryKey: detailKey, exact: true, refetchType: 'none' });
-          replyKeys.forEach(
-            (repliesKey) =>
-              void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' })
-          );
-        },
-        afterSuccess: (result) =>
-          refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
-            kind: 'created',
-            createdTarget: isNodeSeekActionTopic(actionTopic)
-              ? nodeSeekCreatedReplyTarget(result, actionTopic.id)
-              : isDiscourseSource(actionTopic.source)
-                ? discourseCreatedReplyTarget(result, actionTopic.id)
-                : undefined,
-            silent: true
-          }),
-        successMessage: (_result, refreshed) =>
-          (isNodeSeekActionTopic(actionTopic) || isDiscourseSource(actionTopic.source)) && refreshed === false
-            ? '回复已提交，但暂未能显示；请手动刷新，勿重复发送'
-            : '回复已提交'
-      });
-    },
-    [
-      assertReplyNotEnded,
-      cacheKeys,
-      detachReplyEdit,
-      executeMutation,
-      materializeNodeSeekPolls,
-      notify,
-      queryClient,
-      refreshRepliesAfterWrite,
-      replyComposerIntent,
-      replyComposerIntentRef,
-      replyContent,
-      replyFace,
-      runLinuxDoRequest,
-      runNodeSeekRequest,
-      runYaohuoRequest,
-      selectedTopic,
-      siteSessionViewModels.nodeseek.currentUser?.id,
-      topicCommands,
-      topicComposer,
-      topicDetail,
-      writableTicketCurrentRef
-    ]
-  );
-
-  const deleteReplyConfirmed = useCallback(
-    async (reply: Reply, trace: DiagnosticTrace) => {
-      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-      if (!actionTopic || !reply.canDelete) {
-        notify(actionTopic ? '当前回复不能删除' : '主题尚未加载');
-        finishDiagnosticTrace(trace, 'blocked', { reason: actionTopic ? 'permission_denied' : 'not_ready' });
-        return;
-      }
-      if (isNodeSeekActionTopic(actionTopic)) {
-        notify('NodeSeek 原站没有删除评论入口');
-        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
-        return;
-      }
-      if (isYaohuoActionTopic(actionTopic) && !reply.deletePath) {
-        notify('当前回复缺少删除链接，刷新主题后再试。');
-        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
-        return;
-      }
-      if (isDiscourseSource(actionTopic.source) && !reply.commentId) {
-        notify('当前回复缺少评论 id，刷新主题后再试。');
-        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
-        return;
-      }
-      const refreshTarget: ReplyRefreshTarget = isYaohuoActionTopic(actionTopic)
-        ? { kind: 'delete-path', deletePath: reply.deletePath! }
-        : { kind: 'comment-id', commentId: reply.commentId! };
-      const actionTopicKey = topicKey(actionTopic);
-      const targetPosition = replyCursorFor(
-        queryClient.getQueryData<ReplyCache>(cacheKeys(actionTopic as TopicDetail).repliesKey),
-        refreshTarget
-      );
-      const patch = () => {
-        const { detailKey, replyKeys } = cacheKeys(actionTopic as TopicDetail);
-        replyKeys.forEach((repliesKey) =>
-          updateReplyCache(queryClient, repliesKey, (replies) => removeRepliesForRefresh(replies, refreshTarget))
-        );
-        queryClient.setQueryData<TopicDetail>(detailKey, (current) =>
-          current
-            ? {
-                ...current,
-                ...(typeof current.replyCount === 'number' ? { replyCount: Math.max(0, current.replyCount - 1) } : {}),
-                replies: removeRepliesForRefresh(current.replies, refreshTarget)
-              }
-            : current
-        );
-      };
-      await executeMutation(actionTopic as TopicDetail, {
-        actionKey: topicDeleteReplyActionKey(actionTopicKey, refreshTarget),
-        busy: true,
-        decision: { action: 'delete', reply },
-        trace,
-        task: (ticket) =>
-          isYaohuoActionTopic(actionTopic)
-            ? runYaohuoRequest(
-                (cookieHeader) =>
-                  buildYaohuoDeleteReplyRequest({
-                    deletePath: reply.deletePath || '',
-                    sid: extractYaohuoSid(cookieHeader)
-                  }),
-                trace,
-                ticket
-              )
-            : runLinuxDoRequest(
-                {
-                  type: 'delete-post',
-                  postId: reply.commentId || 0
-                },
-                trace,
-                ticket
-              ),
-        applyResult: (_result, { replyKeys }) => {
-          patch();
-          replyKeys.forEach(
-            (repliesKey) =>
-              void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' })
-          );
-        },
-        afterSuccess: () =>
-          refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
-            kind: 'deleted',
-            silent: true,
-            target: refreshTarget,
-            ...(targetPosition ? { position: targetPosition } : {})
-          }),
-        successMessage: '回复已删除'
-      });
-    },
-    [
-      cacheKeys,
-      executeMutation,
-      notify,
-      queryClient,
-      refreshRepliesAfterWrite,
-      runLinuxDoRequest,
-      runYaohuoRequest,
-      selectedTopic,
-      topicDetail
-    ]
-  );
-
-  const deleteReply = useCallback(
-    (reply: Reply) => {
-      const trace = beginDiagnosticTrace('reply', 'delete', detail ? { source: detail.source } : {});
-      if (!reply.canDelete) {
-        notify('当前回复不能删除');
-        finishDiagnosticTrace(trace, 'blocked', { reason: 'permission_denied' });
-        return;
-      }
-      let handled = false;
-      Alert.alert(
-        '删除回复',
-        '确认删除这条回复？',
-        [
-          {
-            text: '取消',
-            style: 'cancel',
-            onPress: () => {
-              handled = true;
-              finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
-            }
-          },
-          {
-            text: '删除',
-            style: 'destructive',
-            onPress: () => {
-              handled = true;
-              void deleteReplyConfirmed(reply, trace);
-            }
-          }
-        ],
-        {
-          cancelable: true,
-          onDismiss: () => {
-            if (!handled) finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
-          }
-        }
-      );
-    },
-    [deleteReplyConfirmed, detail, notify]
   );
 
   const uploadReplyImageMarkup = useCallback(async () => {
@@ -2111,13 +2442,15 @@ export function useTopicActionsController({
         assertWritableTicket(ticket, Boolean(imageUrl));
         assertCurrentEditTarget(Boolean(imageUrl));
         if (!imageUrl) throw new HandledMutationError('图片上传结果不正确', 'failure', 'invalid_response');
-        return { imageUrl, name: file.name };
-      },
-      applyResult: (result) => {
-        const uploaded = result as { imageUrl: string; name: string };
-        uploadedMarkup = replyImageMarkupForSource(actionTopic.source, uploaded.imageUrl, uploaded.name);
-      },
-      successMessage: '图片已插入'
+        const result = await { imageUrl, name: file.name };
+        return {
+          applyResult: () => {
+            const uploaded = result;
+            uploadedMarkup = replyImageMarkupForSource(actionTopic.source, uploaded.imageUrl, uploaded.name);
+          },
+          successMessage: '图片已插入'
+        };
+      }
     });
     return uploadedMarkup || undefined;
   }, [
@@ -2184,11 +2517,9 @@ export function useTopicActionsController({
           },
           trace,
           applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
-          applyResult: () => {
-            void updateInteraction(actionTopic as TopicDetail, patch);
-          },
-          task: (ticket) =>
-            runLinuxDoRequest(
+
+          task: async (ticket) => {
+            await runLinuxDoRequest(
               {
                 type: 'set-like',
                 postId: commentId,
@@ -2196,8 +2527,14 @@ export function useTopicActionsController({
               },
               trace,
               ticket
-            ),
-          successMessage: desired ? '点赞已提交' : '已取消点赞'
+            );
+            return {
+              applyResult: () => {
+                void updateInteraction(actionTopic as TopicDetail, patch);
+              },
+              successMessage: desired ? '点赞已提交' : '已取消点赞'
+            };
+          }
         });
         return;
       }
@@ -2222,12 +2559,16 @@ export function useTopicActionsController({
         },
         trace,
         applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
-        applyResult: () => {
-          void updateInteraction(actionTopic as TopicDetail, patch);
-        },
-        task: (ticket) =>
-          runNodeSeekRequest(buildNodeSeekInteractionRequest({ type, commentId, active: false }), trace, ticket),
-        successMessage: type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
+
+        task: async (ticket) => {
+          await runNodeSeekRequest(buildNodeSeekInteractionRequest({ type, commentId, active: false }), trace, ticket);
+          return {
+            applyResult: () => {
+              void updateInteraction(actionTopic as TopicDetail, patch);
+            },
+            successMessage: type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
+          };
+        }
       });
     },
     [
@@ -2264,8 +2605,8 @@ export function useTopicActionsController({
       decision: { action: 'bookmark', targetPresent: !bookmarked || Boolean(actionDetail.bookmarkId) },
       trace,
       applyOptimistic: () => toggleBookmarkOptimistically(patch, bookmarked, actionDetail),
-      task: (ticket) =>
-        runYaohuoRequest(
+      task: async (ticket) => {
+        const result = await runYaohuoRequest(
           () =>
             bookmarked
               ? buildYaohuoDeleteFavoriteRequest({ favoriteId: actionDetail.bookmarkId || 0 })
@@ -2275,12 +2616,15 @@ export function useTopicActionsController({
                 }),
           trace,
           ticket
-        ),
-      applyResult: (result) => {
-        const yaohuoResult = result as YaohuoActionResult;
-        patch(!bookmarked, bookmarked || yaohuoResult.status === 'unknown' ? undefined : yaohuoResult.favoriteId);
-      },
-      successMessage: bookmarked ? '已取消收藏' : '收藏已提交'
+        );
+        return {
+          applyResult: () => {
+            const yaohuoResult = result;
+            patch(!bookmarked, bookmarked ? undefined : yaohuoResult.favoriteId);
+          },
+          successMessage: bookmarked ? '已取消收藏' : '收藏已提交'
+        };
+      }
     });
   }, [cacheKeys, executeMutation, notify, queryClient, runYaohuoRequest, selectedTopic, topicDetail]);
 
@@ -2316,9 +2660,10 @@ export function useTopicActionsController({
         patch(!collected);
         return () => patch(collected);
       },
-      task: (ticket) =>
-        runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace, ticket),
-      successMessage: collected ? '已取消收藏' : '收藏已提交'
+      task: async (ticket) => {
+        await runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace, ticket);
+        return { successMessage: collected ? '已取消收藏' : '收藏已提交' };
+      }
     });
   }, [cacheKeys, executeMutation, queryClient, runNodeSeekRequest, selectedTopic, topicDetail]);
 
@@ -2339,8 +2684,8 @@ export function useTopicActionsController({
       decision: { action: 'bookmark' },
       trace,
       applyOptimistic: () => toggleBookmarkOptimistically(patch, bookmarked, actionDetail),
-      task: (ticket) =>
-        runLinuxDoRequest(
+      task: async (ticket) => {
+        const result = await runLinuxDoRequest(
           {
             type: 'set-bookmark',
             targetId: actionTopic.id,
@@ -2350,9 +2695,12 @@ export function useTopicActionsController({
           },
           trace,
           ticket
-        ),
-      applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : discourseBookmarkIdFromActionResult(result)),
-      successMessage: bookmarked ? '已取消收藏' : '收藏已提交'
+        );
+        return {
+          applyResult: () => patch(!bookmarked, bookmarked ? undefined : discourseBookmarkIdFromActionResult(result)),
+          successMessage: bookmarked ? '已取消收藏' : '收藏已提交'
+        };
+      }
     });
   }, [cacheKeys, executeMutation, queryClient, runLinuxDoRequest, selectedTopic, topicDetail]);
 
@@ -2459,9 +2807,9 @@ export function useTopicActionsController({
             throw new HandledMutationError(message, 'failure', 'invalid_response');
           }
           outcome = 'submitted';
-          return null;
-        },
-        successMessage: '付款已由 NodeSeek 确认'
+          await null;
+          return { successMessage: '付款已由 NodeSeek 确认' };
+        }
       });
       return outcome;
     },
@@ -2609,10 +2957,10 @@ export function useTopicActionsController({
   const setPolicyAcceptance = useCallback(
     async (policy: DiscoursePostPolicy, accepted: boolean) => {
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-      if (!activeRef.current || actionTopic?.source !== 'linuxdo' || policyActionRef.current) return;
+      if (!activeRef.current || actionTopic?.source !== 'linuxdo' || policies.hasRequest()) return;
       const scope = policyScope;
       if (scope !== policyScopeRef.current) return;
-      const submitted = policySubmissionsRef.current[policy.postId];
+      const submitted = policies.submitted(scope, policy);
       if (submitted?.scope === scope && submitted.postId === policy.postId && submitted.version === policy.version) {
         notify('操作已提交，请刷新公告核对阅读状态');
         return;
@@ -2626,14 +2974,11 @@ export function useTopicActionsController({
         notify(topicActionDecisionMessage(decision));
         return;
       }
-      const controller = new AbortController();
-      policyActionRef.current = controller;
-      setPolicyBusy(true);
+      const run = policies.claim({ scope, policy, accepted, busyDuringConfirmation: true });
+      if (!run) return;
+      const controller = run.controller;
       const isCurrent = () =>
-        policyActionRef.current === controller &&
-        !controller.signal.aborted &&
-        activeRef.current &&
-        policyScopeRef.current === scope;
+        policies.owns(run) && !controller.signal.aborted && activeRef.current && policyScopeRef.current === scope;
       const assertCurrent = (ticket: WritableSessionTicket, beforeSend = false) => {
         if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
         assertWritableTicket(ticket);
@@ -2670,6 +3015,7 @@ export function useTopicActionsController({
           });
           if (!confirmed || !isCurrent()) return;
         }
+        if (!policies.beginSend(run)) return;
         const trace = beginDiagnosticTrace('topic', 'apply', { source: 'linuxdo' });
         await executeMutation(actionTopic as TopicDetail, {
           actionKey: `policy:${policy.postId}:${policy.version}`,
@@ -2695,11 +3041,23 @@ export function useTopicActionsController({
                 notify(message);
                 throw new HandledMutationError(message, 'failure', 'invalid_response');
               }
-              const submission = { scope, postId: policy.postId, version: policy.version, accepted };
-              const submissions = { ...policySubmissionsRef.current, [policy.postId]: submission };
-              policySubmissionsRef.current = submissions;
-              setPolicySubmissions(submissions);
-              return result;
+              policies.confirmed(run);
+              await result;
+              return {
+                afterSuccess: async () => {
+                  if (!isCurrent()) return false;
+                  try {
+                    const result = await refreshWholeTopicRef.current();
+                    return result === 'completed' || result === true;
+                  } catch {
+                    return false;
+                  }
+                },
+                successMessage: (refreshed) =>
+                  refreshed === false
+                    ? '提交已由原站确认，但阅读状态刷新失败，请刷新公告核对'
+                    : '提交已由原站确认，阅读状态以刷新后的公告为准'
+              };
             } catch (error) {
               if (!isCurrent()) throw new HandledMutationError('操作已取消', 'canceled', 'canceled');
               if (
@@ -2713,26 +3071,10 @@ export function useTopicActionsController({
               else notify(message);
               throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
             }
-          },
-          afterSuccess: async () => {
-            if (!isCurrent()) return false;
-            try {
-              const result = await refreshWholeTopicRef.current();
-              return result === 'completed' || result === true;
-            } catch {
-              return false;
-            }
-          },
-          successMessage: (_result, refreshed) =>
-            refreshed === false
-              ? '提交已由原站确认，但阅读状态刷新失败，请刷新公告核对'
-              : '提交已由原站确认，阅读状态以刷新后的公告为准'
+          }
         });
       } finally {
-        if (policyActionRef.current === controller) {
-          policyActionRef.current = null;
-          setPolicyBusy(false);
-        }
+        policies.finish(run);
       }
     },
     [
@@ -2749,213 +3091,47 @@ export function useTopicActionsController({
       refreshWholeTopicRef,
       selectedTopic,
       showLinuxDoVerification,
-      topicDetail
+      topicDetail,
+      policies
     ]
   );
 
-  const votePoll = useCallback(
-    async (poll: TopicPoll, optionIds: string[]) => {
-      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-      const trace = beginDiagnosticTrace('topic', 'vote', {
-        ...(actionTopic ? { source: actionTopic.source } : {}),
-        selectedCount: optionIds.length
-      });
-      if (!canVotePollOnTopic(actionTopic) || !optionIds.length) {
-        if (!optionIds.length) notify('请选择投票选项');
-        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-        return;
-      }
-      const submit = async () => {
-        await executeMutation(actionTopic as TopicDetail, {
-          actionKey: topicPollVoteActionKey(topicKey(actionTopic), poll),
-          busy: true,
-          decision: { action: 'vote', poll, targetPresent: optionIds.length > 0 },
-          trace,
-          task: async (ticket) => {
-            if (isNodeSeekActionTopic(actionTopic)) {
-              await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace, ticket);
-              try {
-                if (!poll.id) throw new Error('投票 id 不正确');
-                assertWritableTicket(ticket);
-                const confirmedPoll = await fetchNodeSeekVoteInfo({
-                  pollId: poll.id,
-                  fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
-                  userAgent: getNodeSeekUserAgent()
-                });
-                return { confirmedPoll, refreshFailed: false };
-              } catch (error) {
-                if (isRawUnauthorized(error)) throw error;
-                hintDiagnosticOutcome(trace, 'partial', {
-                  source: 'nodeseek',
-                  reason: 'refresh_failed'
-                });
-                return { confirmedPoll: undefined, refreshFailed: true };
-              }
-            }
-            if (isDiscourseSource(actionTopic.source)) {
-              if (!poll.postId || !poll.name) {
-                throw new HandledMutationError('当前投票信息不完整，刷新主题后再试。', 'blocked', 'not_ready');
-              }
-              await runLinuxDoRequest(
-                {
-                  type: 'vote',
-                  postId: poll.postId,
-                  pollName: poll.name,
-                  optionIds
-                },
-                trace,
-                ticket
-              );
-            } else {
-              await runYaohuoRequest(
-                () =>
-                  buildYaohuoVoteRequest({
-                    topicId: actionTopic.id,
-                    classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-                    voteIds: optionIds
-                  }),
-                trace,
-                ticket
-              );
-            }
-            return { confirmedPoll: undefined, refreshFailed: false };
-          },
-          applyResult: (result) => {
-            const voteResult = result as { confirmedPoll?: TopicPoll; refreshFailed: boolean };
-            applyPollResult({
-              actionTopic: actionTopic as TopicDetail,
-              confirmedPoll: voteResult.confirmedPoll,
-              optionIds,
-              poll,
-              preserveUnknownCounts: voteResult.refreshFailed
-            });
-            if (voteResult.refreshFailed) notify('提交成功但结果刷新失败，请手动刷新。');
-          },
-          successMessage: (result) => ((result as { refreshFailed: boolean }).refreshFailed ? '' : '投票已提交')
-        });
-      };
-      if (!isNodeSeekActionTopic(actionTopic)) {
-        await submit();
-        return;
-      }
-      confirmNodeSeekPollAction('确认提交投票？', '提交后不可修改。', '提交', submit, () =>
-        finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' })
-      );
-    },
-    [
-      applyPollResult,
-      executeMutation,
-      authenticatedFetcher,
-      getNodeSeekUserAgent,
-      notify,
-      runLinuxDoRequest,
-      runNodeSeekRequest,
-      runYaohuoRequest,
-      selectedTopic,
-      topicDetail
-    ]
-  );
-
-  const lockNodeSeekPoll = useCallback(
-    async (poll: TopicPoll) => {
-      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-      const trace = beginDiagnosticTrace('topic', 'manage-poll', {
-        ...(actionTopic ? { source: actionTopic.source } : {})
-      });
-      if (!isNodeSeekActionTopic(actionTopic) || !poll.id) {
-        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-        return;
-      }
-      const actionDetail = actionTopic as TopicDetail;
-      const pollId = poll.id;
-      const initialDecision = decisionFor({ action: 'manage-poll', poll });
-      if (!initialDecision.allowed) {
-        const message = topicActionDecisionMessage(initialDecision);
-        if (message) notify(message);
-        finishDiagnosticTrace(trace, 'blocked', {
-          source: 'nodeseek',
-          reason: normalizeDiagnosticReason({ reason: initialDecision.reason })
-        });
-        return;
-      }
-      const submit = async () => {
-        await executeMutation(actionDetail, {
-          actionKey: `lock:${topicPollVoteActionKey(topicKey(actionTopic), poll)}`,
-          busy: true,
-          decision: { action: 'manage-poll', poll },
-          trace,
-          task: async (ticket) => {
-            try {
-              await runNodeSeekRequest(buildNodeSeekPollLockRequest({ pollId }), trace, ticket, false);
-            } catch (error) {
-              if (
-                isRawUnauthorized(error) ||
-                (error instanceof HandledMutationError && (error.serverConfirmed || error.serverRejected))
-              ) {
-                if (error instanceof HandledMutationError && error.serverRejected) notify(error.message);
-                throw error;
-              }
-              try {
-                assertWritableTicket(ticket);
-                const reconciledPoll = await fetchNodeSeekVoteInfo({
-                  pollId,
-                  fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
-                  userAgent: getNodeSeekUserAgent()
-                });
-                assertWritableTicket(ticket);
-                if (reconciledPoll.closed) return { confirmedPoll: reconciledPoll, refreshFailed: false };
-              } catch (reconcileError) {
-                if (isRawUnauthorized(reconcileError)) throw reconcileError;
-              }
-              notify('投票锁定结果未知，请刷新原站确认，切勿重复提交。');
-              throw error;
-            }
-            try {
-              assertWritableTicket(ticket, true);
-              const confirmedPoll = await fetchNodeSeekVoteInfo({
-                pollId,
-                fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
-                userAgent: getNodeSeekUserAgent()
-              });
-              assertWritableTicket(ticket, true);
-              return { confirmedPoll, refreshFailed: false };
-            } catch (error) {
-              if (error instanceof HandledMutationError && error.reason === 'stale') throw error;
-              hintDiagnosticOutcome(trace, 'partial', { source: 'nodeseek', reason: 'refresh_failed' });
-              return { confirmedPoll: { ...poll, closed: true }, refreshFailed: true };
-            }
-          },
-          applyResult: (result) => {
-            const lockResult = result as { confirmedPoll: TopicPoll; refreshFailed: boolean };
-            applyPollResult({
-              actionTopic: actionDetail,
-              confirmedPoll: lockResult.confirmedPoll,
-              optionIds: [],
-              poll
-            });
-            if (lockResult.refreshFailed) notify('锁定成功但结果刷新失败，请手动刷新。');
-          },
-          successMessage: (result) => ((result as { refreshFailed: boolean }).refreshFailed ? '' : '投票已锁定')
-        });
-      };
-      confirmNodeSeekPollAction('锁定投票？', '锁定后普通作者无法重新开启，且不能继续投票。', '锁定', submit, () =>
-        finishDiagnosticTrace(trace, 'canceled', { source: 'nodeseek', reason: 'canceled' })
-      );
-    },
-    [
-      assertWritableTicket,
-      applyPollResult,
-      authenticatedFetcher,
-      decisionFor,
-      executeMutation,
-      getNodeSeekUserAgent,
-      notify,
-      runNodeSeekRequest,
-      selectedTopic,
-      topicDetail
-    ]
-  );
-
+  const { editReply, submitReply, deleteReply } = useTopicReplyActions({
+    active,
+    sessionEpochs,
+    ensureWritableSession,
+    isWritableSessionTicketCurrent: currentWritableTicket,
+    notify,
+    siteSessionViewModels,
+    topicDetail,
+    topicReplies,
+    topicSession,
+    executeMutation,
+    decisionFor,
+    getReplyComposerIntent,
+    assertReplyNotEnded,
+    cacheKeys,
+    queryClient,
+    refreshRepliesAfterWrite,
+    materializeNodeSeekPolls,
+    runNodeSeekRequest,
+    runLinuxDoRequest,
+    runYaohuoRequest
+  });
+  const { votePoll, lockNodeSeekPoll } = useTopicPollActions({
+    topicDetail,
+    selectedTopic,
+    getNodeSeekUserAgent,
+    notify,
+    executeMutation,
+    decisionFor,
+    assertWritableTicket,
+    authenticatedFetcher,
+    applyPollResult,
+    runNodeSeekRequest,
+    runLinuxDoRequest,
+    runYaohuoRequest
+  });
   return {
     actionBusy,
     boostComposer,

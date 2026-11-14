@@ -266,6 +266,42 @@ describe('topic draft lifecycle', () => {
     }
   );
 
+  it('ignores a retained draft recovery retry after another account has finished restoring', async () => {
+    const hook = await setup();
+    const oldRetry = hook.result.current.retryDraft;
+    const reading: string[] = [];
+    try {
+      await hook.rerender({ owner: runtimeFor('456') });
+      await waitFor(() => expect(hook.result.current.draft?.identityKey).toBe('nodeseek:456'));
+      await waitFor(() => expect(hook.result.current.loading).toBe(false));
+      await waitFor(() => expect(hook.result.current.context?.source).toBe('nodeseek'));
+      const current = hook.result.current.draft;
+      if (!current) throw new Error('New account did not restore its draft');
+      const requestSnapshot = jest.fn(async () => snapshot('新账号正文'));
+      hook.result.current.editorRef.current = editorHandle({ requestSnapshot });
+      mockDraftRead = async (identityKey) => {
+        reading.push(identityKey);
+      };
+      await act(async () => {
+        oldRetry();
+        await Promise.resolve();
+      });
+      expect(reading).toEqual([]);
+      expect(requestSnapshot).not.toHaveBeenCalled();
+      expect(hook.result.current.loading).toBe(false);
+      expect(hook.result.current.draft).toBe(current);
+      await act(async () => {
+        hook.result.current.retryDraft();
+      });
+      await waitFor(() => expect(reading).toContain('nodeseek:456'));
+      await waitFor(() => expect(hook.result.current.loading).toBe(false));
+      expect(requestSnapshot).toHaveBeenCalledTimes(1);
+    } finally {
+      mockDraftRead = undefined;
+      await hook.unmount();
+    }
+  });
+
   it('opens the local picker without waiting for upload network preparation', async () => {
     const owner = runtimeFor();
     const hook = await setup(storedDraft(), owner);

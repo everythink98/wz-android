@@ -3,6 +3,43 @@
 本文记录已确认事故的历史症状、根因、当前状态、修复证据和验收边界。按 REG 编号或能力 ID 查找条目，先读状态与当前结论，再核对证据适用的源码、构建、设备和来源。历史通过结果不能直接作为当前版本的验证结论。
 
 
+
+## `REG-WRITE-140` 同一编辑文档的新提交被旧结算回调清空
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/04/05`、`NOTIFY-02`，共享 StructuredReplyComposer |
+| 历史症状与根因 | 宿主原结算回调只检查 document epoch 和快照 revision。前一次提交结束后，同文档、同 revision 的新提交已经接管，保留的旧 settlement 仍会请求快照、执行完成回调，并可能清空新提交的正文或解除其只读。文档身份不能代替同一文档内每次提交的身份。 |
+| 当前 owner | `tests/ui/topic/structured-reply-composer.test.tsx#rejects a retained settlement after a newer submission claims the same document epoch and revision`；真实共享宿主与 `composerWriteOperations`。 |
+| 修前 oracle | 在已验收 B04 生产代码上只安装 canonical 测试 hunk，seed `644051`：旧 settlement 应返回 false，实际 true。两个提交使用相同 epoch/revision，明确排除换文档造成的失效。 |
+| 修复 | submission claim 的实际对象身份参与快照前、快照后与 finally 资格检查；旧结算不能请求新快照、调用完成或解锁新 owner。调用方还须返回真实业务 Promise，避免把旧 void 回调返回当作异步流程完成；该接线由实际私信主要用例验证。 |
+| 当前验证边界 | 定向同 seed 5 项／负控通过；私信 void／Promise 接线回归已在本批修复，真实 route＋host 的原主要用例及确认退出通过。最终完整 UI 3292 项（seed 635439265）、Vitest 4626 项（seed 1794649657774）及普通／私有 APK sanity 通过；匹配私有包的 16/16 隔离设备用例通过，范围见 B05 执行记录；同 epoch/revision 精确竞争仍由上述主要 UI owner 证明，无真实远端写入。 |
+
+## `REG-WRITE-141` 保留的草稿重试回调重新读取新账号草稿
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-07`，共享账号身份与本机草稿恢复边界 |
+| 历史症状与根因 | 第一账号的 retryDraft 函数被保留；切换账号且新账号草稿已经恢复 ready 后，执行旧函数仍会重新取编辑器快照、flush 并读取新账号草稿。恢复请求标识未发生变化时，仅比较 request 不能确定回调属于哪次账号作用域。 |
+| 当前 owner | `tests/ui/topic-composer/topic-draft-controller.test.tsx#ignores a retained draft recovery retry after another account has finished restoring`；`useTopicDraftHydration`。 |
+| 修前 oracle | 同 seed `644051`、真实 controller 与草稿持久化入口：旧 retry 应产生零读取、零快照，实际又读取 `nodeseek:456` 两次。新账号 ready 后才执行旧动作，避免把仍未恢复完成的等待误当作失效证明。 |
+| 修复 | 重试同时绑定捕获 key 与 request，比较已提交的当前 key；旧账号函数直接失效，当前账号的显式 retry 仍真实执行一次 flush 并重新读取。同步当前状态与 React 展示只通过唯一 publish 入口写入。 |
+| 当前验证边界 | 本行为在实际旧实现失败、修后同 seed 定向通过；最终完整门禁与两个 APK sanity 通过，详见 B05 执行记录。匹配私有包的 16/16 隔离设备用例通过，换站与进程恢复覆盖实际存储入口；未宣称覆盖所有 parent-layout／passive-cleanup 交错或真实账号切换设备流程。不改 SQLite schema、存储格式、tombstone/CAS 或账号数据。 |
+
+## `REG-WRITE-142` 旧发帖返回错误污染已恢复的新账号草稿
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-07`，共享本机提交日志与账号边界 |
+| 历史症状与根因 | 第一账号的发帖已经经实际提交日志事务结算为 posted，但 adapter 返回被延迟；切至另一账号并完成草稿恢复后，旧返回抛错进入未绑定原稿的展示 catch，把“原站已返回发布结果，但本机记录保存失败”写到新账号页面。原账号持久结果与当前页面错误的归属不同。 |
+| 当前 owner | `tests/ui/topic-composer/topic-submit-controller.test.tsx#keeps a restored account draft clear of an older publication adapter failure`；`useTopicComposerController` 的提交 owner／catch。 |
+| 修前 oracle | 同 seed `644051`：新稿错误应保持空串，实际被写入旧失败文案。测试先调用真实 settleTopicSubmissionAttempt 完成事务，再只在 adapter 返回边界等待并抛错；原账号 posted 记录、一次本地 POST、新账号稿对象和不导航均保留断言。 |
+| 修复 | submit 捕获原 draft owner；展示错误要求仍挂载、当前 draftId 与身份相同。原账号的 durable 结算继续执行，不把 late error 的 UI 拒绝扩大成回滚日志或丢弃 mayHaveSent／unknown。 |
+| 当前验证边界 | 本行为在实际旧实现失败、修后同 seed 定向通过；最终完整门禁与两个 APK sanity 通过，匹配私有包的 16/16 隔离设备用例通过；这不把全部真实账号切换或迟到 adapter 竞争称为设备已注入。该 oracle 不证明 SQLite 事务失败、不明提交结果或真实站点写入；原存储和 mayHaveSent 主要用例已随完整门禁执行，不以本例替代其独立边界。 |
+
 ## `REG-NAV-022` Paper 按钮禁用变化与原生退场交错导致重复挂载崩溃
 
 | 字段 | 内容 |

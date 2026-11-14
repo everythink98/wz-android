@@ -21,6 +21,7 @@ import {
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { prepareRequestToSend } from '@/platform/network/request';
 import { loadTopicDraft, readTopicSubmissionAttempt } from '@/platform/persistence/topicDrafts';
+import * as topicDraftStore from '@/platform/persistence/topicDrafts';
 import type { ComposerSnapshot } from '@/domain/forum/structuredComposer';
 import { nodeSeekPendingPollToken, normalizePendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import type { TopicCreationSource } from '@/domain/forum/topicComposer';
@@ -1131,6 +1132,64 @@ describe('创建主题发布控制器', () => {
     expect(test.result.current.attempt?.status).toBe('rejected');
     expect(test.onPosted).not.toHaveBeenCalled();
     expect(test.result.current.error).toContain('账号已变化');
+  });
+
+  it('keeps a restored account draft clear of an older publication adapter failure', async () => {
+    const test = await setup();
+    await ready(test);
+    const returned = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const actualSettle = topicDraftStore.settleTopicSubmissionAttempt;
+    // This is the adapter's return boundary, after the real journal transaction has committed.
+    // It proves UI publication ownership, not a SQLite transaction or unknown-receipt failure.
+    const settle = jest
+      .spyOn(topicDraftStore, 'settleTopicSubmissionAttempt')
+      .mockImplementationOnce(async (...args) => {
+        await actualSettle(...args);
+        returned.resolve();
+        await release.promise;
+        throw new Error('旧发布 adapter 回执失败');
+      });
+    let submitting: Promise<void> | undefined;
+    try {
+      await act(() => {
+        submitting = test.result.current.submit();
+      });
+      await returned.promise;
+      const originalIdentity = siteSessionIdentityKey(test.runtime.sessions.nodeseek);
+      const next = {
+        ...test.runtime,
+        sessions: {
+          ...test.runtime.sessions,
+          nodeseek: {
+            ...test.runtime.sessions.nodeseek,
+            currentUser: { ...testAccountUser('nodeseek'), id: 'next-account' }
+          }
+        }
+      };
+      await test.rerender({ value: next });
+      await waitFor(() => expect(test.result.current.draft?.identityKey).toBe('nodeseek:next-account'));
+      await waitFor(() => expect(test.result.current.loading).toBe(false));
+      const draft = test.result.current.draft;
+      const error = test.result.current.error;
+      await act(async () => {
+        release.resolve();
+        await submitting;
+      });
+      expect(test.result.current.error).toBe(error);
+      expect(test.result.current.draft).toBe(draft);
+      expect(test.onPosted).not.toHaveBeenCalled();
+      expect(test.onAccepted).not.toHaveBeenCalled();
+      expect(test.posts()).toHaveLength(1);
+      expect(await readTopicSubmissionAttempt('nodeseek', originalIdentity)).toMatchObject({ status: 'posted' });
+    } finally {
+      await act(async () => {
+        release.resolve();
+        await submitting;
+      });
+      settle.mockRestore();
+      await test.unmount();
+    }
   });
 
   it('返回成功前账号变化，只结算原账号记录且不跳转新账号页面', async () => {

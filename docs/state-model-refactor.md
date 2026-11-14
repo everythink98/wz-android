@@ -12,7 +12,7 @@
 | B02 | 账号恢复、认证与 Cookie 交接 | 已验收：2 项完整转换、7 项局部简化 |
 | B03 | 请求队列、代理与 Native generation | 已验收：7 项完整转换、3 项局部简化 |
 | B04 | 编辑器宿主与文档生命周期 | 已验收：8 项完整转换、5 项局部简化 |
-| B05 | 草稿、提交与互动写操作 | 待实施 |
+| B05 | 草稿、提交与互动写操作 | 已验收：11 项完整转换、2 项局部简化 |
 | B06 | 阅读入口、回复窗口与原生定位 | 待实施 |
 | B07 | 列表、搜索、用户与消息读取 | 待实施 |
 | B08 | 媒体、预览与原生资源归属 | 待实施 |
@@ -124,3 +124,44 @@ Native 未改，不新增 Native/Replay 通过结论。真实凭据填入、所�
 - 限定的 `LIVE_PASS`：普通 final-v5 在可见主模拟器覆盖安装，UID 10214、首次安装时间 `2026-07-26 16:51:37` 与签名保持；PID 21752 对应新 buildId 的 22 条成功启动记录，真实首页有数据。安装前后刷新均确认妖火、NodeSeek 已登录，linux.do 维持「已验证」标签，身份仍未独立确认。主设备使用 WebView 156，专用设备使用 124；25 项流程属于专用设备，不外推为主设备编辑器或真实写入验收。最终返回可见首页。
 
 完整 82-case 编辑器矩阵、注入 renderer 退出与所有前后台帧交错、物理设备、真实论坛上传及写入仍为 `NOT_VERIFIED`；历史长会话黑图、妖火掉线和空回复未由本批关闭。原日志、媒体、APK 与设备回执只在 ignored 目录保存。本批保存本地验收提交，不 push、不合并、不正式发布。构建和测试进程已退出；本任务新建的专用 AVD 保留给后续 B05 连续验证，主模拟器、共享 MCP 与 ADB 保留。
+
+## B05
+
+草稿、发帖与编辑、回复与投票、私信、政策确认、反应及 Stardust 按原完整 scope 复核 25 项：**11 项完整转换、2 项局部简化、12 项合理保留**。代码、完整门禁、两个匹配 APK、专用设备的 16 项隔离流程与主模拟器普通包只读复验均已通过。
+
+完整转换的 11 项为 `PL-JS-topic-submit-attempt`、`ui.draft-autosave`、`ui.draft-context`、`ui.draft-hydrate`、`ui.notify-message-write`、`ui.notify-policy`、`ui.post-policy`、`ui.reaction-picker`、`ui.stardust-payment`、`ui.web-host-submit`、`ui.web-host-upload`。实际调用方已迁入草稿持久化、恢复、规则读取、私信及编辑器写操作负责模块；政策 owner 在 Topic 与消息中共同使用。旧的并行 ref/setter、可选但不一致的提交结果袋和重复收尾写入已删除，未保留一层只转发旧 setter 的包装。
+
+草稿保存的串行 tail、已落盘版本与 retired fence 是独立事实。取消意图不表示 I/O 已经停止，内存 retired 也不能替代 SQLite 的 tombstone/CAS。磁盘 schema v2、JSON 协议与实际 SQL 保持；posted receipt 仍只要求原有 `id/source/title`，不伪造完整 Topic。同步申请、发送结果与本地应用各有归属；主请求和子投票的 `mayHaveSent` 独立，可能已发送而未确认时保留 unknown，不能退回普通失败后自动重发。旧账号可以完成自身持久结算，但不能覆盖新账号的错误、正文或导航。
+
+两项局部收益与剩余控制点分别为：
+
+| 原项 | 本批实际收益 | 保留的控制职责 |
+| --- | --- | --- |
+| `ui.topic-mutation` | 14 个真实任务使用 typed completion，结果随闭包交给成功路径；回复、编辑、删除与投票改用局部语义命令，移除内部 raw result 强转 | 既有 executor 继续负责权限、同步防重、发送前票据检查及 mutation 结算 |
+| `ui.topic-submit-journal` | travel／create／edit 的同步 admission 与具体提交 run 集中归属，attempt/result 关联用于真实异常分类；旧 busy/travel 写入删除 | 持久 journal 的认领、结算与事务仍由存储负责；prepared/claimed 对现有消费者同义，不能按阶段名算整个模型消除 |
+
+12 项保留的是实际资源或独立收据：附件文件与已提交引用、草稿 tombstone/CAS、子投票事务 claim、验证等待的一次性结算、删除 Alert 的消费许可、多帖 Boost 草稿、DOM 投票数据、文档写锁、真实上传锚点、Native entered／exitAction、并行元数据请求集合及按帖 single-flight 核对。每项的消费者、不可派生原因和剩余证据缺口仍在逐项清单；不为字段数量添加 phase。原 281 项分类保持 94 项计划重构、183 项保留、4 项待补证；这些分类数不是未完成数，本批不改原 375 项 CSV 或 ledger。
+
+三个旧缺陷先在已验收 B04 代码上运行实际 canonical 测试，仅安装测试 hunk，seed `644051` 得到 3 个预期失败及 2 个上传 ACK 控制通过；修后同 5 项通过，完整门禁继续覆盖。历史分别记录为 `REG-WRITE-140/141/142`，不额外增加原清单转换数量：
+
+- 同一 document epoch 和 revision 内，旧 submission settlement 仍能清空或解锁后续提交。现在提交实例参与快照前、快照后和 finally 资格检查，旧回调不能接管新提交。
+- 第一账号保留的 retryDraft 在新账号已经恢复 ready 后仍重新读取、flush 新稿。现在重试同时绑定捕获 key 与 request；旧动作零 read／snapshot，当前显式重试仍可工作。
+- 旧发布日志已经结算 posted，adapter 返回却被延迟并抛错，旧错误污染新账号页面。现在只限制错误展示归属，保留旧账号的真实持久结果。此 oracle 不冒充 SQLite 事务失败或 unknown 落盘测试。
+
+批内集成验证还暴露两处必要接线问题，均在本批修复并保留失败：私信调用方原返回 void，使宿主提前释放新提交身份；改为返回实际发送、文档结算和确认弹窗的完整 Promise。取消、核对会话、仍要重发、dismiss、失焦及 scope 退出各有明确结算，旧 dismiss 不能提前解锁已开始的重发。原主要用例和五个退出用例都核对真实 route＋host 的 busy、正文与零额外 POST；没有为测试删除 owner 守卫。
+
+另一处是隐藏路由 effect 每 render 带入新 query key，空闲 cancel 又发布新的 idle 对象，形成可达反馈回路。现在空闲取消不再发布操作快照，确认清理仍执行。两次实际 V8 OOM／Jest SIGTERM 记录保留；修复后通知原 139 项全部通过，但没有将零已完成用例的 OOM 伪称为某个 inactive 断言 RED，也不宣称已证明两次 OOM 的唯一分配根因。新增退出测试首轮的字符数和空新稿前置错误已按实际正文及合法新稿纠正，没有放宽 busy 或零写入断言。
+
+本批已运行证据：
+
+- `STATIC_PASS`：完整 typecheck 与 `npm run verify` 退出 0，绑定 1147 个冻结输入，SHA-256 `b443577614088e4b63e44f307ceff013c18dd0b461c682076589d9409a77f1fe`。verify 于 UTC 09:46:31.839–09:54:48.002 执行，日志 SHA-256 `b9b5d8ee475179bd49d7f0b13e422ea86da1975d82afd36fa343a0d13ffb22f2`。文档与审查数据收尾另做治理及文档检查，不冒充源码冻结的一部分。
+- `UNIT_PASS`：273 文件、4626 项，seed `1794649657774`；包含原 journal、tombstone/CAS、事务失败、附件归属与实际 DOM 协议主要用例。
+- `UI_PASS`：105 suites、3292 项，seed `635439265`；原 act 告警保留。局部私信与通知复验为 67/67、139/139，确认退出五项包含在主要 owner 内，不与完整总数重复累加。
+- Native `UNIT_PASS` 明确继承 B04 的 66 项：原测试和 RNCWebView 的 6 个输入 SHA 逐项完全相同。本批没有 SDK 或 Native 代码修改，不称为新增运行，也不以原生通过替代 JS 写操作验证。
+- `APK_SANITY`：普通 Release 构建 3m59s，APK SHA-256 `2043e20c388c44a1894ae3ddf3bb24d5e63ea9af0c2b765087300ef340d18843`，buildId `e8ff43ee740f48bd95d836776a68a90c`；真实 map 绑定 15 个生产运行模块、实际 Paper dist 与 4 个 DOM 输入，classes、R8/DEX 和 Hermes 分别核对。私有隔离入口构建 3m32s，APK SHA-256 `c5bb03cf9eaf368eca3f65217880ca66405c3b8c845281fb9d1a7fcfc6bae11d`，buildId `cf61fb7772304ce2ac15ba7781ba1753`；同冻结输入的生产模块、6 个 proof 模块、Paper dist、DOM 与实际 Native 产物另行绑定，普通包 sanity 不替代设备流程。
+- `DEVICE_REPLAY_PASS`：匹配私有包在专用 AVD 完成 16/16 个既有隔离用例，退出 0，耗时 3m57s；三站发帖、编辑、enqueued／unknown、换站和进程恢复、富文本／源码提交后新稿、楼层回复及三站私信通过。UID 10209、首次安装时间 `2026-11-14 07:25:01` 与 versionCode 162 保持，安装 APK 与上述私有包 SHA 相同；Gboard 与动画设置恢复，运行窗口新增 AndroidRuntime fatal 为 0。专用设备为 API 35／WebView 124，主设备为 WebView 156，证据分开。业务写入由严格 Mock transport 接管，未匹配端点直接拒绝，没有真实论坛 POST 兜底。实际设备上传 begin／finish ACK 仍未验证，不外推真实远端写入或完整 82-case 矩阵。
+- 限定的 `LIVE_PASS`：普通包在可见主模拟器同签名覆盖安装，UID 10214、首次安装时间 `2026-07-26 16:51:37`、versionCode 162 保持；新 PID 22888 对应 22 条成功启动记录，真实首页有数据。安装前后实际刷新均确认妖火、NodeSeek 已登录，linux.do 保持「已验证」标签，身份仍为 `NOT_VERIFIED`。最终回到可见首页；主设备未安装私有入口，未运行真实编辑器提交或远端写入。
+
+生产代码按已验收 B04 字节逐文件统计 **+2670／−1497 行**，测试 **+266／−8 行**，整文件删除 **0**；新文件已包含，ignored 产物不计。局部代码增加换取实际归属和类型约束，不把移动、改名或增加阶段名计为删除或消除收益；文档另计。
+
+实际设备上传 begin／finish ACK、全部 Native 转场交错、真实论坛写入、物理设备及数据库断电／跨进程持久性仍为 `NOT_VERIFIED`。现有 stress-image 只取消选择器，不能冒充完整上传；原协议／DOM／宿主跨层用例继续保留。Reaction、Stardust 与政策写入没有现成隔离设备场景，本批按原 UI／gateway／source 层证据验收，不追加真实远端写入。历史黑图、妖火掉线与空回复等异常未由本批关闭。日志、媒体、APK 与回执仅保留于 ignored 目录；本批不 push、不合并、不正式发布。设备与自有进程收尾按最终回执单列；不停止保留的模拟器、共享 MCP 或 ADB。

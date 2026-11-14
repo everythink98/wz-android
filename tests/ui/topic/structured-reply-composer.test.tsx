@@ -4,7 +4,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createRef, useState } from 'react';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { StructuredReplyComposer, type StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
-import type { ComposerIntent, ComposerPresentation, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
+import type {
+  ComposerIntent,
+  ComposerPresentation,
+  ComposerSnapshot,
+  ComposerSubmissionSettlement,
+  PendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 import { composerHostMessageSchema } from '@/ui/composer/structuredComposerBridge';
 import { AppState, DeviceEventEmitter, Keyboard, StyleSheet, Text } from 'react-native';
 import { recordUserInteraction, userPresent } from '@/platform/network/userPresence';
@@ -450,6 +456,86 @@ describe('StructuredReplyComposer', () => {
     ).toHaveLength(2);
   });
 
+  it('rejects a retained settlement after a newer submission claims the same document epoch and revision', async () => {
+    const current = Promise.withResolvers<void>();
+    let previousSettlement: ComposerSubmissionSettlement | undefined;
+    const onSubmit = jest
+      .fn<(_snapshot: ComposerSnapshot, settle: ComposerSubmissionSettlement) => Promise<void>>()
+      .mockImplementation((_snapshot, settle) => {
+        if (!previousSettlement) {
+          previousSettlement = settle;
+          return Promise.resolve();
+        }
+        return current.promise;
+      });
+    const view = await render(
+      <StructuredReplyComposer
+        actionBusy={false}
+        content="正文"
+        initialMode="rich"
+        intent={{ kind: 'reply', site: 'nodeseek', topicId: 'same-epoch' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        visible
+        onSnapshot={jest.fn()}
+        onSubmit={onSubmit}
+      />
+    );
+    const webView = view.getByTestId('structured-composer-webview');
+    const requests = () =>
+      postedMessages(webView).filter((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT');
+    const answer = async () => {
+      const request = requests().at(-1);
+      if (!request || request.type !== 'REQUEST_SNAPSHOT') throw new Error('No current snapshot request');
+      await fireEvent(
+        webView,
+        'message',
+        message('SNAPSHOT', {
+          documentEpoch: 0,
+          requestId: request.payload.requestId,
+          snapshot: {
+            revision: 1,
+            markdown: '正文',
+            mode: 'rich',
+            isEmpty: false,
+            validationIssues: [],
+            pendingNodeSeekPolls: []
+          }
+        })
+      );
+    };
+    let retained: Promise<boolean> | undefined;
+    try {
+      await fireEvent(webView, 'loadEnd');
+      await fireEvent(webView, 'message', message('READY', { documentEpoch: 0, revision: 0 }));
+      await fireEvent.press(view.getByLabelText('发送回复'));
+      await answer();
+      await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
+      await fireEvent.press(view.getByLabelText('发送回复'));
+      await answer();
+      expect(onSubmit).toHaveBeenCalledTimes(2);
+      const settlePrevious = previousSettlement;
+      if (!settlePrevious) throw new Error('Submission did not expose its settlement capability');
+      const complete = jest.fn(() => true);
+      const before = requests().length;
+      await act(() => {
+        retained = settlePrevious(complete);
+      });
+      // Drain the old implementation's unexpected protocol request too, so RED cannot leave a timer behind.
+      if (requests().length > before) await answer();
+      expect(await retained).toBe(false);
+      expect(complete).not.toHaveBeenCalled();
+      expect(requests()).toHaveLength(before);
+      expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
+    } finally {
+      await act(async () => {
+        current.resolve();
+        await retained;
+      });
+      await view.unmount();
+    }
+  });
+
   it('keeps a replacement document reserved when an older submission rejects', async () => {
     const previous = Promise.withResolvers<void>();
     const current = Promise.withResolvers<void>();
@@ -797,11 +883,12 @@ describe('StructuredReplyComposer', () => {
             accepted
           })
         );
-      const begin = async () => {
+      const begin = async (beforeAcknowledge?: () => Promise<void>) => {
         let pending!: Promise<string>;
         await act(() => {
           pending = ref.current!.beginImageUpload();
         });
+        await beforeAcknowledge?.();
         await acknowledge(messages().at(-1).payload);
         const request = messages().findLast((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT');
         await fireEvent(
@@ -837,9 +924,12 @@ describe('StructuredReplyComposer', () => {
       await act(async () => {
         await ref.current!.finishImageUpload(id).catch(() => undefined);
       });
-      const next = await begin();
+      const next = await begin(async () => {
+        const before = messages().filter((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT').length;
+        await acknowledge(command);
+        expect(messages().filter((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT')).toHaveLength(before);
+      });
       expect(next).not.toBe(id);
-      await acknowledge(command);
       await expect(ref.current!.beginImageUpload()).rejects.toThrow('请等待当前上传完成');
       expect(
         messages().filter(

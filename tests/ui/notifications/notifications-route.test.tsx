@@ -197,7 +197,7 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
       onChangeContent: (value: string) => void;
       onLoadLinuxDoPollCapabilities?: () => Promise<unknown>;
       onLoadLinuxDoTemplates?: () => Promise<unknown>;
-      onSubmit: () => void;
+      onSubmit: () => unknown;
       onUploadImage?: () => unknown;
       onUseLinuxDoTemplate?: (id: string) => Promise<void>;
     }) =>
@@ -219,7 +219,10 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
             ),
             ReactModule.createElement(
               Text,
-              { accessibilityLabel: '测试发送私信', onPress: busy || !content.trim() ? undefined : onSubmit },
+              {
+                accessibilityLabel: '测试发送私信',
+                onPress: busy || !content.trim() ? undefined : () => void onSubmit()
+              },
               '发送'
             ),
             ReactModule.createElement(
@@ -4697,7 +4700,12 @@ describe('notification routes', () => {
         const uncertain = !['unsent', 'rejected'].includes(outcome);
         if (uncertain) {
           expect(attempts).toBe(1);
-          expect(alert).toHaveBeenCalledWith('私信可能已发送', expect.any(String), expect.any(Array));
+          expect(alert).toHaveBeenCalledWith(
+            '私信可能已发送',
+            expect.any(String),
+            expect.any(Array),
+            expect.objectContaining({ onDismiss: expect.any(Function) })
+          );
           const review = alert.mock.calls.at(-1)?.[2]?.find((button) => button.text === '核对会话');
           expect(review).toBeDefined();
           const readsBeforeReview = loadDetail.mock.calls.length;

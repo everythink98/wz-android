@@ -1251,7 +1251,18 @@
       "consumer": "src/features/topic-composer/useTopicComposerController.ts#submit/create/edit submission",
       "cannotDerive": "在 topicDrafts 内存模型收敛 sending/settled(result) 联合与 begin/settle，保留 activeAttempts 和原磁盘 schema。",
       "tests": ["src/platform/persistence/topicDrafts.test.ts"],
-      "evidenceGap": "须迁移全部调用并保留恢复、冲突和部分成功断言，不能只加标签。"
+      "evidenceGap": "须迁移全部调用并保留恢复、冲突和部分成功断言，不能只加标签。",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "topicSubmissionWithReceipt与decodeReceipt实际接管status/result关联，所有read/settle/UI快照迁移到准确只读receipt；磁盘posted topic仍为旧id/source/title窄shape。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "进程内activeAttempts表示仍在运行的提交，与磁盘sending或terminal状态独立；持久posted topic只含原id/source/title窄shape，不能当作完整Topic。"
+        ]
+      }
     },
     {
       "id": "PL-JS-update-operation-owner",
@@ -2768,7 +2779,18 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/topic-submit-controller.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "useTopicDraftPersistence实际接管串行tail、unknown/saved/retired持久事实、保存反馈与按稿snapshot issues；调用方改用persist/flush/retire等语义入口，旧MAX_SAFE_INTEGER哨兵与独立writer删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "串行I/O tail、已保存revision、retired fence、当前保存反馈及snapshot校验问题是独立事实。retired不表示排队或在途I/O已经停止；磁盘tombstone/CAS仍决定迟到保存能否提交。"
+        ]
+      }
     },
     {
       "id": "ui.draft-context",
@@ -2784,7 +2806,18 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/topic-submit-controller.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "useTopicDraftContext接管rules/edit baseline/可选emoji与category请求owner，key含source/identity/target/draft/epoch；真实读取消费当前票据，旧loading/setter/reload/category writer删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "必需规则、编辑baseline、可选emoji与分类读取有独立完成时刻；标题、正文及其他表单值不由读取阶段决定，编辑baseline也不能从已修改表单还原。"
+        ]
+      }
     },
     {
       "id": "ui.draft-hydrate",
@@ -2799,7 +2832,18 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/topic-submit-controller.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "useTopicDraftHydration接管旧上传等待、flush、draft/attempt读取、编辑上下文、附件校验及安装/持久化管线；retry捕获key+request，旧scope和迟到结果不能接管新恢复。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "保留草稿与恢复loading可以共存；旧上传、flush tail、draft/attempt存储结果和附件验证各有独立等待，不能由draft非空推导恢复完成。"
+        ]
+      }
     },
     {
       "id": "ui.editor-autosave",
@@ -3380,7 +3424,18 @@
         "tests/ui/app/content-source-route-gates.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "useNotificationReplyOperation实际统一upload/send/confirmed、uncertain正文及确认许可；真实submit调用方返回完整gateway/settlement或confirmation Promise，取消/核对/dismiss/失焦/scope各自结算，idle cancel幂等。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "mayHaveSent、原站confirmed回执、未确认正文集合和重发确认许可独立。draftRevision另行约束清稿，不能从请求完成推导正文未变；取消已confirmed的操作不能将其改判unknown。"
+        ]
+      }
     },
     {
       "id": "ui.notify-open",
@@ -3412,7 +3467,18 @@
         "tests/ui/app/content-source-route-gates.test.tsx",
         "tests/ui/notifications/notifications-runtime.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "消息实际调用createDiscoursePolicyOperation的claim/beginSend/confirmed/observe/finish，操作实例与已确认待核对marker分离；确认阶段不错误显示发送busy，旧policy ref/setter删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "已确认但尚待读取对账的marker与当前请求独立；请求结束或刷新失败不抹掉marker。消息入口的确认窗口与实际发送busy也有不同含义。"
+        ]
+      }
     },
     {
       "id": "ui.notify-read-block",
@@ -3482,7 +3548,18 @@
         "tests/ui/topic/topic-route-external-links.test.tsx",
         "tests/ui/topic/topic-reply-filters.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "Topic实际政策写入迁入共用policy owner；撤销确认时保留原busy表现，写前重新核政策version、当前ticket及来源，旧policy槽与并行writer删除。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "每帖每version的已确认marker与当前请求独立；Topic撤销确认期间的busy、当前政策内容及发送前账号ticket各有独立消费者，不能互相派生。"
+        ]
+      }
     },
     {
       "id": "ui.preview-gesture",
@@ -3608,7 +3685,18 @@
       "consumer": "src/features/topic/TopicScreen.tsx :: <LinuxDoPostInteractionsProvider",
       "cannotDerive": "picker定位/目标、reactionBusy与presentedBoost有不同生命周期，当前post reaction数据不能表达已选择但未确认的命令。",
       "tests": ["tests/ui/topic/linuxdo-post-interactions.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "真实picker以请求实例拥有reaction发送和结算，选择维度独立；同步claim防连点，只有当前所选实例完成才关闭，旧请求不能关闭新picker。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "当前selection与物理reaction request独立；Boost草稿和emoji展示不属于该请求的生命周期，列表回收或新选择也不能从请求结果反推。"
+        ]
+      }
     },
     {
       "id": "ui.read-viewport",
@@ -3865,7 +3953,18 @@
       "consumer": "src/features/topic/components/TopicContentList.tsx :: return actions && receive ? <NodeSeekStardustCard actions={actions} receive={receive} /> : null;",
       "cannotDerive": "当前远端status可能落后于付款，paymentUnknown和oneTimePaid是操作结果；请求序号还防同receive新查询被旧结果覆盖。",
       "tests": ["tests/ui/topic/topic-components.test.tsx", "tests/ui/topic/topic-actions-controller.test.tsx"],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "真实Stardust付款实例与unknown/paid本地回执集中表达；迟到status GET不能覆盖一次性结果，回收或换绑后旧请求不可接管。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "unknown与一次性paid本地回执不能由可能迟到的status GET推导；当前行身份和付款请求实例仍独立，金额或相等props不能代替它们。"
+        ]
+      }
     },
     {
       "id": "ui.toolbar-menu",
@@ -3936,7 +4035,17 @@
         "tests/ui/topic/topic-route-external-links.test.tsx",
         "tests/ui/topic/topic-reply-filters.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "partial",
+        "delivered": "14个真实任务改用typed completion和局部回复/编辑/删除/投票命令；原raw result强转及重复结果拼装删除，权限/发送/成功回调仍穿过同一executor。",
+        "residualControlAuthority": [
+          "既有executor仍唯一负责mutation admission、权限和发送前票据守卫、trace与后续结算；typed completion和命令分组只记局部收益。"
+        ],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.topic-open-guard",
@@ -4006,7 +4115,17 @@
         "tests/ui/topic-composer/topic-submit-controller.test.tsx",
         "tests/ui/topic-composer/topic-draft-controller.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "partial",
+        "delivered": "useTopicComposerOperation实际接管travel/create/edit同步admission及当前run，attempt/result关联用于异常分类，finally只释放原run；原busy/travel writer删除。",
+        "residualControlAuthority": [
+          "持久journal claim/settle和SQLite事务仍是独立权威；prepared/claimed对当前消费者同义，不按新增阶段名给完整转换信用。"
+        ],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE"
+      }
     },
     {
       "id": "ui.trace-page",
@@ -4196,7 +4315,18 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/create-topic-screen.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "composerWriteOperations接管真实submission实例和只读快照，claim/settle/release都核原owner；同epoch/revision旧结算无权取新快照、清稿或解锁，真实私信调用方返回业务Promise。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "同一document epoch/revision内仍可出现不同提交实例；同步admission、React展示快照、DOM写锁和snapshot resolver各有独立职责，不能由busy或正文版本互推。"
+        ]
+      }
     },
     {
       "id": "ui.web-host-upload",
@@ -4213,7 +4343,19 @@
         "tests/ui/topic-composer/topic-draft-controller.test.tsx",
         "tests/ui/topic-composer/create-topic-screen.test.tsx"
       ],
-      "evidenceGap": ""
+      "evidenceGap": "",
+      "implementation": {
+        "batch": "B05",
+        "outcome": "whole",
+        "delivered": "composerWriteOperations接管物理upload实例、单ACK命令和timer；begin/finish/timeout/取消/结果都走语义入口，旧command/timer不能清新请求，原bridge协议不变。",
+        "residualControlAuthority": [],
+        "validation": "docs/state-model-refactor.md#b05",
+        "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE",
+        "retainedIndependentFacts": [
+          "物理upload、文档epoch与单条ACK命令有不同生命周期；文档失效不表示物理操作已结束。timer可核对命令实例，现有ACK协议只带id/epoch/name，不区分完全相同tuple的重放；本批未扩展ABI。"
+        ],
+        "remainingEvidenceGap": "本批没有完整实际设备上传begin/finish ACK oracle；stress-image仅取消picker。原DOM/宿主协议测试保留，不冒充设备上传通过。"
+      }
     },
     {
       "id": "ui.yaohuo-panel",
