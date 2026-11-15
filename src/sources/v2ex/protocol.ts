@@ -4,7 +4,7 @@ import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 export const V2EX_BASE_URL: string = sourceCatalog.v2ex.baseUrl;
 export const SOV2EX_URL = 'https://www.sov2ex.com';
 
-export function isV2exHost(hostname: string) {
+function isV2exHost(hostname: string) {
   const host = hostname.toLowerCase();
   return host === 'v2ex.com' || host.endsWith('.v2ex.com');
 }

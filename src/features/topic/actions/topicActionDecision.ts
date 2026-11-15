@@ -3,7 +3,7 @@ import type { InteractionType } from '@/domain/forum/topicActionState';
 import { sourceSupportsTopicAction, type TopicActionCapability } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 
-export type TopicActionDecisionReason =
+type TopicActionDecisionReason =
   | 'allowed'
   | 'unsupported'
   | 'login-required'

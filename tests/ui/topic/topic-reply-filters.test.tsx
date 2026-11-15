@@ -336,7 +336,6 @@ jest.mock('react-native-render-html', () => {
   const Passthrough = ({ children }: { children?: React.ReactNode }) =>
     ReactModule.createElement(ReactModule.Fragment, null, children);
   const RenderersContext = ReactModule.createContext<Record<string, React.ComponentType<any>>>({});
-  const DefaultTextPropsContext = ReactModule.createContext<{ selectable?: boolean }>({});
   const nodeText = (node: { children?: unknown[]; data?: unknown }): string =>
     `${typeof node.data === 'string' ? node.data : ''}${
       Array.isArray(node.children)
@@ -344,25 +343,18 @@ jest.mock('react-native-render-html', () => {
         : ''
     }`;
   return {
-    __useMockDefaultTextProps: () => ReactModule.useContext(DefaultTextPropsContext),
     useContentWidth: () => 720,
     __useMockRenderers: () => ReactModule.useContext(RenderersContext),
     HTMLContentModel: { block: 'block', mixed: 'mixed', textual: 'textual' },
     HTMLElementModel: { fromCustomModel: () => ({}) },
     RenderHTMLConfigProvider: ({
       children,
-      defaultTextProps = {},
       renderers = {}
     }: {
       children?: React.ReactNode;
-      defaultTextProps?: { selectable?: boolean };
       renderers?: Record<string, React.ComponentType<any>>;
     }) => {
-      return ReactModule.createElement(
-        RenderersContext.Provider,
-        { value: renderers },
-        ReactModule.createElement(DefaultTextPropsContext.Provider, { value: defaultTextProps }, children)
-      );
+      return ReactModule.createElement(RenderersContext.Provider, { value: renderers }, children);
     },
     TChildrenRenderer: ({ tchildren }: { tchildren: { children?: unknown[]; data?: unknown; nodeIndex?: number }[] }) =>
       ReactModule.createElement(

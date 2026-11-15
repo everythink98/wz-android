@@ -765,6 +765,42 @@ describe('More screen state and actions', () => {
     expect(props.account.center.linuxDoCredit.open).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['collapsed', 'inactive'] as const)(
+    'pauses a retained pending level indicator while %s and resumes it without another read',
+    async (hidden) => {
+      const props = moreProps({
+        account: {
+          enabledSessionSources: ['linuxdo'],
+          read: { sessions: authorizedLinuxDoSessions },
+          center: { linuxDoLevel: { busy: true } }
+        }
+      });
+      const view = await render(<MoreScreen {...props} />);
+      const animatingIndicators = () =>
+        view.root?.queryAll(
+          (instance) => instance.props.accessibilityRole === 'progressbar' && instance.props.accessibilityState?.busy
+        ) ?? [];
+      await fireEvent.press(view.getByText('linux.do 等级'));
+      const reading = view.getByText('正在读取当前账号统计。');
+      expect(animatingIndicators().length).toBeGreaterThan(0);
+
+      if (hidden === 'collapsed') await fireEvent.press(view.getByText('linux.do 等级'));
+      else await view.rerender(<MoreScreen {...props} account={{ ...props.account, active: false }} />);
+
+      expect(view.getByText('正在读取当前账号统计。', { includeHiddenElements: true })).toBe(reading);
+      if (hidden === 'collapsed') expect(view.queryByText('正在读取当前账号统计。')).toBeNull();
+      expect(props.account.center.linuxDoLevel.busy).toBe(true);
+      expect(animatingIndicators()).toHaveLength(0);
+      if (hidden === 'inactive') expect(view.getByLabelText('刷新中').props.accessibilityState.disabled).toBe(true);
+
+      if (hidden === 'collapsed') await fireEvent.press(view.getByText('linux.do 等级'));
+      else await view.rerender(<MoreScreen {...props} />);
+      expect(view.getByText('正在读取当前账号统计。')).toBe(reading);
+      expect(animatingIndicators().length).toBeGreaterThan(0);
+      expect(props.account.center.linuxDoLevel.refresh).not.toHaveBeenCalled();
+    }
+  );
+
   it('refreshes level details through the unified account action only after the user expands them', async () => {
     const refreshLevel = jest.fn();
     const props = moreProps({

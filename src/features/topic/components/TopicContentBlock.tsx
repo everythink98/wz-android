@@ -74,13 +74,15 @@ function codeRunNodes(runs: readonly ForumCodeTextRun[], query: string, highligh
     ));
   }
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`(${escaped})`, 'gi');
+  const normalizedNeedle = needle.toLocaleLowerCase();
   return runs.flatMap((run, runIndex) =>
-    run.text.split(new RegExp(`(${escaped})`, 'gi')).map((text, partIndex) => (
+    run.text.split(pattern).map((text, partIndex) => (
       <Text
         key={`${runIndex}:${partIndex}`}
         style={[
           run.style,
-          text.toLocaleLowerCase() === needle.toLocaleLowerCase() ? { backgroundColor: highlightColor } : undefined
+          text.toLocaleLowerCase() === normalizedNeedle ? { backgroundColor: highlightColor } : undefined
         ]}
       >
         {text}

@@ -6,7 +6,7 @@ export function orientReplyWindow(result: RepliesResponse, order: ReplyOrder): R
   return reverseReplyWindow(result);
 }
 
-export function reverseReplyWindow<T extends RepliesResponse>(result: T): T {
+function reverseReplyWindow<T extends RepliesResponse>(result: T): T {
   return copySourceDiagnosticSummary(
     {
       ...result,

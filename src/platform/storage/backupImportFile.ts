@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { assertBackupJsonSize } from '@/domain/reader/readerBackup';
 
-export type BackupFileAsset = {
+type BackupFileAsset = {
   uri: string;
   size?: number | null;
 };

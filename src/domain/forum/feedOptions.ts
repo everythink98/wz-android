@@ -29,12 +29,12 @@ export const feedDiscourseFilterItems: { value: DiscourseFeedFilter; label: stri
   { value: 'new-replies', label: '新·回复' }
 ];
 
-export const feedNodeSeekFilterItems: { value: NodeSeekFeedFilter; label: string }[] = [
+const feedNodeSeekFilterItems: { value: NodeSeekFeedFilter; label: string }[] = [
   { value: 'postTime', label: '新帖子' },
   { value: 'replyTime', label: '新评论' }
 ];
 
-export const feedV2exFilterItems: { value: V2exFeedFilter; label: string }[] = [
+const feedV2exFilterItems: { value: V2exFeedFilter; label: string }[] = [
   { value: 'all', label: '全部' },
   { value: 'latest', label: '最新' },
   { value: 'hot', label: '最热' }
@@ -90,7 +90,7 @@ function feedFilterGroups(source: FeedFilterSource): FeedFilterMenuGroup[] {
   }
 }
 
-export const feedFilterMenuGroups = Object.fromEntries(
+const feedFilterMenuGroups = Object.fromEntries(
   registeredSources
     .filter((source): source is FeedFilterSource => sourceCatalog[source].feedFilter !== 'none')
     .map((source) => [source, feedFilterGroups(source)])

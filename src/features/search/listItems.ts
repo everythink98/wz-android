@@ -17,7 +17,7 @@ export type SearchGroup = {
   nextPage?: number | null;
 };
 
-export type RemoteSearchAction =
+type RemoteSearchAction =
   | { type: 'yaohuo-login'; message: string }
   | { type: 'nodeseek-verification'; message: string }
   | { type: 'linuxdo-verification'; message: string };

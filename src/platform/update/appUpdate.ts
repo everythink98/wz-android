@@ -30,7 +30,7 @@ export function sameAppUpdate(left: AppUpdateInfo | null | undefined, right: App
   return Boolean(left && right && left.versionCode === right.versionCode && left.sha256 === right.sha256);
 }
 
-export type ReleaseManifest = {
+type ReleaseManifest = {
   apkName: string;
   sha256: string;
   packageName: string;
@@ -46,7 +46,7 @@ export type ReleaseManifest = {
   builtAbis?: string[];
 };
 
-export type ApkInspection = {
+type ApkInspection = {
   sha256?: unknown;
   packageName?: unknown;
   versionName?: unknown;

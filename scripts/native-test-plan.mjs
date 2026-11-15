@@ -110,9 +110,9 @@ export const nativeTestTasks = {
   },
   ':expo-blur:testDebugUnitTest': {
     related: (file) => file.startsWith('patches/expo-blur+'),
-    args: ['--tests', 'expo.modules.blur.ExpoBlurTargetViewTest'],
+    args: ['--tests', 'expo.modules.blur.ExpoBlurTargetViewTest', '--tests', 'expo.modules.blur.ExpoBlurViewTest'],
     reports: 'node_modules/expo-blur/android/build/test-results/testDebugUnitTest',
-    classes: ['expo.modules.blur.ExpoBlurTargetViewTest']
+    classes: ['expo.modules.blur.ExpoBlurTargetViewTest', 'expo.modules.blur.ExpoBlurViewTest']
   },
   ':expo-image:testDebugUnitTest': {
     related: (file) => file.startsWith('patches/expo-image+'),

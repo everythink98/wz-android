@@ -4,7 +4,7 @@ import { nodeSeekStardustMarkerRanges, type NodeSeekStardustReceive } from '@/do
 
 export const NODESEEK_STARDUST_PLACEHOLDER_TAG = 'forum-nodeseek-stardust';
 
-export function nodeSeekStardustPlaceholderHtml(receive: NodeSeekStardustReceive) {
+function nodeSeekStardustPlaceholderHtml(receive: NodeSeekStardustReceive) {
   return `<${NODESEEK_STARDUST_PLACEHOLDER_TAG} member-id="${escapeHtmlAttribute(
     receive.receiverMemberId
   )}" amount="${receive.amount}" ref-id="${receive.refId}" description="${escapeHtmlAttribute(

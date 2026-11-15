@@ -38,7 +38,7 @@ export function TabBarIcon({
   );
 }
 
-export function createNavBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
+function createNavBarStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   return StyleSheet.create({
     navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, minHeight: 48, borderRadius: 6 },
     navIconPill: {

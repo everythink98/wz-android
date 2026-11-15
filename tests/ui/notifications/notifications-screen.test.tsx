@@ -6,7 +6,7 @@ import { Image, ScrollView, StyleSheet } from 'react-native';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
-import type { ForumNotification } from '@/domain/notifications/models';
+import type { ForumNotification, NotificationDetail } from '@/domain/notifications/models';
 import type { NotificationState } from '@/platform/notifications/notificationStore';
 import {
   NotificationDetailScreen as NotificationDetailScreenView,
@@ -198,6 +198,60 @@ function notificationState(globalEnabled = true): NotificationState {
 }
 
 describe('notification screens', () => {
+  it('keeps conversation message work idle while the draft and reply status change', async () => {
+    const formatTime = jest.spyOn(notificationPresentation, 'formatNotificationTime');
+    let messageIdReads = 0;
+    const messages: NonNullable<NotificationDetail['messages']> = Array.from({ length: 80 }, (_, index) => ({
+      get id() {
+        messageIdReads++;
+        return `message-${index}`;
+      },
+      author: `author-${index}`,
+      contentText: `message body ${index}`,
+      createdAt: '2026-08-03T10:00:00Z'
+    }));
+    const detail: NotificationDetail = {
+      notification: { ...notification, kind: 'private-message' },
+      title: '长会话',
+      messages,
+      reply: { format: 'plain-text' }
+    };
+    const props = {
+      contentWidth: 360,
+      detail,
+      loading: false,
+      onOpenTopic: jest.fn(),
+      onRetry: jest.fn()
+    };
+    try {
+      const view = await render(<NotificationDetailScreen {...props} />);
+      expect(formatTime).toHaveBeenCalledTimes(messages.length);
+      formatTime.mockClear();
+      messageIdReads = 0;
+      for (let index = 0; index < 8; index++) {
+        await view.rerender(
+          <NotificationDetailScreen {...props} replyContent={`草稿 ${index}`} replyStatus={`状态 ${index}`} />
+        );
+      }
+      expect({ formatted: formatTime.mock.calls.length, messageIdReads }).toEqual({ formatted: 0, messageIdReads: 0 });
+      expect(view.getByText('message body 79')).toBeTruthy();
+      expect(view.getByLabelText('继续编辑私信草稿')).toBeTruthy();
+
+      const changedMessages = messages.map((message, index) =>
+        index === 0 ? { ...message, contentText: 'updated body' } : message
+      );
+      changedMessages.push({ id: 'new-message', author: 'new author', contentText: 'new body', createdAt: null });
+      await view.rerender(
+        <NotificationDetailScreen {...props} detail={{ ...detail, messages: changedMessages }} replyContent="草稿 7" />
+      );
+      expect(view.queryByText('message body 0')).toBeNull();
+      expect(view.getByText('updated body')).toBeTruthy();
+      expect(view.getByText('new body')).toBeTruthy();
+    } finally {
+      formatTime.mockRestore();
+    }
+  });
+
   it('keeps unchanged message rows idle while pagination settles and updates only changed messages', async () => {
     const title = jest.spyOn(notificationPresentation, 'notificationTitleText');
     try {
@@ -245,6 +299,71 @@ describe('notification screens', () => {
       }
     ]
   };
+
+  it('updates reused conversation bubbles for appearance, width, media identity and current actions', async () => {
+    const lightSettings = createEmptyReaderData().settings;
+    let appearance = { settings: lightSettings, theme: createTheme(lightSettings) };
+    let sessionEpochs = initialForumSessionEpochs;
+    const detail: NotificationDetail = {
+      ...imageDetail,
+      messages: [...imageDetail.messages, { id: 'plain', author: 'Alice', createdAt: null, contentText: 'plain body' }],
+      reply: { format: 'plain-text' }
+    };
+    const oldOpenExternalUrl = jest.fn();
+    const oldOpenTopic = jest.fn();
+    let props: React.ComponentProps<typeof NotificationDetailScreen> = {
+      contentWidth: 360,
+      detail,
+      loading: false,
+      onOpenExternalUrl: oldOpenExternalUrl,
+      onOpenTopic: oldOpenTopic,
+      onRetry: jest.fn()
+    };
+    const tree = () => (
+      <ReaderStyleProvider value={appearance}>
+        <ForumSessionEpochProvider sessionEpochs={sessionEpochs}>
+          <NotificationDetailScreen {...props} />
+        </ForumSessionEpochProvider>
+      </ReaderStyleProvider>
+    );
+    const view = await render(tree());
+    expect(StyleSheet.flatten(view.getByLabelText('第一张').props.style).width).toBe(259);
+    props = { ...props, contentWidth: 240 };
+    await view.rerender(tree());
+    expect(StyleSheet.flatten(view.getByLabelText('第一张').props.style).width).toBe(173);
+
+    const darkSettings: ReaderSettings = { ...lightSettings, theme: 'dark', fontScale: 1.25 };
+    appearance = { settings: darkSettings, theme: createTheme(darkSettings) };
+    await view.rerender(tree());
+    expect(StyleSheet.flatten(view.getByText('plain body').props.style)).toMatchObject({
+      color: appearance.theme.ink,
+      fontSize: Math.round(14 * darkSettings.fontScale)
+    });
+    const firstIdentity = view.getByLabelText('第一张').props.source[0].headers['X-WZ-Forum-Media-Identity'];
+    sessionEpochs = { ...initialForumSessionEpochs, nodeseek: 1 };
+    await view.rerender(tree());
+    expect(view.getByLabelText('第一张').props.source[0].headers['X-WZ-Forum-Media-Identity']).not.toBe(firstIdentity);
+    props = { ...props, detail: { ...detail, notification: { ...detail.notification, source: 'linuxdo' } } };
+    await view.rerender(tree());
+    expect(view.getByLabelText('第一张').props.source[0].headers['X-WZ-Forum-Media-Source']).toBe('linuxdo');
+
+    const onOpenExternalUrl = jest.fn();
+    const onOpenTopic = jest.fn();
+    const onOpenReply = jest.fn();
+    props = { ...props, onOpenExternalUrl, onOpenTopic, onOpenReply };
+    await view.rerender(tree());
+    await fireEvent.press(view.getByText('外部链接'));
+    expect(onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/page');
+    await fireEvent.press(view.getByText('主题链接'));
+    expect(onOpenTopic).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'linuxdo', id: '123' }),
+      expect.anything()
+    );
+    await fireEvent.press(view.getByRole('button', { name: '回复私信' }));
+    expect(onOpenReply).toHaveBeenCalledTimes(1);
+    expect(oldOpenExternalUrl).not.toHaveBeenCalled();
+    expect(oldOpenTopic).not.toHaveBeenCalled();
+  });
 
   it('displays message bitmaps from their real load when native size probing rejects the image scheme', async () => {
     jest.spyOn(Image, 'getSize').mockImplementation((_uri, _success, failure) => {

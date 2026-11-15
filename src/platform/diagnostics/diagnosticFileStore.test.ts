@@ -188,6 +188,67 @@ import { diagnosticRef, type DiagnosticFields } from './diagnosticPolicy';
 import { createDiagnosticExport, pruneDiagnosticExports } from './diagnosticExportFiles';
 import { readDiagnosticJournal } from './nativeDiagnosticJournal';
 import { readNativeReadNetworkDiagnosticLines } from './nativeReadNetworkDiagnostics';
+
+it('retains socket failure categories and actual request budgets without exporting exception text', async () => {
+  const lines = await readNativeReadNetworkDiagnosticLines({
+    readNetworkDiagnosticEvents: async () => [
+      {
+        timeMs: 1000,
+        operation: 'request',
+        phase: 'request-config',
+        callId: 'abc123',
+        connectTimeoutMs: 0,
+        readTimeoutMs: 15000,
+        writeTimeoutMs: 20000,
+        callTimeoutMs: 0
+      },
+      {
+        timeMs: 1001,
+        operation: 'request',
+        phase: 'connect-failed',
+        callId: 'abc123',
+        socketFailure: 'reset',
+        socketErrno: 'ECONNRESET',
+        message: 'PRIVATE_HOST_AND_TOKEN'
+      },
+      {
+        timeMs: 1002,
+        operation: 'request',
+        phase: 'call-failed',
+        socketFailure: 'PRIVATE_HOST_AND_TOKEN',
+        socketErrno: 'ECONNRESET PRIVATE_HOST_AND_TOKEN',
+        connectTimeoutMs: -1,
+        readTimeoutMs: Infinity,
+        writeTimeoutMs: 'PRIVATE_HOST_AND_TOKEN',
+        callTimeoutMs: 1.5
+      }
+    ]
+  });
+  const events = lines!
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  expect(events).toHaveLength(3);
+  expect(events[0]).toMatchObject({
+    nativePhase: 'request-config',
+    callId: 'abc123',
+    connectTimeoutMs: 0,
+    readTimeoutMs: 15000,
+    writeTimeoutMs: 20000,
+    callTimeoutMs: 0
+  });
+  expect(events[1]).toMatchObject({ callId: 'abc123', socketFailure: 'reset', socketErrno: 'ECONNRESET' });
+  for (const key of [
+    'socketFailure',
+    'socketErrno',
+    'connectTimeoutMs',
+    'readTimeoutMs',
+    'writeTimeoutMs',
+    'callTimeoutMs'
+  ])
+    expect(events[2]).not.toHaveProperty(key);
+  expect(lines).not.toContain('PRIVATE_HOST_AND_TOKEN');
+});
 const sharingLoadsAtImport = boundary.sharingModuleLoads;
 
 const metadata: DiagnosticExportMetadata = {

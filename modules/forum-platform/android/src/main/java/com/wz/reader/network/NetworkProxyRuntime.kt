@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.system.ErrnoException
+import android.system.OsConstants
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import com.bumptech.glide.Glide
@@ -1023,13 +1025,71 @@ internal fun requestDiagnosticTag(request: Request): RequestDiagnosticTag? {
 internal class RequestDiagnosticInterceptor : Interceptor {
   override fun intercept(chain: Interceptor.Chain): Response {
     val request = chain.request()
+    val requestTag = requestDiagnosticTag(request)
+    val source = readNetworkDiagnosticSource(request)
+    val imageTag = request.tag(ImageDiagnosticTag::class.java)
+    if (source != null || requestTag != null || imageTag != null) {
+      ReadNetworkDiagnostics.record(linkedMapOf<String, Any>(
+        "operation" to "request", "phase" to "request-config",
+        "source" to (source ?: "anonymous"), "callId" to opaqueNetworkIdentity(chain.call()),
+        "connectTimeoutMs" to chain.connectTimeoutMillis(), "readTimeoutMs" to chain.readTimeoutMillis(),
+        "writeTimeoutMs" to chain.writeTimeoutMillis(),
+        "callTimeoutMs" to TimeUnit.NANOSECONDS.toMillis(chain.call().timeout().timeoutNanos())
+      ).apply { requestTag?.let { putAll(it.fields()) }; imageTag?.let { putAll(it.fields()) } })
+    }
     return chain.proceed(request.newBuilder()
       .removeHeader("X-WZ-Diagnostic-Session")
       .removeHeader("X-WZ-Diagnostic-Trace")
       .removeHeader("X-WZ-Diagnostic-Request")
-      .tag(RequestDiagnosticTag::class.java, requestDiagnosticTag(request))
+      .tag(RequestDiagnosticTag::class.java, requestTag)
       .build())
   }
+}
+
+private fun socketFailureFields(error: IOException): Map<String, Any> {
+  val causes = generateSequence<Throwable>(error) { it.cause }.take(8).toList()
+  val errno = causes.filterIsInstance<ErrnoException>().firstOrNull()?.let { cause ->
+    when (cause.errno) {
+      OsConstants.ECONNRESET -> "ECONNRESET"
+      OsConstants.ECONNABORTED -> "ECONNABORTED"
+      OsConstants.EBADF -> "EBADF"
+      OsConstants.ENOTCONN -> "ENOTCONN"
+      OsConstants.ECONNREFUSED -> "ECONNREFUSED"
+      OsConstants.ENETUNREACH -> "ENETUNREACH"
+      OsConstants.EHOSTUNREACH -> "EHOSTUNREACH"
+      OsConstants.ETIMEDOUT -> "ETIMEDOUT"
+      OsConstants.EPIPE -> "EPIPE"
+      else -> "other"
+    }
+  }
+  val failure = when (errno) {
+    "ECONNRESET" -> "reset"
+    "ECONNABORTED" -> "aborted"
+    "EBADF", "ENOTCONN" -> "closed"
+    "ECONNREFUSED" -> "refused"
+    "ENETUNREACH", "EHOSTUNREACH" -> "unreachable"
+    "ETIMEDOUT" -> "timeout"
+    "EPIPE" -> "broken_pipe"
+    "other" -> "other"
+    else -> causes.firstNotNullOfOrNull { cause ->
+      if (cause is SocketTimeoutException) "timeout"
+      else if (cause is SocketException) {
+        // Inspect only fixed system phrases; never retain an exception's free text.
+        val message = cause.message.orEmpty().lowercase(Locale.US)
+        when {
+          message.contains("connection reset") || message.contains("econnreset") -> "reset"
+          message.contains("connection abort") || message.contains("econnaborted") -> "aborted"
+          message.contains("socket closed") || message.contains("socket is closed") || message.contains("ebadf") || message.contains("enotconn") -> "closed"
+          message.contains("connection refused") || message.contains("econnrefused") -> "refused"
+          message.contains("network is unreachable") || message.contains("no route to host") || message.contains("enetunreach") || message.contains("ehostunreach") -> "unreachable"
+          message.contains("timed out") || message.contains("etimedout") -> "timeout"
+          message.contains("broken pipe") || message.contains("epipe") -> "broken_pipe"
+          else -> null
+        }
+      } else null
+    } ?: "other"
+  }
+  return buildMap { put("socketFailure", failure); errno?.let { put("socketErrno", it) } }
 }
 
 internal data class ImageDiagnosticTag(
@@ -1191,7 +1251,7 @@ private class ReadNetworkEventListener(
 
   override fun callStart(call: Call) {
     super.callStart(call)
-    record("call-start")
+    record("call-start", mapOf("callTimeoutMs" to TimeUnit.NANOSECONDS.toMillis(call.timeout().timeoutNanos())))
   }
 
   override fun dnsStart(call: Call, domainName: String) {
@@ -1255,7 +1315,7 @@ private class ReadNetworkEventListener(
         "addressFamily" to readNetworkAddressFamily(inetSocketAddress.address),
         "protocol" to (protocol?.toString() ?: "unknown"),
         "errorType" to ioe.javaClass.simpleName
-      )
+      ) + socketFailureFields(ioe)
     )
   }
 
@@ -1309,7 +1369,7 @@ private class ReadNetworkEventListener(
     headerWriteTimeout?.exit()
     headerWriteTimeout = null
     super.requestFailed(call, ioe)
-    record("request-failed", mapOf("errorType" to ioe.javaClass.simpleName))
+    record("request-failed", mapOf("errorType" to ioe.javaClass.simpleName) + socketFailureFields(ioe))
   }
 
   override fun responseHeadersEnd(call: Call, response: Response) {
@@ -1332,7 +1392,7 @@ private class ReadNetworkEventListener(
 
   override fun responseFailed(call: Call, ioe: IOException) {
     super.responseFailed(call, ioe)
-    record("response-failed", mapOf("outcome" to "failure", "imageFailure" to "read_error"))
+    record("response-failed", mapOf("outcome" to "failure", "imageFailure" to "read_error") + socketFailureFields(ioe))
   }
 
   override fun callEnd(call: Call) {
@@ -1348,7 +1408,7 @@ private class ReadNetworkEventListener(
         "outcome" to if (call.isCanceled()) "canceled" else "failure",
         "imageFailure" to imageNetworkFailure(ioe, call.isCanceled()),
         "errorType" to ioe.javaClass.simpleName
-      )
+      ) + socketFailureFields(ioe)
     )
   }
 

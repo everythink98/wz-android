@@ -132,12 +132,14 @@ function SearchInputField({
   );
 }
 function LinuxDoAiControl({
+  active,
   state,
   styles,
   theme,
   onRetry,
   onToggle
 }: {
+  active: boolean;
   state: LinuxDoAiSearchState;
   styles: SearchStyles;
   theme: ReaderTheme;
@@ -160,7 +162,7 @@ function LinuxDoAiControl({
       <Text numberOfLines={1} style={styles.searchFilterEntrySummary}>
         {statusText}
       </Text>
-      {state.status === 'loading' ? <ActivityIndicator size="small" color={theme.primary} /> : null}
+      {state.status === 'loading' ? <ActivityIndicator animating={active} size="small" color={theme.primary} /> : null}
       {state.status === 'error' ? <AppButton compact label="重试 AI 搜索" variant="ghost" onPress={onRetry} /> : null}
       <AppSwitch
         accessibilityLabel="AI 搜索"
@@ -174,6 +176,7 @@ function LinuxDoAiControl({
 }
 
 export const SearchScreen = memo(function SearchScreen({
+  active = true,
   busy,
   categories,
   sessionEpochs,
@@ -206,6 +209,7 @@ export const SearchScreen = memo(function SearchScreen({
   onToggleLinuxDoAiSearch,
   onSearchSourceChange
 }: {
+  active?: boolean;
   busy: boolean;
   categories: Category[];
   sessionEpochs: ForumSessionEpochs;
@@ -753,6 +757,8 @@ export const SearchScreen = memo(function SearchScreen({
       ),
     [styles]
   );
+  const aiControlActive = linuxDoAiVisible && active;
+  const filterRequestsEnabled = visibleSearchSource !== 'all' && !externalSearchSelected && requestsEnabled;
   const header = useMemo(
     () => (
       <View style={[styles.stack, styles.listHeader]}>
@@ -781,7 +787,7 @@ export const SearchScreen = memo(function SearchScreen({
             categories={categories}
             readPlanScopes={searchCandidateReadPlanScopes}
             sessionEpochs={sessionEpochs}
-            requestsEnabled={requestsEnabled}
+            requestsEnabled={filterRequestsEnabled}
             source={visibleSearchSource as Source}
             searchFilters={searchFilters}
             summary={searchFilterEntrySummary}
@@ -794,6 +800,7 @@ export const SearchScreen = memo(function SearchScreen({
         ) : null}
         {linuxDoAiVisible ? (
           <LinuxDoAiControl
+            active={aiControlActive}
             state={linuxDoAiState}
             styles={styles}
             theme={theme}
@@ -804,12 +811,14 @@ export const SearchScreen = memo(function SearchScreen({
       </View>
     ),
     [
+      aiControlActive,
       applySearchFilter,
       busy,
       categories,
       changeSearchSource,
       enabledSearchSourceItems,
       externalSearchSelected,
+      filterRequestsEnabled,
       expectedSearchSources,
       hasInputValue,
       hasSearchTerm,
@@ -822,7 +831,6 @@ export const SearchScreen = memo(function SearchScreen({
       onSearchDiscourseTags,
       onSearchDiscourseUsers,
       query,
-      requestsEnabled,
       searchCandidateReadPlanScopes,
       searchFilters,
       searchFilterEntrySummary,

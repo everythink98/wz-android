@@ -1,6 +1,6 @@
 import type { Topic } from '@/domain/forum/models';
 
-export type LinuxDoAiSearchStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'unavailable' | 'error';
+type LinuxDoAiSearchStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'unavailable' | 'error';
 
 export type LinuxDoAiSearchState = {
   status: LinuxDoAiSearchStatus;

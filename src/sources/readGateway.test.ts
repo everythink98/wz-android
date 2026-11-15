@@ -26,6 +26,56 @@ import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
 afterEach(() => setDiagnosticWriter(null));
 
 describe('bounded source preparation', () => {
+  it.each(['abort', 'source-disabled', 'identity-changed'] as const)(
+    'rejects late feed progress after %s',
+    async (change) => {
+      const pending = Promise.withResolvers<Response>();
+      const controller = new AbortController();
+      let enabled: Source[] = ['linuxdo', 'v2ex'];
+      let epoch = 0;
+      const fetcher: Fetcher = async (url, init) =>
+        url.includes('linux.do')
+          ? withAbortableTimeout(() => pending.promise, { signal: init?.signal })
+          : new Response(page);
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => enabled,
+        linuxDoUserAgent: () => 'saved',
+        nodeSeekUserAgent: () => 'saved',
+        readSessionRuntimeSnapshot: (source) => ({
+          ...anonymousSession(source),
+          authenticated: true,
+          identityKey: `${source}:user-${epoch}`,
+          sessionEpoch: epoch
+        })
+      });
+      const onProgress = vi.fn();
+      const result = gateway
+        .getFeed({ source: 'all', signal: controller.signal }, { onProgress })
+        .catch((error) => error);
+      try {
+        await vi.waitFor(() => expect(onProgress).toHaveBeenCalledTimes(1));
+        if (change === 'abort') controller.abort();
+        else if (change === 'source-disabled') enabled = ['v2ex'];
+        else epoch++;
+        pending.resolve(
+          Response.json({
+            topic_list: {
+              topics: [{ id: 72, title: 'Late response', created_at: '2026-05-20T00:00:00Z', posts_count: 1 }]
+            }
+          })
+        );
+        expect(await result).toMatchObject({ message: '请求已取消' });
+        expect(onProgress).toHaveBeenCalledTimes(1);
+      } finally {
+        controller.abort();
+        pending.resolve(new Response('{}'));
+        await result;
+      }
+    }
+  );
+
   beforeEach(() => {
     vi.mocked(recoverReadNetworkRuntime).mockClear();
     vi.mocked(getDefaultAndroidWebViewUserAgent).mockClear();

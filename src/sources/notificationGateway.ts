@@ -50,8 +50,8 @@ import {
 export type NotificationAccessReader = (
   source: NotificationSource
 ) => NotificationAdapterAccess | Promise<NotificationAdapterAccess>;
-export type NotificationSourceAllowed = (source: NotificationSource) => boolean;
-export type NotificationPrivateAccessAllowed = (source: NotificationSource, identityKey: string) => boolean;
+type NotificationSourceAllowed = (source: NotificationSource) => boolean;
+type NotificationPrivateAccessAllowed = (source: NotificationSource, identityKey: string) => boolean;
 
 interface NotificationBatchResult {
   items: ForumNotification[];

@@ -16,6 +16,9 @@ import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.Executor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 
 @Suppress("UNUSED_PARAMETER")
 internal fun <T> singleCurrentApkSigner(
@@ -23,11 +26,24 @@ internal fun <T> singleCurrentApkSigner(
   signingCertificateHistory: Array<T>?
 ): T? = currentSigners?.singleOrNull()
 
-class ApkInstallerModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+class ApkInstallerModule internal constructor(
+  private val reactContext: ReactApplicationContext,
+  private val inspectionExecutor: Executor
+) : ReactContextBaseJavaModule(reactContext) {
+  constructor(reactContext: ReactApplicationContext) : this(reactContext, Dispatchers.IO.asExecutor())
+
   override fun getName(): String = "ApkInstallerModule"
 
   @ReactMethod
   fun inspectApk(uriString: String, promise: Promise) {
+    try {
+      inspectionExecutor.execute { inspectApkOnWorker(uriString, promise) }
+    } catch (error: Exception) {
+      promise.reject("apk_inspect_failed", error.message ?: "无法校验 APK。", error)
+    }
+  }
+
+  private fun inspectApkOnWorker(uriString: String, promise: Promise) {
     try {
       val file = apkFileFromUri(uriString)
       if (!file.exists()) {

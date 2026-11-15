@@ -35,10 +35,6 @@ export function createAppStyles(theme: ReaderTheme) {
       zIndex: 20,
       elevation: 0
     },
-    statusBarScrimBelowOverlay: {
-      zIndex: 0,
-      elevation: 0
-    },
     nav: {
       flexDirection: 'row' as const,
       borderTopColor: theme.line,

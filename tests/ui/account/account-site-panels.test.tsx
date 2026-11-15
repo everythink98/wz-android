@@ -515,11 +515,12 @@ describe('Account site panels', () => {
     expect(onContinue).toHaveBeenCalledTimes(1);
   });
 
-  it('guides anonymous linux.do users and switches a loaded profile between progress and activity', async () => {
+  it('guides anonymous users and retains loaded level controls through refresh visibility changes', async () => {
     const onOpenLogin = jest.fn();
     const onRefresh = jest.fn();
     const view = await render(
       <LinuxDoLevelPanel
+        active
         busy={false}
         error=""
         siteSession={session('linuxdo', 'anonymous')}
@@ -537,6 +538,7 @@ describe('Account site panels', () => {
 
     await view.rerender(
       <LinuxDoLevelPanel
+        active
         busy={false}
         error=""
         siteSession={session('linuxdo', 'logged-in')}
@@ -563,6 +565,7 @@ describe('Account site panels', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
     await view.rerender(
       <LinuxDoLevelPanel
+        active
         busy
         error=""
         siteSession={session('linuxdo', 'logged-in')}
@@ -579,8 +582,34 @@ describe('Account site panels', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(view.getByText('LV 1 → LV 2')).toBeTruthy();
     expect(view.getByRole('tab', { name: '活跃数据' }).props.accessibilityState.selected).toBe(true);
+    for (const active of [false, true]) {
+      await view.rerender(
+        <LinuxDoLevelPanel
+          active={active}
+          busy
+          error=""
+          siteSession={session('linuxdo', 'logged-in')}
+          profile={levelProfile}
+          styles={styles}
+          theme={theme}
+          onOpenLogin={onOpenLogin}
+          onRefresh={onRefresh}
+        />
+      );
+      const retainedRefresh = view.getByRole('button', { name: '正在刷新等级' });
+      expect(retainedRefresh).toBe(refreshing);
+      expect(retainedRefresh.props.accessibilityState.disabled).toBe(true);
+      const animating = view.root?.queryAll(
+        (instance) => instance.props.accessibilityRole === 'progressbar' && instance.props.accessibilityState?.busy
+      );
+      expect(animating).toHaveLength(active ? 1 : 0);
+      expect(view.getByRole('tab', { name: '活跃数据' }).props.accessibilityState.selected).toBe(true);
+      await fireEvent.press(retainedRefresh);
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    }
     await view.rerender(
       <LinuxDoLevelPanel
+        active
         busy={false}
         error="等级读取失败"
         siteSession={session('linuxdo', 'logged-in')}
@@ -599,6 +628,7 @@ describe('Account site panels', () => {
   it('shows official risk usage with veto status aligned beside its label and changes below', async () => {
     const view = await render(
       <LinuxDoLevelPanel
+        active
         busy={false}
         error=""
         siteSession={session('linuxdo', 'logged-in')}
@@ -642,6 +672,7 @@ describe('Account site panels', () => {
   it('announces an achieved minimum requirement with its actual value and bounded progress', async () => {
     const view = await render(
       <LinuxDoLevelPanel
+        active
         busy={false}
         error=""
         siteSession={session('linuxdo', 'logged-in')}
@@ -690,6 +721,7 @@ describe('Account site panels', () => {
     };
     const view = await render(
       <LinuxDoLevelPanel
+        active
         busy={false}
         error=""
         siteSession={session('linuxdo', 'logged-in')}

@@ -32,7 +32,7 @@ export type CompatibleSvgArtifact = Readonly<{
 
 type CompatibleSvgArtifactWithoutPoster = Omit<CompatibleSvgArtifact, 'posterRevision' | 'posterSource'>;
 
-export type CompatibleSvgArtifactOptions = Readonly<{
+type CompatibleSvgArtifactOptions = Readonly<{
   fetcher?: Fetcher;
   renderPoster?: (svgBase64: string, cacheKey: string, timeoutMs: number) => Promise<SvgPosterRenderResult>;
   signal?: AbortSignal;

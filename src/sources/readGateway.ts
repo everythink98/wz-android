@@ -177,6 +177,7 @@ type ManagedReadKeys =
   | 'nodeSeekUserAgent'
   | 'includedSources'
   | 'preparation'
+  | 'onProgress'
   | 'unavailableSources';
 type ManagedGetCategoriesOptions = Omit<GetCategoriesOptions, ManagedReadKeys>;
 type ManagedGetFeedOptions = Omit<GetFeedOptions, ManagedReadKeys>;
@@ -215,7 +216,7 @@ type ManagedLinuxDoLevelProfileOptions = Omit<
 > & {
   source: 'linuxdo';
 };
-export type ReadGatewayReadContext = {
+type ReadGatewayReadContext = {
   includedSources?: readonly Source[];
   readPlanScope?: string;
   readPlanScopes?: readonly (readonly [Source, string])[];
@@ -373,21 +374,25 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     source: FeedSource,
     operationName: DiagnosticOperation,
     readOperation: ForumReadOperation,
-    operation: (credentials: {
-      discourseAuth?: LinuxDoReadAuth;
-      fetcher: Fetcher;
-      fetcherForSource?: (source: Source) => Fetcher;
-      nodeSeekAuthenticated?: boolean;
-      nodeSeekUserAgent?: string;
-      preparation?: ReadPreparation;
-      signal?: AbortSignal;
-      trace: DiagnosticTrace;
-      unavailableSources?: readonly Source[];
-    }) => Promise<T>,
+    operation: (
+      credentials: {
+        discourseAuth?: LinuxDoReadAuth;
+        fetcher: Fetcher;
+        fetcherForSource?: (source: Source) => Fetcher;
+        nodeSeekAuthenticated?: boolean;
+        nodeSeekUserAgent?: string;
+        preparation?: ReadPreparation;
+        signal?: AbortSignal;
+        trace: DiagnosticTrace;
+        unavailableSources?: readonly Source[];
+      },
+      publishProgress?: (result: T) => void
+    ) => Promise<T>,
     context?: ReadGatewayReadContext,
     signal?: AbortSignal,
     intentFields: DiagnosticFields = {},
-    onBeforeSessionChange?: (result: T) => void
+    onBeforeSessionChange?: (result: T) => void,
+    onProgress?: (result: T) => void
   ) => {
     const readingRequest = dependencies.reading?.startRequest();
     const preparationDeadline = Date.now() + READ_PREPARATION_BUDGET_MS;
@@ -593,20 +598,27 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           recoveryCommitIsEligible
         );
       const runOperation = (fetcher: Fetcher, attempt: ReadAttempt) =>
-        operation({
-          discourseAuth,
-          fetcher: ownFetcher(fetcher, attempt),
-          ...(source === 'all'
-            ? { fetcherForSource: (planSource: Source) => ownFetcher(sourcePlanFetcher(planSource), attempt) }
-            : {}),
-          nodeSeekAuthenticated,
-          nodeSeekUserAgent: nodeSeekPlan?.state === 'ready' ? dependencies.nodeSeekUserAgent() : undefined,
-          trace,
-          signal: activeSignal,
-          ...(preparation ? { preparation } : {}),
-          ...(source === 'all' ? { includedSources } : {}),
-          ...(unavailableSources.length ? { unavailableSources } : {})
-        });
+        operation(
+          {
+            discourseAuth,
+            fetcher: ownFetcher(fetcher, attempt),
+            ...(source === 'all'
+              ? { fetcherForSource: (planSource: Source) => ownFetcher(sourcePlanFetcher(planSource), attempt) }
+              : {}),
+            nodeSeekAuthenticated,
+            nodeSeekUserAgent: nodeSeekPlan?.state === 'ready' ? dependencies.nodeSeekUserAgent() : undefined,
+            trace,
+            signal: activeSignal,
+            ...(preparation ? { preparation } : {}),
+            ...(source === 'all' ? { includedSources } : {}),
+            ...(unavailableSources.length ? { unavailableSources } : {})
+          },
+          onProgress
+            ? (result) => {
+                if (recoveryCommitIsEligible()) onProgress(result);
+              }
+            : undefined
+        );
       const runReadAttempt = async (): Promise<ReadAttemptOutcome<T>> => {
         const attempt: ReadAttempt = { requests: 'none' };
         try {
@@ -1092,22 +1104,27 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     },
     getFeed(
       options: ManagedGetFeedOptions,
-      context?: ReadGatewayReadContext & { onBeforeSessionChange?: (response: FeedResponse) => void }
+      context?: ReadGatewayReadContext & {
+        onBeforeSessionChange?: (response: FeedResponse) => void;
+        onProgress?: (response: FeedResponse) => void;
+      }
     ) {
       return read(
         options.source,
         'getFeed',
         'feed',
-        ({ trace, ...credentials }) =>
+        ({ trace, ...credentials }, onProgress) =>
           getForumFeed({
             ...options,
             ...credentials,
-            diagnosticTrace: trace
+            diagnosticTrace: trace,
+            onProgress
           }),
         context,
         options.signal,
         {},
-        context?.onBeforeSessionChange
+        context?.onBeforeSessionChange,
+        context?.onProgress
       );
     },
     getEmojiUrls({ source, ...options }: ManagedGetEmojiUrlsOptions, context?: ReadGatewayReadContext) {

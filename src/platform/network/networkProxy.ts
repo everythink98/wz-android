@@ -9,7 +9,7 @@ export const NETWORK_PROXY_STORAGE_KEY = 'network-proxy-settings';
 export const MAX_NETWORK_PROXY_PROFILES = 10;
 
 export type NetworkProxyProtocol = 'http' | 'socks5';
-export type ReadNetworkRuntimeRecoveryResult = {
+type ReadNetworkRuntimeRecoveryResult = {
   ok: boolean;
   rotated: boolean;
   previousGeneration: number;
@@ -70,7 +70,7 @@ export type NativeNetworkProxyModule = {
 
 const readNetworkRuntimeRecoveries = new Map<number, Promise<ReadNetworkRuntimeRecoveryResult>>();
 
-export type ReadNetworkRuntimeRecoveryOptions = {
+type ReadNetworkRuntimeRecoveryOptions = {
   module?: NativeNetworkProxyModule;
   trace?: DiagnosticTrace;
 };

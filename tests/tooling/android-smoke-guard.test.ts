@@ -24,6 +24,7 @@ import {
   runReplayBatch
 } from '../../scripts/run-device-replay.mjs';
 import { loggedOutDeviceName } from '../../scripts/run-logged-out-device-replay.mjs';
+import { runSensitiveReplay, sensitiveReplayErrorCode, sensitiveReplayPlan } from '../../scripts/sensitive-replay.mjs';
 
 const rootDir = path.resolve(__dirname, '../..');
 const bootedAndroidDeviceOutput = JSON.stringify({
@@ -1088,6 +1089,233 @@ describe('Android release evidence guards', () => {
     expect((failure as AggregateError).errors).toHaveLength(2);
     expect((failure as Error).message).toContain('broken.ad');
     expect((failure as Error).message).toContain('last.ad');
+  });
+
+  it.each(['success', 'selector-failure', 'cleanup-failure'] as const)(
+    'runs all eight journeys without sensitive captures or raw errors on %s',
+    async (outcome) => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'wz-sensitive-replay-'));
+      const apkPath = path.join(directory, 'candidate.apk');
+      writeFileSync(apkPath, 'controlled APK');
+      const artifacts = path.join(rootDir, 'tmp', 'agent-device');
+      const files = new Map<string, string>();
+      const canary = 'PRIVATE_PROXY_CANARY.invalid:38473';
+      const sensitive = ['account-readonly', 'more-readonly', 'nodeseek-session'];
+      const testCalls: string[] = [];
+      const atomicCalls: {
+        args: string[];
+        capture: unknown;
+        echoCapture: unknown;
+        inheritedCapture: boolean;
+        timeout: number | undefined;
+      }[] = [];
+      const config = JSON.parse(readProjectFile('app.json')).expo;
+      vi.resetModules();
+      vi.doMock('node:fs', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('node:fs')>();
+        return {
+          ...actual,
+          mkdirSync: (target: string, options?: Parameters<typeof mkdirSync>[1]) =>
+            target.startsWith(artifacts) ? undefined : actual.mkdirSync(target, options),
+          writeFileSync: (target: string, data: string) => {
+            if (target.startsWith(artifacts)) files.set(target, String(data));
+            else actual.writeFileSync(target, data);
+          }
+        };
+      });
+      vi.doMock('node:child_process', () => ({
+        spawnSync: (command: string, args: string[]) => {
+          if (command === 'git') return { status: 0, stdout: args[0] === 'rev-parse' ? 'revision' : '' };
+          if (command !== 'adb') throw new Error('Unexpected controlled command');
+          if (args.includes('dumpsys'))
+            return { status: 0, stdout: `versionCode=${config.android.versionCode}\nversionName=${config.version}\n` };
+          if (args.includes('path')) return { status: 0, stdout: 'package:/data/app/controlled/base.apk\n' };
+          if (args.includes('pull')) copyFileSync(apkPath, args[args.indexOf('pull') + 2]);
+          return { status: args.includes('cat') ? 1 : 0, stdout: '' };
+        }
+      }));
+      vi.doMock('../../scripts/agent-device-runtime.mjs', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('../../scripts/agent-device-runtime.mjs')>()),
+        assertAgentDeviceVersion: () => '0.20.6',
+        runAgentDevice: (
+          args: string[],
+          options?: { capture?: boolean; echoCapture?: boolean; env?: NodeJS.ProcessEnv; timeout?: number }
+        ) => {
+          if (args[0] === 'test') {
+            const name = path.basename(args[1], '.ad');
+            testCalls.push(name);
+            const artifactDirectory = args[args.indexOf('--artifacts-dir') + 1];
+            if (sensitive.includes(name)) files.set(path.join(artifactDirectory, 'recording.mp4'), canary);
+            const reporter = args.find((arg) => arg.startsWith('junit:'));
+            if (reporter) files.set(reporter.slice(6), '<testsuite tests="1" failures="0"/>');
+            return '';
+          }
+          atomicCalls.push({
+            args,
+            capture: options?.capture,
+            echoCapture: options?.echoCapture,
+            inheritedCapture: Object.hasOwn(options?.env || {}, 'AGENT_DEVICE_EXEC_TRACE'),
+            timeout: options?.timeout
+          });
+          if (
+            (outcome === 'selector-failure' && args[0] === 'wait' && args[1] === 'text="使用代理"') ||
+            (outcome === 'cleanup-failure' &&
+              args[0] === 'close' &&
+              args[args.indexOf('--session') + 1].endsWith('-more-readonly'))
+          ) {
+            throw Object.assign(new Error(canary), {
+              stdout: JSON.stringify({ success: false, error: { code: 'ELEMENT_NOT_FOUND', message: canary } })
+            });
+          }
+          return JSON.stringify({ success: true, data: { targetEvidence: canary } });
+        }
+      }));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      vi.stubEnv('AGENT_DEVICE_EXEC_TRACE', 'PRIVATE_TRACE_CANARY');
+      let failure: unknown;
+      try {
+        const { runDeviceReplay: controlledReplay } = await import('../../scripts/run-device-replay.mjs');
+        try {
+          await controlledReplay({
+            apkPath,
+            selectedDevice: 'Controlled device',
+            device: { id: 'controlled-device', name: 'Controlled device' }
+          });
+        } catch (error) {
+          failure = error;
+        }
+        expect(testCalls).toEqual(
+          outcome === 'cleanup-failure'
+            ? ['feed-gesture-priority', 'feed-source-controls', 'library-return']
+            : [
+                'feed-gesture-priority',
+                'feed-source-controls',
+                'library-return',
+                'notifications-readonly',
+                'search-multi-source'
+              ]
+        );
+        for (const name of outcome === 'cleanup-failure' ? sensitive.slice(0, 2) : sensitive) {
+          const calls = atomicCalls.filter(({ args }) => args[args.indexOf('--session') + 1]?.endsWith(`-${name}`));
+          expect(calls.length).toBeGreaterThan(2);
+          expect(calls.at(-1)?.args[0]).toBe('close');
+          expect(calls.every(({ capture, echoCapture }) => capture === true && echoCapture === false)).toBe(true);
+          expect(calls.every(({ inheritedCapture }) => !inheritedCapture)).toBe(true);
+          expect(calls.every(({ timeout }) => typeof timeout === 'number' && timeout > 0 && timeout <= 240000)).toBe(
+            true
+          );
+          expect(calls.every(({ args }) => args.includes('--no-record') && args.includes('--json'))).toBe(true);
+          expect(calls.every(({ args }) => files.get(args[args.indexOf('--config') + 1]) === '{}\n')).toBe(true);
+          expect(
+            calls.every(
+              ({ args }) =>
+                !args.some((arg) =>
+                  ['test', 'replay', 'snapshot', 'screenshot', 'record', '--out', '--record-video'].includes(arg)
+                )
+            )
+          ).toBe(true);
+          expect(files.has(path.join(artifacts, `${name}.junit.xml`))).toBe(true);
+        }
+        expect([...files.keys()].some((file) => /\.(?:png|mp4)$|overflow|divergence/.test(file))).toBe(false);
+        expect([...files.values()].join('\n')).not.toContain(canary);
+        expect(String(failure)).not.toContain(canary);
+        expect(failure instanceof AggregateError).toBe(outcome === 'selector-failure');
+        if (outcome === 'cleanup-failure') expect((failure as Error).name).toBe('ReplayCleanupError');
+        expect(files.get(path.join(artifacts, 'more-readonly.junit.xml'))).toContain(
+          `failures="${outcome === 'success' ? 0 : 1}"`
+        );
+      } finally {
+        log.mockRestore();
+        vi.unstubAllEnvs();
+        vi.doUnmock('node:fs');
+        vi.doUnmock('node:child_process');
+        vi.doUnmock('../../scripts/agent-device-runtime.mjs');
+        vi.resetModules();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each([
+    '\nscreenshot private.png',
+    '\npress label="${UNKNOWN}"',
+    '\ncontext recordVideo=true',
+    '\nenv SECRET=private',
+    '\nfill label="账号" private'
+  ])('rejects unsupported sensitive script content before the first device action: %s', (extra) => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'wz-sensitive-plan-'));
+    const replayFile = path.join(directory, 'more-readonly.ad');
+    const run = vi.fn();
+    try {
+      writeFileSync(replayFile, `${readProjectFile('tests/device/more-readonly.ad')}${extra}\n`);
+      const result = runSensitiveReplay({
+        replayFile,
+        replaySession: 'controlled',
+        deviceName: 'Controlled device',
+        appPackage: 'com.wz.reader',
+        artifactsDir: directory,
+        junitPath: path.join(directory, 'result.xml'),
+        runAgentDevice: run,
+        cwd: rootDir
+      });
+      expect(result.error?.message).toContain('INVALID_SCRIPT');
+      expect(run).not.toHaveBeenCalled();
+      expect(readFileSync(path.join(directory, 'result.xml'), 'utf8')).toContain('failures="1"');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves the authored sensitive selectors, ordering and timeout without accepting arbitrary error codes', () => {
+    const plan = sensitiveReplayPlan(readProjectFile('tests/device/account-readonly.ad'), 'com.wz.reader');
+    expect(plan.timeout).toBe(240000);
+    expect(plan.steps[0]).toEqual(['open', 'com.wz.reader', '--relaunch']);
+    expect(plan.steps[6]).toEqual([
+      'wait',
+      'id="account-site-nodeseek" label="NodeSeek，已登录，已选择" || id="account-site-nodeseek" label="NodeSeek，本次核对失败，可重试，已选择"',
+      '60000'
+    ]);
+    const more = sensitiveReplayPlan(readProjectFile('tests/device/more-readonly.ad'), 'com.wz.reader');
+    expect(more.steps).toContainEqual(['find', 'label="展开备份 / 恢复"', 'click']);
+    expect(more.steps).toContainEqual(['wait', 'stable', '1500', '15000']);
+    expect(sensitiveReplayErrorCode({ stdout: JSON.stringify({ error: { code: 'PRIVATE_VALUE_CANARY' } }) })).toBe(
+      'COMMAND_FAILED'
+    );
+  });
+
+  it('bounds atomic waits by the remaining journey deadline and closes once without retrying', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'wz-sensitive-deadline-'));
+    const replayFile = path.join(directory, 'account-readonly.ad');
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const run = vi.fn((args: string[]) => {
+      if (args[0] === 'open') now = 239990;
+      if (args[0] === 'wait') {
+        expect(args[2]).toBe('10');
+        now = 240001;
+        return JSON.stringify({ success: false, error: { code: 'TIMEOUT' } });
+      }
+      return JSON.stringify({ success: true });
+    });
+    try {
+      writeFileSync(replayFile, readProjectFile('tests/device/account-readonly.ad'));
+      const result = runSensitiveReplay({
+        replayFile,
+        replaySession: 'controlled',
+        deviceName: 'Controlled device',
+        appPackage: 'com.wz.reader',
+        artifactsDir: directory,
+        junitPath: path.join(directory, 'result.xml'),
+        runAgentDevice: run,
+        cwd: rootDir
+      });
+      expect(result.error?.message).toContain('TIMEOUT');
+      expect(run.mock.calls.map(([args]) => args[0])).toEqual(['open', 'wait', 'close']);
+      expect(readFileSync(path.join(directory, 'result.xml'), 'utf8')).toContain('unreached step 3');
+    } finally {
+      clock.mockRestore();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('stops before the next Replay when cleanup cannot restore isolation', async () => {

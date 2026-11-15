@@ -1,0 +1,48 @@
+# Diagnostic attribution only; does not replace ordinary Release timing.
+# Only payload-free TCP metadata and the two audited app log tags are recorded.
+buffers { size_kb: 245760 fill_policy: RING_BUFFER }
+buffers { size_kb: 16384 fill_policy: RING_BUFFER }
+duration_ms: 250000
+
+data_sources { config {
+  name: "linux.ftrace"
+  target_buffer: 0
+  ftrace_config {
+    ftrace_events: "sched/sched_switch"
+    ftrace_events: "sched/sched_waking"
+    ftrace_events: "task/task_newtask"
+    ftrace_events: "task/task_rename"
+    ftrace_events: "sched/sched_process_exit"
+    ftrace_events: "sock/inet_sock_set_state"
+    ftrace_events: "tcp/tcp_receive_reset"
+    ftrace_events: "tcp/tcp_send_reset"
+    ftrace_events: "tcp/tcp_retransmit_skb"
+    atrace_categories: "am"
+    atrace_categories: "wm"
+    atrace_apps: "com.wz.reader"
+    buffer_size_kb: 4096
+    drain_period_ms: 250
+  }
+} }
+
+data_sources { config {
+  name: "android.log"
+  target_buffer: 1
+  android_log_config {
+    log_ids: LID_DEFAULT
+    min_prio: PRIO_INFO
+    filter_tags: "WzNetworkProxy"
+    filter_tags: "WzStartup"
+  }
+} }
+
+data_sources { config {
+  name: "linux.process_stats"
+  target_buffer: 1
+  process_stats_config {
+    scan_all_processes_on_start: true
+    proc_stats_poll_ms: 1000
+  }
+} }
+
+data_sources { config { name: "android.packages_list" target_buffer: 1 } }

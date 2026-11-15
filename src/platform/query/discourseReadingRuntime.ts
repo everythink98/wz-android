@@ -16,7 +16,7 @@ export interface ReadingBatch {
   topicTime: number;
   timings: Record<number, number>;
 }
-export interface ReadingRequest {
+interface ReadingRequest {
   scope: string | null;
   sequence: number;
   localVersion: number;
@@ -29,7 +29,7 @@ type PendingBatch = ReadingBatch & {
   sends: number;
   due: number;
 };
-export type ReadingSendContext = {
+type ReadingSendContext = {
   batchId: number;
   attempt: number;
   batchAgeMs: number;

@@ -34,7 +34,7 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const AUDIO_TIME_UPDATE_INTERVAL_SECONDS = 1;
 
-export type TopicAudioAdmission = {
+type TopicAudioAdmission = {
   admitted: boolean;
   attachmentKey: string;
   attemptId: string;
@@ -44,7 +44,7 @@ export type TopicAudioAdmission = {
   settle: (outcome: 'displayed' | 'error') => void;
 };
 
-export type TopicAudioSnapshot = Readonly<{
+type TopicAudioSnapshot = Readonly<{
   duration: number;
   error: string | null;
   playing: boolean;

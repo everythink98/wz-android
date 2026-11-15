@@ -271,6 +271,7 @@ export function MoreAccountPanel({
               {linuxDoLevelContentVisited ? (
                 <LinuxDoLevelPanel
                   key={linuxDoSession.currentUser?.id ?? 'anonymous'}
+                  active={dataActive && linuxDoLevelExpanded}
                   busy={linuxDoLevelBusy}
                   error={linuxDoLevelError}
                   siteSession={linuxDoSession}

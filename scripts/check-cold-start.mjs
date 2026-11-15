@@ -96,16 +96,20 @@ async function main() {
         '-c',
         'android.intent.category.LAUNCHER'
       );
-      if (!/LaunchState:\s*COLD/u.test(launch)) throw new Error('Expected a process cold start');
+      if (!/LaunchState:\s*COLD/u.test(launch)) {
+        result.rejectedLaunch = { batch, run, launch };
+        writeFileSync(output, JSON.stringify(result, null, 2));
+        throw new Error('Expected a process cold start');
+      }
       const pid = adb('shell', 'pidof', packageName).trim();
       if (!/^\d+$/u.test(pid)) throw new Error('Missing single app PID');
       if (pids.has(pid)) throw new Error('App PID was reused during the benchmark');
       pids.add(pid);
       let events;
-      const deadline = performance.now() + 20_000;
+      const deadline = performance.now() + 35_000;
       do {
         events = startupEvents(adb('logcat', '-d', `--pid=${pid}`, '-s', 'WzStartup:I', '*:S'));
-        if (events.some((event) => /^feed-(content|empty|error)$/u.test(event.state))) break;
+        if (events.some((event) => event.state === 'feed-terminal')) break;
         await delay(500);
       } while (performance.now() < deadline);
       const processIds = new Set(events.map((event) => event.processSessionId));
@@ -119,6 +123,7 @@ async function main() {
       const phases = Object.fromEntries(events.map((event) => [event.state, event.elapsedMs]));
       if (!Number.isFinite(phases['page-ready'])) throw new Error('Page never became ready');
       if (adb('shell', 'pidof', packageName).trim() !== pid) throw new Error('App exited during startup');
+      if (!Number.isFinite(phases['feed-terminal'])) throw new Error('Feed never reached its terminal state');
       const sample = {
         batch,
         run,
@@ -131,7 +136,7 @@ async function main() {
       result.samples.push(sample);
       writeFileSync(output, JSON.stringify(result, null, 2));
       console.log(
-        `Batch ${batch}/${batches}, run ${run}/${runs}: page ${phases['page-ready']} ms, feed ${phases['feed-content'] ?? 'no content'} ms`
+        `Batch ${batch}/${batches}, run ${run}/${runs}: page ${phases['page-ready']} ms, feed ${phases['feed-content'] ?? 'no content'} ms, terminal ${phases['feed-terminal']} ms`
       );
       // Keep sequential live reads spaced out; never overlap two startup request waves.
       await delay(5_000);
@@ -141,7 +146,8 @@ async function main() {
       batch,
       systemDisplayMs: timingSummary(samples.map((s) => s.systemDisplayMs)),
       pageReadyMs: timingSummary(samples.map((s) => s.phases['page-ready'])),
-      feedContentMs: timingSummary(samples.map((s) => s.phases['feed-content']))
+      feedContentMs: timingSummary(samples.map((s) => s.phases['feed-content'])),
+      feedTerminalMs: timingSummary(samples.map((s) => s.phases['feed-terminal']))
     });
     if (firstInstall() !== firstInstallTime) throw new Error('Installation identity changed; freeze device');
     writeFileSync(output, JSON.stringify(result, null, 2));

@@ -52,6 +52,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
     },
     routeState: { flex: 1, margin: 16 },
     header: { alignItems: 'center', flexDirection: 'row', gap: 9 },
+    indicatorSpace: { width: 24, height: 24 },
     stateTitle: { color: theme.ink, fontFamily, fontSize: 17, fontWeight: '700', textAlign: 'center' },
     text: { color: theme.muted, fontFamily, fontSize: 13 },
     centeredText: { textAlign: 'center' },
@@ -102,7 +103,7 @@ export function RecoverableEmptyState({
   );
 }
 
-export function LoadingState({ text }: { text: string }) {
+export function LoadingState({ text, animating = true }: { text: string; animating?: boolean }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
   return (
     <View
@@ -114,7 +115,11 @@ export function LoadingState({ text }: { text: string }) {
       style={styles.state}
     >
       <View style={styles.header}>
-        <ActivityIndicator accessible={false} color={theme.primary} size="small" />
+        {animating ? (
+          <ActivityIndicator accessible={false} color={theme.primary} size="small" />
+        ) : (
+          <View testID="loading-indicator-space" style={styles.indicatorSpace} />
+        )}
         <Text accessible={false} style={styles.text}>
           {text}
         </Text>

@@ -4,9 +4,14 @@ import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsForTests
+import android.system.ErrnoException
+import android.system.OsConstants
+import java.io.IOException
 import java.io.DataInputStream
 import java.io.InputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.Base64
@@ -15,6 +20,7 @@ import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -27,6 +33,40 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], manifest = Config.NONE)
 class NetworkProxyProfileTest {
+  @Test fun socketFailuresPreferBoundedPlatformErrnoWithoutExportingFunctionNames() {
+    val client = NetworkProxyRuntime.configureManagedClient(okhttp3.OkHttpClient.Builder()).build()
+    val call = client.newCall(okhttp3.Request.Builder().url("https://linux.do/private-token").build())
+    val listener = client.eventListenerFactory.create(call)
+    val cases = listOf(
+      Triple(OsConstants.ECONNRESET, "ECONNRESET", "reset"),
+      Triple(OsConstants.ECONNABORTED, "ECONNABORTED", "aborted"),
+      Triple(OsConstants.EBADF, "EBADF", "closed"),
+      Triple(OsConstants.ENOTCONN, "ENOTCONN", "closed"),
+      Triple(OsConstants.ECONNREFUSED, "ECONNREFUSED", "refused"),
+      Triple(OsConstants.ENETUNREACH, "ENETUNREACH", "unreachable"),
+      Triple(OsConstants.EHOSTUNREACH, "EHOSTUNREACH", "unreachable"),
+      Triple(OsConstants.ETIMEDOUT, "ETIMEDOUT", "timeout"),
+      Triple(OsConstants.EPIPE, "EPIPE", "broken_pipe"),
+      Triple(OsConstants.EACCES, "other", "other")
+    )
+    for ((errno, expectedErrno, expectedFailure) in cases) {
+      val error = java.net.SocketException("Connection refused PRIVATE_WRAPPER").apply {
+        initCause(ErrnoException("PRIVATE_HOST_AND_TOKEN", errno))
+      }
+      listener.connectFailed(call, InetSocketAddress.createUnresolved("private.example", 443), Proxy.NO_PROXY, null, error)
+      val fields = DiagnosticJournal.safeNetworkFields(NetworkProxyRuntime.readNetworkDiagnosticEvents().last().fields)
+      assertEquals(expectedErrno, fields["socketErrno"])
+      assertEquals(expectedFailure, fields["socketFailure"])
+      assertFalse(fields.toString().contains("PRIVATE"))
+      assertFalse(fields.toString().contains("private.example"))
+    }
+    var deep: Throwable = ErrnoException("PRIVATE_DEEP", OsConstants.ECONNRESET)
+    repeat(8) { deep = IOException("PRIVATE_WRAPPER", deep) }
+    listener.callFailed(call, deep as IOException)
+    val fields = DiagnosticJournal.safeNetworkFields(NetworkProxyRuntime.readNetworkDiagnosticEvents().last().fields)
+    assertEquals("other", fields["socketFailure"])
+    assertNull(fields["socketErrno"])
+  }
   private lateinit var module: NetworkProxyModule
   private val passwords = listOf(" ", null, "", " padded ", "\u2003")
 

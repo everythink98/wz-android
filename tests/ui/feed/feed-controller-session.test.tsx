@@ -121,6 +121,94 @@ function readerDataWithEnabledSources(enabledSources: readonly Source[]) {
 }
 
 describe('Feed controller sessions', () => {
+  it('shows first source posts before the aggregate settles without enabling premature pagination or replacing a refresh', async () => {
+    const enabledSources: Source[] = ['linuxdo', 'v2ex'];
+    const readerData = readerDataWithEnabledSources(enabledSources);
+    const pending: ((response: Response) => void)[] = [];
+    let version = 1;
+    const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('linux.do'))
+        return new Promise<Response>((resolve, reject) => {
+          pending.push(resolve);
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+            once: true
+          });
+        });
+      return new Response(
+        `<div class="cell item"><a class="topic-link" href="/t/${version}#reply0">Ready ${version}</a><a class="node" href="/go/create">create</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>`
+      );
+    });
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => enabledSources,
+      linuxDoUserAgent: () => 'saved',
+      nodeSeekUserAgent: () => 'saved',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        sourceEnabled: enabledSources.includes(source),
+        authenticated: false,
+        authSurfaceOpen: false,
+        identityKey: `${source}:anonymous`,
+        identityTrust: 'none',
+        sessionEpoch: 0
+      })
+    });
+    const notify = jest.fn();
+    const hook = await renderHook(() =>
+      useFeedController({
+        active: true,
+        enabledSources,
+        enabledSourcesKey: canonicalEnabledSourcesKey(readerData.settings.contentSources),
+        catalogCategories: [],
+        linuxDoVerificationActive: false,
+        notify,
+        readerData,
+        readerDataLoaded: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway: gateway
+      })
+    );
+    const linuxResponse = () =>
+      Response.json({
+        topic_list: {
+          topics: [
+            { id: 71, title: 'Slow connection', slug: 'slow', created_at: '2026-05-20T00:00:00Z', posts_count: 1 }
+          ]
+        }
+      });
+    try {
+      await waitFor(() => expect(hook.result.current.shownFeedItems.map(topicKey)).toEqual(['v2ex:1']));
+      expect(hook.result.current.feedBusy).toBe(false);
+      expect(hook.result.current.activeFeedState.hasMore).toBe(false);
+      expect(hook.result.current.feedOutcomeKind).toBeUndefined();
+      await act(async () => pending.shift()!(linuxResponse()));
+      await waitFor(() => expect(hook.result.current.feedOutcomeKind).toBe('data'));
+      expect(hook.result.current.shownFeedItems.map(topicKey)).toEqual(['v2ex:1', 'linuxdo:71']);
+      version = 2;
+      let refresh: Promise<unknown> | undefined;
+      await act(async () => {
+        refresh = hook.result.current.refreshFeed();
+      });
+      await waitFor(() => expect(pending).toHaveLength(1));
+      expect(hook.result.current.shownFeedItems.map(topicKey)).toEqual(['v2ex:1', 'linuxdo:71']);
+      await act(async () => {
+        pending.shift()!(linuxResponse());
+        await refresh;
+      });
+      await waitFor(() =>
+        expect(hook.result.current.shownFeedItems.map(topicKey)).toEqual(
+          expect.arrayContaining(['v2ex:2', 'linuxdo:71'])
+        )
+      );
+      expect(notify.mock.calls.map(([message]) => message)).toEqual(['正在更新列表', '列表已更新']);
+    } finally {
+      await hook.unmount();
+    }
+  });
+
   afterEach(async () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));

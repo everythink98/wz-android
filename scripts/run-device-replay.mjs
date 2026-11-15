@@ -11,6 +11,7 @@ import {
   runAgentDevice,
   selectedDeviceName
 } from './agent-device-runtime.mjs';
+import { isSensitiveReplay, runSensitiveReplay } from './sensitive-replay.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(scriptPath), '..');
@@ -329,33 +330,54 @@ export async function runDeviceReplay({
     /** @type {{kind:'none'} | {kind:'failed', error:unknown}} */
     let cleanupOutcome = { kind: 'none' };
     try {
-      runAgentDevice(
-        [
-          'test',
+      if (isSensitiveReplay(replayFile)) {
+        const result = runSensitiveReplay({
           replayFile,
-          '--session',
           replaySession,
-          ...deviceSelectionArgs(device.name),
-          '--retries',
-          '0',
-          '--fail-fast',
-          '--record-video',
-          '--artifacts-dir',
-          replayArtifactsDir,
-          '--reporter',
-          'default',
-          '--reporter',
-          `junit:${junitPath}`
-        ],
-        { cwd: rootDir }
-      );
+          deviceName: device.name,
+          appPackage,
+          artifactsDir: replayArtifactsDir,
+          junitPath,
+          runAgentDevice,
+          cwd: rootDir
+        });
+        if (result.error) replayOutcome = { kind: 'failed', error: result.error };
+        if (result.cleanupError) cleanupOutcome = { kind: 'failed', error: result.cleanupError };
+      } else {
+        runAgentDevice(
+          [
+            'test',
+            replayFile,
+            '--session',
+            replaySession,
+            ...deviceSelectionArgs(device.name),
+            '--retries',
+            '0',
+            '--fail-fast',
+            '--record-video',
+            '--artifacts-dir',
+            replayArtifactsDir,
+            '--reporter',
+            'default',
+            '--reporter',
+            `junit:${junitPath}`
+          ],
+          { cwd: rootDir }
+        );
+      }
     } catch (error) {
       replayOutcome = { kind: 'failed', error };
     }
     try {
       recoverOwnedReplayRecording(device, replaySession);
     } catch (error) {
-      cleanupOutcome = { kind: 'failed', error };
+      cleanupOutcome = {
+        kind: 'failed',
+        error:
+          cleanupOutcome.kind === 'failed'
+            ? new AggregateError([cleanupOutcome.error, error], 'Replay cleanup failed')
+            : error
+      };
     }
     if (cleanupOutcome.kind === 'failed') {
       const cause =

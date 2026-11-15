@@ -76,7 +76,7 @@ export function alphaColor(hex: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-export type StatusBadgeTone = 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning';
+type StatusBadgeTone = 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning';
 
 type ChipTone = { light: { background: string; ink: string }; dark: { background: string; ink: string } };
 

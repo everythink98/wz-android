@@ -20,11 +20,13 @@ export async function readWithinAggregateSourceBudget<T>(
   {
     prepare,
     preparation,
-    trace
+    trace,
+    timeoutMs = AGGREGATE_SOURCE_BUDGET_MS
   }: {
     prepare?: (signal: AbortSignal) => Promise<unknown>;
     preparation?: ReadPreparation;
     trace?: DiagnosticTrace;
+    timeoutMs?: number;
   } = {}
 ) {
   if (parentSignal?.aborted) {
@@ -63,7 +65,7 @@ export async function readWithinAggregateSourceBudget<T>(
     }
   }
   if (parentSignal?.aborted) throw new RequestCanceledError();
-  if (trace) markDiagnosticStage(trace, 'transport', { source, state: 'start', timeoutMs: AGGREGATE_SOURCE_BUDGET_MS });
+  if (trace) markDiagnosticStage(trace, 'transport', { source, state: 'start', timeoutMs });
   return withAbortableTimeout(
     (signal) => {
       if (signal.aborted) throw new RequestCanceledError();
@@ -71,10 +73,13 @@ export async function readWithinAggregateSourceBudget<T>(
     },
     {
       signal: parentSignal,
-      timeoutMs: AGGREGATE_SOURCE_BUDGET_MS,
+      timeoutMs,
       canceledError: () => new Error(REQUEST_CANCELED_MESSAGE),
       timeoutError: () =>
-        Object.assign(new Error(`${source} 聚合读取超过 5 秒`), { source, reason: 'aggregate_timeout' })
+        Object.assign(new Error(`${source} 聚合读取超过 ${timeoutMs / 1_000} 秒`), {
+          source,
+          reason: 'aggregate_timeout'
+        })
     }
   );
 }

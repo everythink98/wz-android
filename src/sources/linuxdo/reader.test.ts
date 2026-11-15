@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { sanitizeLinuxDoContentHtml } from './parser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
-import type { Fetcher } from '@/platform/network/request';
+import { RequestTimeoutError, type Fetcher } from '@/platform/network/request';
+import { createLinuxDoWebViewFallbackFetcher } from './browserFallback';
 import {
   categoryMapForTopics,
   getLinuxDoCategories,
@@ -475,6 +476,80 @@ describe('linux.do reader', () => {
 
 describe('linux.do catalog ownership', () => {
   const catalog = (name: string) => ({ categories: [{ id: 5, name, slug: 'catalog' }] });
+
+  it.each(['direct', 'fallback'] as const)(
+    'bounds shared category enrichment to five seconds across %s transport while another reader remains active',
+    async (transport) => {
+      vi.useFakeTimers();
+      const siteResponse = Promise.withResolvers<Response>();
+      const browserResponse = Promise.withResolvers<Response>();
+      const transportAborts = vi.fn();
+      const waitForResponse = (response: Promise<Response>, signal?: AbortSignal | null) =>
+        new Promise<Response>((resolve, reject) => {
+          response.then(resolve, reject);
+          signal?.addEventListener(
+            'abort',
+            () => {
+              transportAborts();
+              reject(new DOMException('aborted', 'AbortError'));
+            },
+            { once: true }
+          );
+        });
+      const native = vi.fn<Fetcher>((input, init) =>
+        new URL(input).pathname === '/site.json'
+          ? waitForResponse(siteResponse.promise, init?.signal)
+          : Promise.resolve(jsonResponse({ topic_list: { topics: [{ ...topic(1), category_id: 5 }] } }))
+      );
+      const browser = vi.fn<Fetcher>((_input, init) => waitForResponse(browserResponse.promise, init?.signal));
+      const fetcher = createLinuxDoWebViewFallbackFetcher({ defaultFetcher: native, webViewFetcher: browser });
+      const first = new AbortController();
+      const options = { fetcher, linuxDoAccess: { categoryCacheScope: `shared-budget:${transport}` } };
+      const categories = getLinuxDoCategories({ ...options, signal: first.signal });
+      const canceledCategory = expect(categories).rejects.toThrow('请求已取消');
+      const survivingCategories = getLinuxDoCategories(options);
+      const timedOutCategory = expect(survivingCategories).rejects.toBeInstanceOf(RequestTimeoutError);
+      let feedResult: Awaited<ReturnType<typeof getLinuxDoFeed>> | undefined;
+      const feed = getLinuxDoFeed({ ...options, limit: 1 }).then((result) => {
+        feedResult = result;
+        return result;
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(native.mock.calls.filter(([input]) => new URL(input).pathname === '/site.json')).toHaveLength(1);
+        first.abort();
+        await canceledCategory;
+        expect(transportAborts).not.toHaveBeenCalled();
+        expect(feedResult).toBeUndefined();
+
+        await vi.advanceTimersByTimeAsync(4_000);
+        if (transport === 'fallback') {
+          siteResponse.resolve(
+            new Response('<html>Checking your browser</html>', {
+              status: 403,
+              headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' }
+            })
+          );
+          await vi.advanceTimersByTimeAsync(0);
+          expect(browser).toHaveBeenCalledTimes(1);
+        }
+        await vi.advanceTimersByTimeAsync(999);
+        expect(transportAborts).not.toHaveBeenCalled();
+        expect(feedResult).toBeUndefined();
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(transportAborts).toHaveBeenCalledTimes(1);
+        await timedOutCategory;
+        await expect(feed).resolves.toMatchObject({ items: [{ id: '1', title: 'Topic 1' }], errors: {} });
+        expect(browser).toHaveBeenCalledTimes(transport === 'fallback' ? 1 : 0);
+      } finally {
+        siteResponse.resolve(jsonResponse(catalog('cleanup')));
+        browserResponse.resolve(jsonResponse(catalog('cleanup')));
+        await Promise.allSettled([categories, survivingCategories, timedOutCategory, feed]);
+        vi.useRealTimers();
+      }
+    }
+  );
 
   it.each([null, false])('does not retain a falsy catalog document (%s) as a successful cache entry', async (data) => {
     const fetcher = vi

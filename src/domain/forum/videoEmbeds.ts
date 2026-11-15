@@ -1,6 +1,6 @@
 import { sourceCatalog } from './sourceCatalog';
 
-export type NsVideoEmbed =
+type NsVideoEmbed =
   | { type: 'bilibili'; sourceUrl: string; embedUrl: string }
   | { type: 'iframeLink'; sourceUrl: string; displayDomain: string };
 

@@ -1,7 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 import { assertBackupJsonSize } from '@/domain/reader/readerBackup';
 
-export type BackupSaveResult = { status: 'saved'; byteCount: number } | { status: 'canceled' };
+type BackupSaveResult = { status: 'saved'; byteCount: number } | { status: 'canceled' };
 
 export async function saveBackupDocument(fileName: string, json: string): Promise<BackupSaveResult> {
   assertBackupJsonSize(json);

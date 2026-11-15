@@ -1,12 +1,12 @@
 import { NODESEEK_URL } from './sourceUrls';
 
-export type NodeSeekStickerExpression = {
+type NodeSeekStickerExpression = {
   code: string;
   label: string;
   imageUrl: string;
 };
 
-export type NodeSeekStickerCategory = {
+type NodeSeekStickerCategory = {
   label: string;
   items: NodeSeekStickerExpression[];
 };

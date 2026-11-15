@@ -108,7 +108,7 @@ function normalizeNodeSeekUserReply(
   };
 }
 
-export function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = false }: { allowUidText?: boolean } = {}) {
+function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = false }: { allowUidText?: boolean } = {}) {
   const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
   if (embeddedUser) {
     return embeddedUser;
@@ -147,7 +147,7 @@ export function parseNodeSeekCurrentUserRoot(
   };
 }
 
-export function isNodeSeekLoggedOutHtml(html: string) {
+function isNodeSeekLoggedOutHtml(html: string) {
   return isNodeSeekLoggedOutRoot(parseHtml(html));
 }
 

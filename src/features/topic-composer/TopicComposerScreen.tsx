@@ -257,7 +257,6 @@ function createStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
       borderColor: theme.line
     },
     attachmentDescription: { paddingLeft: 68, gap: 4 },
-    descriptionInput: { minHeight: 48, paddingVertical: 8, paddingHorizontal: 0 },
     emptyMedia: { paddingVertical: 20, alignItems: 'center', gap: 6 },
     option: {
       minHeight: 48,

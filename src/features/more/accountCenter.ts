@@ -9,9 +9,9 @@ import {
 import type { UserIdentity } from '@/domain/forum/models';
 
 export type { CredentialSummaries } from '@/platform/storage/credentialVault';
-export type AccountPrimaryAction = 'open-user' | 'open-login' | 'open-login-with-fill' | 'none';
+type AccountPrimaryAction = 'open-user' | 'open-login' | 'open-login-with-fill' | 'none';
 
-export type SiteAccountCredentialView = {
+type SiteAccountCredentialView = {
   state: 'missing' | 'invalidated' | 'saved';
   hasCredential: boolean;
   protection: CredentialProtection | null;

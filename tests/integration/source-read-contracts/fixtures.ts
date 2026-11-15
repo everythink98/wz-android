@@ -4,7 +4,7 @@ import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGat
 import { createReadGateway as createProductionReadGateway } from '@/sources/readGateway';
 import type { Fetcher } from '@/platform/network/request';
 
-export function publicSessionSnapshot(source: SessionSource): SessionRuntimeSnapshot {
+function publicSessionSnapshot(source: SessionSource): SessionRuntimeSnapshot {
   return {
     source,
     authenticated: false,

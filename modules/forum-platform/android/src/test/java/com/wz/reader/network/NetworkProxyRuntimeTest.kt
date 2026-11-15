@@ -2389,6 +2389,55 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun networkDiagnosticsReadFinalRequestTimeoutsAndBoundSocketFailureDetails() {
+    val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder())
+      .connectTimeout(321, TimeUnit.MILLISECONDS)
+      .readTimeout(654, TimeUnit.MILLISECONDS)
+      .writeTimeout(987, TimeUnit.MILLISECONDS)
+      .callTimeout(1234, TimeUnit.MILLISECONDS)
+      .addInterceptor { chain -> responseFor(chain.request()) }
+      .build()
+    val request = Request.Builder().url("https://linux.do/private-host-token")
+      .tag(RequestDiagnosticTag::class.java, RequestDiagnosticTag("session-socket-test", "trace-987", "request-987"))
+      .build()
+    client.newCall(request).execute().close()
+    val events = NetworkProxyRuntime.readNetworkDiagnosticEvents().filter { it.fields["requestId"] == "request-987" }
+    assertEquals(1234L, events.single { it.fields["phase"] == "call-start" }.fields["callTimeoutMs"])
+    val config = events.single { it.fields["phase"] == "request-config" }.fields
+    assertEquals(321, config["connectTimeoutMs"])
+    assertEquals(654, config["readTimeoutMs"])
+    assertEquals(987, config["writeTimeoutMs"])
+    assertEquals(1234L, config["callTimeoutMs"])
+
+    val call = client.newCall(request)
+    val listener = client.eventListenerFactory.create(call)
+    val cases = listOf(
+      "Connection reset by peer" to "reset", "Software caused connection abort" to "aborted",
+      "Socket closed" to "closed", "Connection refused" to "refused",
+      "Network is unreachable" to "unreachable", "No route to host" to "unreachable",
+      "Connection timed out" to "timeout", "Broken pipe" to "broken_pipe", "PRIVATE_UNKNOWN" to "other"
+    )
+    for ((message, expected) in cases) {
+      val error = IOException("PRIVATE_WRAPPER").apply { initCause(SocketException(message)) }
+      listener.connectFailed(call, InetSocketAddress.createUnresolved("private.example", 443), Proxy.NO_PROXY, null, error)
+      listener.callFailed(call, error)
+      val emitted = NetworkProxyRuntime.readNetworkDiagnosticEvents().takeLast(2).map { DiagnosticJournal.safeNetworkFields(it.fields) }
+      assertEquals(listOf(expected, expected), emitted.map { it["socketFailure"] })
+      assertTrue(emitted.all { it["socketErrno"] == null && it["outcome"] != "canceled" })
+      assertFalse(emitted.toString().contains("PRIVATE"))
+      assertFalse(emitted.toString().contains("private.example"))
+    }
+    listener.requestFailed(call, SocketTimeoutException("PRIVATE_TIMEOUT"))
+    listener.responseFailed(call, SocketTimeoutException("PRIVATE_TIMEOUT"))
+    assertEquals(listOf("timeout", "timeout"), NetworkProxyRuntime.readNetworkDiagnosticEvents().takeLast(2)
+      .map { DiagnosticJournal.safeNetworkFields(it.fields)["socketFailure"] })
+    val cyclic = SocketException("PRIVATE_CYCLE")
+    cyclic.initCause(IOException("PRIVATE_CYCLE").apply { initCause(cyclic) })
+    listener.callFailed(call, cyclic)
+    assertEquals("other", NetworkProxyRuntime.readNetworkDiagnosticEvents().last().fields["socketFailure"])
+  }
+
+  @Test
   fun reactNativeCannotReplaceOrRemoveTheReadOnlyCookieJar() {
     val url = "https://www.nodeseek.com/private".toHttpUrl()
     val container = ReadOnlyCookieJarContainer(
@@ -2643,6 +2692,202 @@ class NetworkProxyRuntimeTest {
     assertThrows(IllegalStateException::class.java) { registry.requireCurrent(1) }
     assertEquals(0L, registry.generation())
     assertNull(registry.release(1) { throw AssertionError("released owner must not run callbacks again") })
+  }
+
+  @Test
+  fun repeatedDirectProxyApplicationKeepsAnInFlightForegroundRead() {
+    assertProxyApplicationDuringInFlightRead(useProxy = false)
+  }
+
+  @Test
+  fun repeatedProfileProxyApplicationKeepsItsRelayAndInFlightForegroundRead() {
+    assertProxyApplicationDuringInFlightRead(useProxy = true)
+  }
+
+  @Test
+  fun aNewProxyOwnerKeepsTheConfirmedRelayAndReadableForegroundBody() {
+    assertProxyApplicationDuringInFlightRead(useProxy = true, adoptOwner = true)
+  }
+
+  @Test
+  fun changingProxyCredentialsStillCancelsAnInFlightForegroundRead() {
+    assertProxyApplicationDuringInFlightRead(useProxy = true, changeProfile = true)
+  }
+
+  private fun assertProxyApplicationDuringInFlightRead(
+    useProxy: Boolean,
+    adoptOwner: Boolean = false,
+    changeProfile: Boolean = false
+  ) {
+    ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { upstream ->
+      val requestArrived = CountDownLatch(1)
+      val releaseResponse = CountDownLatch(1)
+      val executor = Executors.newFixedThreadPool(2)
+      val registry = OwnedProxyServerRegistry()
+      val operations = SerializedWebViewProxyOperations()
+      val relays = mutableListOf<LocalNetworkProxyServer>()
+      val webViewWrites = AtomicInteger()
+      val profile = if (useProxy) NetworkProxyProfile("http", "127.0.0.1", upstream.localPort, null, null) else null
+      registry.register(1)
+      fun apply(owner: Long, requested: NetworkProxyProfile?): Int? = operations.run {
+        registry.apply(owner, requested) {
+          registry.begin(owner) { NetworkProxyRuntime.blockNetworkRequests() }?.stop()
+          val relay = requested?.let { LocalNetworkProxyServer(it).also { server -> relays.add(server); server.start() } }
+          webViewWrites.incrementAndGet()
+          check(registry.commit(owner, relay) { NetworkProxyRuntime.setLocalProxyPort(relay?.port) })
+          check(registry.confirmWebView(owner, requested, registry.generation()))
+          relay?.port
+        }
+      }
+      var call: Call? = null
+      try {
+        executor.submit {
+          upstream.accept().use { socket ->
+            socket.soTimeout = 5000
+            val input = socket.getInputStream().bufferedReader()
+            check(input.readLine().startsWith("GET "))
+            while (!input.readLine().isNullOrEmpty()) { }
+            requestArrived.countDown()
+            check(releaseResponse.await(5, TimeUnit.SECONDS))
+            socket.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nready".toByteArray())
+            socket.getOutputStream().flush()
+          }
+        }
+        val originalPort = apply(1, profile)
+        val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
+        val url = if (useProxy) "http://feed.fixture.invalid/held" else "http://127.0.0.1:${upstream.localPort}/held"
+        val foregroundRead = client.newCall(Request.Builder().url(url).build())
+        call = foregroundRead
+        val response = executor.submit<String> {
+          foregroundRead.execute().use { requireNotNull(it.body).string() }
+        }
+        assertTrue("the real foreground request must be in flight before background restore", requestArrived.await(5, TimeUnit.SECONDS))
+
+        val repeatOwner = if (adoptOwner) 2L else 1L
+        if (adoptOwner) registry.register(repeatOwner)
+        val requested = if (changeProfile) requireNotNull(profile).copy(username = "next-user", password = "next-password") else profile?.copy()
+        val repeatedPort = apply(repeatOwner, requested)
+        if (adoptOwner) {
+          assertNull(registry.release(1) { throw AssertionError("the old owner must not invalidate the adopted runtime") })
+          assertThrows(IllegalStateException::class.java) { apply(1, profile) }
+        }
+
+        if (changeProfile) {
+          assertTrue("a genuine credential change must isolate the old foreground read", foregroundRead.isCanceled())
+          assertNotEquals(originalPort, repeatedPort)
+          assertEquals(2, webViewWrites.get())
+          releaseResponse.countDown()
+          assertTrue(assertThrows(java.util.concurrent.ExecutionException::class.java) {
+            response.get(5, TimeUnit.SECONDS)
+          }.cause is IOException)
+        } else {
+          assertFalse("restoring the same effective proxy must not cancel an in-flight foreground read", foregroundRead.isCanceled())
+          assertEquals("the existing local relay must be retained", originalPort, repeatedPort)
+          assertEquals("confirmed WebView proxy state must not be written again", 1, webViewWrites.get())
+          assertEquals(if (useProxy) 1 else 0, relays.size)
+          releaseResponse.countDown()
+          assertEquals("ready", response.get(5, TimeUnit.SECONDS))
+        }
+      } finally {
+        releaseResponse.countDown()
+        call?.cancel()
+        registry.release(2) { NetworkProxyRuntime.setLocalProxyPort(null) }?.stop()
+        registry.release(1) { NetworkProxyRuntime.setLocalProxyPort(null) }?.stop()
+        relays.forEach { it.stop() }
+        upstream.close()
+        executor.shutdownNow()
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+      }
+    }
+  }
+
+  @Test
+  fun firstDirectProxyApplicationRequiresWebViewConfirmation() {
+    val registry = OwnedProxyServerRegistry()
+    registry.register(1)
+    val clears = AtomicInteger()
+    fun apply() = registry.apply(1, null) {
+      registry.begin(1) {}
+      check(registry.commit(1, null) {})
+      val generation = registry.generation()
+      clears.incrementAndGet()
+      check(registry.confirmWebView(1, null, generation))
+      null
+    }
+    assertNull(apply())
+    assertEquals("even an initially direct runtime must confirm global WebView state", 1, clears.get())
+    assertNull(apply())
+    assertEquals(1, clears.get())
+    registry.release(1) {}
+    assertNull(apply())
+    assertEquals("released state must not act as a confirmed direct configuration", 2, clears.get())
+  }
+
+  @Test
+  fun proxyReuseComparesEveryEffectiveProfileField() {
+    val original = NetworkProxyProfile("http", "127.0.0.1", 23456, "user", "password")
+    val changed = listOf(
+      original.copy(protocol = "socks5"), original.copy(host = "localhost"),
+      original.copy(port = 23457), original.copy(username = "other"),
+      original.copy(password = "other"), original.copy(password = null), original.copy(username = null)
+    )
+    for (candidate in listOf(original.copy()) + changed) {
+      val registry = OwnedProxyServerRegistry()
+      val relay = LocalNetworkProxyServer(original)
+      try {
+        registry.register(1)
+        registry.begin(1) {}
+        assertTrue(registry.commit(1, relay) {})
+        assertTrue(registry.confirmWebView(1, original, registry.generation()))
+        val transitions = AtomicInteger()
+        registry.apply(1, candidate) { transitions.incrementAndGet(); null }
+        assertEquals(if (candidate == original) 0 else 1, transitions.get())
+      } finally {
+        registry.release(1) {}?.stop()
+        relay.stop()
+      }
+    }
+  }
+
+  @Test
+  fun lateWebViewCompletionInvalidatesProxyReuseAndOlderConfirmation() {
+    val registry = OwnedProxyServerRegistry()
+    registry.register(1)
+    fun expiredOperation(): () -> Unit {
+      val callback = AtomicReference<(() -> Unit)?>()
+      assertThrows(IllegalStateException::class.java) {
+        awaitWebViewProxyOperation(
+          "WebView fixture timeout",
+          timeoutMs = 1,
+          onTimeoutOrLateCompletion = registry::markWebViewUnconfirmed
+        ) { complete -> callback.set(complete) }
+      }
+      return requireNotNull(callback.get())
+    }
+    val lateDuringSynchronization = expiredOperation()
+    val lateAfterConfirmation = expiredOperation()
+    registry.begin(1) {}
+    assertTrue(registry.commit(1, null) {})
+    val generation = registry.generation()
+    awaitWebViewProxyOperation("current WebView synchronization") { complete ->
+      lateDuringSynchronization()
+      complete()
+    }
+
+    assertFalse("a completion from before the late global mutation cannot confirm it", registry.confirmWebView(1, null, generation))
+    val writes = AtomicInteger()
+    fun apply() = registry.apply(1, null) {
+      writes.incrementAndGet(); registry.begin(1) {}
+      check(registry.commit(1, null) {})
+      val expected = registry.generation()
+      awaitWebViewProxyOperation("retry WebView synchronization") { complete -> complete() }
+      check(registry.confirmWebView(1, null, expected)); null
+    }
+    apply()
+    assertEquals("uncertain WebView state must be reconciled instead of reused", 1, writes.get())
+    lateAfterConfirmation()
+    apply()
+    assertEquals("a completion after confirmation must also invalidate the reusable state", 2, writes.get())
   }
 
   @Test

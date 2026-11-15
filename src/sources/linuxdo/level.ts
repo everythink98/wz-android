@@ -19,7 +19,7 @@ import { LINUXDO_BASE_URL } from './protocol';
 const CONNECT_URL = 'https://connect.linux.do/';
 const SNAPSHOT_KEY_PREFIX = 'linuxdo-level-snapshot:';
 
-export type LinuxDoLevelRequirement = DiscourseLevelRequirement;
+type LinuxDoLevelRequirement = DiscourseLevelRequirement;
 export type LinuxDoLevelProfile = DiscourseLevelProfile;
 type LinuxDoSummaryInput = DiscourseSummaryInput;
 export const buildLinuxDoLevelProfileFromSummary = buildDiscourseLevelProfileFromSummary;

@@ -11,7 +11,7 @@ import {
 import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '@/domain/forum/quotedPosts';
 import { stableTextHash } from './contentIdentity';
 
-export type ReplyQuoteContent = Exclude<CompiledForumContentRow, { type: 'quote' }>;
+type ReplyQuoteContent = Exclude<CompiledForumContentRow, { type: 'quote' }>;
 export type ReplyRenderableContent = Exclude<ReplyQuoteContent, { type: 'poll' }>;
 
 export type TopicReplyListItem =

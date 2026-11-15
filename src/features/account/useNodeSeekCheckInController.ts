@@ -24,6 +24,7 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type AttendanceVariables = {
   random: boolean;
@@ -142,8 +143,7 @@ export function useNodeSeekCheckInController({
   onSessionExpired: (source: 'nodeseek', requestSessionEpoch: number) => void;
   readAttendance: (ticket: WritableSessionTicket) => Promise<NodeSeekAttendanceBoard>;
 }) {
-  const sessionTicketRef = useRef(currentSessionTicket);
-  sessionTicketRef.current = currentSessionTicket;
+  const sessionTicketRef = useCommittedRef(currentSessionTicket);
   const mountedRef = useRef(true);
   const operationRef = useRef<{ phase: 'idle' } | AttendanceOperation>({ phase: 'idle' });
   const [busyOperation, setBusyOperation] = useState<AttendanceOperation | null>(null);
@@ -337,8 +337,7 @@ export function useNodeSeekCheckInController({
   });
 
   const isCurrentOperation = useCallback(
-    (operation: AttendanceOperation) => {
-      const currentTicket = sessionTicketRef.current;
+    (operation: AttendanceOperation, currentTicket = sessionTicketRef.current) => {
       return operation.ticket
         ? Boolean(
             currentTicket &&
@@ -463,6 +462,6 @@ export function useNodeSeekCheckInController({
     isWritableSessionTicketCurrent(scopedState.ticket)
       ? scopedState.state
       : IDLE;
-  const busy = busyOperation ? isCurrentOperation(busyOperation) : false;
+  const busy = busyOperation ? isCurrentOperation(busyOperation, currentSessionTicket) : false;
   return { busy, checkIn, state, refresh, observeBoard };
 }

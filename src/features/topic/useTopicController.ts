@@ -1677,7 +1677,7 @@ export function useTopicController({
   const currentTopicKey = topicKey(currentTopic);
   const topicError =
     !topicDetail && detailQuery.error ? sourceErrorFromUnknown(selectedTopic.source, detailQuery.error) : null;
-  const topicFavorite = Boolean(readerData.favorites[topicKey(currentTopic)]);
+  const topicFavorite = Boolean(readerData.favorites[currentTopicKey]);
   const unreadReplyCount =
     !ordinaryLinuxDoTopic && typeof topicDetail?.replyCount === 'number'
       ? Math.max(

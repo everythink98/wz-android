@@ -245,6 +245,7 @@ function LinuxDoLevelScenario() {
   const sessions = createLoggedInSessions();
   return (
     <LinuxDoLevelPanel
+      active
       busy={false}
       error=""
       profile={createLinuxDoLevelProfile()}

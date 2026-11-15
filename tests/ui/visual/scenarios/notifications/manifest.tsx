@@ -1,5 +1,5 @@
 import { projectTestAccountSessions } from '../../../../helpers/accountSessions';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useMemo, useState } from 'react';
 
 import type { ForumNotification, NotificationDetail } from '@/domain/notifications/models';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
@@ -17,13 +17,6 @@ type NotificationSettingsState = 'default' | 'denied';
 
 const FIXED_TIME = '2026-08-29T08:00:00.000Z';
 const noop = () => undefined;
-
-function createSafeAreaMetrics() {
-  return {
-    frame: { height: 844, width: 390, x: 0, y: 0 },
-    insets: { bottom: 24, left: 0, right: 0, top: 24 }
-  };
-}
 
 function notification(
   source: ForumNotification['source'],
@@ -95,11 +88,14 @@ function detail(state: Exclude<NotificationDetailState, 'error' | 'loading'>): N
   if (state === 'conversation') {
     return {
       contentText: '会话开始前的原消息。',
-      historyNotice: '原站仅提供最近的会话记录。',
-      messages: [
-        { author: '示例用户甲', contentText: '第一条收到的消息。', createdAt: FIXED_TIME, id: 'message-1' },
-        { author: '我', contentText: '随后发出的回复。', createdAt: FIXED_TIME, id: 'message-2', mine: true }
-      ],
+      historyNotice: '80 条本地合成消息，草稿仅保留在本场景，不读取或发送站内消息。',
+      messages: Array.from({ length: 80 }, (_, index) => ({
+        author: index % 2 === 0 ? '示例用户甲' : '我',
+        contentText: `本地会话消息 ${index + 1}：保留上下文，检查草稿编辑与返回。`,
+        createdAt: new Date(Date.parse(FIXED_TIME) + index * 60_000).toISOString(),
+        id: `message-${index + 1}`,
+        mine: index % 2 !== 0
+      })),
       notification: item,
       reply: { format: 'markdown' },
       title: '示例私信会话'
@@ -132,28 +128,37 @@ function detail(state: Exclude<NotificationDetailState, 'error' | 'loading'>): N
 }
 
 function NotificationDetailScenario({ state }: { state: NotificationDetailState }) {
-  const loadedDetail = state === 'data' || state === 'conversation' ? detail(state) : undefined;
+  const loadedDetail = useMemo(
+    () => (state === 'data' || state === 'conversation' ? detail(state) : undefined),
+    [state]
+  );
+  const [replyContent, setReplyContent] = useState('我看过了，补充一个想法');
+  const [replyVisible, setReplyVisible] = useState(false);
   return (
-    <SafeAreaProvider initialMetrics={createSafeAreaMetrics()}>
-      <NotificationDetailScreen
-        canOpenTopic={state === 'data' || state === 'error'}
-        contentWidth={350}
-        detail={loadedDetail}
-        error={state === 'error' ? '详情暂时无法读取，仍可前往完整主题。' : undefined}
-        loading={state === 'loading'}
-        replyContent={state === 'conversation' ? '我看过了，补充一个想法' : ''}
-        actorUser={
-          state === 'conversation'
-            ? { source: 'nodeseek', id: '9', displayName: '示例用户甲', url: 'https://visual.invalid/nodeseek/space/9' }
-            : undefined
-        }
-        onOpenActor={noop}
-        onSetPolicyAcceptance={noop}
-        onOpenExternalUrl={noop}
-        onOpenTopic={noop}
-        onRetry={noop}
-      />
-    </SafeAreaProvider>
+    <NotificationDetailScreen
+      canOpenTopic={state === 'data' || state === 'error'}
+      contentWidth={350}
+      detail={loadedDetail}
+      error={state === 'error' ? '详情暂时无法读取，仍可前往完整主题。' : undefined}
+      loading={state === 'loading'}
+      replyContent={state === 'conversation' ? replyContent : ''}
+      replyVisible={state === 'conversation' && replyVisible}
+      actorUser={
+        state === 'conversation'
+          ? { source: 'nodeseek', id: '9', displayName: '示例用户甲', url: 'https://visual.invalid/nodeseek/space/9' }
+          : undefined
+      }
+      onOpenActor={noop}
+      onSetPolicyAcceptance={noop}
+      onOpenExternalUrl={noop}
+      onOpenTopic={noop}
+      onOpenReply={() => setReplyVisible(true)}
+      onReplyClose={() => setReplyVisible(false)}
+      onReplyContentChange={setReplyContent}
+      onSubmitReply={noop}
+      onUploadReplyImage={noop}
+      onRetry={noop}
+    />
   );
 }
 

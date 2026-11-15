@@ -88,11 +88,11 @@ export function sourceReadRecoveryOutcome(
   return sourceErrorFromUnknown(source, error).kind === 'verification-required' ? 'verification-required' : 'failed';
 }
 
-export function sourceErrorMessage(error?: SourceErrorInfo) {
+function sourceErrorMessage(error?: SourceErrorInfo) {
   return error?.message || '';
 }
 
-export function sourceErrorRequiresVerification(error?: SourceErrorInfo) {
+function sourceErrorRequiresVerification(error?: SourceErrorInfo) {
   return error?.kind === 'verification-required';
 }
 
@@ -111,7 +111,7 @@ export function formatSourceErrorMessages(errors: SourceErrors, sourceLabel: (so
     .join('；');
 }
 
-export function nodeSeekVerificationErrorMessage(errors: SourceErrors, fallback = 'NodeSeek 需要完成 Cloudflare 验证') {
+function nodeSeekVerificationErrorMessage(errors: SourceErrors, fallback = 'NodeSeek 需要完成 Cloudflare 验证') {
   return sourceErrorRequiresVerification(errors.nodeseek) ? sourceErrorMessage(errors.nodeseek) || fallback : '';
 }
 

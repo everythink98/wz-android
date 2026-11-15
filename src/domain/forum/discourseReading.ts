@@ -26,7 +26,7 @@ export function discourseReadingFromJson(raw: unknown): DiscourseTopicReading | 
   };
 }
 
-export interface DiscourseReadingEntry {
+interface DiscourseReadingEntry {
   server: DiscourseTopicReading;
   visited: boolean;
   anchor?: ReadingAnchor;

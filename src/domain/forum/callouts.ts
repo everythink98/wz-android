@@ -22,7 +22,7 @@ export type DiscourseCalloutType =
 
 export type DiscourseCalloutTone = 'primary' | 'success' | 'warning' | 'danger' | 'muted';
 
-export type DiscourseCalloutDefinition = {
+type DiscourseCalloutDefinition = {
   title: string;
   tone: DiscourseCalloutTone;
   type: DiscourseCalloutType;

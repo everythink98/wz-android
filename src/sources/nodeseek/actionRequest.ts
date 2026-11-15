@@ -41,7 +41,7 @@ export function nodeSeekCreatedReplyTarget(data: unknown, topicId: string) {
 
 const NODESEEK_CONTENT_TOKEN_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-export function nodeSeekInteractionRemovalMessage(type: NodeSeekInteractionType) {
+function nodeSeekInteractionRemovalMessage(type: NodeSeekInteractionType) {
   const labels: Record<NodeSeekInteractionType, string> = {
     upvote: '点赞',
     like: '鸡腿',

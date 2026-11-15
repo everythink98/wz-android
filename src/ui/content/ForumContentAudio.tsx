@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } fro
 import { Pause, Play, RotateCcw } from 'lucide-react-native';
 import { readerRadii, type ReaderTheme } from '@/ui/theme/tokens';
 
-export type ForumContentAudioStatus = 'error' | 'idle' | 'loading' | 'buffering' | 'ready';
+type ForumContentAudioStatus = 'error' | 'idle' | 'loading' | 'buffering' | 'ready';
 
 export function ForumContentAudio({
   boundarySpacing,

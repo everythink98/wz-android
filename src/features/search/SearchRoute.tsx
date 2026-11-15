@@ -85,6 +85,7 @@ export function SearchRoute() {
   );
   return (
     <SearchScreen
+      active={active}
       busy={controller.searchBusy}
       categories={runtime.catalogCategories}
       sessionEpochs={runtime.account.sessionEpochs}

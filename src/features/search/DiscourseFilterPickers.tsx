@@ -286,7 +286,7 @@ export function useDiscourseFilterPickers({
   };
 }
 
-export type DiscourseFilterPickerController = ReturnType<typeof useDiscourseFilterPickers>;
+type DiscourseFilterPickerController = ReturnType<typeof useDiscourseFilterPickers>;
 
 export function DiscourseFilterPickers({
   controller,

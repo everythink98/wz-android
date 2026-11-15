@@ -593,7 +593,8 @@ export function AccountCenterPanel({
           iconSize={18}
           icon={RefreshCw}
           label={statusBusy ? '刷新中' : '刷新账号'}
-          loading={statusBusy}
+          disabled={!active && statusBusy}
+          loading={active && statusBusy}
           onPress={() => void onCommand({ type: 'refresh' })}
         />
       ) : null}

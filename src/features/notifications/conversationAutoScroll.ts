@@ -1,4 +1,4 @@
-export type ConversationAutoScrollController = {
+type ConversationAutoScrollController = {
   contentChanged: (contentKey: string) => boolean;
   userScrolled: () => void;
   viewportChanged: (distanceFromEnd: number) => void;

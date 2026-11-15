@@ -440,3 +440,57 @@ Hermes 使用真实 `downloadHermes`／`unzipHermes` task 建立归档布局断�
 整文件删除 **0**，新增整文件 **55**；移动、重命名和 SDK 安装副本不算删除。这里的删除行是 Git 差分，不能换算成模型数量。生产净增加来自真正接管旧流程的 owner、类型和必要边界；本轮目标按“状态清晰优先”验收，不以总行数下降代替行为证明。
 
 长期黑图、妖火掉线／空回复、Search 慢帧和冷启动波动仍按各批已确认范围保留；本轮没有补齐因果的历史问题不关闭。媒体 round 20 的黑色起始截图、Native 首帧窗口、真实下载／安装返回与全部身份交错等已列 NOT_VERIFIED 边界继续生效。没有新增已确认的 App 产品事故，corpus 保持原字节；测试、构建、设备截图与原始日志仅保存 ignored。不 push、不合并、不正式发布。
+
+## 2026-11-15 审查后续实施
+
+本次以 `9a92d686` 为代码基线，按用户要求一次性完成妖火评论兼容、必要减法、审查门禁及遗漏清理整合，不 push、不合并、不执行正式发布。原有 `docs/code-cleanup-map.md` 未提交改动保留。历史范围分别为 `c3a0a45f..bcbc97b0` 的去重与依赖清理、`bcbc97b0..9a92d686` 的全部状态机治理和 `beff077f..9a92d686` 的最近模型重构；原始 unused-code-audit 工作区单独核对，不覆盖当前实现。
+
+妖火评论根因及修复证据归 `REG-TOPIC-224`；新旧集合和引用类名兼容，作者/时间优先读取头部，正文嵌套节点不进入回复集合。`TOPIC-01/03` 的新增四项断言在 seed `651201` 修前失败，修后现有来源 owner 共 97 项通过。
+
+`ACCOUNT-01/02/04` 的 preparation 删除内部事件转发，保留 marker、identity、persistence 的独立事实和 pending 守卫。`TOPIC-04` 的分享捕获删除无消费者的阶段字段，以当前 run 绑定认领、取消与结束，独立保留 preview ticket 和 Native ready；没有改变分享或保存协议。定向 Account/Share UI 215 项、preparation unit 4 项通过，seed `15112026`。
+
+治理检查新增实施记录与分类一致性、完整转换/局部简化的剩余职责、测试文件及验证章节引用检查；10 个新增负向断言修前失败，修后 13 项通过，seed `641117`。同步过期描述，原 281 项分类和 49 whole／38 partial／192 keep／2 investigate 数量保持；不把新增门禁当作全部运行时行为已验证。
+
+原 unused-code-audit 的 92 文件、125 个差异块均按当前消费者重新核对，实际迁移 89 文件、+130／−174 行；原工作区 92 文件哈希全部保持。127 个导出候选中，124 个收窄到模块内部，1 个已无消费者的类型删除，1 个认证取消函数因新增两处真实调用保留导出，1 个旧写队列已被新模型替代。旧 Session 重复守卫和 Topic 判空已被后续重构覆盖，不重新套入；无消费者样式、测试 Context、类型与重复判断按当前实现删除。符号审查覆盖 1015 文件，相关运行模块的 194 处引用均为静态命名 import；检查动态入口后再执行删除，完整类型及运行门禁继续兜底。逐文件、原始 hunk 与原工作区哈希回执仅保存在 ignored 目录。
+
+最终 `STATIC_PASS`：typecheck、完整 verify、281 项治理及收尾文档检查通过。`UNIT_PASS`：274 文件／4651 项，seed `1794686352106`；`UI_PASS`：105 suites／3300 项，seed `-1880201876`，既有 act／StrictMode 告警保留。额外定向数量不重复累计到全量数。
+
+普通 x86_64 Release 构建 5m1s，APK SHA-256 `dbf89d88d76c313d607e4a93fe455c74639675258eea79aa0eedca7f5934f860`、buildId `d4388a2b485445c5808370db1f74baed`。638 个生产路径、782 个生产/SDK/配置输入前后冻结相同；88 个变更模块中 84 个实际 SourceMap 内容逐字匹配，三份纯类型文件不在图中，linuxDoPoll 的类型导出改动经 Composer builder 和实际生成模块另行绑定。APK 的 Hermes、普通入口、非调试、签名、版本和 DEX 身份通过，未带合成音视频或指定 proof 引用；没有重跑或继承宣称 Native 专项通过。
+
+`APK_SANITY` 与有限 `LIVE_PASS`：主模拟器同签名覆盖，UID、首次安装时间与 Gboard 保持，当前 PID 的 22 条启动记录匹配新构建，崩溃和运行失败窗口未命中。妖火短长帖正倒序、跨页终态、目标与引用、筛选、查找、刷新及重进见 `REG-TOPIC-224`。四来源实际主题/回复/排序只读抽查通过；Share 的真实预览、Native 捕获、系统图片分享面板、取消后重试通过，未选择接收方或保存相册；妖火原有账号 surface 打开/关闭后仍已登录。消息列表、空搜索与历史列表可读，不打开消息详情或清理数据。
+
+未验证物理设备、真实业务写入、完整键盘/上传及 Native 回调矩阵、全部原站媒体和历史掉线原因；未把部分原站图片失败静默算成媒体全通过。192 个合理保留和两项工具缺口维持原结论，Native 事件来源及预览旧 worklet 回调的既有证据缺口继续保留。完整测试与构建自有进程已退出，保留共享 MCP、ADB 和原主模拟器；改动留在当前分支工作树，不新增提交、不 push、不合并。
+
+## 2026-11-15 冷启动与建连核对
+
+本轮继续使用上节工作树与普通包为基线，影响 `NAV-01`、`FEED-01/02/04`，共享分类、账号和后台启动门禁一并核对。用户要求启动状态可追踪、内容更快出现；目标不是把必要的生命周期状态按数量删除。以下为启动关键路径的现有 owner，完整清单仍由[状态审查记录](state-model-review.json)维护。
+
+| owner | 真实等待与状态 | 是否阻塞冷启动；本轮结论 |
+| --- | --- | --- |
+| `useReaderRuntime` / Reader command queue | `loading → ready/recovery`，先取得可信设置与本机资料；写入独立排序 | 阻塞正常路由与来源许可。保留，不能用默认设置提前放行或覆盖资料。 |
+| `useAccountStatusController` | `reading → loaded → restoring → ready`；已有快照恢复与一次性候选迁移分开 | 普通已迁移启动只读本机终态，本轮样本没有启动 Account probe。5 秒迁移预算不是所有冷启动必经的网络等待。 |
+| `useLocalIdentityRestore` | UA 读取、逐站身份恢复、legacy Cookie 迁移各自绑定当前 owner；失败可重试 | 身份恢复参与正常路由门禁；保留真实成功、失败和取消。不能把存储未返回当成已恢复。 |
+| `useAppStartupRuntime` | `awaiting-navigation → delivering-navigation → awaiting-layout ↔ check-queued → ready`；另有挂载 owner、Splash 一次交接和 idle task | 只等本机恢复后的导航与当前 route 布局，不等网络；保留以避免旧页面布局或深链交接误放行。 |
+| `useNetworkProxyRuntime` | `loading → applying → disabled/applied/failed`；apply Promise 与持久化分别拥有顺序 | 读取前等待实际代理生效，准备共享 10 秒 deadline。基线直连冷启 Native apply 仍涉及 WebView，约数百毫秒，是否能安全减少须独立对照；本轮未跳过。 |
+| 默认 WebView UA reader | `cold → reading(task) → ready(value)`，失败归回 cold；并发读取共用 Promise | 只影响确实缺 UA 的来源；准备完成后才开始 transport 预算。保留成功缓存与失败重试，不新增预热旗标。 |
+| Feed Query / `feedSnapshot` | Query 拥有请求和 cursor；快照只展示本次部分结果或此前可信内容 | 原来必须等全部来源结算才有帖子。本轮解除这一显示等待，复用现有快照，没有增加持久缓存或第二个请求状态机。 |
+| `useInitialForegroundRuntime` | `awaiting-both/awaiting-feed/awaiting-catalog/ready` | 只限制通知、更新与延后分类；首个来源展示不提前触发该终态。保留以免后台任务抢首屏资源。 |
+
+全部来源 Feed 的每站读取预算由 5 秒改为普通 HTTP 的 15 秒，仍取消超时 transport；准备的 10 秒和 Categories 的 5 秒不变。无 Query 数据的首屏先展示各来源有限份额，最终保留已显示顺序并补齐平衡选集；刷新已有列表仍整次替换，部分结果不提供 cursor。Gateway 与 controller 两层复核取消、来源许可、身份 scope 和活动入口。修复前的慢来源与提前布局断言失败，修后通过；相关事故归 `REG-FEED-046`。
+
+主 API 35 模拟器保留数据的进程冷启动，普通 Release/Hermes，旧包 3 次、新包 5 次，各次 PID 独立。以下是有限样本，覆盖安装首开包含在新包样本中，没有把 CPU 采样或录像轮次混入计时。
+
+| 指标 | 旧包 | 新包 | 解释 |
+| --- | --- | --- | --- |
+| `page-ready` 中位数 | 621 ms | 719 ms | 可见路由布局标记，非系统实际呈现；未证明本机壳层提速。 |
+| 首批帖子 `feed-content` 中位数 | 3854 ms | 2678 ms | 提前 1176 ms，约 30.5%；新包范围 2559–2708 ms。 |
+| 完整 Feed 读取中位数 | 3165 ms | 3047 ms | 从读取 intent 起算；新包范围 2942–3682 ms，不能视为建连提速或与进程起点直接相减。 |
+| 每次首屏来源错误数 | 0 | 0 | 本轮没有现场复现用户频繁 5 秒超时，慢 6 秒的正确结算由受控测试证明。 |
+
+Native 逐请求事件显示单进程共享 forum pool、IPv4/direct、TLS 1.3 与 HTTP/2，未见地址回退失败。新包 DNS 约 251–913 ms、TCP 约 476–515 ms、TLS 约 154–534 ms；各区段来自同一 call 的成对事件，不是纯 CPU。旧包暖刷新在 2–7 ms 取得复用连接，新包一次暖刷新全量 1317 ms。连接复用已经有效，当前没有证据支持更换网络库、固定 IP、持久 DNS 缓存或单独 HEAD 预热。独立 Simpleperf 5 秒、331 个样本无丢失，主要采到模拟器时钟和绘制工作；不足以把建连等待归因为 TLS CPU。事件语义参考 [OkHttp 官方连接说明](https://github.com/lysine-dev/okhttp/blob/parent-4.12.0/docs/connections.md)。
+
+`STATIC_PASS`：typecheck、完整 verify、收尾文档与差分检查。`UNIT_PASS`：274 文件／4655 项，seed `1794689751495`；`UI_PASS`：105 suites／3302 项，seed `-883213479`。随后补强快来源多帖的份额断言，31 项来源测试再次通过，seed `151150`，未改生产构建输入。Gateway 取消、停用与身份变化隔离，Controller 首屏/刷新，以及实际布局后才启动后台均有相应行为断言。
+
+普通 APK SHA-256 `f2e70288f895cf84291c989d6bff7d917662a58459a88b1ad49dd0d260b6a9f1`、buildId `3c8996c609214c44b56b313b307b71b2`，638 个生产路径及 782 个构建输入冻结匹配；93 个变更模块中 89 个 SourceMap 内容逐字匹配，其余四个纯类型/仅类型消费路径另归构建清单。`APK_SANITY` 通过，同签名覆盖安装，UID、首次安装时间、Gboard、三站已登录状态保持。有限 `LIVE_PASS`：五次冷启均有真实首批与完整 Feed 终态，额外录像可见先显示的帖子在全量返回后保持位置；实际下拉刷新、L 站切换和返回全部成功。部分结果 footer 与取消竞态由 UI/Unit 证明，不冒充完整设备注入回放；本轮没有新增 `DEVICE_REPLAY_PASS`。
+
+`REG-NAV-010` 仍保持 OPEN：未证明所有冷启动波动消失，未覆盖物理设备、首次候选迁移、自然 CF、代理与多网络条件。后续 Android 专项与工具选择见[性能实施计划](performance/android-optimization-plan.md)。本轮不提交、不推送、不合并。

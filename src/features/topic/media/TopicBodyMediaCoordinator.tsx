@@ -31,7 +31,7 @@ type TopicBodyMediaEntryState =
   | { phase: 'displayed' }
   | { phase: 'failed'; failure: Exclude<TopicBodyMediaFailure, null> };
 
-export type TopicBodyMediaDiagnosticSession = Readonly<{
+type TopicBodyMediaDiagnosticSession = Readonly<{
   networkMediaCount: number;
   plannedRowCount: number;
   responseReadyAt?: number;
@@ -285,9 +285,17 @@ class TopicBodyMediaCoordinator {
     ) {
       return;
     }
+    const previousDeadline = entry.state.deadline;
+    const deadline = Date.now() + MEDIA_NO_PROGRESS_TIMEOUT_MS;
     entry.state.lastProgressValue = value;
-    entry.state.deadline = Date.now() + MEDIA_NO_PROGRESS_TIMEOUT_MS;
-    this.scheduleTimer();
+    entry.state.deadline = deadline;
+    if (
+      this.timer === null ||
+      this.timerDeadline === null ||
+      (deadline !== previousDeadline && (previousDeadline === this.timerDeadline || deadline < this.timerDeadline))
+    ) {
+      this.scheduleTimer();
+    }
   }
 
   markFirstRowElapsed(elapsedMs: number) {

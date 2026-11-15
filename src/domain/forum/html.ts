@@ -198,6 +198,7 @@ export function transformForumElements(
   selected: readonly HTMLElement[],
   transform: (node: HTMLElement) => Node[] | undefined
 ) {
+  if (!selected.length) return;
   const candidates = new Set(selected);
   const replacements = new Map<HTMLElement, Map<Node, Node[]>>();
   const pending: Node[] = [...root.childNodes].reverse();

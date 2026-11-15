@@ -186,14 +186,56 @@ internal class InvalidatableResourceSlot<T : Any>(
 }
 
 internal class OwnedProxyServerRegistry {
+  private sealed interface WebViewConfirmation {
+    data object Unconfirmed : WebViewConfirmation
+    data class Confirmed(val profile: NetworkProxyProfile?) : WebViewConfirmation
+  }
   private sealed interface Ownership {
     data object Unowned : Ownership
-    data class Owned(val owner: Long, val server: LocalNetworkProxyServer?) : Ownership
+    data class Owned(
+      val owner: Long,
+      val server: LocalNetworkProxyServer?,
+      val webView: WebViewConfirmation = WebViewConfirmation.Unconfirmed
+    ) : Ownership
   }
   private val lock = Any()
   private var latestOwner = 0L
   private var ownership: Ownership = Ownership.Unowned
   private var stateGeneration = 0L
+
+  // The caller holds the shared WebView operation lock through apply and confirmation.
+  fun apply(owner: Long, profile: NetworkProxyProfile?, operation: () -> Int?): Int? {
+    synchronized(lock) {
+      check(owner == latestOwner) { "代理 bridge 已失效" }
+      val current = ownership
+      if (current is Ownership.Owned && current.webView is WebViewConfirmation.Confirmed &&
+        current.webView.profile == profile) {
+        ownership = current.copy(owner = owner)
+        return current.server?.port
+      }
+    }
+    return operation()
+  }
+
+  fun confirmWebView(owner: Long, profile: NetworkProxyProfile?, expectedGeneration: Long): Boolean = synchronized(lock) {
+    val current = ownership
+    if (current !is Ownership.Owned || current.owner != owner || latestOwner != owner ||
+      stateGeneration != expectedGeneration || (profile == null) != (current.server == null)) {
+      return@synchronized false
+    }
+    ownership = current.copy(webView = WebViewConfirmation.Confirmed(profile))
+    true
+  }
+
+  fun markWebViewUnconfirmed() {
+    synchronized(lock) {
+      val current = ownership
+      if (current is Ownership.Owned) {
+        ownership = current.copy(webView = WebViewConfirmation.Unconfirmed)
+      }
+      stateGeneration += 1
+    }
+  }
 
   fun register(owner: Long) {
     synchronized(lock) {
@@ -300,46 +342,52 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
       var nextServer: LocalNetworkProxyServer? = null
       try {
         val appliedPort = webViewProxyOperations.run {
+          check(!invalidated) { "代理 bridge 已销毁" }
           val parsed = profile?.let { parseProfile(it) }
           NetworkProxyRuntime.install(reactContext)
-          // ProxyController can load the provider without starting Chromium. Newer
-          // providers reject its blocking worker-thread calls until startup completes.
-          val webViewReady = CompletableFuture<WebViewStartUpResult>()
-          WebViewCompat.startUpWebView(
-            reactContext,
-            WebViewStartUpConfig.Builder(ForkJoinPool.commonPool()).build(),
-            object : WebViewOutcomeReceiver<WebViewStartUpResult, WebViewStartupException> {
-              override fun onResult(result: WebViewStartUpResult) { webViewReady.complete(result) }
-              override fun onError(error: WebViewStartupException) { webViewReady.completeExceptionally(error) }
+          proxyServers.apply(owner, parsed) {
+            // ProxyController can load the provider without starting Chromium. Newer
+            // providers reject its blocking worker-thread calls until startup completes.
+            val webViewReady = CompletableFuture<WebViewStartUpResult>()
+            WebViewCompat.startUpWebView(
+              reactContext,
+              WebViewStartUpConfig.Builder(ForkJoinPool.commonPool()).build(),
+              object : WebViewOutcomeReceiver<WebViewStartUpResult, WebViewStartupException> {
+                override fun onResult(result: WebViewStartUpResult) { webViewReady.complete(result) }
+                override fun onError(error: WebViewStartupException) { webViewReady.completeExceptionally(error) }
+              }
+            )
+            webViewReady.get(10, TimeUnit.SECONDS)
+            check(!invalidated) { "代理 bridge 已销毁" }
+            beginTransition()
+            transitionStarted = true
+            val port = if (parsed == null) {
+              clearWebViewProxy()
+              if (!commitServer(null)) {
+                throw IllegalStateException("代理 bridge 已被替换")
+              }
+              null
+            } else {
+              val server = LocalNetworkProxyServer(parsed)
+              nextServer = server
+              server.start()
+              applyWebViewProxy(server.port)
+              if (!commitServer(server)) {
+                throw IllegalStateException("代理 bridge 已被替换")
+              }
+              nextServer = null // Publication transfers cleanup to the shared owner.
+              server.port
             }
-          )
-          webViewReady.get(10, TimeUnit.SECONDS)
-          beginTransition()
-          transitionStarted = true
-          if (parsed == null) {
-            clearWebViewProxy()
-            if (!commitServer(null)) {
-              throw IllegalStateException("代理 bridge 已被替换")
-            }
+            val generation = proxyServers.generation()
             synchronizeWebViewProxyWithRuntime()
-            null
-          } else {
-            val server = LocalNetworkProxyServer(parsed)
-            nextServer = server
-            server.start()
-            applyWebViewProxy(server.port)
-            if (!commitServer(server)) {
-              throw IllegalStateException("代理 bridge 已被替换")
-            }
-            synchronizeWebViewProxyWithRuntime()
-            server.port
+            check(!invalidated && proxyServers.confirmWebView(owner, parsed, generation)) { "无法确认 WebView 代理状态" }
+            port
           }
         }
         promise.resolve(statusMap(true, appliedPort))
       } catch (error: Exception) {
         if (transitionStarted) {
-          releaseOwnedServer()
-          restoreWebViewProxyFromRuntime()
+          if (releaseOwnedServer()) restoreWebViewProxyFromRuntime()
         }
         nextServer?.stop()
         promise.reject("proxy_apply_failed", error.message ?: "代理启动失败", error)
@@ -582,6 +630,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   private fun restoreWebViewProxyFromRuntime() {
+    proxyServers.markWebViewUnconfirmed()
     try {
       webViewProxyRestoreExecutor.execute {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
@@ -644,13 +693,16 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     }
   }
 
-  private fun releaseOwnedServer() {
+  private fun releaseOwnedServer(): Boolean {
+    var released = false
     val previous = webViewProxyOperations.run {
       proxyServers.release(owner) {
+        released = true
         NetworkProxyRuntime.blockNetworkRequests()
       }
     }
     previous?.stop()
+    return released
   }
 
   override fun invalidate() {
@@ -658,8 +710,7 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     val activeProbe = probes.invalidate()
     worker.shutdownNow()
     activeProbe?.stop()
-    releaseOwnedServer()
-    restoreWebViewProxyFromRuntime()
+    if (releaseOwnedServer()) restoreWebViewProxyFromRuntime()
     super.invalidate()
   }
 

@@ -971,6 +971,63 @@ describe('native topic structured rendering', () => {
     expect(JSON.stringify(screen.toJSON())).toContain('"selectable":true');
   });
 
+  it('shares one literal search pattern across the styled runs of a code frame', async () => {
+    const lines = Array.from(
+      { length: 52 },
+      (_, index) => `line-[${index + 1}]${index === 0 || index === 51 ? ' код' : ''}`
+    );
+    const html = `<pre>${lines
+      .map((line, index) => `<span style="color: ${index % 2 ? '#ef4444' : '#22c55e'}">${line}</span>\n`)
+      .join('')}</pre>`;
+    const code = compileForumContent({ html, role: 'reply', source: 'linuxdo' }).rows[0];
+    if (!code || code.type !== 'codeBlock') throw new Error('Expected one styled semantic code block.');
+    expect(code.runs.length).toBeGreaterThan(52);
+    const NativeRegExp = globalThis.RegExp;
+    const patterns = jest
+      .spyOn(globalThis, 'RegExp')
+      .mockImplementation((pattern, flags) => new NativeRegExp(pattern, flags));
+    const content = (query: string) => (
+      <TopicTableScrollProvider>
+        <TopicSplitDisclosureScope scopeKey="reply:9:body">
+          <TopicContentBlock contentWidth={320} query={query} row={code} />
+        </TopicSplitDisclosureScope>
+      </TopicTableScrollProvider>
+    );
+    try {
+      const screen = await render(content('LINE-[52]'));
+
+      expect(
+        patterns.mock.calls.filter(([pattern, flags]) => pattern === '(LINE-\\[52\\])' && flags === 'gi')
+      ).toHaveLength(1);
+      expect(screen.getAllByTestId('topic-code-frame')).toHaveLength(1);
+      expect(StyleSheet.flatten(screen.getByText('line-[52]').props.style)).toMatchObject({ color: '#ef4444' });
+      expect(StyleSheet.flatten(screen.getByText('line-[52]').props.style)?.backgroundColor).toBeTruthy();
+      expect(StyleSheet.flatten(screen.getByText('line-[1] код').props.style)).toMatchObject({ color: '#22c55e' });
+      expect(code.copyText).toBe(`${lines.join('\n')}\n`);
+      await fireEvent.press(screen.getByRole('button', { name: '复制完整代码' }));
+      expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(code.copyText);
+
+      await screen.rerender(content('LINE-[1]'));
+      expect(StyleSheet.flatten(screen.getByText('line-[1]').props.style)?.backgroundColor).toBeTruthy();
+      expect(StyleSheet.flatten(screen.getByText('line-[52] код').props.style)?.backgroundColor).toBeUndefined();
+      expect(
+        patterns.mock.calls.filter(([pattern, flags]) => pattern === '(LINE-\\[1\\])' && flags === 'gi')
+      ).toHaveLength(1);
+
+      await screen.rerender(content('КОД'));
+      const highlightedUnicode = screen.getAllByText('код');
+      expect(highlightedUnicode).toHaveLength(2);
+      expect(highlightedUnicode.every((node) => StyleSheet.flatten(node.props.style)?.backgroundColor)).toBe(true);
+      expect(patterns.mock.calls.filter(([pattern, flags]) => pattern === '(КОД)' && flags === 'gi')).toHaveLength(1);
+
+      await screen.rerender(content(''));
+      expect(screen.queryByText('код')).toBeNull();
+      expect(code.copyText).toBe(`${lines.join('\n')}\n`);
+    } finally {
+      patterns.mockRestore();
+    }
+  });
+
   it('lets reply ownership disable native selection for code and disclosure text', async () => {
     const screen = await render(
       <CompiledContentFixture

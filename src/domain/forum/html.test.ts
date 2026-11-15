@@ -25,6 +25,18 @@ function materializeText(segments: ForumTextSegment[]) {
 }
 
 describe('scoped HTML queries', () => {
+  it('leaves an unselected document untouched without reading its nodes', () => {
+    const markup = '<section><p>keep<span>child</span></p><p>also keep</p></section>';
+    const root = parseForumContentHtml(markup);
+    const children = [...root.childNodes];
+    const transform = vi.fn(() => []);
+    const { reads } = withHtmlWorkBudget(0, () => transformForumElements(root, [], transform), root);
+    expect(reads).toBe(0);
+    expect(transform).not.toHaveBeenCalled();
+    expect(root.toString()).toBe(markup);
+    expect(root.childNodes).toEqual(children);
+  });
+
   it.each([parseHtml, parseForumContentHtml])(
     'retains literal replacement text when parsing produces no children',
     (parse) => {

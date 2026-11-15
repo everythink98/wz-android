@@ -66,7 +66,7 @@ export function withFetchGuard(fetcher: Fetcher, assertCurrent: () => void | Pro
   };
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 export const REQUEST_CANCELED_MESSAGE = '请求已取消';
 const REQUEST_TIMEOUT_CANCEL = Symbol.for('wz.requestTimeoutCancel');

@@ -160,12 +160,14 @@ export const FeedScreen = memo(function FeedScreen({
             ? 'feed-error'
             : 'feed-empty'
     );
+    recordStartupPhase('feed-terminal');
     onInitialContentReady?.();
   }, [allSourcesDisabled, feedItems.length, feedOutcomeKind, onInitialContentReady]);
   const handleInitialListLoad = useCallback(() => {
     if (initialContentPhaseRef.current === 'awaiting-list') initialContentPhaseRef.current = 'awaiting-terminal';
+    if (!allSourcesDisabled && feedItems.length && !initialContentTerminal) recordStartupPhase('feed-content');
     if (initialContentTerminal) reportInitialContentReady();
-  }, [initialContentTerminal, reportInitialContentReady]);
+  }, [allSourcesDisabled, feedItems.length, initialContentTerminal, reportInitialContentReady]);
   useEffect(() => {
     if (initialContentPhaseRef.current !== 'awaiting-list' && initialContentTerminal) reportInitialContentReady();
   }, [initialContentTerminal, reportInitialContentReady]);
@@ -389,24 +391,24 @@ export const FeedScreen = memo(function FeedScreen({
   const feedEmptyText =
     readingFilter !== 'all' || Boolean(categoryFilter) || feedSource !== 'all' ? '当前筛选没有匹配主题' : '暂无主题';
   const renderFeedLoadingScene = useCallback(
-    () => (
+    (routeSource: FeedSource | undefined) => (
       <View
         testID="feed-loading-scene"
         style={[styles.content, { paddingTop: sourceHeaderHeight + secondaryHeaderHeight }]}
       >
-        <LoadingState text="正在读取主题..." />
+        <LoadingState text="正在读取主题..." animating={screenActive && routeSource === feedSource} />
       </View>
     ),
-    [styles, sourceHeaderHeight, secondaryHeaderHeight]
+    [styles, sourceHeaderHeight, secondaryHeaderHeight, screenActive, feedSource]
   );
   const renderFeedContent = useCallback(
     ({ route }: { route: { key: string } }) => {
       const routeSource = enabledFeedSourceItems.find((item) => item.value === route.key)?.value;
       if (!routeSource || routeSource !== feedSource) {
-        return renderFeedLoadingScene();
+        return renderFeedLoadingScene(routeSource);
       }
       if (visibleFeedItems.length === 0 && busy && renderedSourceRef.current.phase === 'waiting') {
-        return renderFeedLoadingScene();
+        return renderFeedLoadingScene(routeSource);
       }
       renderedSourceRef.current.phase = 'rendered';
       return (
@@ -450,7 +452,7 @@ export const FeedScreen = memo(function FeedScreen({
             {...FEED_LIST_PERFORMANCE_PROPS}
             ListEmptyComponent={
               busy ? (
-                <LoadingState text="正在读取主题..." />
+                <LoadingState text="正在读取主题..." animating={screenActive} />
               ) : (
                 <View testID="feed-empty-state" onLayout={handleInitialListLoad}>
                   {allSourcesDisabled ? (
@@ -479,7 +481,11 @@ export const FeedScreen = memo(function FeedScreen({
                   onPress={() => requestFeedLoadMore('button')}
                 />
               ) : visibleFeedItems.length > 0 && !busy ? (
-                <Text style={styles.endOfListText}>已经到底了</Text>
+                feedOutcomeKind ? (
+                  <Text style={styles.endOfListText}>已经到底了</Text>
+                ) : (
+                  <LoadingState text="正在读取其他来源..." animating={screenActive} />
+                )
               ) : null
             }
             ItemSeparatorComponent={renderTopicSeparator}
@@ -507,6 +513,7 @@ export const FeedScreen = memo(function FeedScreen({
       onManageContentSources,
       onRefresh,
       refreshing,
+      screenActive,
       renderFeedLoadingScene,
       renderTopicItem,
       renderTopicSeparator,

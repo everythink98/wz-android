@@ -9,13 +9,13 @@ import {
   type ForumMediaRequestContext
 } from './mediaRequestContext';
 
-export type ImageRequestOptions = {
+type ImageRequestOptions = {
   mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
   referrerPolicy?: MediaReferrerPolicy;
 };
 
-export type ImageSourceOptions = ImageRequestOptions & {
+type ImageSourceOptions = ImageRequestOptions & {
   baseSource?: unknown;
 };
 

@@ -1,6 +1,6 @@
-export type LinuxDoPollType = 'regular' | 'multiple' | 'number' | 'ranked_choice';
-export type LinuxDoPollResults = 'always' | 'on_vote' | 'on_close' | 'staff_only';
-export type LinuxDoPollGroup = { id: number; name: string; displayName: string };
+type LinuxDoPollType = 'regular' | 'multiple' | 'number' | 'ranked_choice';
+type LinuxDoPollResults = 'always' | 'on_vote' | 'on_close' | 'staff_only';
+type LinuxDoPollGroup = { id: number; name: string; displayName: string };
 export type LinuxDoPollCapabilities = {
   groups: LinuxDoPollGroup[];
   canUseStaffResults: boolean;

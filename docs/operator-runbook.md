@@ -469,6 +469,8 @@ npm run test:device
 
 runner 会校验设备实际 `base.apk` 的版本和 SHA-256，再执行 `tests/device/`。每个 Replay 使用唯一 session、零重试；既有 manifest、对应 `.tmp`、录屏进程或 orphan scratch 会阻断并保留现场。runner 只清理自己 manifest 中同时匹配 session/device 的录屏，不停止 daemon、MCP 或未知进程。全部旅程通过才形成 `DEVICE_REPLAY_PASS`。
 
+默认八项全部执行。`account-readonly.ad`、`more-readonly.ad`、`nodeseek-session.ad` 涉及账号或代理页面，依照 [Live 取证边界](../tests/live/agent-live.md#全局边界)使用受限原子 CLI 执行，不录像、不进入 Replay 的失败截图、screen refs 或 overflow 分支；只保存步骤编号、固定错误码和 JUnit。执行前整份校验既有语法与总期限，未知命令或变量拒绝运行；失败清理仍由同一 owner 负责。其余五项保留普通录像回放。该路径依赖已核对的 CLI 行为，升级后须重新做隔离合成值的正常与失败取证检查，不能只删除 `--record-video` 参数就认定敏感信息安全。
+
 未登录旅程使用独立、无论坛登录数据的 AVD：
 
 ```powershell
@@ -554,7 +556,60 @@ node scripts/check-notification-refresh-cancel.mjs '<ignored-evidence-directory>
 
 `npm run smoke:android` 在覆盖安装后的第一次启动前写入日志 marker，只检查有界启动窗口、前台包名、崩溃、ANR 与 RedBox，形成 `APK_SANITY`；随后 Replay 独立形成 `DEVICE_REPLAY_PASS`。二者都不等于真实来源当天数据或全部功能通过，也不授权任何远端写操作。
 
+### Android Perfetto 分析
+
+Perfetto 用于独立归因；普通 Release 性能计时另跑。本机已安装的官方 skill 位于 `C:\Users\ljx\.codex\skills\perfetto`，使用其中的 `bin/trace_processor`，Windows 通过 Python 调用。其他机器先按 [Google 安装说明](https://github.com/google/perfetto/blob/main/docs/getting-started/using-ai.md) 安装并固定来源版本；不默认该本机路径存在。
+
+本机另按需安装 [Google Android skills](https://github.com/android/skills) 的 `android-profiler`、`anr-audit-and-fix`、`r8-analyzer`，固定来源修订 `5815d27fda564aa9f07ebdcb5e57ed3e8d904e0d`，位于同一用户 skills 目录。原文及资源保持上游字节，附仓库根 LICENSE.txt；没有安装 Compose 迁移等无关技能。新技能可在后续对话自动发现，本轮通过读取安装后的 SKILL.md 使用。
+
+`android-profiler` 用于系统 trace、同窗口线程状态与唤醒链分析，先核对数据完整性、PID/UPID 和平台干扰，并区分 SQL 事实、推断与证据缺口。`anr-audit-and-fix` 仅处理真正的阻塞/ANR 风险，不能把普通慢帧当 ANR。`r8-analyzer` 的配置建议先与当前 Expo/AGP 和既有保留规则核对；本项目当前没有为获取分析分数临时升级 R8 或修改生成的 settings，不构造未实际生成的分数。
+
+Android skill 自带 trace_processor 当前为 v58.3，既有项目入口为 v59.1，二者 RPC API 均为 14。为保持已有查询可比，项目实验继续使用下面的既有入口并记录实际版本；不改第三方 skill 的文件，也不混用两版标准库的列假设。Windows 命名 session 用前台运行方式，结束只关闭自己的 session。官方示例的清数据、卸载或其他与本项目保留状态规则冲突的操作不执行。
+
+从官方仓库固定版本取得 `tools/record_android_trace` 后，使用项目配置录制。下例在工作区执行，`TRACE` 替换成 ignored 目录内的新文件路径，录制开始后执行待测动作；冷启动必须覆盖进程创建之前，普通静置与切页分别采集。配置只有 15 秒，不用于长时间 heap 观察。
+
+默认配置保留 `view`、App atrace、sched 和 FrameTimeline，不启用 `gfx`。本机 API 35 的 guest GL encode marker 会显著增加追踪计时成本；只有确需 GL 命令细节时，在 ignored 配置副本添加 `atrace_categories: "gfx"`，并单列侵入性诊断。去掉 gfx 后仍有 HWUI marker 和 HPET 开销，不能将较轻 trace 的帧时作为 App 提速。暖切页实测保留 255/255 个同名 DrawFrames，FrameTimeline 为 254/255，缺少的一个 token 单列证据缺口，见[宿主链路核对](performance/android-host-chain.md)。
+
+`Trace started` 只证明录制命令已启动，不能证明 App atrace 已完整覆盖。自动触发时先预留 2 秒，再开始启动或页面动作，并在结果中核对实际覆盖；四页动作各保留 3.3 秒时，将配置复制到 ignored 证据目录并延长至 20 秒，冷启动归因使用 30 秒。若缺少进程创建、首个转场前段或完整帧，只分析已覆盖区段，不将空结果记成零耗时，也不据此直接修改 profileable 或运行配置。本轮补录已取得真实 cold startup、WZ 初始化与首个 Search 完整转场，见[执行记录](performance/android-official-skills-execution.md)。
+
+```powershell
+python .codex-tmp/perfetto/record_android_trace.py --serial emulator-5554 -c scripts/performance/android-app.pftxt -o TRACE -n
+python C:/Users/ljx/.codex/skills/perfetto/bin/trace_processor --version
+python C:/Users/ljx/.codex/skills/perfetto/bin/trace_processor server unix --name wz-android TRACE
+```
+
+Windows 的 server 在前台保持运行，在另一个终端查询，完成后关闭自己命名的会话：
+
+```powershell
+python C:/Users/ljx/.codex/skills/perfetto/bin/trace_processor query --remote wz-android -f scripts/performance/android-app.sql --format csv
+python C:/Users/ljx/.codex/skills/perfetto/bin/trace_processor server kill wz-android
+```
+
+先核对 `stats` 中的 error/data_loss、目标 PID、实际 slice 覆盖和 FrameTimeline 行是否存在。空结果不解释为耗时为零；有多个 PID 时分开查询。父子 inclusive slice 不能相加为 CPU，CPU 以调度 Running 区段为准。帧必须按同 token 与同窗口归因，切页保留下面规定的完整晚帧窗口。固定标签见原生诊断章节；默认不采集完整 logcat、响应、Cookie 或草稿，不将 trace 上传外站。
+
+连接等待或 TLS reset 使用 `scripts/performance/android-tls.pftxt`，它是独立的 250 秒归因配置，采 TCP state/reset/retransmit、sched 与固定 WzStartup/WzNetworkProxy 两 tag，不含业务正文。原始 trace 仍可能带内核地址元数据，只保留在 ignored 目录，不上传。API 35 与 trace_processor v59.1 已完成设备 proto smoke、完整录制及 SQL 重放；其他内核先确认 tracepoint 可用，缺事件不能记为零等待。该配置不提供 FrameTimeline，不替代切页配置。
+
+```powershell
+python .codex-tmp/perfetto/record_android_trace.py --serial emulator-5554 -c scripts/performance/android-tls.pftxt -o TRACE -n
+python C:/Users/ljx/.codex/skills/perfetto/bin/trace_processor server unix --name wz-android-tls TRACE
+# 在另一终端执行，结束后只关闭自己的 session。
+python C:/Users/ljx/.codex/skills/perfetto/bin/trace_processor query --remote wz-android-tls -f scripts/performance/android-tls.sql --format csv
+python C:/Users/ljx/.codex/skills/perfetto/bin/trace_processor server kill wz-android-tls
+```
+
+SQL 可重复执行，动态读取 build/processSession、UPID/UTID，并输出健康、连接候选、TLS 线程状态覆盖与 failure/cancel 的安全投影。先核对预期进程和动作首尾、日志 tag、事件可用性、unfinished TLS 与 coverage；没有匹配进程、零候选或多个候选均为证据缺口。SYN_SENT 可能早于 autobind，端口由同 socket 生命周期后续状态解析，遇 CLOSE 或下一次 SYN 后不再复用。成功 h2 调用最终 acquired 的连接也可能不同于新建候选，不能只凭端口不同判错。状态窗不是线上 RTT；线程 sleep 不指定具体等待；TLS 成功后的 send_reset 不证明握手 reset。带 trace 的冷启、journal 读取与人为间隔不混入普通 Release 性能对照。实际结果及尚未复现的故障见 [TLS 与切页继续核对](performance/android-tls-frame-followup.md)。
+
+本机 Emulator 36.5.11/API 35 的同主 AVD A/B/A 已确认默认 Netsim 存在额外连接等待，见[宿主链路核对](performance/android-host-chain.md)。当前仅该主 AVD 保留官方 legacy Wi-Fi 参数。需要复现此启动方式时，先按保留数据规则核对安装身份、正常关闭原 AVD、确认原 QEMU 已退出，再执行以下命令；不并行启动同一 userdata，不修改全局 SDK feature 文件。启动后再次核对 UID、firstInstallTime、APK SHA、IME 和实际登录状态。去掉最后两个参数即可回到默认后端；切换不代表修复了旧 TLS reset。
+
+```powershell
+Start-Process -FilePath "$env:LOCALAPPDATA/Android/Sdk/emulator/emulator.exe" -ArgumentList @('-avd', 'WZ_Pixel_API_35', '-no-snapshot-load', '-no-snapshot-save', '-feature', '-WiFiPacketStream') -WindowStyle Hidden
+```
+
 ### 冷启动对照
+
+启动 runner 分别记录首批可读内容与完整首屏终态，必须等待 `feed-terminal`，最多 35 秒。缺少该标记的旧 APK 不兼容新 runner；不能将仅有 `feed-content` 的部分成功当作完整请求已结束。
+
+AVD 真实重启后也可能由 Expo TaskBroadcastReceiver 先创建后台进程，数十秒后才首次打开 Activity。Native elapsed 是进程年龄，不能把这段尚未发起 Activity 的空闲时间当作界面启动阻塞。此路径单列为后台预起后的首次 Activity，以同次 ActivityManager START/Displayed 与对应 JS 阶段核对；普通进程冷启继续 force-stop 并要求 LaunchState=COLD。非 COLD 样本保留原始 launch 回执后拒绝，不能改名充当冷启，也不为测量禁用 receiver 或清除任务/资料。
 
 本地冷启动性能与外站读取分开评价。优先检查进程→JS、JS→React、本机资料/身份恢复、导航与实际首帧，以及主线程长帧；线上首批帖子耗时只用于读取功能观察，不能据此判断 App 初始化快慢。`page-ready` 是正常导航与当前页面布局共同完成后的逻辑标记，实际首帧须从原生帧呈现证据独立核对。启动恢复错误页布局也会隐藏 Splash，但不记录正常 `page-ready`，不能混入正常冷启动样本。下面的普通入口工具默认会读取已启用的外站，不提供离线开关；本地问题优先复用现有 trace 与受控测试，不反复请求外站作性能对照。需要零外站实验时，只隔离最终传输边界，并核对 Native 图片/WebView 等通道；不得预读或 mock 掉生产本地初始化。
 
@@ -570,7 +625,7 @@ node scripts/check-notification-refresh-cancel.mjs '<ignored-evidence-directory>
 node scripts/check-cold-start.mjs --serial <serial> --apk <匹配的本地APK路径> --output .codex-tmp/<任务目录>/startup-results.json
 ```
 
-输出父目录须已存在，文件必须是 `.codex-tmp` 内的新路径。默认三批、每批十次；工具不安装或清数据，只 force-stop 指定 App 并通过 launcher 启动。每轮校验 COLD 启动、新进程身份和阶段所属 buildId，以进程启动以来的 Native 单调毫秒记录 `page-ready`、本机恢复及首批 Feed；`TotalTime` 单列为系统显示指标，不与 Native 毫秒相加。Feed 空态、失败和二十秒内缺少内容阶段不补零，不算帖子成功。各轮等本轮内容终态或采样截止后再间隔五秒，保持请求波顺序执行。工具不会清 logcat；仅读取当前 PID 的固定 `WzStartup` 阶段。
+输出父目录须已存在，文件必须是 `.codex-tmp` 内的新路径。默认三批、每批十次；工具不安装或清数据，只 force-stop 指定 App 并通过 launcher 启动。每轮校验 COLD 启动、新进程身份和阶段所属 buildId，以进程启动以来的 Native 单调毫秒记录 `page-ready`、本机恢复及首批 Feed；`TotalTime` 单列为系统显示指标，不与 Native 毫秒相加。Feed 空态、失败和三十五秒内缺少内容阶段不补零，不算帖子成功。各轮等本轮内容终态或采样截止后再间隔五秒，保持请求波顺序执行。工具不会清 logcat；仅读取当前 PID 的固定 `WzStartup` 阶段。
 
 首次覆盖安装、旧版迁移和设备重启后的启动单独观察，不纳入普通冷启动。前后保持来源设置、资料规模、设备、电源状态和构建类型一致；计时期间不运行构建、测试、Hermes sampling 或其他设备操作。报告三批中位数、p90、最慢值，以及首次详情/公式/编辑器和通知/深链接的独立结果；页面就绪信号不能代替实际交互或首批帖子。退出、缺少页面就绪、构建或安装身份变化立即停止并保留结果。原生图标视觉必须使用 Release 包检查，开发客户端不作效果证据。
 

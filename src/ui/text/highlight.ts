@@ -6,7 +6,7 @@ const MAX_HIGHLIGHTED_DOM_NODES = 80;
 const HIGHLIGHT_MARKUP_CHARS = '<mark></mark>'.length;
 const MAX_DOM_NODE_GROWTH_PER_HIGHLIGHT = 3;
 
-export interface HighlightPart {
+interface HighlightPart {
   text: string;
   highlighted: boolean;
 }

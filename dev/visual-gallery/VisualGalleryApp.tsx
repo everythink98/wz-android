@@ -89,6 +89,7 @@ export function VisualGalleryApp() {
       <GestureHandlerRootView style={styles.flex} testID="visual-gallery-root">
         <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
         <SafeAreaView
+          edges={fullScreen ? ['left', 'right'] : undefined}
           testID={`visual-frame-${selected?.id}-${appearance.theme}-${appearance.fontScale}-${fullScreen ? 'full' : 'controls'}`}
           style={[styles.flex, dark && styles.darkRoot]}
         >
@@ -169,7 +170,9 @@ export function VisualGalleryApp() {
             </View>
           ) : null}
           <View style={styles.scene} testID="visual-gallery-ready">
-            {selected ? <VisualScenarioView appearance={appearance} id={selected.id} /> : null}
+            {selected ? (
+              <VisualScenarioView appearance={appearance} id={selected.id} insetContent={fullScreen} />
+            ) : null}
           </View>
         </SafeAreaView>
       </GestureHandlerRootView>

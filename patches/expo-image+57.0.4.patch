@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
-index 7abe582..69ec84a 100644
+index 7abe582..5f1b899 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
 +++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
 @@ -54,6 +54,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
@@ -10,6 +10,15 @@ index 7abe582..69ec84a 100644
  
    /**
     * @returns the view which is currently active or will be used when both views are empty
+@@ -71,7 +72,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+   private var secondTarget = ImageViewWrapperTarget(WeakReference(this))
+ 
+   internal val onLoadStart by EventDispatcher<Unit>()
+-  internal val onProgress by EventDispatcher<ImageProgressEvent>()
++  internal val onProgress by EventDispatcher<ImageProgressEvent> { 0 }
+   internal val onError by EventDispatcher<ImageErrorEvent>()
+   internal val onLoad by EventDispatcher<ImageLoadEvent>()
+   internal val onDisplay by EventDispatcher<Unit>()
 @@ -147,6 +148,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
    var recyclingKey: String? = null
      set(value) {
@@ -293,9 +302,10 @@ diff --git a/node_modules/expo-image/android/build.gradle b/node_modules/expo-im
  }
 diff --git a/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt b/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt
 new file mode 100644
+index 0000000..7853f8f
 --- /dev/null
 +++ b/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,229 @@
 +package expo.modules.image
 +
 +import android.app.Activity
@@ -308,10 +318,13 @@ new file mode 100644
 +import com.bumptech.glide.RequestManager
 +import com.bumptech.glide.request.target.Target
 +import com.facebook.react.bridge.BridgeReactContext
++import com.facebook.react.bridge.WritableMap
++import com.facebook.react.uimanager.events.Event
 +import expo.modules.kotlin.AppContext
 +import expo.modules.kotlin.viewevent.ViewEvent
 +import expo.modules.image.decodedsource.DecodedModel
 +import expo.modules.image.records.DecodedSource
++import expo.modules.image.records.ImageProgressEvent
 +import java.lang.ref.WeakReference
 +import org.junit.After
 +import org.junit.Assert.*
@@ -361,6 +374,36 @@ new file mode 100644
 +    setCache("requestManager", null)
 +    setCache("appContextRef", WeakReference<AppContext>(null))
 +    setCache("activityRef", WeakReference<Activity>(null))
++  }
++
++  @Test
++  fun progressCanCoalesceToTheLatestPayloadWhileLifecycleEventsStayOrdered() {
++    val field = ViewEvent::class.java.getDeclaredField("coalescingKey").apply { isAccessible = true }
++    @Suppress("UNCHECKED_CAST")
++    val key = field.get(view.onProgress) as ((ImageProgressEvent) -> Short)?
++    assertNotNull("progress bursts must opt into RN's frame queue coalescing", key)
++    val coalescingKey = requireNotNull(key).invoke(ImageProgressEvent(10, 100))
++    for (callback in listOf(view.onLoadStart, view.onLoad, view.onError, view.onDisplay)) {
++      assertNull("load boundaries must remain independent queue entries", field.get(callback))
++    }
++
++    val eventClass = Class.forName("expo.modules.kotlin.events.KEventEmitterWrapper\$UIEvent")
++    val constructor = eventClass.declaredConstructors.single().apply { isAccessible = true }
++    val firstData = mock(WritableMap::class.java)
++    val latestData = mock(WritableMap::class.java)
++    val first = constructor.newInstance(1, view.id, "onProgress", firstData, coalescingKey) as Event<*>
++    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1))
++    val latest = constructor.newInstance(1, view.id, "onProgress", latestData, coalescingKey) as Event<*>
++    assertTrue(first.canCoalesce())
++    assertEquals(first.getCoalescingKey(), latest.getCoalescingKey())
++    assertEquals("topProgress", latest.eventName)
++    assertSame(latest, first.coalesce(latest))
++    val eventData = eventClass.getDeclaredMethod("getEventData").apply { isAccessible = true }
++    assertSame(latestData, eventData.invoke(latest))
++    for (name in listOf("onLoadStart", "onLoad", "onError", "onDisplay")) {
++      val boundary = constructor.newInstance(1, view.id, name, null, null) as Event<*>
++      assertFalse(boundary.canCoalesce())
++    }
 +  }
 +
 +  @Test

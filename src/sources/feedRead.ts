@@ -17,7 +17,7 @@ import type {
   Topic,
   V2exFeedFilter
 } from '@/domain/forum/models';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { DEFAULT_REQUEST_TIMEOUT_MS, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { resolveWebViewUserAgent } from '@/platform/android/resolveWebViewUserAgent';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
@@ -129,7 +129,8 @@ export async function getFeed({
   includedSources,
   unavailableSources,
   signal,
-  timeoutMs
+  timeoutMs,
+  onProgress
 }: {
   source: FeedSource;
   page?: number;
@@ -148,6 +149,7 @@ export async function getFeed({
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
+  onProgress?: (response: FeedResponse) => void;
 }): Promise<FeedResponse> {
   const options = {
     authenticated: nodeSeekAuthenticated,
@@ -188,6 +190,8 @@ export async function getFeed({
           };
         });
         const adapterLimit = limit < 30 ? limit * sources.length : limit;
+        let visibleItems: Topic[] = [];
+        const previewLimit = Math.floor(limit / Math.max(1, sources.length));
         const results = await Promise.allSettled(
           plans.map((plan): Promise<FeedResponse> => {
             const item = plan.source;
@@ -227,9 +231,17 @@ export async function getFeed({
                   ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
                   : readSource(sourceFetcher);
               },
-              { prepare, preparation, trace: diagnosticTrace }
+              { prepare, preparation, trace: diagnosticTrace, timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS }
             ).then(
               (value) => {
+                if (onProgress && page === 1 && !cursor && !signal?.aborted && value.items.length && previewLimit) {
+                  // Reserve each source's share so already visible posts survive the final balanced page.
+                  visibleItems = mergeTopics(
+                    visibleItems,
+                    sortTopicsByTime(mergeTopics([], value.items)).slice(0, previewLimit)
+                  );
+                  onProgress({ items: visibleItems, errors: {} });
+                }
                 if (diagnosticTrace) {
                   markDiagnosticStage(diagnosticTrace, 'transport', {
                     source: item,
@@ -266,7 +278,12 @@ export async function getFeed({
             ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
           ])
         );
-        const selected = balanceTopicsBySource(items).slice(0, limit);
+        const balanced = balanceTopicsBySource(items).slice(0, limit);
+        const balancedKeys = new Set(balanced.map(topicKey));
+        const selected = mergeTopics(
+          visibleItems.filter((item) => balancedKeys.has(topicKey(item))),
+          balanced
+        );
         const selectedKeys = new Set(selected.map(topicKey));
         const nextBuffers: Partial<Record<Source, Topic[]>> = {};
         for (const item of items) {

@@ -4,6 +4,20 @@
 
 本手册保存历史实验与判断依据。当前产品行为以[产品地图](../product-map.md)为准，事故状态以[回归语料库](../regression-corpus.md)为准，待处理项以[技术债务清单](../code-cleanup-map.md)为准。实验通过不等于当前代码包含该方案，也不授权恢复已撤回的改动。
 
+2026-11-15 的下一轮工作见 [Android 性能提升实施计划](android-optimization-plan.md)：包括当前冷启动数据、GitHub 工具调研、现有状态 owner 的优化边界，以及后续执行顺序。该计划只面向 Android，候选方案不代表已实现或已经证明提速。
+
+已开展的接入、实测与候选处置见 [Android Perfetto 执行记录](android-perfetto-execution.md)。
+
+后续连接诊断、页面与图片事件链的优化见 [Android 全应用性能继续核对](android-app-followup.md)。
+
+官方 Android 技能接入、模糊目标监听器与 APK 校验调度的继续处理见 [官方技能执行记录](android-official-skills-execution.md)。
+
+后续同帧绑定、TLS 跨层取证及 More 隐藏动画修复见 [TLS 与切页继续核对](android-tls-frame-followup.md)。
+
+同一主 AVD 网络 A/B/A、图形追踪开销与重复代理恢复问题见 [宿主网络与图形提交链路核对](android-host-chain.md)。
+
+停止首页加载研究后的 Search、私信草稿与代码查找优化见 [Android 交互中的代码重复工作](android-code-interaction.md)。
+
 ## 按问题查经验
 
 | 遇到的问题 | 已经走过的路径 | 阅读入口 |

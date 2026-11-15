@@ -2016,6 +2016,67 @@ describe('Android direct yaohuo API', () => {
     expect(emptyFetcher.mock.calls[0]?.[0]).toContain('page=1');
   });
 
+  it.each([
+    { page: 1, order: 'oldest' as const, floors: Array.from({ length: 19 }, (_, index) => index + 1) },
+    { page: 19, order: 'oldest' as const, floors: [1, 2, 3, 4, 5, 6, 7] },
+    { page: 1, order: 'newest' as const, floors: [527, ...Array.from({ length: 29 }, (_, index) => index + 530)] }
+  ])('reads modern Yaohuo reply windows in $order order on page $page', async ({ page, order, floors }) => {
+    const html = `<title>查看回复</title><a href="/bbs-1560939.html">返回主题</a>
+      <input name="replyPage" value="${page}"><div class="recontent"><div class="forum-container">
+      ${[...floors]
+        .reverse()
+        .map(
+          (floor) => `<div class="forum-post bgColor" data-floor="${floor}" id="floor-${floor}">
+        <div class="post-header"><span class="user-name"><span class="user-nick"><a href="/bbs/userinfo.aspx?touserid=101">alice</a></span></span><span class="post-date">11-15 03:40</span><div class="floor-info"><span class="floor-number">${floor}</span></div></div>
+        <div class="post-content"><span class="retext">reply ${floor}<img src="https://example.test/image.png"></span></div>
+        <div class="admin-actions"><a class="replyicon" href="/bbs/book_re.aspx?id=1560939&amp;reply=${floor}&amp;touserid=101">回</a></div>
+      </div>`
+        )
+        .join('')}</div></div>`;
+    const response = new Response(html);
+    Object.defineProperty(response, 'url', {
+      value: `https://www.yaohuo.me/bbs/book_re.aspx?id=1560939&page=${page}`
+    });
+    const result = await getYaohuoRepliesDirect({
+      id: '1560939',
+      order,
+      position: { kind: 'start' },
+      replyCount: Math.max(...floors),
+      yaohuoFetcher: async () => response
+    });
+    expect(result.items.map((reply) => reply.floor)).toEqual(order === 'newest' ? [...floors].reverse() : floors);
+    expect(result.completeness).toBe('complete');
+    expect(result.items[0]).toMatchObject({ author: 'alice', authorId: '101' });
+    expect(result.items[0].contentHtml).toContain('https://example.test/image.png');
+    expect(result.items[0].createdAt).toMatch(/T19:40:00.000Z$/);
+  });
+
+  it('keeps modern reply targets and header identity separate from authored reply content', () => {
+    const result = parseReplies(
+      `<div class="forum-post" data-floor="99">outside reply collection</div>
+      <div class="recontent"><div class="forum-container"><div class="forum-post" data-floor="12">
+        <div class="post-header"><span class="user-nick"><a href="/bbs/userinfo.aspx?touserid=101">alice</a></span><span class="post-date">11-15 03:40</span></div>
+        <div class="post-content"><span class="replay-other"><a href="/bbs/book_re.aspx?id=1560939&amp;tofloor=11">11楼</a></span><span class="retext">11-14 01:02 <a href="/bbs/userinfo.aspx?touserid=999">mention</a><div class="recontent"><div class="forum-container"><div class="forum-post" data-floor="98">quoted row</div></div></div><div class="line1" data-floor="97">quoted legacy row</div></span></div>
+      </div></div></div>`,
+      { url: 'https://www.yaohuo.me/bbs/book_re.aspx?id=1560939&page=1' }
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ floor: 12, author: 'alice', authorId: '101', replyTarget: { floor: 11 } });
+    expect(result.items[0].createdAt).toMatch(/T19:40:00.000Z$/);
+    expect(result.items[0].contentHtml).toContain('mention');
+    expect(sourceDiagnosticSummary(result)).toMatchObject({ candidateCount: 1, validCount: 1, droppedCount: 0 });
+  });
+
+  it('keeps legacy reply metadata when its body quotes a modern reply header', () => {
+    const result = parseReplies(`<div class="list-reply" data-floor="12">
+      <span class="retext"><blockquote><div class="post-header"><span class="user-nick"><a href="/bbs/userinfo.aspx?touserid=999">quoted-user</a></span><span class="post-date">11-14 01:02</span></div><span class="replay-other"><a href="/bbs/book_re.aspx?id=1560939&amp;tofloor=98">quoted target</a></span></blockquote>reply</span>
+      <span class="renick"><a href="/bbs/userinfo.aspx?touserid=101">actual-author</a></span><span class="retime">11-15 03:40</span>
+    </div>`);
+    expect(result.items[0]).toMatchObject({ floor: 12, author: 'actual-author', authorId: '101' });
+    expect(result.items[0].createdAt).toMatch(/T19:40:00.000Z$/);
+    expect(result.items[0].replyTarget).toBeUndefined();
+  });
+
   it('parses yaohuo activity replies from list-reply rows with real floors and rewards', () => {
     const result = parseReplies(
       `

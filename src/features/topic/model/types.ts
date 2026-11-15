@@ -17,11 +17,11 @@ export interface ReplyEditTarget {
   ticket: WritableSessionTicket;
 }
 
-export type ReplyCommentIdRefreshTarget = { kind: 'comment-id'; commentId: number };
+type ReplyCommentIdRefreshTarget = { kind: 'comment-id'; commentId: number };
 
 export type ReplyRefreshTarget = ReplyCommentIdRefreshTarget | { kind: 'delete-path'; deletePath: string };
 
-export type ReplyCursor = Extract<ReplyWindowPosition, { kind: 'cursor' }>;
+type ReplyCursor = Extract<ReplyWindowPosition, { kind: 'cursor' }>;
 
 export type ReplyRefreshCommand =
   | { kind: 'manual'; silent?: boolean }

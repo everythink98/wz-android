@@ -23,7 +23,7 @@ import {
   type MediaReferrerPolicy
 } from '@/domain/forum/mediaReferrer';
 
-export type ImageDisplayCandidateKind = 'src' | 'srcset' | 'data-src' | 'data-original';
+type ImageDisplayCandidateKind = 'src' | 'srcset' | 'data-src' | 'data-original';
 
 export interface ImageDisplaySize {
   width: number;
@@ -344,7 +344,7 @@ export function selectImageOriginalSource(attributes: Record<string, string | un
   ]);
 }
 
-export function fallbackBodyImageSource(
+function fallbackBodyImageSource(
   attributes: Record<string, string | undefined>
 ): { uri: string; candidateKind: Exclude<ImageDisplayCandidateKind, 'srcset'>; displaySize?: ImageDisplaySize } | null {
   const displaySize = imageDisplaySizeFromAttributes(attributes);

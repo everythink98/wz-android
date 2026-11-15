@@ -772,7 +772,7 @@ export function ReplyItem({
                   {discourseReplyReactionStats.map((stat, index) => (
                     <DiscourseReactionPill
                       compact
-                      contentSource={source || null}
+                      contentSource={source}
                       key={getMappingKey(stat.id, index)}
                       stat={stat}
                       styles={styles}

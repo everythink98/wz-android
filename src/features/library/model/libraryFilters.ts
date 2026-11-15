@@ -1,12 +1,12 @@
 import type { Category, FeedSource } from '@/domain/forum/models';
 import type { TopicRecord } from '@/domain/reader/readerData';
 
-export interface LibrarySection {
+interface LibrarySection {
   label: string;
   records: TopicRecord[];
 }
 
-export function libraryCategoryKey(source: FeedSource, categoryId: string) {
+function libraryCategoryKey(source: FeedSource, categoryId: string) {
   return source === 'all' ? categoryId : `${source}:${categoryId}`;
 }
 

@@ -9,7 +9,7 @@ import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
-export interface ImageSaveRequestOptions {
+interface ImageSaveRequestOptions {
   mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
   referrerPolicy?: MediaReferrerPolicy;

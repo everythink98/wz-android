@@ -256,12 +256,23 @@ describe('TopicBodyMediaCoordinator', () => {
   it('keeps 2000 descriptors within four runs and one timer', async () => {
     jest.useFakeTimers();
     let timeoutSpy: jest.SpiedFunction<typeof setTimeout> | undefined;
+    let valuesSpy: jest.SpiedFunction<typeof Map.prototype.values> | undefined;
+    const leases: MediaLease[] = [];
     try {
       const descriptors = (
         <>
-          {Array.from({ length: 2_000 }, (_, index) => (
-            <PassiveMediaProbe id={`image-${index}`} key={index} />
-          ))}
+          {Array.from({ length: 2_000 }, (_, index) =>
+            index < 4 ? (
+              <MediaProbe
+                key={index}
+                automaticRetry={false}
+                id={`image-${index}`}
+                onLease={(lease) => (leases[index] = lease)}
+              />
+            ) : (
+              <PassiveMediaProbe id={`image-${index}`} key={index} />
+            )
+          )}
         </>
       );
       const view = await render(<CoordinatorHarness paused>{descriptors}</CoordinatorHarness>);
@@ -275,8 +286,24 @@ describe('TopicBodyMediaCoordinator', () => {
       expect(coordinatorTimerCallIndex).toBeGreaterThanOrEqual(0);
       expect(timeoutSpy.mock.calls.filter(([, delay]) => delay === 30_000)).toHaveLength(1);
 
+      valuesSpy = jest.spyOn(Map.prototype, 'values');
+      for (const lease of leases) lease.progress(1);
+      expect(valuesSpy).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(1);
+      leases[3].progress(2);
+      expect(valuesSpy).toHaveBeenCalledTimes(1);
+      for (let value = 3; value < 103; value += 1) {
+        jest.advanceTimersByTime(1);
+        const scans = valuesSpy.mock.calls.length;
+        leases[3].progress(value);
+        expect(valuesSpy.mock.calls).toHaveLength(scans);
+      }
+      valuesSpy.mockRestore();
+      valuesSpy = undefined;
+
       await view.unmount();
     } finally {
+      valuesSpy?.mockRestore();
       timeoutSpy?.mockRestore();
       jest.useRealTimers();
     }
@@ -689,6 +716,41 @@ describe('TopicBodyMediaCoordinator', () => {
       expect(view.getByTestId('media-progressing').props.children).toBe('failed:timeout');
       view.unmount();
     } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps exact stalled deadlines after the earliest request progresses and the wall clock moves back', async () => {
+    jest.useFakeTimers({ now: 0 });
+    const leases: MediaLease[] = [];
+    const tree = (second: boolean) => (
+      <CoordinatorHarness>
+        <MediaProbe automaticRetry={false} id="earliest-progress" onLease={(lease) => (leases[0] = lease)} />
+        {second ? (
+          <MediaProbe automaticRetry={false} id="later-progress" onLease={(lease) => (leases[1] = lease)} />
+        ) : null}
+      </CoordinatorHarness>
+    );
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    try {
+      view = await render(tree(false));
+      await act(() => jest.advanceTimersByTime(1_000));
+      await view.rerender(tree(true));
+      await act(() => jest.advanceTimersByTime(1_000));
+      await act(() => leases[0].progress(1));
+      await act(() => leases[1].progress(1));
+      jest.setSystemTime(1_000);
+      await act(() => leases[0].progress(2));
+      await act(() => jest.advanceTimersByTime(29_999));
+      expect(view.getByTestId('media-earliest-progress').props.children).toBe('admitted');
+      expect(view.getByTestId('media-later-progress').props.children).toBe('admitted');
+      await act(() => jest.advanceTimersByTime(1));
+      expect(view.getByTestId('media-earliest-progress').props.children).toBe('failed:timeout');
+      expect(view.getByTestId('media-later-progress').props.children).toBe('admitted');
+      await act(() => jest.advanceTimersByTime(1_000));
+      expect(view.getByTestId('media-later-progress').props.children).toBe('failed:timeout');
+    } finally {
+      await view?.unmount();
       jest.useRealTimers();
     }
   });

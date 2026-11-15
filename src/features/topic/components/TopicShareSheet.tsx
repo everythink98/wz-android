@@ -155,13 +155,11 @@ const ShareTableCell: CustomBlockRenderer = ({ TDefaultRenderer, ...props }) => 
 const defaultTextProps = { selectable: false };
 const renderersProps = { a: { onPress: () => undefined } };
 
-type ShareCaptureRun = { action: 'share' | 'save'; preview: number; abort: AbortController };
-type ShareCaptureState =
-  { phase: 'idle' } | { phase: 'waiting-layout' | 'capturing' | 'sharing' | 'saving'; run: ShareCaptureRun };
+type ShareCaptureRun = { preview: number; abort: AbortController };
 
 /** Admission and cancellation belong to one export; preview readiness remains an independent native observation. */
 class TopicShareCaptureSession {
-  private state: ShareCaptureState = { phase: 'idle' };
+  private run: ShareCaptureRun | null = null;
   private mounted = true;
   private preview = 0;
   private ready = false;
@@ -175,9 +173,6 @@ class TopicShareCaptureSession {
     this.mounted = false;
     this.invalidateCapture();
   }
-  isMounted() {
-    return this.mounted;
-  }
   acceptsPreview(preview: number) {
     return this.mounted && preview === this.preview;
   }
@@ -185,42 +180,34 @@ class TopicShareCaptureSession {
     this.ready = ready;
   }
   invalidateCapture() {
-    if (this.state.phase !== 'idle') this.state.run.abort.abort();
+    this.run?.abort.abort();
   }
 
   retryPreview() {
-    if (!this.mounted || this.state.phase !== 'idle') return null;
+    if (!this.mounted || this.run) return null;
     this.preview += 1;
     return this.preview;
   }
 
   claim(action: 'share' | 'save') {
-    if (!this.ready || !this.mounted || this.state.phase !== 'idle') return null;
-    const run: ShareCaptureRun = { action, preview: this.preview, abort: new AbortController() };
-    this.state = { phase: 'waiting-layout', run };
+    if (!this.ready || !this.mounted || this.run) return null;
+    const run: ShareCaptureRun = { preview: this.preview, abort: new AbortController() };
+    this.run = run;
     this.publishOperation(action);
     return run;
   }
 
   owns(run: ShareCaptureRun) {
-    return this.mounted && this.state.phase !== 'idle' && this.state.run === run && run.preview === this.preview;
+    return this.mounted && this.run === run && run.preview === this.preview;
   }
 
-  capture(run: ShareCaptureRun) {
-    if (!this.owns(run) || !this.ready) return false;
-    this.state = { phase: 'capturing', run };
-    return true;
-  }
-
-  handoff(run: ShareCaptureRun) {
-    if (!this.owns(run)) return false;
-    this.state = { phase: run.action === 'share' ? 'sharing' : 'saving', run };
-    return true;
+  canCapture(run: ShareCaptureRun) {
+    return this.owns(run) && this.ready;
   }
 
   finish(run: ShareCaptureRun) {
-    if (this.state.phase === 'idle' || this.state.run !== run) return;
-    this.state = { phase: 'idle' };
+    if (this.run !== run) return;
+    this.run = null;
     if (this.mounted) this.publishOperation(null);
   }
 }
@@ -392,7 +379,7 @@ export function TopicShareSheet({
     try {
       // Wait for the layout after the final decoded image before reading native pixels.
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      if (!capture.capture(run)) return;
+      if (!capture.canCapture(run)) return;
       if (Platform.OS === 'android') {
         const captured = await captureLongTopicImage(scrollRef.current, abort.signal);
         uri = captured.uri;
@@ -409,7 +396,7 @@ export function TopicShareSheet({
         const capturedUri = uri;
         release = () => viewShot.releaseCapture(capturedUri);
       }
-      if (!capture.handoff(run)) return;
+      if (!capture.owns(run)) return;
       if (action === 'share') await shareTopicImageFile(uri, topic.title, () => capture.owns(run));
       else {
         // Load the gallery module only when the user chooses to save.

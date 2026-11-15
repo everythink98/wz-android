@@ -25,6 +25,7 @@ const operations = new Set<NativeReadNetworkOperation>([
 ]);
 const phases = new Set([
   'call-start',
+  'request-config',
   'image-lease-released',
   'image-call-failed',
   'response-body-end',
@@ -91,6 +92,10 @@ const countKeys = [
   'generation',
   'previousGeneration',
   'elapsedMs',
+  'connectTimeoutMs',
+  'readTimeoutMs',
+  'writeTimeoutMs',
+  'callTimeoutMs',
   'queuedCount',
   'runningCount',
   'leaseCount',
@@ -223,6 +228,28 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
     if (typeof input.mediaRef === 'string' && /^media-[1-9][0-9]{0,9}$/.test(input.mediaRef))
       output.mediaRef = input.mediaRef;
     for (const [key, allowed] of Object.entries({
+      socketFailure: new Set([
+        'reset',
+        'aborted',
+        'closed',
+        'refused',
+        'unreachable',
+        'timeout',
+        'broken_pipe',
+        'other'
+      ]),
+      socketErrno: new Set([
+        'ECONNRESET',
+        'ECONNABORTED',
+        'EBADF',
+        'ENOTCONN',
+        'ECONNREFUSED',
+        'ENETUNREACH',
+        'EHOSTUNREACH',
+        'ETIMEDOUT',
+        'EPIPE',
+        'other'
+      ]),
       cookieKind: new Set(['login', 'session', 'clearance', 'bot-management', 'connect', 'other']),
       cfClearanceInfoResult: new Set(['success', 'unsupported', 'failed']),
       cookieAction: new Set(['set', 'delete', 'unknown']),

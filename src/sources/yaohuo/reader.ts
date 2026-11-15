@@ -32,7 +32,7 @@ export interface DirectRequestOptions {
   timeoutMs?: number;
 }
 
-export type YaohuoHtmlRequestOptions = DirectRequestOptions & {
+type YaohuoHtmlRequestOptions = DirectRequestOptions & {
   validateLogin?: boolean;
 };
 

@@ -979,7 +979,9 @@
         "batch": "B01",
         "outcome": "partial",
         "delivered": "B01已修正旧Promise失败只能删除仍属于自己的同键缓存，复用已有Promise身份，两个淘汰/重建失败路径有实际修前红绿；没有接管整个下载/cache业务为新模型。",
-        "residualControlAuthority": [],
+        "residualControlAuthority": [
+          "loadRemoteAvatarSvgText仍分别调度带signal的直读与共享缓存；rememberAvatarSvgTextRequest管理容量淘汰，loadRemoteAvatarSvgTextUncached拥有HEAD/GET、超时和响应预算。"
+        ],
         "retainedIndependentFacts": [
           "缓存容量/Map成员/真实Promise仍是独立事实；本轮仅补最终归属，不给B10重复实施信用。"
         ],
@@ -1523,10 +1525,10 @@
       "owner": "modules/forum-platform/android/src/main/java/com/wz/reader/svg/SvgRendererModule.kt",
       "invariant": "本request私有页面和visual回执匹配才捕获，重复回调/renderer消失/deadline单次结算。",
       "consumer": "SvgRendererModule.kt#onPageFinished / WebView visual-state回调 / SvgPosterRendererRuntime视觉捕获回调；svgPosterRenderer.ts",
-      "cannotDerive": "prepared/visualStateRequested/captureStarted/expectedPageUrl组合依赖散落回调；删任一位会丢重入或旧文档屏障。",
+      "cannotDerive": "RenderRequest的私有stage绑定当前SvgRenderPage及PreparedPoster；实际页面URL和visual回执必须匹配，不能从排队或renderer存在推导捕获许可。",
       "tests": ["modules/forum-platform/android/src/hostTest/java/com/wz/reader/svg/SvgRendererInstrumentedTest.kt"],
       "evidenceGap": "仪器覆盖正常渲染/容量/动态SVG，仍缺duplicate visual、late-write/total timeout、renderer-gone明确故障断言。",
-      "targetModel": "RenderRequest以Queued/Loading/AwaitingVisual/Capturing/Settled分支持prepared/page identity，保持原主线程调度和实例校验。",
+      "targetModel": "RenderRequest以Reserved/Queued/Preparing/Loading/AwaitingVisual/AwaitingCapture/Capturing/Encoding/Settled拥有工作阶段；SvgRenderPage携带PreparedPoster和页面身份，物理renderer lease独立。",
       "implementation": {
         "batch": "B08",
         "outcome": "whole",
@@ -1616,7 +1618,7 @@
       "owner": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt",
       "invariant": "Call 执行一次，可提前取消；执行绑定 generation，body关闭/失败只释放自己的 lease。",
       "consumer": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt#imageCallFactory/frescoCallFactory",
-      "cannotDerive": "在 RuntimeImageCall 内建受锁 Created/Started/Released 生命周期，Started绑定delegate/generation，独立保留 cancel 意图与 failure-once。",
+      "cannotDerive": "RuntimeImageCall在等锁前以CAS认领Claimed，取得锁后进入Starting并绑定generation，Started/Released保留delegate；cancel意图和failure-once是独立回执。",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
       "evidenceGap": "需验证取消先于start、callback抛错、body close/失败竞争，保持 OkHttp Call API。",
       "implementation": {
@@ -1716,11 +1718,11 @@
       "action": "keep",
       "batch": 3,
       "owner": "modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyModule.kt",
-      "invariant": "新代理、失败补偿与 invalidate 期间旧 owner 不得关闭或恢复新 server。",
+      "invariant": "新代理、失败补偿与 invalidate 期间旧 owner 不得关闭或恢复新 server；重复已确认配置不得取消在途读取。",
       "consumer": "src/platform/network/networkProxy.ts#applyNetworkProxy",
       "cannotDerive": "applyProxy has one serialized worker-local try/catch owner. transitionStarted records that beginTransition actually succeeded, rather than requested stage; nextServer holds a physical relay needing stop even when commit or synchronization fails. Registry already owns stale bridge admission and port publication. Neither field has a second writer or outside phase consumer. Adding a shadow phase would duplicate the visible single async protocol and cannot replace relay ownership.",
       "tests": ["modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt"],
-      "evidenceGap": "真实 provider apply/timeout/late completion 需匹配 APK 证据。",
+      "evidenceGap": "2026-11-16 在既有 Ownership 中显式记录 Unconfirmed/Confirmed(profile)，复用 stateGeneration；真实 loopback 在途读取、全字段比较、跨 owner 接管和迟到回调由同一 Native owner 验证。真实 provider 与设备结果见 docs/performance/android-host-chain.md。",
       "implementation": {
         "batch": "B03",
         "outcome": "keep",
@@ -3388,9 +3390,9 @@
       "action": "keep",
       "batch": 7,
       "owner": "src/features/feed/useFeedController.ts",
-      "invariant": "聚合首屏部分来源失效时保留已提交的可用帖子，新Query的数据或key失效后清理该展示快照。",
+      "invariant": "无当前 Query 数据的聚合首屏先展示已完成来源的有限份额；部分来源失效时保留可信帖子。完整结果替换快照，scope 变化剔除失效来源，旧请求不得继续发布。",
       "consumer": "src/features/feed/FeedRoute.tsx :: const controller = useFeedController({ ; dev/review-remediation-proof/index.tsx :: const controller = useFeedController({",
-      "cannotDerive": "当前Query尚无数据时旧帖仅存在此快照；它是展示缓存，不应成为cursor、读取许可或第二套Query状态。",
+      "cannotDerive": "当前 Query 尚无完整数据时，部分结果或此前可信帖子仅存在此快照；它不持久化，不提供 cursor、读取许可或请求终态，已有 Query 的刷新继续保留完整列表。",
       "tests": [
         "tests/ui/feed/feed-controller-session.test.tsx",
         "tests/ui/app/content-source-navigation.test.tsx",
@@ -4586,7 +4588,7 @@
       "implementation": {
         "batch": "B08",
         "outcome": "whole",
-        "delivered": "真实 capture session idle/waiting-layout/capturing/sharing/saving 由一个同步 owner claim 操作并持有 action、preview attempt、AbortController；两个 RAF、Native capture 与系统分享/保存的返回路径都归还同一 owner。旧 busyRef 与独立 operation 写入已迁走。",
+        "delivered": "capture session以run|null同步认领一次导出，run保留preview attempt和AbortController；两个RAF、Native capture与系统分享/保存的返回路径只允许当前run提交并释放。action仅用于界面操作反馈，图片与Native布局ready独立保留；旧busyRef与无消费者的中间阶段已删除。",
         "residualControlAuthority": [],
         "retainedIndependentFacts": [
           "图片 completed 集合、实测 height、mounted 与 capture view 是实际输入/物理资源；它们不能由导出操作阶段推导。render 中 observeReady 延续原 canCapture.current 的时机，不能宣称新增 committed-layout 屏障。"
@@ -4825,9 +4827,9 @@
       "implementation": {
         "batch": "B05",
         "outcome": "partial",
-        "delivered": "useTopicComposerOperation实际接管travel/create/edit同步admission及当前run，attempt/result关联用于异常分类，finally只释放原run；原busy/travel writer删除。",
+        "delivered": "useTopicComposerOperation接管create/edit同步admission及当前run，以preflight/attempt/received关联attempt和result用于异常分类，finally只释放原run；原busy/travel writer及prepared/claimed重复阶段已删除。",
         "residualControlAuthority": [
-          "持久journal claim/settle和SQLite事务仍是独立权威；prepared/claimed对当前消费者同义，不按新增阶段名给完整转换信用。"
+          "持久journal claim/settle、SQLite事务与transport的mayHaveSent仍由各自owner管理；operation的attempt/received不证明磁盘提交或远端结果。"
         ],
         "validation": "docs/state-model-refactor.md#b05",
         "acceptance": "ACCEPTED_B05_BOUNDED_EVIDENCE"

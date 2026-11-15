@@ -13,7 +13,7 @@ export class LinuxDoCloudflareError extends Error {
   }
 }
 
-export function responseRetryAfterMs(headers: Pick<Headers, 'get'>) {
+function responseRetryAfterMs(headers: Pick<Headers, 'get'>) {
   const value = headers.get('Retry-After');
   if (!value) return undefined;
   const delay = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();

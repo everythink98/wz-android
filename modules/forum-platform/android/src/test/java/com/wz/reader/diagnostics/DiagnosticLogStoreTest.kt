@@ -16,6 +16,23 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 class DiagnosticLogStoreTest {
+  @Test fun retainsOnlyClosedSocketFailureCategoriesAndFiniteTimeouts() {
+    val accepted = mapOf<String, Any>(
+      "phase" to "request-config", "socketFailure" to "reset", "socketErrno" to "ECONNRESET",
+      "connectTimeoutMs" to 0, "readTimeoutMs" to 15000, "writeTimeoutMs" to 20000, "callTimeoutMs" to 0
+    )
+    assertEquals(accepted, DiagnosticJournal.safeNetworkFields(accepted + mapOf(
+      "exceptionMessage" to "PRIVATE_HOST", "host" to "PRIVATE_HOST", "ip" to "192.0.2.10"
+    )))
+    for (value in listOf("PRIVATE_HOST", "ECONNRESET PRIVATE_HOST")) {
+      assertTrue(DiagnosticJournal.safeNetworkFields(mapOf("socketFailure" to value, "socketErrno" to value)).isEmpty())
+    }
+    for (key in listOf("connectTimeoutMs", "readTimeoutMs", "writeTimeoutMs", "callTimeoutMs")) {
+      for (value in listOf(-1, 1.5, Double.NaN, 1_000_000_001L, "PRIVATE_TIMEOUT")) {
+        assertTrue(DiagnosticJournal.safeNetworkFields(mapOf(key to value)).isEmpty())
+      }
+    }
+  }
   @Test fun retainsOnlyValidSocketLocalPortsWithoutAddresses() {
     for (port in listOf(1, 49152, 65535)) {
       assertEquals(mapOf("socketLocalPort" to port), DiagnosticJournal.safeNetworkFields(mapOf(
@@ -82,6 +99,8 @@ class DiagnosticLogStoreTest {
     assertFalse(DiagnosticJournal.recordStartupPhase("page-ready"))
     assertTrue(DiagnosticJournal.recordStartupPhase("page-layout"))
     assertFalse(DiagnosticJournal.recordStartupPhase("page-layout"))
+    assertTrue(DiagnosticJournal.recordStartupPhase("feed-terminal"))
+    assertFalse(DiagnosticJournal.recordStartupPhase("feed-terminal"))
   }
 
   @Test fun keepsFourBoundedSegmentsAndReopensAfterRestart() {

@@ -79,6 +79,63 @@ const nodeSeekPayload = Buffer.from(
 ).toString('base64');
 
 describe('feed read', () => {
+  it('shows completed sources while a cold connection is still reading, then keeps visible posts in order', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes('nodeseek.com')) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 6_000);
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(new DOMException('aborted', 'AbortError'));
+            },
+            { once: true }
+          );
+        });
+        return new Response(`<script id="__NODESEEK_DATA__" type="application/json">${nodeSeekPayload}</script>`);
+      }
+      return new Response(
+        [901, 902, 903]
+          .map(
+            (id) =>
+              `<div class="cell item"><a class="topic-link" href="/t/${id}#reply0">Ready ${id}</a><a class="node" href="/go/create">create</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>`
+          )
+          .join('')
+      );
+    });
+    const request = getFeed({
+      source: 'all',
+      limit: 2,
+      includedSources: ['nodeseek', 'v2ex'],
+      fetcher,
+      signal: controller.signal,
+      onProgress: progress
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(progress).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [expect.objectContaining({ id: '901' })] })
+      );
+      await vi.advanceTimersByTimeAsync(6_000);
+      const result = await request;
+      expect(result.errors).toEqual({});
+      expect(result.items.map((item) => item.id)).toEqual(['901', '1']);
+      expect(
+        progress.mock.calls
+          .flatMap(([value]) => value.items)
+          .every((item) => result.items.some((final) => final.id === item.id))
+      ).toBe(true);
+    } finally {
+      controller.abort();
+      await request.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it('drains a producer cursor to completion without reading its buffered page again', async () => {
     const fetcher = vi.fn(async (input: string) =>
       input.includes('linux.do')
@@ -938,7 +995,7 @@ describe('feed read', () => {
     expect(retryCursor.sourceCursors.v2ex).toBe(sourceCursor);
   });
 
-  it('publishes feed and categories after the active five-second source budget', async () => {
+  it('bounds hanging feed sources without delaying completed posts and keeps the shorter catalog budget', async () => {
     vi.useFakeTimers();
     const diagnosticEvents: Record<string, unknown>[] = [];
     setDiagnosticWriter((line) => {
@@ -991,13 +1048,15 @@ describe('feed read', () => {
     const categoryController = new AbortController();
     let feedResult: Awaited<ReturnType<typeof getFeed>> | undefined;
     let categoryResult: Awaited<ReturnType<typeof getCategories>> | undefined;
+    const onProgress = vi.fn();
     const feedPromise = getFeed({
       source: 'all',
       limit: 2,
       diagnosticTrace,
       fetcher,
       signal: feedController.signal,
-      unavailableSources
+      unavailableSources,
+      onProgress
     }).then((result) => {
       feedResult = result;
     });
@@ -1013,7 +1072,13 @@ describe('feed read', () => {
     try {
       await vi.advanceTimersByTimeAsync(4_999);
       expect(feedResult).toBeUndefined();
+      expect(onProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [expect.objectContaining({ id: '901' })] })
+      );
       await vi.advanceTimersByTimeAsync(1);
+      expect(categoryResult?.errors.nodeseek).toBeTruthy();
+      expect(feedResult).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(10_000);
       await Promise.resolve();
       const feedAtBudget = feedResult;
       const categoriesAtBudget = categoryResult;
@@ -1033,7 +1098,7 @@ describe('feed read', () => {
       expect(childTerminals).toHaveLength(2);
       expect(childTerminals).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ source: 'nodeseek', state: 'timeout', latencyMs: 5_000 }),
+          expect.objectContaining({ source: 'nodeseek', state: 'timeout', latencyMs: 15_000 }),
           expect.objectContaining({ source: 'v2ex', state: 'success' })
         ])
       );
@@ -1118,7 +1183,7 @@ describe('feed read', () => {
         unavailableSources: ['linuxdo', 'yaohuo']
       });
 
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(15_000);
 
       await expect(request).resolves.toMatchObject({
         items: [],
@@ -1152,7 +1217,7 @@ describe('feed read', () => {
       );
       const request = getFeed({ source: 'all', page: 2, cursor, fetcher });
 
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(15_000);
       const result = await request;
       const retryCursor = JSON.parse(decodeURIComponent(result.nextCursor || '')) as {
         nextPages: Record<string, number>;

@@ -4,7 +4,7 @@ import { prepareReplyContent, prepareTopicContent } from './topicContentSplit';
 
 export type InteractionType = 'upvote' | 'like' | 'dislike';
 type InteractionMode = 'add' | 'remove';
-export type TopicActionStateKind = InteractionType | 'boost' | 'collection' | 'bookmark';
+type TopicActionStateKind = InteractionType | 'boost' | 'collection' | 'bookmark';
 
 type InteractionPatch = {
   commentId: number;

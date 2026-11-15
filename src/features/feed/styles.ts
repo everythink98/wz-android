@@ -1,11 +1,5 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import {
-  readerRadii,
-  type ReaderStyleSettings,
-  type ReaderTheme,
-  alphaColor,
-  fontFamilyValue
-} from '@/ui/theme/tokens';
+import { readerRadii, type ReaderStyleSettings, type ReaderTheme, fontFamilyValue } from '@/ui/theme/tokens';
 
 export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
@@ -144,21 +138,6 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderStyleSettin
       paddingHorizontal: 12,
       paddingTop: 6,
       paddingBottom: 2
-    },
-    linuxDoFilterMenuItem: {
-      minHeight: 38,
-      paddingVertical: 6
-    },
-    linuxDoFilterMenuItemText: {
-      fontSize: 13,
-      includeFontPadding: false,
-      lineHeight: 18
-    },
-    linuxDoFilterMenuItemActive: {
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.06)
-    },
-    linuxDoFilterMenuItemTextActive: {
-      color: theme.primary
     },
     feedPager: {
       flex: 1

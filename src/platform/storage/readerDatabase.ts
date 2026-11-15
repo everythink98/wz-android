@@ -26,9 +26,9 @@ import {
   type ReaderState
 } from '@/domain/reader/readerRecordState';
 
-export type ReaderSql = Pick<SQLiteDatabase, 'execAsync' | 'getAllAsync' | 'getFirstAsync' | 'runAsync'>;
-export type StoredReaderRecord = TopicRecord | FollowedUserRecord;
-export interface ReaderMeta {
+type ReaderSql = Pick<SQLiteDatabase, 'execAsync' | 'getAllAsync' | 'getFirstAsync' | 'runAsync'>;
+type StoredReaderRecord = TopicRecord | FollowedUserRecord;
+interface ReaderMeta {
   status: 'cleanup_pending' | 'ready';
   settings: string;
   bytes: number;

@@ -21,16 +21,16 @@ export type AuthSurfaceTicket = {
   sessionEpoch: number;
 };
 
-export type AuthSurfaceLifecycle = AuthSurfaceTicket & {
+type AuthSurfaceLifecycle = AuthSurfaceTicket & {
   phase: 'open' | 'reconciling';
 };
 
-export type ClosedAuthSurfaceTicket = AuthSurfaceTicket & {
+type ClosedAuthSurfaceTicket = AuthSurfaceTicket & {
   closeReason: AuthSurfaceCloseReason;
   shouldReconcile: boolean;
 };
 
-export type AuthSurfaceRegistry = {
+type AuthSurfaceRegistry = {
   generation: number;
   active: Partial<Record<AuthSurface, AuthSurfaceLifecycle>>;
   visible: AuthSurface | null;

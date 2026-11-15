@@ -66,7 +66,7 @@ export type NodeSeekStardustReceive = {
   oneTime: boolean;
 };
 
-export type ParsedNodeSeekStardustReceive = NodeSeekStardustReceive & {
+type ParsedNodeSeekStardustReceive = NodeSeekStardustReceive & {
   rawMarker: string;
 };
 

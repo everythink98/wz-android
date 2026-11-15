@@ -2,7 +2,7 @@ import { createSqliteExecutor } from '@/platform/storage/sqliteExecutor';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
-export type NodeSeekPollJournalEntry = {
+type NodeSeekPollJournalEntry = {
   localId: string;
   fingerprint: string;
   remoteId: string | null;

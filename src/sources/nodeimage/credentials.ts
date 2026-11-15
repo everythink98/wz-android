@@ -12,13 +12,13 @@ const nodeImageApiKeyWriteGate = createCredentialWriteGate();
 type CredentialPersistenceState = { phase: 'stable' } | { phase: 'restore-required'; previousValue: string | null };
 let credentialPersistence: CredentialPersistenceState = { phase: 'stable' };
 
-export type NodeImageApiKeyCredential = Readonly<{
+type NodeImageApiKeyCredential = Readonly<{
   version: 1;
   apiKey: string;
   ownership: Readonly<{ kind: 'unverified' }> | Readonly<{ kind: 'verified'; identityKey: string }>;
 }>;
 
-export type NodeImageApiKeyUseStatus = 'confirmation-required' | 'identity-mismatch' | 'missing' | 'usable';
+type NodeImageApiKeyUseStatus = 'confirmation-required' | 'identity-mismatch' | 'missing' | 'usable';
 
 export function normalizeNodeImageApiKey(value: string) {
   return String(value || '').trim();

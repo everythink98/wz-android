@@ -112,7 +112,7 @@ export type DiscourseBoost = {
   canDelete: boolean;
 };
 
-export interface QuotedAuthorReference {
+interface QuotedAuthorReference {
   avatar?: string;
   label: string;
   username?: string;

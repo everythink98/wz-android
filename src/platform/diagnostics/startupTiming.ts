@@ -15,6 +15,7 @@ export type StartupPhase =
   | 'page-ready'
   | 'splash-hidden'
   | 'feed-content'
+  | 'feed-terminal'
   | 'feed-empty'
   | 'feed-error';
 

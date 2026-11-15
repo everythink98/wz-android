@@ -1,6 +1,6 @@
 import type { DiagnosticFields } from './diagnosticPolicy';
 
-export type SourceDiagnosticSummary = {
+type SourceDiagnosticSummary = {
   parserVariant: NonNullable<DiagnosticFields['parserVariant']>;
   candidateCount: number;
   validCount: number;

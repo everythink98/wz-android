@@ -3,9 +3,7 @@ import { notificationSources, type NotificationSource } from '@/domain/forum/sou
 type NotificationSourceLifecycle =
   { phase: 'clean' | 'cleanup-required' | 'cleanup-failed' } | { phase: 'cleaning'; operation: Promise<void> };
 
-export type NotificationSourceLifecyclePhase = NotificationSourceLifecycle['phase'];
-
-export type NotificationSourceLifecycleRegistry = Record<NotificationSource, NotificationSourceLifecycle>;
+type NotificationSourceLifecycleRegistry = Record<NotificationSource, NotificationSourceLifecycle>;
 
 export function createNotificationSourceLifecycleRegistry(): NotificationSourceLifecycleRegistry {
   return Object.fromEntries(

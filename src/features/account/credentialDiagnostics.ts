@@ -7,7 +7,7 @@ import { type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 export type LoginWebViewFailureReason = 'network_error' | 'renderer_gone' | 'timeout';
 export type CredentialFillTraceState = { site: CredentialSite; attempt: number; trace: DiagnosticTrace };
 
-export type CredentialSummaryLoadResult =
+type CredentialSummaryLoadResult =
   | { ok: true; summaries: CredentialSummaries }
   | { ok: false; stale: true }
   | { ok: false; error: unknown; summaries: Partial<CredentialSummaries> };

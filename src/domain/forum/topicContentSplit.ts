@@ -85,7 +85,7 @@ type ForumContentPlanRow = {
 
 export type ForumContentCompileRole = 'accepted-answer' | 'opening' | 'quoted-reply' | 'reply' | 'signature';
 
-export type ForumContentMaterializationBudget = {
+type ForumContentMaterializationBudget = {
   readonly metrics: NodeMetrics | null;
   readonly regionCount: number;
 };
@@ -121,7 +121,7 @@ export type ForumContentAncestorFrame =
       readonly tabId: string;
     });
 
-export type ForumCodeTextStyle = {
+type ForumCodeTextStyle = {
   backgroundColor?: string;
   color?: string;
   fontStyle?: 'italic' | 'normal';

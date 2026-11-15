@@ -67,7 +67,7 @@ export type ForumImagePreviewDescriptor = {
   readonly width?: string;
 };
 
-export type ParsedForumImageNode = {
+type ParsedForumImageNode = {
   tagName: string;
   rawTagName?: string | null;
   rawAttrs?: string;

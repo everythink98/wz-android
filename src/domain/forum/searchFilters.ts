@@ -2,16 +2,16 @@ import type { SearchSort } from './feed';
 import type { Category, Source } from './models';
 import { sourceCatalog } from './sourceCatalog';
 
-export type SearchTimeRange = 'all' | 'day' | 'week' | 'month' | 'year';
-export type SearchTextScope = 'all' | 'title';
-export type SearchKeywordOperator = 'or' | 'and';
-export type DiscourseSearchOrder = 'relevance' | 'latest';
-export type DiscourseTagMatch = 'any' | 'all';
+type SearchTimeRange = 'all' | 'day' | 'week' | 'month' | 'year';
+type SearchTextScope = 'all' | 'title';
+type SearchKeywordOperator = 'or' | 'and';
+type DiscourseSearchOrder = 'relevance' | 'latest';
+type DiscourseTagMatch = 'any' | 'all';
 export type DiscourseVisitedFilter = 'seen' | 'bookmarks' | 'likes' | 'posted' | 'created';
-export type DiscourseSearchStatus =
+type DiscourseSearchStatus =
   '' | 'open' | 'closed' | 'public' | 'archived' | 'noreplies' | 'single_user' | 'solved' | 'unsolved';
-export type DiscourseDateRelation = 'before' | 'after';
-export type NodeSeekSearchSort = 'replyTime' | 'postTime';
+type DiscourseDateRelation = 'before' | 'after';
+type NodeSeekSearchSort = 'replyTime' | 'postTime';
 
 export type V2exSearchFilter = {
   source: 'v2ex';
@@ -52,7 +52,7 @@ export type NodeSeekSearchFilter = {
   sort: NodeSeekSearchSort;
 };
 
-export type YaohuoSearchFilter = {
+type YaohuoSearchFilter = {
   source: 'yaohuo';
   category: string;
 };
@@ -155,7 +155,7 @@ export function searchFilterForSource(filters: SearchFilterState, source: Source
   return filters[source];
 }
 
-export function searchTimeRangeLabel(value: SearchTimeRange) {
+function searchTimeRangeLabel(value: SearchTimeRange) {
   return searchTimeRangeItems.find((item) => item.value === value)?.label || '不限时间';
 }
 

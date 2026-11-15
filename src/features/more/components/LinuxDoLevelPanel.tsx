@@ -27,6 +27,7 @@ function formatActivitySeconds(seconds: number) {
 }
 
 export function LinuxDoLevelPanel({
+  active,
   busy,
   error,
   loginButtonLabel = '打开 linux.do 登录 / 验证',
@@ -38,6 +39,7 @@ export function LinuxDoLevelPanel({
   onOpenLogin,
   onRefresh
 }: {
+  active: boolean;
   busy: boolean;
   error: string;
   loginButtonLabel?: string;
@@ -87,7 +89,8 @@ export function LinuxDoLevelPanel({
                   icon={RefreshCw}
                   iconSize={18}
                   label={busy ? '正在刷新等级' : '刷新等级'}
-                  loading={busy}
+                  disabled={!active && busy}
+                  loading={active && busy}
                   onPress={onRefresh}
                 />
               </View>
@@ -281,7 +284,7 @@ export function LinuxDoLevelPanel({
         </>
       ) : (
         <View style={styles.levelEmptyState}>
-          {busy ? <ActivityIndicator color={theme.primary} size="small" /> : null}
+          {busy ? <ActivityIndicator animating={active} color={theme.primary} size="small" /> : null}
           <Text style={styles.meta}>{busy ? '正在读取当前账号统计。' : '暂无等级资料。'}</Text>
         </View>
       )}

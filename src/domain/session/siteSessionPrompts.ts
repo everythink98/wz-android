@@ -3,9 +3,9 @@ import { forumReadOperationIsPublic } from '@/domain/forum/readPlan';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from './siteSessionState';
 
-export type AuthPromptSurface = 'search' | 'read' | 'action';
-export type AuthNoticeTone = 'neutral' | 'warning' | 'danger';
-export type AuthNoticeKind =
+type AuthPromptSurface = 'search' | 'read' | 'action';
+type AuthNoticeTone = 'neutral' | 'warning' | 'danger';
+type AuthNoticeKind =
   | 'anonymous'
   | 'identity-unavailable'
   | 'logged-in'

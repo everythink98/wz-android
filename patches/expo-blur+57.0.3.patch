@@ -1,8 +1,13 @@
 diff --git a/node_modules/expo-blur/android/build.gradle b/node_modules/expo-blur/android/build.gradle
-index 56c71d5..d241662 100644
+index 56c71d5..dae4cab 100644
 --- a/node_modules/expo-blur/android/build.gradle
 +++ b/node_modules/expo-blur/android/build.gradle
-@@ -16,4 +16,8 @@ android {
+@@ -12,8 +12,13 @@
+     versionCode 1
+     versionName "57.0.3"
+   }
++  testOptions.unitTests.includeAndroidResources = true
+ }
  
  dependencies {
    implementation 'com.github.Dimezis:BlurView:version-3.1.0'
@@ -98,5 +103,212 @@ index 0000000..af5664d
 +    target.draw(canvas)
 +    assertEquals("Ending the transition must release the removed content", afterTransitionDraw, draws)
 +    bitmap.recycle()
++  }
++}
+diff --git a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt
+index 71344c8..663ba6e 100644
+--- a/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt
++++ b/node_modules/expo-blur/android/src/main/java/expo/modules/blur/ExpoBlurView.kt
+@@ -147,7 +147,11 @@
+   }
+ 
+   private fun configureBlurView() {
+-    if (blurTarget == null || blurMethod == BlurMethod.NONE) {
++    // setupWith destroys the old controller without removing its pre-draw listener.
++    blurView.setBlurAutoUpdate(false)
++    if (blurTarget == null || blurMethod == BlurMethod.NONE ||
++      (blurMethod == BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS && Build.VERSION.SDK_INT < 31)
++    ) {
+       blurView.setBlurEnabled(false)
+       blurConfiguration = BlurViewConfiguration.NONE
+       return
+@@ -162,6 +166,7 @@
+     blurView.setupWith(dimezisBlurTarget)
+       .setFrameClearDrawable(decorView.background)
+       .setBlurRadius(blurRadius / blurReduction)
++    blurView.setBlurAutoUpdate(true)
+ 
+     blurConfiguration = BlurViewConfiguration.DIMEZIS
+   }
+diff --git a/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt
+new file mode 100644
+index 0000000..8065c00
+--- /dev/null
++++ b/node_modules/expo-blur/android/src/test/java/expo/modules/blur/ExpoBlurViewTest.kt
+@@ -0,0 +1,176 @@
++package expo.modules.blur
++
++import android.app.Activity
++import android.content.Context
++import android.graphics.Canvas
++import android.graphics.RenderNode
++import android.view.View
++import android.widget.FrameLayout
++import eightbitlab.com.blurview.BlurTarget
++import eightbitlab.com.blurview.BlurView
++import eightbitlab.com.blurview.RenderScriptBlur
++import expo.modules.blur.enums.BlurMethod
++import expo.modules.kotlin.AppContext
++import org.junit.Assert.assertEquals
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.mockito.Mockito.mock
++import org.mockito.Mockito.mockConstruction
++import org.mockito.Mockito.any
++import org.mockito.Mockito.times
++import org.mockito.Mockito.verify
++import org.mockito.Mockito.`when`
++import org.robolectric.Robolectric
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.LooperMode
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [35], manifest = Config.NONE)
++@LooperMode(LooperMode.Mode.PAUSED)
++class ExpoBlurViewTest {
++  private class CountingTarget(context: Context) : BlurTarget(context) {
++    var locationReads = 0
++    override fun getLocationOnScreen(location: IntArray) {
++      locationReads += 1
++      super.getLocationOnScreen(location)
++    }
++  }
++
++  private fun withFixture(block: (ExpoBlurView, FrameLayout, List<CountingTarget>) -> Unit) {
++    val activity = Robolectric.buildActivity(Activity::class.java).setup().visible()
++    try {
++      val context = activity.get()
++      val appContext = mock(AppContext::class.java)
++      `when`(appContext.throwingActivity).thenReturn(context)
++      val host = FrameLayout(context)
++      context.setContentView(host)
++      val targets = (1..3).map { id ->
++        val target = ExpoBlurTargetView(context, appContext)
++        val inner = CountingTarget(context)
++        target.removeView(target.blurTargetView)
++        ExpoBlurTargetView::class.java.getDeclaredField("blurTargetView").also {
++          it.isAccessible = true
++          it.set(target, inner)
++        }
++        target.addView(inner)
++        `when`(appContext.findView<ExpoBlurTargetView>(id)).thenReturn(target)
++        host.addView(target, FrameLayout.LayoutParams(80, 80))
++        inner
++      }
++      val view = ExpoBlurView(context, appContext)
++      host.addView(view, FrameLayout.LayoutParams(40, 40))
++      block(view, host, targets)
++    } finally {
++      activity.pause().stop().destroy()
++    }
++  }
++
++  private fun locationReads(host: FrameLayout, targets: List<CountingTarget>): List<Int> {
++    targets.forEach { it.locationReads = 0 }
++    host.viewTreeObserver.dispatchOnPreDraw()
++    return targets.map { it.locationReads }
++  }
++
++  @Test
++  fun switchingTargetsStopsReadingThePreviousTargetOnPreDraw() = withFixture { view, host, targets ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++    for (id in 1..3) view.setBlurTargetId(id)
++    assertEquals(listOf(0, 0, 1), locationReads(host, targets))
++    repeat(30) { view.setBlurTargetId(it % 3 + 1) }
++    assertEquals(listOf(0, 0, 1), locationReads(host, targets))
++  }
++
++  @Test
++  fun keepingTheSameTargetAndSettingsRetainsOnlyOneListener() = withFixture { view, host, targets ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++    view.setBlurTargetId(1)
++    repeat(3) {
++      view.setBlurTargetId(1)
++      view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++      view.setBlurRadius(40f)
++    }
++    repeat(3) {
++      view.setBlurTargetId(null)
++      view.setBlurTargetId(1)
++    }
++    assertEquals(listOf(1, 0, 0), locationReads(host, targets))
++  }
++
++  @Test
++  fun clearingTheTargetStopsItsListenerAndANewTargetCanResume() = withFixture { view, host, targets ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++    view.setBlurTargetId(1)
++    view.setBlurTargetId(null)
++    assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++    view.setBlurTargetId(2)
++    assertEquals(listOf(0, 1, 0), locationReads(host, targets))
++  }
++
++  @Test
++  fun detachingRemovesAllListenersAndReattachingRestoresOnlyTheCurrentOne() = withFixture { view, host, targets ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++    view.setBlurTargetId(1)
++    view.setBlurTargetId(2)
++    host.removeView(view)
++    assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++    host.addView(view, FrameLayout.LayoutParams(40, 40))
++    assertEquals(listOf(0, 1, 0), locationReads(host, targets))
++  }
++
++  @Test
++  @Config(sdk = [28, 35], manifest = Config.NONE)
++  fun aNoneMethodDoesNotInstallTargetListeners() = withFixture { view, host, targets ->
++    view.setBlurTargetId(1)
++    view.setBlurMethod(BlurMethod.NONE)
++    view.setBlurTargetId(2)
++    view.setBlurRadius(40f)
++    assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++  }
++
++  @Test
++  @Config(sdk = [28], manifest = Config.NONE)
++  fun sdk31OnlyBlurKeepsItsOlderApiFallbackAfterTargetChanges() {
++    // Count attempted renderer construction without requiring Robolectric to load a RenderScript driver.
++    mockConstruction(RenderScriptBlur::class.java).use { renderer ->
++      withFixture { view, host, targets ->
++        view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++        view.setBlurTargetId(1)
++        view.setBlurTargetId(2)
++        view.setBlurRadius(40f)
++        assertEquals("SDK 31-only blur must never construct a RenderScript fallback", 0, renderer.constructed().size)
++        assertEquals(listOf(0, 0, 0), locationReads(host, targets))
++        assertEquals(View.VISIBLE, view.visibility)
++      }
++    }
++  }
++
++  @Test
++  @Config(sdk = [28], manifest = Config.NONE)
++  fun theGeneralBlurMethodStillConfiguresItsOlderApiRenderer() {
++    mockConstruction(RenderScriptBlur::class.java).use { renderer ->
++      withFixture { view, _, _ ->
++        view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW)
++        view.setBlurTargetId(1)
++        view.setBlurTargetId(2)
++        assertEquals(2, renderer.constructed().size)
++      }
++    }
++  }
++
++  @Test
++  fun targetChangesKeepTheActualHardwareDrawPath() = withFixture { view, _, _ ->
++    view.setBlurMethod(BlurMethod.DIMEZIS_BLUR_VIEW_SDK_31_PLUS)
++    view.setBlurTargetId(1)
++    val inner = view.getChildAt(0) as BlurView
++    val exact = View.MeasureSpec.makeMeasureSpec(40, View.MeasureSpec.EXACTLY)
++    inner.measure(exact, exact)
++    inner.layout(0, 0, 40, 40)
++    val canvas = mock(Canvas::class.java)
++    `when`(canvas.isHardwareAccelerated).thenReturn(true)
++    inner.draw(canvas)
++    view.setBlurTargetId(2)
++    inner.draw(canvas)
++    verify(canvas, times(2)).drawRenderNode(any(RenderNode::class.java))
 +  }
 +}

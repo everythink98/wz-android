@@ -1,9 +1,9 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { CompiledForumContentRow, ForumContentAncestorFrame } from '@/domain/forum/topicContentSplit';
 
-export type TopicSplitDisclosureKind = 'callout' | 'details';
+type TopicSplitDisclosureKind = 'callout' | 'details';
 
-export type TopicSplitDisclosureStoreValue = {
+type TopicSplitDisclosureStoreValue = {
   activeTabByKey: Readonly<Record<string, string>>;
   expandedByKey: Readonly<Record<string, boolean>>;
   selectTab: (key: string, tabId: string) => void;
@@ -103,11 +103,11 @@ export function useTopicImageGallery(semanticId: string) {
   return { index, select };
 }
 
-export function topicSplitDisclosureKey(scopeKey: string, kind: TopicSplitDisclosureKind, semanticId: string) {
+function topicSplitDisclosureKey(scopeKey: string, kind: TopicSplitDisclosureKind, semanticId: string) {
   return `${scopeKey}\u0000${kind}\u0000${semanticId}`;
 }
 
-export function topicTerminalReportKey(scopeKey: string, semanticId: string) {
+function topicTerminalReportKey(scopeKey: string, semanticId: string) {
   return `${scopeKey}\u0000terminalReport\u0000${semanticId}`;
 }
 

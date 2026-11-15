@@ -3,7 +3,7 @@ import { Text, View, type ViewStyle } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import type { MathJaxSvgResult } from './mathJaxSvg';
 
-export type ForumMathProps = {
+type ForumMathProps = {
   boundarySpacing?: Pick<ViewStyle, 'marginBottom' | 'marginTop'>;
   color: string;
   contentWidth: number;

@@ -13,7 +13,7 @@ export type WritableSessionSnapshot = SessionRuntimeSnapshot;
 
 export type WritableSessionTicket = Pick<WritableSessionSnapshot, 'source' | 'identityKey' | 'sessionEpoch'>;
 
-export type WritableSessionReconcileResult = {
+type WritableSessionReconcileResult = {
   status: 'anonymous' | 'changed' | 'same' | 'stale' | 'unknown';
 };
 

@@ -1,8 +1,6 @@
 import type { ReactElement } from 'react';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 
-export type VisualScenarioKind = 'device-only' | 'non-visual' | 'rendered';
-
 export type VisualAppearance = Partial<
   Pick<ReaderSettings, 'contentWidth' | 'fontFamily' | 'fontScale' | 'lineHeight' | 'listDensity' | 'theme'>
 >;

@@ -993,6 +993,47 @@ export function NotificationDetailScreen({
     conversationAutoScroll.reset();
     setShowLatestMessage(false);
   }, [conversationAutoScroll, conversationIdentity]);
+  const messages = detail?.messages;
+  const messageSource = detail?.notification.source;
+  const conversationKey = useMemo(() => messages?.map((message) => message.id).join(':') || '', [messages]);
+  const messageRows = useMemo(() => {
+    if (!messageSource) return undefined;
+    return messages?.map((message) => (
+      <View
+        key={message.id}
+        testID={`notification-message-${message.id}`}
+        style={[styles.messageRow, message.mine && styles.messageRowMine]}
+      >
+        <View style={[styles.messageMetaRow, message.mine && styles.messageMetaMine]}>
+          <Text style={styles.messageAuthor} numberOfLines={1}>
+            {message.author}
+          </Text>
+          {message.createdAt ? (
+            <Text style={styles.messageTime}>{formatNotificationTime(message.createdAt)}</Text>
+          ) : null}
+        </View>
+        <View style={[styles.messageBubble, message.mine && styles.messageBubbleMine]}>
+          {message.contentHtml ? (
+            <DetailHtml
+              message
+              contentWidth={Math.round(contentWidth * 0.72)}
+              html={message.contentHtml}
+              source={messageSource}
+              mediaContext={mediaContext}
+              onOpenImagePreview={openImagePreview}
+              onOpenExternalUrl={onOpenExternalUrl}
+              onOpenTopic={onOpenTopic}
+            />
+          ) : null}
+          {message.contentText ? (
+            <Text selectable style={styles.messageBody}>
+              {message.contentText}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    ));
+  }, [contentWidth, mediaContext, messages, messageSource, onOpenExternalUrl, onOpenTopic, openImagePreview, styles]);
   const dockSafeAreaStyle = { paddingBottom: Math.max(9, insets.bottom + 9) };
   const replyToTopic =
     topicReplyAction || detail?.notification.kind === 'mention' || detail?.notification.kind === 'reply';
@@ -1034,7 +1075,6 @@ export function NotificationDetailScreen({
   const emptyConversation = item.source === 'nodeseek' && detail.messages?.length === 0;
   const readOnlyText =
     item.kind === 'system' ? '系统通知由原站提供为只读。' : '原站没有为这条通知提供可回复的会话或主题。';
-  const conversationKey = detail.messages?.map((message) => message.id).join(':') || '';
   const hasDraft = Boolean(replyContent.trim());
   return (
     <View style={styles.screen} onLayout={onPageLayout}>
@@ -1170,37 +1210,7 @@ export function NotificationDetailScreen({
           {conversation ? (
             <>
               <View key="spacer" collapsable={false} style={styles.conversationSpacer} />
-              {detail.messages?.map((message) => (
-                <View
-                  key={message.id}
-                  testID={`notification-message-${message.id}`}
-                  style={[styles.messageRow, message.mine && styles.messageRowMine]}
-                >
-                  <View style={[styles.messageMetaRow, message.mine && styles.messageMetaMine]}>
-                    <Text style={styles.messageAuthor} numberOfLines={1}>
-                      {message.author}
-                    </Text>
-                    {message.createdAt ? (
-                      <Text style={styles.messageTime}>{formatNotificationTime(message.createdAt)}</Text>
-                    ) : null}
-                  </View>
-                  <View style={[styles.messageBubble, message.mine && styles.messageBubbleMine]}>
-                    {message.contentHtml ? (
-                      <DetailHtml
-                        message
-                        contentWidth={Math.round(contentWidth * 0.72)}
-                        html={message.contentHtml}
-                        {...detailHtmlProps}
-                      />
-                    ) : null}
-                    {message.contentText ? (
-                      <Text selectable style={styles.messageBody}>
-                        {message.contentText}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-              ))}
+              {messageRows}
             </>
           ) : (
             <>

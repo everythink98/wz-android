@@ -200,7 +200,7 @@ export function discourseReplyWindow(data: unknown, limit: number) {
   };
 }
 
-export type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentId' | 'floor'> & {
+type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentId' | 'floor'> & {
   cookedHtml: string;
 } & Partial<
     Pick<

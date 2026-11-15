@@ -27,14 +27,14 @@ export type CredentialSummary =
 
 export type CredentialSummaries = Record<CredentialSite, CredentialSummary>;
 
-export type SavedCredential = {
+type SavedCredential = {
   site: CredentialSite;
   account: string;
   password: string;
   updatedAt: number;
 };
 
-export type CredentialVaultErrorCode = 'biometric-unavailable' | 'invalid-input' | 'invalidated';
+type CredentialVaultErrorCode = 'biometric-unavailable' | 'invalid-input' | 'invalidated';
 
 export class CredentialVaultError extends Error {
   constructor(

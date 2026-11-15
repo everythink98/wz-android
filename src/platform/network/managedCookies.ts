@@ -3,9 +3,9 @@ import { errorMessage } from './errors';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
-export type ManagedLoginCookieSource = 'linuxdo' | 'nodeseek' | 'yaohuo';
+type ManagedLoginCookieSource = 'linuxdo' | 'nodeseek' | 'yaohuo';
 
-export type CookieBarrierReason =
+type CookieBarrierReason =
   'startup' | 'source-change' | 'surface-open' | 'surface-close' | 'identity-change' | 'explicit-clear';
 
 export type ManagedCookieReadResult =

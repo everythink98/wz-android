@@ -23,7 +23,7 @@ export interface DiscourseLevelRequirement {
   displayChange?: string;
 }
 
-export interface DiscourseActivityStats {
+interface DiscourseActivityStats {
   daysVisited: number;
   topicsEntered: number;
   postsReadCount: number;

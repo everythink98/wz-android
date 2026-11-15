@@ -112,7 +112,7 @@ export function NotificationsRoute({
   useEffect(() => {
     const requested = route.params?.source;
     if (!requested) return;
-    setSource(requested && runtime.enabledNotificationSources.includes(requested) ? requested : 'all');
+    setSource(runtime.enabledNotificationSources.includes(requested) ? requested : 'all');
     setCategoryId('');
     const frame = requestAnimationFrame(() => navigation.setParams({ source: undefined }));
     return () => cancelAnimationFrame(frame);

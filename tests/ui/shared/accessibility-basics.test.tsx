@@ -42,6 +42,18 @@ describe('shared accessibility basics', () => {
     const [indicator] = view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar') || [];
     expect(indicator.props.accessible).toBe(false);
     expect(view.getByText('正在读取主题').props.accessible).toBe(false);
+
+    await view.rerender(<LoadingState text="正在读取主题" animating={false} />);
+    expect(view.getByRole('status').props.accessibilityState).toEqual({ busy: true });
+    expect(view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(0);
+    expect(StyleSheet.flatten(view.getByTestId('loading-indicator-space').props.style)).toMatchObject({
+      width: 24,
+      height: 24
+    });
+    expect(view.getByText('正在读取主题')).toBeTruthy();
+
+    await view.rerender(<LoadingState text="正在读取主题" />);
+    expect(view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar')).toHaveLength(1);
   });
 
   it('keeps recoverable empty copy and its single action together', async () => {

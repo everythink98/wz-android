@@ -1578,7 +1578,6 @@ export const TopicContentList = memo(function TopicContentList({
         );
       }
 
-      if (contentItem.type === 'quoteSummary') return null;
       return null;
     },
     [
@@ -1727,7 +1726,7 @@ export const TopicContentList = memo(function TopicContentList({
                     {discourseTopicReactionStats.map((stat) => (
                       <DiscourseReactionPill
                         compact
-                        contentSource={topic?.source || null}
+                        contentSource={topic.source}
                         key={stat.id}
                         stat={stat}
                         styles={styles}

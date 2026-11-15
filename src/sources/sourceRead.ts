@@ -190,7 +190,7 @@ export type UserReadOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
 };
-export type UserActivityReadOptions = Omit<UserReadOptions, 'id' | 'username'> & {
+type UserActivityReadOptions = Omit<UserReadOptions, 'id' | 'username'> & {
   profile: UserDetails;
   cursor?: string | null;
 };

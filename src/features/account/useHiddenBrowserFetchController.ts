@@ -455,7 +455,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
 true;
 `;
 
-export function hasTrustedBrowserFetchMessageOrigin(sourceUrl: string | undefined, payloadUrl: string | undefined) {
+function hasTrustedBrowserFetchMessageOrigin(sourceUrl: string | undefined, payloadUrl: string | undefined) {
   try {
     const source = new URL(String(sourceUrl || ''));
     const payload = new URL(String(payloadUrl || ''));

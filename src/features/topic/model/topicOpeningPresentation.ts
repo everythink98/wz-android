@@ -27,7 +27,7 @@ export type TopicContentItem =
   | { type: 'poll'; key: string; poll: TopicPoll; row: Extract<CompiledForumContentRow, { type: 'poll' }> }
   | { type: 'accessNotice'; key: string; label: string; detail: string };
 
-export type AcceptedAnswerPresentation = {
+type AcceptedAnswerPresentation = {
   floor: number;
   instanceKey: string;
   reference: QuotedPostReference;

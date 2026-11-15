@@ -1,6 +1,6 @@
 import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 
-export type CredentialWriteGate = {
+type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
   writes: ReturnType<typeof createKeyedSerialRunner<null>>;

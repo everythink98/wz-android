@@ -372,6 +372,25 @@ export function useFeedController({
               ? { includedSources: enabledFeedSources, readPlanScopes: feedReadPlanScopes }
               : { readPlanScope: feedReadPlanScope }),
             trace,
+            ...(pageParam.page === 1 && !queryClient.getQueryData(feedQueryKey)
+              ? {
+                  onProgress: (response: FeedResponse) => {
+                    if (
+                      pageParam.page !== 1 ||
+                      signal.aborted ||
+                      !feedReadOwnerRef.current.active ||
+                      feedReadOwnerRef.current.queryKey !== feedQueryKey ||
+                      queryClient.getQueryData(feedQueryKey) ||
+                      !response.items.length
+                    )
+                      return;
+                    setFeedSnapshot({
+                      queryKey: feedQueryKey,
+                      data: { pages: [validateFeedPage(feedSource, pageParam, response)], pageParams: [pageParam] }
+                    });
+                  }
+                }
+              : {}),
             onBeforeSessionChange: (response) => {
               if (
                 feedSource !== 'all' ||
@@ -748,7 +767,7 @@ export function useFeedController({
     categoryFilter,
     changeFeedSource,
     feedAllowsRemotePagination,
-    feedBusy: feedActive && feedEnabled && feedQuery.isPending && !feedData,
+    feedBusy: feedActive && feedEnabled && feedQuery.isPending && shownFeedItems.length === 0,
     feedCategories,
     enabledFeedSources,
     feedFilter,

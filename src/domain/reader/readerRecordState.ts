@@ -5,7 +5,7 @@ export type ReaderStatus = 'loading' | 'ready' | 'recovery';
 
 export const readerCollections = ['favorites', 'history', 'followedUsers'] as const;
 export type ReaderCollection = (typeof readerCollections)[number];
-export type ReaderKeys = Readonly<Record<string, unknown>>;
+type ReaderKeys = Readonly<Record<string, unknown>>;
 
 export interface ReaderMembership {
   favorites: ReaderKeys;

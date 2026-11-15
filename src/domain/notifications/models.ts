@@ -9,7 +9,7 @@ export interface NotificationCategory {
   label: string;
 }
 
-export type NotificationTarget =
+type NotificationTarget =
   | { type: 'topic'; topicId: string; url: string }
   | ({ type: 'topic-post'; topicId: string; url: string } & (
       { postId: string; postNumber?: number } | { postId?: string; postNumber: number }

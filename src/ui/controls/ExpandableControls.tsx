@@ -19,7 +19,7 @@ import {
   type ReaderTheme
 } from '@/ui/theme/tokens';
 
-export function createExpandableStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
+function createExpandableStyles(theme: ReaderTheme, settings: ReaderStyleSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   const fontSize = createReaderFontSizer(settings);
   return StyleSheet.create({

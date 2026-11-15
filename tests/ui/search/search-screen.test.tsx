@@ -478,6 +478,100 @@ function renderSearchScreen(
 }
 
 describe('Search state', () => {
+  it('keeps unchanged search controls committed across focus-only changes', async () => {
+    const props = createSearchScreenProps({ query: '', submittedQuery: '', recentSearches: ['Android', 'codex'] });
+    const view = await render(<SearchScreen {...props} active />);
+    const initialInputCommits = mockSearchInputCommit.mock.calls.length;
+
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      await view.rerender(<SearchScreen {...props} active={false} requestsEnabled={false} />);
+      await view.rerender(<SearchScreen {...props} active requestsEnabled />);
+    }
+
+    expect(mockSearchInputCommit.mock.calls.length - initialInputCommits).toBe(0);
+    expect(view.getByLabelText('搜索关键词').props.value).toBe('');
+    expect(view.getByLabelText('搜索最近记录 codex')).toBeTruthy();
+
+    const onSearch = jest.fn();
+    await view.rerender(<SearchScreen {...props} active query="new query" onSearch={onSearch} />);
+    expect(mockSearchInputCommit.mock.calls.length).toBeGreaterThan(initialInputCommits);
+    expect(view.getByLabelText('搜索关键词').props.value).toBe('new query');
+    await fireEvent.press(view.getByLabelText('提交搜索'));
+    expect(onSearch).toHaveBeenCalledTimes(1);
+    expect(props.onSearch).not.toHaveBeenCalled();
+  });
+
+  it('pauses the retained AI loading animation on blur without replacing its pending result', async () => {
+    appQueryClient.clear();
+    const enabledSources = ['linuxdo'] as const;
+    const sessionViewModels = projectTestAccountSessions(
+      createSiteSessionStates({
+        linuxdo: {
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: ['session-present'],
+          isVerifying: false,
+          currentUser: testAccountUser('linuxdo')
+        }
+      })
+    );
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>(
+      async ({ signal }) =>
+        new Promise((_, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('canceled')), { once: true });
+        })
+    );
+    const readGateway = {
+      getReadPlan: (source: Source, operation: ForumReadOperation) =>
+        routeReadPlan(source, operation, enabledSources, sessionViewModels),
+      searchTopics: jest.fn(async () => ({ items: [linuxTopic], errors: {}, hasMore: false, nextPage: null })),
+      searchSemanticTopics,
+      searchTagOptions: jest.fn(async () => []),
+      searchUserOptions: jest.fn(async () => [])
+    } as unknown as ReadGateway;
+    const runtime = createSearchRouteRuntime({
+      readGateway,
+      readerData: contentSourceReaderData(enabledSources),
+      sessionViewModels
+    });
+    const route = () => (
+      <SearchRouteRuntimeProvider value={runtime}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+    const view = await render(route());
+    const indicators = () =>
+      view.root?.queryAll((instance) => instance.props.accessibilityRole === 'progressbar') ?? [];
+    try {
+      await fireEvent.press(view.getByTestId('search-source-linuxdo'));
+      await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
+      await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+      await fireEvent.press(view.getByText('相关'));
+      await fireEvent.press(view.getByText('确认筛选'));
+      await fireEvent.press(view.getByLabelText('提交搜索'));
+      await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(view.getByText('linux.do 主题')).toBeTruthy());
+      expect(view.getByText('AI 结果加载中')).toBeTruthy();
+      expect(indicators().some((indicator) => indicator.props.accessibilityState.busy)).toBe(true);
+
+      mockSearchFocused = false;
+      await view.rerender(route());
+      await waitFor(() => expect(searchSemanticTopics.mock.calls[0]?.[0].signal?.aborted).toBe(true));
+      expect(view.getByText('AI 结果加载中')).toBeTruthy();
+      expect(view.getByText('linux.do 主题')).toBeTruthy();
+      expect(indicators().every((indicator) => !indicator.props.accessibilityState.busy)).toBe(true);
+
+      mockSearchFocused = true;
+      await view.rerender(route());
+      await waitFor(() => expect(indicators().some((indicator) => indicator.props.accessibilityState.busy)).toBe(true));
+      expect(view.getByText('AI 结果加载中')).toBeTruthy();
+    } finally {
+      mockSearchFocused = true;
+      await act(async () => appQueryClient.cancelQueries());
+      await view.unmount();
+    }
+  });
+
   it('keeps the Search list renderer stable across unchanged route renders', async () => {
     const enabledSources = ['v2ex'] as const;
     const sessionViewModels = projectTestAccountSessions(createSiteSessionStates({}));

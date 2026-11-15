@@ -72,6 +72,8 @@ Vitest 默认使用 Node 环境；真正执行编辑器 DOM 或 WebView 注入�
 
 MCP 与 Replay 不互相替代：MCP 用于探索和定位；Replay 只保存经过审查的稳定入口、断言和返回路径。动态对象、当天首条、固定列表长度和固定网络耗时不得写入 Replay。
 
+敏感页面遵守 Agent Live 的取证边界，正常和失败路径都不得导出页面内容。默认敏感 `.ad` 由受限原子执行器保留相同动作和断言；其 canonical tooling owner 用合成敏感值验证不采集视频、截图、screen refs 或 overflow，且错误值不透传。CLI 的真实成功与失败行为另用隔离设备验证，Mock canary 不能替代设备结论；具体默认集合和执行命令见维护手册。
+
 Topic 内容守恒由共享 compiler 的 Vitest 契约拥有：同一 fixture 跨主楼、回复、引用、采纳答案、签名和四个来源核对安全文字、链接、图片、表格、代码、DOM 顺序、selection tape 与 preview catalog；compiler 直接生成不可变的 `row.html`、`selectionToken` 与 `previewImages`，opaque 媒体必须有非空且完全转义的降级内容。实体解码后的恶意 `alt/title` 不得重新生成节点或扩大媒体预算；有界内联语义只接受 sanitizer 后由来源 adapter 写入的可信 marker，外部 `/face/` 仍是普通预览。Topic Presentation Contract 的 canonical wiring owner 还必须从 sanitizer → compiler 真实挂载 production renderer，覆盖 standalone/mixed/figure/table、waiting/displayed/SVG poster/original/error/retry/cache/recycle/inactive/epoch；含 `forum-inline-image` 的 row 不得以空 `View` 跳过。临时破坏共享 compatible artifact seam 必须使该用例转红。单次图片事故不新增一条同义 UI 用例；RNTL 只在 Native inline renderer、自然尺寸、预览、失败重试或媒体生命周期 wiring 可独立损坏时承担额外证据。
 
 依赖补丁的 canonical 安装证据不是源码字符串：已执行 postinstall 的依赖树由 `tests/tooling/patch-artifacts.test.ts` 对全部 `patches/*.patch` 运行 `git apply --reverse --check --unsafe-paths`。补丁发生变化时，还必须先在 `npm ci --ignore-scripts` 的干净依赖上逐个执行 forward `git apply --check --unsafe-paths`，再运行真实 postinstall 与 reverse gate。

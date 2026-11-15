@@ -37,7 +37,7 @@ export interface FollowedUserRecord {
   followedAt: string;
 }
 
-export interface DeletedRecords {
+interface DeletedRecords {
   favorites: Record<string, string>;
   history: Record<string, string>;
   followedUsers: Record<string, string>;

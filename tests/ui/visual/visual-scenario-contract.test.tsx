@@ -1,9 +1,9 @@
 import type { ForwardedRef } from 'react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
+import { SafeAreaFrameContext, SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
 jest.mock('@shopify/flash-list', () => {
   const React = require('react') as typeof import('react');
@@ -42,8 +42,41 @@ jest.mock('expo-video', () => ({
 }));
 
 import { visualScenarioCatalog, VisualScenarioView } from './catalog';
+import { VisualGalleryApp } from '../../../dev/visual-gallery/VisualGalleryApp';
 
 describe('visual scenario catalog', () => {
+  it('keeps fullscreen portals on the window while only ordinary content consumes vertical safe areas', async () => {
+    const view = await render(
+      <SafeAreaFrameContext.Provider value={{ x: 0, y: 0, width: 390, height: 844 }}>
+        <SafeAreaInsetsContext.Provider value={{ top: 48, right: 0, bottom: 24, left: 0 }}>
+          <VisualGalleryApp />
+        </SafeAreaInsetsContext.Provider>
+      </SafeAreaFrameContext.Provider>
+    );
+    await fireEvent.changeText(view.getByLabelText('搜索视觉场景'), 'notifications.detail.conversation');
+    const controlFrame = view.getByTestId('visual-frame-notifications.detail.conversation-light-1-controls');
+    expect(controlFrame).toHaveProp('edges', {
+      top: 'additive',
+      right: 'additive',
+      bottom: 'additive',
+      left: 'additive'
+    });
+    const lastMessage = view.getByText('本地会话消息 80：保留上下文，检查草稿编辑与返回。');
+    await fireEvent.press(view.getByRole('button', { name: '全屏预览' }));
+    const fullFrame = view.getByTestId('visual-frame-notifications.detail.conversation-light-1-full');
+    expect(fullFrame).toHaveProp('edges', { top: 'off', right: 'additive', bottom: 'off', left: 'additive' });
+    const ordinaryContent = view.getByTestId('visual-scenario-content');
+    expect(ordinaryContent).toHaveProp('edges', { top: 'additive', right: 'off', bottom: 'additive', left: 'off' });
+    await fireEvent.press(view.getByLabelText('继续编辑私信草稿'));
+    expect(view.getByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true })).toBeTruthy();
+    expect(
+      within(ordinaryContent).queryByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true })
+    ).toBeNull();
+    expect(within(ordinaryContent).queryByTestId('composer-bottom-sheet', { includeHiddenElements: true })).toBeNull();
+    expect(view.getByText('本地会话消息 80：保留上下文，检查草稿编辑与返回。')).toBe(lastMessage);
+    await view.unmount();
+  });
+
   it('classifies exactly the App capabilities declared in the product map', () => {
     const productMap = readFileSync(path.resolve(__dirname, '../../../docs/product-map.md'), 'utf8');
     const expected = [...new Set(Array.from(productMap.matchAll(/`([A-Z]+-\d{2})`/g), (match) => match[1]))]

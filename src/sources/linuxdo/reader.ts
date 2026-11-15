@@ -57,6 +57,7 @@ import { linuxDoBoostFields } from './boosts';
 import { orientReplyWindow } from '@/sources/replyWindows';
 import { discourseReadingFromJson } from '@/domain/forum/discourseReading';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { AGGREGATE_SOURCE_BUDGET_MS } from '@/sources/readAggregation';
 
 export const LIST_PAGE_SIZE = 30;
 
@@ -142,10 +143,11 @@ function fetchCategoryData(options: LinuxDoOptions) {
   }
   if (owner.state.kind === 'ready') return Promise.resolve(owner.state.data);
   if (owner.state.kind === 'pending') return owner.state.request;
-  const request = fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, {
-    ...options,
-    signal: undefined
-  })
+  const request = withAbortableTimeout(
+    (signal) => fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, { ...options, signal }),
+    // The shared catalog owns its deadline; canceling one reader must not cancel the others.
+    { timeoutMs: AGGREGATE_SOURCE_BUDGET_MS }
+  )
     .then((data) => {
       if (categoryCache === owner && owner.state.kind === 'pending' && owner.state.request === request) {
         owner.state = data ? { kind: 'ready', data, map: categoryMapFromData(data) } : { kind: 'empty' };

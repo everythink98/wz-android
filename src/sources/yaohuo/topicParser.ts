@@ -743,7 +743,10 @@ function yaohuoReplyDeletePath(row: HTMLElement, url?: string) {
 }
 
 function yaohuoReplyTargetFloor(row: HTMLElement, url?: string) {
-  const href = row.querySelector('.reother a[href*="tofloor="]')?.getAttribute('href');
+  const href = row
+    .querySelectorAll('.reother a[href*="tofloor="], .replay-other a[href*="tofloor="]')
+    .find((link) => !link.closest('.retext, blockquote'))
+    ?.getAttribute('href');
   if (!href) return undefined;
   try {
     return parsePositiveInteger(new URL(href.replace(/&amp;/gi, '&'), url || BASE_URL).searchParams.get('tofloor'));
@@ -756,7 +759,9 @@ export function parseYaohuoRepliesDocument(
   root: ReturnType<typeof parseHtml>,
   { page = 1, limit = 30, url }: { page?: number; limit?: number; url?: string } = {}
 ): RepliesResponse & { confirmedFloors: number[] } {
-  const rows = root.querySelectorAll('div.list-reply, div.line1, div.line2');
+  const rows = root
+    .querySelectorAll('div.list-reply, div.line1, div.line2, .recontent > .forum-container > div.forum-post')
+    .filter((row) => !row.closest('.retext, .post-content, blockquote'));
   const floorOffset = Math.max(0, page - 1) * limit;
   let missingFloorCount = 0;
   const confirmedFloors: number[] = [];
@@ -765,7 +770,9 @@ export function parseYaohuoRepliesDocument(
     const text = elementText(row);
     const explicitFloor = explicitReplyFloor(row, text);
     const deletePath = yaohuoReplyDeletePath(row, url);
-    const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
+    const header = row.children.find((child) => child.matches('.post-header'));
+    const authorLink =
+      header?.querySelector('.user-nick a[href*="userinfo"]') || row.querySelectorAll('a[href*="userinfo"]').at(-1);
     const actionLink = row.querySelector(
       'a[href*="book_re.aspx"][href*="reply="], a[href*="book_re.aspx"][href*="touserid="]'
     );
@@ -775,7 +782,7 @@ export function parseYaohuoRepliesDocument(
       extractUserIdFromHref(actionLink?.getAttribute('href'));
     const createdAt =
       parseYaohuoDate(
-        elementText(row.querySelector('.retime')) ||
+        elementText(header?.querySelector('.post-date') || row.querySelector('.retime')) ||
           text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
           text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
       ) || '';

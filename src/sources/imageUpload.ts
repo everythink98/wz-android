@@ -2,7 +2,7 @@ import type { Source } from '@/domain/forum/models';
 import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
 import type { UploadImageAsset } from '@/platform/media/prepareUploadImage';
 
-export type ReplyImageAsset = {
+type ReplyImageAsset = {
   uri: string;
   name?: string | null;
   mimeType?: string | null;

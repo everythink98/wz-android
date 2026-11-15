@@ -18,7 +18,7 @@ export type TopicDraftAttachment = {
   markup?: string;
   error?: string;
 };
-export type YaohuoTopicResource = { title: string; url: string; size: string; extension: string; description: string };
+type YaohuoTopicResource = { title: string; url: string; size: string; extension: string; description: string };
 type TopicDraftBase = {
   edit?: TopicEditBaseline;
   additionalReward?: string;
@@ -336,8 +336,8 @@ export type TopicEditableFields = {
   rank?: number;
   tags?: TopicTag[];
 };
-export type TopicEditPermissions = Record<keyof TopicEditableFields | 'additionalReward', boolean>;
-export type TopicEditBaseline = {
+type TopicEditPermissions = Record<keyof TopicEditableFields | 'additionalReward', boolean>;
+type TopicEditBaseline = {
   topicId: string;
   postId?: number;
   original: TopicEditableFields;

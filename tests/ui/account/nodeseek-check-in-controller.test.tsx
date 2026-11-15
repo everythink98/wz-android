@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { Profiler } from 'react';
+import { Profiler, startTransition, Suspense, useLayoutEffect, useState } from 'react';
+import { Button, Text } from 'react-native';
 
 jest.mock('@/sources/nodeseek/actionClient', () => ({
   runNodeSeekAction: jest.fn()
@@ -102,6 +103,77 @@ async function renderController(
 }
 
 describe('NodeSeek account check-in controller', () => {
+  it('keeps the committed account read single-flight while another account render is discarded', async () => {
+    const response = Promise.withResolvers<NodeSeekAttendanceBoard>();
+    const readAttendance = jest.fn(async () => response.promise);
+    const notify = jest.fn();
+    const discarded = { ...ticket, identityKey: 'nodeseek:discarded', sessionEpoch: ticket.sessionEpoch + 1 };
+    const never = new Promise<void>(() => undefined);
+    let committed: ReturnType<typeof useNodeSeekCheckInController> | undefined;
+    function Probe({ current, suspend }: { current: WritableSessionTicket; suspend: boolean }) {
+      const controller = useNodeSeekCheckInController({
+        currentSessionTicket: current,
+        ensureWritableSession: async () => ticket,
+        fetcher: fetch,
+        isWritableSessionTicketCurrent: (candidate) => candidate === ticket,
+        getNodeSeekUserAgent: () => 'WZ Test',
+        notify,
+        onSessionExpired: jest.fn(),
+        readAttendance
+      });
+      useLayoutEffect(() => {
+        committed = controller;
+      });
+      if (suspend) throw never;
+      return <Text>{current.identityKey}</Text>;
+    }
+    function Harness() {
+      const [suspend, setSuspend] = useState(false);
+      return (
+        <QueryClientProvider client={appQueryClient}>
+          <Button
+            accessibilityLabel="Render another account"
+            title="Render another account"
+            onPress={() => startTransition(() => setSuspend(true))}
+          />
+          <Button title="Discard account render" onPress={() => setSuspend(false)} />
+          <Suspense fallback={<Text>Uncommitted account</Text>}>
+            <Probe current={suspend ? discarded : ticket} suspend={suspend} />
+          </Suspense>
+        </QueryClientProvider>
+      );
+    }
+    const view = await render(<Harness />);
+    let first: Promise<void> | undefined;
+    let repeated: Promise<void> | undefined;
+    try {
+      await act(() => {
+        first = committed!.refresh(ticket);
+      });
+      expect(readAttendance).toHaveBeenCalledTimes(1);
+      await fireEvent.press(view.getByRole('button', { name: 'Render another account' }));
+      expect(view.getByText(ticket.identityKey)).toBeTruthy();
+      expect(view.queryByText('Uncommitted account')).toBeNull();
+      await act(() => {
+        repeated = committed!.refresh(ticket);
+      });
+      expect(readAttendance).toHaveBeenCalledTimes(1);
+      await fireEvent.press(view.getByRole('button', { name: /discard account render/i }));
+      await act(async () => {
+        response.resolve(attendanceBoard(true));
+        await Promise.all([first, repeated]);
+      });
+      expect(committed?.state).toMatchObject({ kind: 'signed', record: { memberId: '7' } });
+    } finally {
+      await act(async () => {
+        response.resolve(attendanceBoard(true));
+        await Promise.all([first, repeated]);
+      });
+      await view.unmount();
+    }
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it.each(['identity', 'epoch', 'source-disabled', 'auth-surface', 'unchanged'])(
     'rechecks attendance after proxy preparation (%s)',
     async (change) => {

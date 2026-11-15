@@ -5,7 +5,7 @@ import { recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
 export const NOTIFICATION_STORAGE_KEY = 'wz.notifications.v1';
 const MAX_DELIVERED_IDS = 200;
 
-export interface NotificationSourceState {
+interface NotificationSourceState {
   intentEnabled: boolean;
   identityKey?: string;
   baselineReady: boolean;

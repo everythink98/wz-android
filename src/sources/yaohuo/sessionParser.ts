@@ -16,7 +16,7 @@ function hasYaohuoContentSurface(html: string) {
   );
 }
 
-export function isYaohuoLoginFormHtml(html: string, responseUrl = '') {
+function isYaohuoLoginFormHtml(html: string, responseUrl = '') {
   try {
     const expected = new URL(YAOHUO_LOGIN_URL);
     const actual = new URL(responseUrl);
@@ -40,7 +40,7 @@ export function isYaohuoLoginFormHtml(html: string, responseUrl = '') {
   );
 }
 
-export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
+function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   const visibleText = textContentFromHtml(html);
   return (
     isYaohuoLoginFormHtml(html, responseUrl) ||
@@ -50,7 +50,7 @@ export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   );
 }
 
-export function isYaohuoVerificationRequiredHtml(html: string) {
+function isYaohuoVerificationRequiredHtml(html: string) {
   return (
     /<title\b[^>]*>[^<]*(?:访问验证|请开启JavaScript并刷新该页)[^<]*<\/title>/i.test(html) ||
     /<script\b[^>]*(?:ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG)[^>]*>/i.test(html) ||

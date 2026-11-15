@@ -341,6 +341,26 @@ function ControllerFeed({
 }
 
 describe('feed initial content readiness', () => {
+  it('reports the first painted posts while other aggregate sources are still pending', async () => {
+    const onInitialContentReady = jest.fn();
+    const phases: StartupPhase[] = [];
+    setStartupTimingRecorder((phase) => phases.push(phase));
+    try {
+      const view = await render(renderFeed(false, [topic], { feedOutcomeKind: undefined, onInitialContentReady }));
+      expect(phases).toContain('feed-content');
+      expect(phases).not.toContain('feed-terminal');
+      expect(onInitialContentReady).not.toHaveBeenCalled();
+      expect(view.queryByText('已经到底了')).toBeNull();
+      expect(view.getByText('正在读取其他来源...')).toBeTruthy();
+      await view.rerender(renderFeed(false, [topic], { feedOutcomeKind: 'data', onInitialContentReady }));
+      expect(phases.at(-1)).toBe('feed-terminal');
+      expect(phases.filter((phase) => phase === 'feed-terminal')).toHaveLength(1);
+      expect(onInitialContentReady).toHaveBeenCalledTimes(1);
+    } finally {
+      setStartupTimingRecorder(undefined);
+    }
+  });
+
   it.each(['unavailable', 'verification'] as const)(
     'shows a retry action after an initial %s response and preserves recovered posts if refresh fails',
     async (failure) => {
@@ -496,7 +516,7 @@ describe('feed initial content readiness', () => {
     expect(phases).toEqual([]);
     await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
     await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
-    expect(phases).toEqual([outcome === 'error' || outcome === 'auth' ? 'feed-error' : 'feed-empty']);
+    expect(phases).toEqual([outcome === 'error' || outcome === 'auth' ? 'feed-error' : 'feed-empty', 'feed-terminal']);
   });
 
   it('reports empty readiness once after the actual empty state has laid out', async () => {
@@ -814,6 +834,32 @@ describe('Feed loading', () => {
 
     expect(mockFlashListMountCount).toBe(2);
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 新请求主题')).toBeTruthy();
+  });
+
+  it('animates only the visible source while preserving loading placeholders across focus and source changes', async () => {
+    const view = await render(renderFeed(true, []));
+    const indicators = (source: FeedSource) =>
+      view
+        .getByTestId(`mock-feed-scene-${source}`)
+        .queryAll((instance) => instance.props.accessibilityRole === 'progressbar')
+        .map((instance) => instance.props.accessibilityState.busy);
+
+    expect(indicators('all')).toEqual([true]);
+    expect(indicators('v2ex')).toEqual([]);
+    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('正在读取主题...')).toBeTruthy();
+
+    await view.rerender(renderFeed(true, [], { active: false }));
+    expect(indicators('all')).toEqual([]);
+    expect(indicators('v2ex')).toEqual([]);
+    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('正在读取主题...')).toBeTruthy();
+
+    await view.rerender(renderFeed(true, [], { feedSource: 'v2ex' }));
+    expect(indicators('all')).toEqual([]);
+    expect(indicators('v2ex')).toEqual([true]);
+
+    await view.rerender(renderFeed(false, [topic], { feedSource: 'v2ex' }));
+    expect(indicators('v2ex')).toEqual([]);
+    expect(indicators('all')).toEqual([]);
   });
 
   it('keeps the prelaid loading scene mounted until the target source has data', async () => {

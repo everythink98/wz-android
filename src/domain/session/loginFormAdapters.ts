@@ -1,7 +1,7 @@
 import type { CredentialSite } from './sessionContracts';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 
-export type LoginCredentials = {
+type LoginCredentials = {
   account: string;
   password: string;
 };
@@ -15,7 +15,7 @@ export type LoginFormMessage = {
   reason?: LoginFormFailureReason;
 };
 
-export type LoginFormFailureReason =
+type LoginFormFailureReason =
   'untrusted-page' | 'missing-fields' | 'invalid-form' | 'native-setter-unavailable' | 'fill-failed';
 
 export type LoginFormAdapter = {

@@ -33,7 +33,7 @@ export function topicForQuotedPost(quote: QuotedPostMetadata, baseUrl?: string):
     : null;
 }
 
-export function boundedQuotedPostPreview(value: string | undefined) {
+function boundedQuotedPostPreview(value: string | undefined) {
   const normalized = String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
