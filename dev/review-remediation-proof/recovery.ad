@@ -17,12 +17,14 @@ gesture pan 540 1750 0 -700 500
 wait label="选择备份文件恢复" 10000
 press label="选择备份文件恢复"
 wait "label=\"Show roots\"" 10000
+# Normalize the drawer through its empty right header area on the fixed AVD.
+press 1060 310
 press "label=\"Show roots\""
 wait 500
-wait text="Downloads" 10000
-press text="Downloads"
+wait "id=\"android:id/title\" text=\"Downloads\" visible=true" 10000
+press "id=\"android:id/title\" text=\"Downloads\" visible=true"
 wait 500
-wait text="Downloads" 10000
+wait "text=\"${INVALID_FILE}\" visible=true" 10000
 wait text="${INVALID_FILE}" 10000
 press text="${INVALID_FILE}"
 wait "text=\"备份格式不兼容，请使用当前 Android 版本导出的 JSON。\"" 10000
@@ -45,6 +47,12 @@ wait label="V2EX" 10000
 press label="核对恢复"
 wait text="恢复结果核对通过" 10000
 press id="main-tab-more"
+# More retains the backup panel scroll position; expose the library shortcuts.
+wait "id=\"more-scroll\" visible=true" 10000
+wait stable 500 10000
+gesture pan 540 900 0 1100 500
+gesture pan 540 900 0 1100 500
+wait "role=button label=\"收藏\" visible=true" 10000
 find "role=button label=\"收藏\"" click
 wait id="library-favorites-ready" 60000
 wait text="恢复验收资料" 10000
