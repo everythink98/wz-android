@@ -1300,6 +1300,15 @@ describe('Android release evidence guards', () => {
     );
     expect(loggedOut.timeout).toBe(240000);
     expect(loggedOut.steps.filter(([command]) => command === 'open')).toHaveLength(2);
+    expect(
+      loggedOut.steps.filter((step, index) => {
+        if (step[0] !== 'wait' || !step[1].startsWith('text="已登录 0/3"')) return false;
+        expect(loggedOut.steps[index - 1]).toEqual(['wait', 'id="my-account"', '10000']);
+        return true;
+      })
+    ).toHaveLength(2);
+    expect(loggedOut.steps).not.toContainEqual(['press', 'label="展开账号中心"']);
+    expect(loggedOut.steps).not.toContainEqual(['press', 'label="收起账号中心"']);
     expect(loggedOut.steps.filter(([command]) => command === 'fill')).toEqual([['fill', 'id="search-query"', 'codex']]);
     expect(loggedOut.steps.filter(([command]) => command === 'keyboard')).toEqual([
       ['keyboard', 'dismiss'],

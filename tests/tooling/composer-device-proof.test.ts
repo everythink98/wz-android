@@ -19,6 +19,8 @@ import {
   injectComposerImeInput,
   captureComposerImeDom,
   captureComposerSnapshotReply,
+  captureComposerExpressionTarget,
+  captureTopicFormatPanel,
   assertComposerSettlementDraft,
   assertComposerSnapshotLimit,
   assertComposerImeDom,
@@ -34,6 +36,124 @@ import {
 } from '../../scripts/run-composer-device-proof.mjs';
 
 describe('composer device evidence', () => {
+  it('recognizes the visible named format button through its real DOM hit target', () => {
+    const dom = new JSDOM(`<div role="dialog" aria-label="文字格式">
+      <button aria-label="粗体" aria-pressed="false"><svg></svg></button>
+    </div>`);
+    try {
+      const document = dom.window.document;
+      const panel = document.querySelector('div');
+      const button = document.querySelector('button');
+      if (!panel || !button) throw new Error('Format fixture unavailable');
+      panel.getBoundingClientRect = () => new dom.window.DOMRect(0, 400, 400, 288);
+      button.getBoundingClientRect = () => new dom.window.DOMRect(12, 455, 61, 48);
+      Object.defineProperty(document, 'elementFromPoint', { value: () => button.firstElementChild });
+      expect(captureTopicFormatPanel(document)).toMatchObject({
+        panelVisible: true,
+        label: '粗体',
+        pressed: 'false',
+        enabled: true,
+        hit: true,
+        ready: true
+      });
+    } finally {
+      dom.window.close();
+    }
+  });
+
+  it.each(['hidden', 'disabled', 'covered', 'wrong-label', 'title-focus'])(
+    'rejects an unavailable format button while retaining the actual panel visibility: %s',
+    (condition) => {
+      const dom = new JSDOM(`<input aria-label="标题"><div role="dialog" aria-label="文字格式">
+        <button aria-label="粗体" aria-pressed="false"><svg></svg></button>
+      </div><div id="cover"></div>`);
+      try {
+        const document = dom.window.document;
+        const panel = document.querySelector('div');
+        const button = document.querySelector('button');
+        if (!panel || !button) throw new Error('Format fixture unavailable');
+        panel.getBoundingClientRect = () => new dom.window.DOMRect(0, 400, 400, 288);
+        button.getBoundingClientRect = () => new dom.window.DOMRect(12, 455, 61, 48);
+        Object.defineProperty(document, 'elementFromPoint', {
+          value: () => (condition === 'covered' ? document.getElementById('cover') : button)
+        });
+        if (condition === 'hidden') panel.hidden = true;
+        if (condition === 'disabled' || condition === 'title-focus') button.disabled = true;
+        if (condition === 'wrong-label') button.setAttribute('aria-label', '斜体');
+        if (condition === 'title-focus') document.querySelector('input')?.focus();
+        expect(captureTopicFormatPanel(document)).toMatchObject({
+          panelVisible: condition !== 'hidden',
+          ready: false
+        });
+        // A still-open panel must not satisfy the title-return oracle just because its button is unavailable.
+        if (condition === 'title-focus') {
+          panel.remove();
+          expect(captureTopicFormatPanel(document)).toMatchObject({ panelVisible: false, ready: false });
+        }
+      } finally {
+        dom.window.close();
+      }
+    }
+  );
+
+  it('requires the intended expression image itself to be loaded before consecutive selections', () => {
+    const dom = new JSDOM(`<div data-expression-cache><div class="expression-grid">
+      <button aria-label="ac01" aria-busy="true" data-image-status="loading"><img></button>
+      <button aria-label="ac02" aria-busy="false" data-image-status="loaded"><img></button>
+    </div></div>`);
+    try {
+      const document = dom.window.document;
+      const target = document.querySelector('button')!;
+      const image = target.querySelector('img')!;
+      const other = document.querySelectorAll('img')[1];
+      Object.defineProperties(other, { complete: { value: true }, naturalWidth: { value: 32 } });
+      const update = (status: string, complete: boolean, naturalWidth: number, busy = 'false') => {
+        target.setAttribute('data-image-status', status);
+        target.setAttribute('aria-busy', busy);
+        Object.defineProperties(image, {
+          complete: { configurable: true, value: complete },
+          naturalWidth: { configurable: true, value: naturalWidth }
+        });
+      };
+      update('loading', false, 0, 'true');
+      expect(other.complete && other.naturalWidth > 0).toBe(true);
+      expect(captureComposerExpressionTarget(document, 'ac01')).toMatchObject({
+        label: 'ac01',
+        status: 'loading',
+        ariaBusy: 'true',
+        imageComplete: false,
+        naturalWidth: 0,
+        ready: false
+      });
+      for (const [status, complete, width, busy] of [
+        ['loading', true, 32, 'true'],
+        ['failed', true, 0, 'false'],
+        ['loaded', false, 32, 'false'],
+        ['loaded', true, 0, 'false'],
+        ['loaded', true, 32, 'true']
+      ] as const) {
+        update(status, complete, width, busy);
+        expect(captureComposerExpressionTarget(document, 'ac01').ready).toBe(false);
+      }
+      update('loaded', true, 32);
+      expect(captureComposerExpressionTarget(document, 'ac01').ready).toBe(true);
+      target.setAttribute('aria-label', 'ac03');
+      expect(captureComposerExpressionTarget(document, 'ac01').ready).toBe(false);
+      target.setAttribute('aria-label', 'ac01，加载失败，点击重试');
+      update('failed', true, 0);
+      expect(captureComposerExpressionTarget(document, 'ac01')).toMatchObject({ status: 'failed', ready: false });
+      target.setAttribute('aria-label', 'ac01');
+      update('loaded', true, 32);
+      target.parentElement!.hidden = true;
+      expect(captureComposerExpressionTarget(document, 'ac01').ready).toBe(false);
+      target.parentElement!.hidden = false;
+      target.parentElement!.parentElement!.hidden = true;
+      expect(captureComposerExpressionTarget(document, 'ac01').ready).toBe(false);
+    } finally {
+      dom.window.close();
+    }
+  });
+
   it.each(['编辑测试主帖', '打开测试发帖'])(
     'opens %s only after its native accessibility target becomes readable',
     (launcher) => {
@@ -786,39 +906,68 @@ class FakeComposerSocket extends EventTarget {
     this.dispatchEvent(new Event('close'));
   });
   reply(id: number, value: unknown) {
-    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id, result: { result: { value } } }) }));
+    this.replyResult(id, { result: { value } });
+  }
+  replyResult(id: number, result: unknown) {
+    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id, result }) }));
   }
 }
 
-it('retires a failed synchronous send timer and response listener', async () => {
+it('settles public text input with an empty protocol result while preserving evaluated values', async () => {
   await withComposerDomConnection(async ({ dom, socket }) => {
-    const failure = new Error('controlled send failure');
-    const remove = vi.spyOn(socket, 'removeEventListener');
-    socket.sendFailure = failure;
-    await expect(dom.evaluate('failed')).rejects.toBe(failure);
+    const inserted = dom.insertText('public input 😀');
+    const evaluated = dom.evaluate('document.activeElement.className');
+    expect(socket.send.mock.calls.slice(-2).map(([raw]) => JSON.parse(raw))).toEqual([
+      { id: socket.requests[1], method: 'Input.insertText', params: { text: 'public input 😀' } },
+      {
+        id: socket.requests[2],
+        method: 'Runtime.evaluate',
+        params: { expression: 'document.activeElement.className', returnByValue: true }
+      }
+    ]);
+    socket.replyResult(socket.requests[1], {});
+    socket.reply(socket.requests[2], { className: 'cm-content' });
+    expect(await inserted).toEqual({});
+    expect(await evaluated).toEqual({ className: 'cm-content' });
     expect(vi.getTimerCount()).toBe(0);
-    expect(remove.mock.calls.filter(([event]) => event === 'message')).toHaveLength(1);
   });
 });
 
-it('settles an owned pending RPC when the connection is closed', async () => {
-  await withComposerDomConnection(async ({ dom, pending }) => {
-    let outcome = 'pending';
-    const waiting = dom.evaluate('pending').then(
-      () => {
-        outcome = 'resolved';
-      },
-      () => {
-        outcome = 'rejected';
-      }
-    );
-    pending.push(waiting);
-    dom.close();
-    await Promise.resolve();
-    expect(outcome).toBe('rejected');
-    expect(vi.getTimerCount()).toBe(0);
-  });
-});
+it.each(['evaluate', 'insertText'] as const)(
+  'retires a failed synchronous %s send timer and response listener',
+  async (method) => {
+    await withComposerDomConnection(async ({ dom, socket }) => {
+      const failure = new Error('controlled send failure');
+      const remove = vi.spyOn(socket, 'removeEventListener');
+      socket.sendFailure = failure;
+      await expect(dom[method]('failed')).rejects.toBe(failure);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(remove.mock.calls.filter(([event]) => event === 'message')).toHaveLength(1);
+    });
+  }
+);
+
+it.each(['evaluate', 'insertText'] as const)(
+  'settles an owned pending %s RPC when the connection is closed',
+  async (method) => {
+    await withComposerDomConnection(async ({ dom, pending }) => {
+      let outcome = 'pending';
+      const waiting = dom[method]('pending').then(
+        () => {
+          outcome = 'resolved';
+        },
+        () => {
+          outcome = 'rejected';
+        }
+      );
+      pending.push(waiting);
+      dom.close();
+      await Promise.resolve();
+      expect(outcome).toBe('rejected');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  }
+);
 
 it('consumes the owned port cleanup once across repeated close', async () => {
   await withComposerDomConnection(async ({ dom, adb }) => {
@@ -849,10 +998,12 @@ it('keeps concurrent RPC identity and the existing request deadline', async () =
     socket.reply(socket.requests[1], 'a-result');
     expect(await Promise.all([a, b])).toEqual(['a-result', 'b-result']);
     expect(vi.getTimerCount()).toBe(0);
+    const inputExpired = expect(dom.insertText('expired')).rejects.toThrow('Composer DOM capture timed out');
+    pending.push(inputExpired);
     const expired = expect(dom.evaluate('expired')).rejects.toThrow('Composer DOM capture timed out');
     pending.push(expired);
     await vi.advanceTimersByTimeAsync(5000);
-    await expired;
+    await Promise.all([expired, inputExpired]);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
@@ -862,7 +1013,7 @@ it.each(['close', 'error'])('settles all owned RPCs after a native socket %s eve
     const outcomes = ['pending', 'pending'];
     for (const index of [0, 1]) {
       pending.push(
-        dom.evaluate(String(index)).then(
+        (index === 0 ? dom.evaluate(String(index)) : dom.insertText(String(index))).then(
           () => {
             outcomes[index] = 'resolved';
           },

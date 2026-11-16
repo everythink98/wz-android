@@ -149,8 +149,14 @@ async function waitFor(label, read, accept, timeout = 30000) {
 
 export async function runDiagnosticDeviceProof() {
   const android = path.join(root, 'android');
+  // Two channels of four 2 MiB segments plus crash metadata can expand sixfold in JSON.
   const execute = (args) =>
-    execFileSync('adb', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 });
+    execFileSync('adb', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60000,
+      maxBuffer: 128 * 1024 * 1024
+    });
   const serial = selectDiagnosticProofSerial(execute(['devices']), (device) =>
     execute(['-s', device, 'emu', 'avd', 'name'])
   );
@@ -235,10 +241,14 @@ export async function runDiagnosticDeviceProof() {
       restorePolicy = 'device-frozen';
       throw new Error('Installation identity changed; device changes frozen.');
     }
+    // Installation can restart the process; this fixture reads its deep link only on mount.
+    adb('shell', 'am', 'force-stop', packageName);
     const readSnapshot = () => {
       try {
         return JSON.parse(adb('shell', 'run-as', packageName, 'cat', 'cache/diagnostic-proof.json'));
-      } catch {
+      } catch (error) {
+        if (error?.code === 'ENOBUFS' || error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+          throw new Error('Diagnostic snapshot exceeded the bounded subprocess output limit.');
         return null;
       }
     };

@@ -55,7 +55,7 @@ agent-device 打开入口可能启用无界面的测试输入法；runner 在表
 
 发送后新稿与快照超限可定向运行 `--cases settlement-nodeseek-rich-new-draft,settlement-nodeseek-source-new-draft,snapshot-nodeseek-source-over-limit`，沿用上述 `--serial`、`--build` 或 `--apk` 及新输出目录参数。前两项保持合成 POST pending，在实际富文本/源码编辑器输入 ASCII 新稿，待生产 autosnapshot 后才放行旧请求；核对新稿保留、结算后继续输入及手动关闭保稿。它们不覆盖 600 ms 尚未同步的新输入、中文 IME 组合输入或其他站点和入口。
 
-第三项通过公共 DOM insertText 向实际源码编辑器输入 524,289 字符，连续两次 REQUEST_SNAPSHOT 均须返回与 documentEpoch/requestId 匹配的 too-long ERROR，且零 POST。该场景只证明超限请求关联与拒绝，不证明纠错后恢复、投票数量边界或真实发送；不得将这三项或其他局部批次通过计为完整 Composer 矩阵或 `LIVE_PASS`。
+第三项通过标准 CDP `Input.insertText` 向已聚焦的实际源码编辑器输入 524,289 字符，连续两次 REQUEST_SNAPSHOT 均须返回与 documentEpoch/requestId 匹配的 too-long ERROR，且零 POST。该场景只证明超限请求关联与拒绝，不证明纠错后恢复、投票数量边界或真实发送；不得将这三项或其他局部批次通过计为完整 Composer 矩阵或 `LIVE_PASS`。
 
 发帖专项复用同一隔离构建，不另开 Metro：
 

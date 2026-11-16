@@ -243,6 +243,59 @@ export function captureComposerSnapshotReply(window, requestId) {
     bridge.postMessage = original;
   }
 }
+export function captureTopicFormatPanel(document) {
+  const panel = document.querySelector('[role="dialog"][aria-label="文字格式"]');
+  const button = panel?.querySelector('button[aria-label="粗体"]');
+  const visible = (element) => {
+    if (!element || element.closest('[hidden], [aria-hidden="true"]')) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+      const style = document.defaultView.getComputedStyle(ancestor);
+      if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility) || style.opacity === '0')
+        return false;
+    }
+    return true;
+  };
+  const panelVisible = visible(panel);
+  const buttonVisible = visible(button);
+  const rect = button?.getBoundingClientRect();
+  const target =
+    panelVisible && buttonVisible ? document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) : null;
+  const hit = Boolean(button && target && button.contains(target));
+  const enabled = Boolean(button && !button.matches(':disabled') && button.getAttribute('aria-disabled') !== 'true');
+  return {
+    panelVisible,
+    buttonVisible,
+    label: button?.getAttribute('aria-label') ?? null,
+    pressed: button?.getAttribute('aria-pressed') ?? null,
+    enabled,
+    hit,
+    rect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+    ready: panelVisible && buttonVisible && enabled && hit
+  };
+}
+
+export function captureComposerExpressionTarget(document, targetLabel) {
+  const panel = document.querySelector('[data-expression-cache]:not([hidden])');
+  const button = [...(panel?.querySelectorAll('.expression-grid:not([hidden]) button') || [])].find((item) =>
+    [targetLabel, `${targetLabel}，加载失败，点击重试`].includes(item.getAttribute('aria-label'))
+  );
+  const image = button?.querySelector('img');
+  const label = button?.getAttribute('aria-label') ?? null;
+  const status = button?.getAttribute('data-image-status') ?? null;
+  const ariaBusy = button?.getAttribute('aria-busy') ?? null;
+  const imageComplete = image?.complete === true;
+  const naturalWidth = image?.naturalWidth ?? 0;
+  return {
+    label,
+    status,
+    ariaBusy,
+    imageComplete,
+    naturalWidth,
+    ready: label === targetLabel && status === 'loaded' && ariaBusy !== 'true' && imageComplete && naturalWidth > 0
+  };
+}
 /** @param {(...args: string[]) => string} adb */
 export async function connectComposerImeDom(adb) {
   const pid = adb('shell', 'pidof', pkg);
@@ -340,51 +393,56 @@ export async function connectComposerImeDom(adb) {
       if (owner.signal.aborted) canceled();
     });
     let id = 0;
+    const request = (method, params) =>
+      new Promise((resolve, reject) => {
+        if (owner.signal.aborted) {
+          reject(owner.signal.reason);
+          return;
+        }
+        const requestId = ++id;
+        /** @type {'inactive' | 'waiting'} */
+        let settlement = 'inactive';
+        /** @param {{error: unknown} | {value: unknown}} result */
+        const finish = (result) => {
+          if (settlement !== 'waiting') return;
+          settlement = 'inactive';
+          pending.delete(cancel);
+          clearTimeout(timer);
+          socket.removeEventListener('message', listener);
+          if ('error' in result) reject(result.error);
+          else resolve(result.value);
+        };
+        const cancel = (error) => finish({ error });
+        const listener = (event) => {
+          const message = JSON.parse(event.data);
+          if (message.id !== requestId) return;
+          if (message.error || message.result?.exceptionDetails)
+            cancel(new Error(`Composer DOM capture failed: ${JSON.stringify(message)}`));
+          else
+            finish({
+              value: method === 'Runtime.evaluate' ? message.result.result.value : message.result
+            });
+        };
+        const timer = setTimeout(() => cancel(new Error('Composer DOM capture timed out')), 5000);
+        pending.add(cancel);
+        settlement = 'waiting';
+        socket.addEventListener('message', listener);
+        try {
+          socket.send(
+            JSON.stringify({
+              id: requestId,
+              method,
+              params
+            })
+          );
+        } catch (error) {
+          cancel(error);
+        }
+      });
     const connection = {
       close,
-      evaluate: (expression) =>
-        new Promise((resolve, reject) => {
-          if (owner.signal.aborted) {
-            reject(owner.signal.reason);
-            return;
-          }
-          const requestId = ++id;
-          /** @type {'inactive' | 'waiting'} */
-          let settlement = 'inactive';
-          /** @param {{error: unknown} | {value: unknown}} result */
-          const finish = (result) => {
-            if (settlement !== 'waiting') return;
-            settlement = 'inactive';
-            pending.delete(cancel);
-            clearTimeout(timer);
-            socket.removeEventListener('message', listener);
-            if ('error' in result) reject(result.error);
-            else resolve(result.value);
-          };
-          const cancel = (error) => finish({ error });
-          const listener = (event) => {
-            const message = JSON.parse(event.data);
-            if (message.id !== requestId) return;
-            if (message.error || message.result?.exceptionDetails)
-              cancel(new Error(`Composer DOM capture failed: ${JSON.stringify(message)}`));
-            else finish({ value: message.result.result.value });
-          };
-          const timer = setTimeout(() => cancel(new Error('Composer DOM capture timed out')), 5000);
-          pending.add(cancel);
-          settlement = 'waiting';
-          socket.addEventListener('message', listener);
-          try {
-            socket.send(
-              JSON.stringify({
-                id: requestId,
-                method: 'Runtime.evaluate',
-                params: { expression, returnByValue: true }
-              })
-            );
-          } catch (error) {
-            cancel(error);
-          }
-        })
+      evaluate: (expression) => request('Runtime.evaluate', { expression, returnByValue: true }),
+      insertText: (text) => request('Input.insertText', { text })
     };
     const capture = (phase) =>
       connection.evaluate(`(${captureComposerImeDom.toString()})(document, ${JSON.stringify(phase)})`);
@@ -1108,25 +1166,72 @@ async function main() {
         await receipt(token, (value) => value.keyboardShown === true);
       }
       if (scenario.source === 'nodeseek' && scenario.entry !== 'topic') {
-        replay('expressions-open', restoredLabel);
-        const countStickers = () =>
-          dom.evaluate(
-            `document.querySelector('.source-pane.active .cm-content')
+        const evidence = { target: 'ac01', initialCount: null, targetStates: [], selections: [] };
+        try {
+          replay('expressions-open', restoredLabel);
+          const countStickers = () =>
+            dom.evaluate(
+              `document.querySelector('.source-pane.active .cm-content')
               ? (document.querySelector('.source-pane.active .cm-content').textContent.match(/:ac01:/g) || []).length
               : document.querySelectorAll('.editor-pane.active [data-composer-node="forum-expression"][aria-label="ac01"]').length`
-          );
-        const before = await countStickers();
-        for (let inserted = 1; inserted <= 2; inserted += 1) {
-          agent(['press', 'label="ac01"']);
-          await waitForKeyboard(false);
-          if ((await countStickers()) !== before + inserted)
-            throw new Error('Each sticker selection must insert exactly once into the actual editor document');
-          if (!snapshot(directory, `expressions-selected-${inserted}`).some((node) => node.label === '关闭'))
-            throw new Error('Expression picker closed before consecutive selections finished');
+            );
+          const before = await countStickers();
+          evidence.initialCount = before;
+          const started = Date.now();
+          const deadline = started + 30000;
+          let previousTarget;
+          for (let inserted = 1; inserted <= 2; inserted += 1) {
+            let target;
+            do {
+              if (Date.now() >= deadline)
+                throw new Error('Target expression ac01 did not satisfy the loaded-image prerequisite within 30000ms');
+              target = await dom.evaluate(`(${captureComposerExpressionTarget.toString()})(document, "ac01")`);
+              const serialized = JSON.stringify(target);
+              if (serialized !== previousTarget) {
+                const state = { beforeSelection: inserted, elapsedMs: Date.now() - started, ...target };
+                if (evidence.targetStates.length < 100) evidence.targetStates.push(state);
+                else evidence.targetStates[99] = state;
+                previousTarget = serialized;
+              }
+              if (Date.now() >= deadline)
+                throw new Error('Target expression ac01 did not satisfy the loaded-image prerequisite within 30000ms');
+              if (target.ready) break;
+              await delay(100);
+            } while (true);
+            const selection = { inserted, target, actualCount: null, pickerOpen: null };
+            evidence.selections.push(selection);
+            agent(['press', 'label="ac01"']);
+            await waitForKeyboard(false);
+            selection.actualCount = await countStickers();
+            if (selection.actualCount !== before + inserted)
+              throw new Error('Each sticker selection must insert exactly once into the actual editor document');
+            selection.pickerOpen = snapshot(directory, `expressions-selected-${inserted}`).some(
+              (node) => node.label === '关闭'
+            );
+            if (!selection.pickerOpen)
+              throw new Error('Expression picker closed before consecutive selections finished');
+          }
+          capture(directory, 'expressions-selected');
+          replay('expressions-close', restoredLabel);
+        } finally {
+          writeFileSync(path.join(directory, 'expressions-selection.json'), JSON.stringify(evidence, null, 2));
         }
-        capture(directory, 'expressions-selected');
-        replay('expressions-close', restoredLabel);
       }
+    } finally {
+      dom.close();
+    }
+  };
+  const verifyTopicFormatPanel = async (directory, stage, open) => {
+    const dom = await connectComposerImeDom(adb);
+    try {
+      const deadline = Date.now() + 30000;
+      do {
+        const panel = await dom.evaluate(`(${captureTopicFormatPanel.toString()})(document)`);
+        writeFileSync(path.join(directory, `${stage}-dom.json`), JSON.stringify(panel));
+        if (open ? panel.ready : !panel.panelVisible) return;
+        await delay(100);
+      } while (Date.now() < deadline);
+      throw new Error(open ? 'Topic format tools did not become ready' : 'Title focus left the format panel visible');
     } finally {
       dom.close();
     }
@@ -1284,18 +1389,18 @@ async function main() {
             await verifyGeometry('keyboard-shown', true);
             agent(['press', 'label="文字格式"']);
             await receipt(token, (value) => value.keyboardShown === false);
+            await verifyTopicFormatPanel(directory, 'format-panel', true);
             const formatNodes = snapshot(directory, 'format-panel');
-            if (!formatNodes.some((node) => node.label === '粗体')) throw new Error('Topic format tools unavailable');
             capture(directory, 'format-panel');
             agent(['press', 'label="查看标题与标签"']);
             await receipt(token, (value) => value.keyboardShown === true);
+            await verifyTopicFormatPanel(directory, 'title-restored', false);
             const titleNodes = snapshot(directory, 'title-restored');
             if (
               !titleNodes.some(
                 (node) =>
                   node.type === 'android.widget.EditText' && node.value === `Local ${scenario.source} topic proof`
-              ) ||
-              titleNodes.some((node) => node.label === '粗体')
+              )
             )
               throw new Error('Title focus did not replace the format panel');
             capture(directory, 'title-restored');
@@ -1309,6 +1414,7 @@ async function main() {
             adb('shell', 'ime', 'set', ime);
             agent(['press', 'label="文字格式"']);
             await receipt(token, (value) => value.keyboardShown === false);
+            await verifyTopicFormatPanel(directory, 'long-format-panel', true);
             const longFormatNodes = snapshot(directory, 'long-format-panel');
             capture(directory, 'long-format-panel');
             if (!longFormatNodes.some((node) => String(node.value || node.label || '').includes('Long draft line')))
@@ -1534,14 +1640,13 @@ async function main() {
               if (evidence.before.type !== 'SNAPSHOT' || evidence.before.payload.snapshot.mode !== 'source')
                 throw new Error('A valid source document did not answer REQUEST_SNAPSHOT');
               evidence.beforeDom = await dom.capture('start');
-              // Exercise public contenteditable input, never CodeMirror's private view/state.
+              // EditContext-backed editors accept standard CDP input instead of DOM execCommand.
               await dom.evaluate(`(() => {
                 const editor = document.querySelector('.cm-content');
                 if (!editor) throw new Error('Source editor unavailable');
                 editor.focus();
-                if (!document.execCommand('insertText', false, 'a'.repeat(${evidence.insertedChars})))
-                  throw new Error('Source editor rejected the public insertText command');
               })()`);
+              await dom.insertText('a'.repeat(evidence.insertedChars));
               await delay(100);
               evidence.afterDom = await dom.capture('stop');
               const expected = {
@@ -1561,7 +1666,7 @@ async function main() {
                 throw new Error('Snapshot limit proof unexpectedly dispatched a POST');
               result.snapshotLimit = {
                 maxChars: 512 * 1024,
-                inputMethod: 'Public DOM insertText command into the actual source editor',
+                inputMethod: 'CDP Input.insertText into the actual focused source editor',
                 validRequestAnswered: true,
                 repeatedOversizedRequestsRejected: true,
                 documentEpoch: expected.documentEpoch,
