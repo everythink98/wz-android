@@ -471,7 +471,11 @@ describe('App navigator UI state', () => {
           expect(navigationRef.getCurrentRoute()?.key).toBe(routeKeys[index]);
           expect(view.getByLabelText(`${id}草稿`).props.value).toBe(`${sources[index]}-${round}`);
           await act(async () => navigationRef.goBack());
-          expect(view.queryByLabelText(`${id}草稿`, { includeHiddenElements: true })).toBeNull();
+          expect({
+            round,
+            source: sources[index],
+            draftRemoved: view.queryByLabelText(`${id}草稿`, { includeHiddenElements: true }) === null
+          }).toEqual({ round, source: sources[index], draftRemoved: true });
         }
         expect(navigationRef.getRootState()?.routes).toHaveLength(1);
         expect(view.getByLabelText('搜索状态').props.value).toBe(`search-${round}`);
