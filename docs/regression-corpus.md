@@ -2,6 +2,18 @@
 
 本文记录已确认事故的历史症状、根因、当前状态、修复证据和验收边界。按 REG 编号或能力 ID 查找条目，先读状态与当前结论，再核对证据适用的源码、构建、设备和来源。历史通过结果不能直接作为当前版本的验证结论。
 
+## `REG-ACCOUNT-077` NodeSeek 强挑战被缓存访客内容覆盖
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01/02/04`，共享 `FEED-01`、`SEARCH-01/02`、`TOPIC-01/03`、`USER-01`、`NOTIFY-01` |
+| 历史症状与根因 | 合成页面同时包含强 Cloudflare 标识与公开列表或明确的 `user:null`。隐藏脚本先以公开内容或运行时字段短路挑战检测，立即输出 anonymous meta；真实 source identity reader 随后可能将其当作访客终态。三个实际脚本反例均已复现。 |
+| 当前 owner | `tests/integration/hidden-browser-scripts.test.ts` 的强挑战、合法访客、普通 JSD 与 JSON 行为；既有账号 browser-flow、hidden-host 和队列 owner；`NodeSeekBrowserScriptInstrumentedTest.kt` 的实际 WebView 消息专项。 |
+| 修前 oracle | account 的强标题加公开列表、Turnstile 加公开列表，以及 account-overview 的强标题加 null 用户，都应继续要求验证；修前三例实际输出 `challenge:false` 与访客 metadata。 |
+| 修复与证据 | 先识别 JSON；HTML 强挑战不再受公开内容或 null 用户短路。合法访客、仅 JSD 检测的可读内容、JSON、期限及单次结算保持。修前 3 例 RED；相关 source/script/解析 owner 227 项、UI owner 117 项、类型和静态检查通过，seed `20261117`。 |
+| 验收边界 | 这是已复现的判定边界，不是当前真实 NodeSeek 会话变化的已证根因。匹配新 APK 的 Android WebView 补验与真实挑战现场分别结算；修复不会恢复服务端会话，也不证明物理 Cookie 曾被删除。 |
+
 ## `REG-PERF-047` More 保留挂载的账号面板在隐藏时继续动画
 
 | 字段 | 内容 |

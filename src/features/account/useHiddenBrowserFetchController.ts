@@ -279,8 +279,9 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     } catch {}
   };
   const postResult = () => {
-    const challenge = !(requestOwner === "account-overview" ? hasRuntimeAccountUser() : hasReadablePage()) && isChallengePage(true);
     const json = jsonText();
+    const challenge = !json && (isChallengePage()
+      || (!(requestOwner === "account-overview" ? hasRuntimeAccountUser() : hasReadablePage()) && isChallengePage(true)));
     const anonymousAccountHtml = !challenge
       && (requestOwner === "account" || requestOwner === "account-overview")
       && window.__config__

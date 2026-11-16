@@ -11,6 +11,7 @@ import {
 } from '@/sources/nodeseek/topicParser';
 import { parseNodeSeekPageDocument } from '@/sources/nodeseek/protocol';
 import { getNodeSeekAccountOverview } from '@/sources/nodeseek/accountData';
+import { getCurrentUserIdentity } from '@/sources/sourceRead';
 import { normalizeCategories, parseHtmlTopics } from '@/sources/nodeseek/feedParser';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import { loadLinuxDoTopicCreationContext } from '@/sources/linuxdo/topicCreation';
@@ -190,6 +191,7 @@ describe('hidden browser fetch scripts', () => {
     const { evaluateAgain, postMessage } = runNodeSeekBrowserFetchScript(
       '/',
       `
+      <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
       <ul class="post-list">
         <li class="post-list-item">Public topic</li>
       </ul>
@@ -375,6 +377,42 @@ describe('hidden browser fetch scripts', () => {
     );
     expect(postMessage).toHaveBeenCalledTimes(1);
     expect(JSON.parse(postMessage.mock.calls[0]![0])).toMatchObject({ challenge: true, html: '' });
+  });
+
+  it.each([
+    {
+      owner: 'account',
+      marker: 'title over public content',
+      title: 'Just a moment...',
+      html: '<li class="post-list-item">Public topic</li>'
+    },
+    {
+      owner: 'account',
+      marker: 'Turnstile over public content',
+      title: '',
+      html: '<div class="cf-turnstile"></div><li class="post-list-item">Public topic</li>'
+    },
+    {
+      owner: 'account-overview',
+      marker: 'title over an explicit null runtime user',
+      title: 'Just a moment...',
+      html: '<main>Checking this request</main>'
+    }
+  ] as const)('keeps a strong $marker as verification-required for $owner', async ({ owner, title, html }) => {
+    Object.defineProperty(window, '__config__', { configurable: true, value: { user: null } });
+    const { evaluateAgain, postMessage } = runNodeSeekBrowserFetchScript('/', html, owner, title);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]![0]);
+    expect(payload).toMatchObject({ challenge: true, html: '' });
+    await expect(
+      getCurrentUserIdentity({
+        source: 'nodeseek',
+        nodeSeekAuthenticated: true,
+        fetcher: async () => nodeSeekBrowserResponse(payload.html, payload.challenge, undefined, payload.url)
+      })
+    ).rejects.toMatchObject({ source: 'nodeseek', reason: 'cloudflare' });
+    evaluateAgain();
+    expect(postMessage).toHaveBeenCalledTimes(1);
   });
 
   it('waits for NodeSeek search results instead of returning the bare search form', () => {

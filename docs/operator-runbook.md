@@ -209,6 +209,10 @@ HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 
 
 `node scripts/run-network-image-instrumented-tests.mjs --hardware-pressure` 在同一隔离 AVD 的独立 instrumentation 进程中验证 JPEG/PNG/WebP：20 轮六个可见目标，另含损坏响应、取消和恢复。该测试请求显式设置 `Downsampler.ALLOW_HARDWARE_CONFIG=true`，逐个断言实际 `Bitmap.Config.HARDWARE`、尺寸、PixelCopy 屏幕象限和 clear 后回收；它不修改产品默认配置，也不能证明默认产品路径或物理设备 codec 已通过。进程 PSS、graphics、native heap 和 FD 为离散观测，没有采到连续峰值时不得声明峰值或无泄漏。
 
+NodeSeek 隐藏脚本另有真实 WebView 专项。先执行 `node scripts/prepare-browser-script-test-assets.mjs --output .codex-tmp/browser-script-<独立运行名>`，求值当前生产 export 及插值，生成专用脚本资产与输入 SHA 清单；输出必须是全新的 ignored 目录，不能复制旧脚本文本。构建测试 APK 时复用 `tests/native/forum-platform.gradle`，以 `-PwzBrowserScriptTestAssets=<本次生成的 assets 绝对路径>` 加入仅 androidTest 的资产，并使用独立 buildId 的 Release instrumentation overlay。非混淆的开发签名专项目标与普通正式包分开绑定，不把专项包当作正式 R8 验收。
+
+本专项只在无真实登录数据的专用隔离 AVD 执行，先按覆盖安装门禁核对目标 APK、签名、UID 和首次安装时间；不得使用主设备。定向运行 `com.wz.reader.NodeSeekBrowserScriptInstrumentedTest#currentScriptKeepsStrongChallengesSeparateFromGuestAndJson`，传入 `nodeSeekBrowserScriptMode=strong-challenge-v1` 和本次 manifest 的 `nodeSeekBrowserScriptSha256`。缺少模式会明确跳过，错误模式或 SHA 必须失败；只有实际 `OK (1 test)` 且 `NODESEEK_BROWSER_SCRIPT` 包含六个结算场景，才记该专项通过。六份页面通过 CSP、禁用网络加载及资源拦截隔离，覆盖三个强挑战反例、合法访客、普通 JSD 标记及 JSON，并重复注入核对单次消息。该结果只证明 Chromium 执行生产脚本到 RNC 原生消息；账号 hook、source parser、完整登录保持和真实 CF/JSD 网络行为分别验收。测试后覆盖恢复本次普通包，核对身份，并在关闭隔离设备前完成包管理器结算、刷盘与稳定等待。
+
 ### 备份、诊断分享与图片保存验证
 
 长图分享的原生验证使用 `node scripts/run-network-image-instrumented-tests.mjs --topic-share`，同样只接受独立 `WZ_ImageRuntime_Test_API35`。四项指定方法必须各自成功结算：以 360/720/1080/1440/1920 px 源宽生成统一 1440 px 宽、约 40,000 px 高的完整 PNG，按区域解码检查首尾、条带接缝和非整数输出高度，并比较实际文字重绘与低分辨率位图放大后的灰色过渡边缘，确认输出保留抗锯齿且减少模糊边缘；实际位图分配不超过 1440×256，原预览尺寸与滚动位置不变；取消、磁盘写入失败和布局变化必须删除本次临时文件。隔离入口 `dev/topic-share-capture-proof/index.tsx` 通过生产 JS helper、Fabric ScrollView 和 ExpoImage 生成 PNG，核对头部、实际图片、尾部像素及 release 后文件删除；另从真实分享页导出，验证 1440 px 原图的条纹细节仍在 PNG 中，打开系统分享后取消，不启动 Feed 或账号请求。JVM 编码与失败清理由 `:forum-platform:testDebugUnitTest --tests '*TopicShareCaptureTest'` 验证。原生像素证据不替代真实帖子、相册及接收 App 的完整流程验收；旧安装包缺少新模块时，长图页提示更新，必须重新编译 APK 后验证。

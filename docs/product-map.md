@@ -644,6 +644,8 @@ LDC 使用 [Linux DO Credit 官方服务](https://github.com/linux-do/credit) �
 
 `ACCOUNT-01` 与 `ACCOUNT-02` 共享账号终态契约：上次已确认的 authenticated/anonymous 是下次启动的有效事实，普通冷启动零 Account probe。核对中的 busy 与身份事实分离；正常账号核对不复用 Feed 的 5 秒聚合预算，只等待站点协议终态，单个 HTTP 请求继续使用连续墙钟 15 秒 watchdog。网络、解析、403、429、Cloudflare 或超时只结束本次核对并保留原 snapshot/ReadPlan。只有账号协议明确终态、用户显式清除，或当前 authenticated epoch 的原始 HTTP 401 才改变身份；本地退出绝不清理 WebView Cookie。
 
+`ACCOUNT-01/02/04` 与共享 NodeSeek 读取：隐藏页面先识别 JSON，HTML 的强 Cloudflare 标识优先于公开内容及缓存的 `user:null`，不能据此发布访客身份；只有普通 JSD 检测脚本时，仍按既有正文与运行时就绪规则结算。合法访客、JSON、原期限和单次消息规则保持。Canonical owner 为 `tests/integration/hidden-browser-scripts.test.ts`，结合真实 source identity reader 验证强挑战继续返回验证要求，不把它转换为 anonymous。原站实际会话是否失效、是否出现对应挑战标识分别取证，不由合成页测试推断。
+
 `ACCOUNT-01`、`SEARCH-02/04`、`WRITE-01` 区分核对触发与身份结论：L 站读取或主题 mutation 的失败响应明确要求登录时，协议 adapter 保留原站文案并发布 `account-recheck-required`，由 Account runtime 对仍有效的 confirmed authenticated epoch 发起核对；普通权限、等级、Cloudflare 与 CSRF 错误不触发此路径。直接错误和聚合来源错误共用入口，同站并发复用在途核对，账号请求自身不再次触发。核对中及失败时保持原身份；只有明确终态才更新账号、搜索 ReadPlan 与回复权限，不自动弹登录页或重发写操作。核对 trace 关联原失败 trace，旧 epoch、已停用来源和登录 surface barrier 的信号不生效。`src/sources/readGateway.test.ts`、`src/sources/linuxdo/actionClient.test.ts`、`tests/ui/account/account-runtime.test.tsx` 与 `tests/ui/topic/topic-actions-controller.test.tsx` 分别拥有解析/聚合、写协议、账号生命周期和回复失败的 canonical evidence。
 
 
