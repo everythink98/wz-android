@@ -64,6 +64,6 @@
 
 本轮原始日志、修前快照和可重放实验保存在 ignored `.codex-tmp/code-perf-20261116/`；通知修复的前期日志位于 `.codex-tmp/host-chain-20261116/conversation-derived-*`。它们不进入提交范围。真实 Android 的输入与滚动、普通切页尾部、物理设备及未执行流程分别报告，不用低层计数替代设备验收。
 
-切页原始记录位于 ignored `.codex-tmp/app-perf-root-20261116/navigation/search-runs/v7-code-interaction-unprofiled-3x10/`；阶段复核工具为本轮 `summarize-navigation.cjs`。临时 AVD 已停止；清理其本轮独有数据文件的命令被自动审批以“策略阻止”拒绝，因此保留目录与 ini，不改用其他删除方式。
+切页原始记录位于 ignored `.codex-tmp/app-perf-root-20261116/navigation/search-runs/v7-code-interaction-unprofiled-3x10/`；阶段复核工具为本轮 `.codex-tmp/code-perf-20261116/summarize-navigation.cjs`。临时 AVD 已停止；清理其本轮独有数据文件的命令被自动审批以“策略阻止”拒绝，因此保留目录与 ini，不改用其他删除方式。
 
 最终 `STATIC_PASS`：typecheck、相关 ESLint/Prettier、712 modules 架构检查、文档引用与 diff 检查；`APK_SANITY`：普通包当前 UID、首次安装时间、SHA、非 debuggable 与真实 Gboard 复核通过，当前 PID crash buffer 没有崩溃事件。宿主未残留本轮新增 Node、Java、模拟器或 profiler 进程；原主模拟器、ADB、FlClash 与 core 保持。`LIVE_PASS` 仅限上述 Search 空输入和实际 Topic 查找路径；真实私信、物理设备、完整设备 Replay 矩阵及切页性能达标仍为 `NOT_VERIFIED`，不能由合成场景或局部计数替代。

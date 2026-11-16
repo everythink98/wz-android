@@ -481,6 +481,8 @@ npm run test:device:logged-out
 
 runner 会拒绝与 `WZ_ANDROID_TEST_DEVICE` 或 `WZ_ANDROID_SMOKE_DEVICE` 相同的设备。不要克隆、卸载或清除主 AVD 来制造未登录状态。
 
+独立未登录旅程也会进入认证页面，因此同样使用无页面取证的受限原子路径；只增加该脚本现有的公开搜索词输入、关闭键盘和固定等待语法，不允许借此填写凭据。未知动作仍在任何设备操作前拒绝。
+
 ### 首页手势完整回归
 
 相关改动按 `docs/testing-standard.md` 执行以下整套流程；各项共用已核对的 APK 和独占设备输入，不能把一项通过当成整套通过。

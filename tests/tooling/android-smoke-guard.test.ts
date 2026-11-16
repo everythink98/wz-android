@@ -1091,16 +1091,22 @@ describe('Android release evidence guards', () => {
     expect((failure as Error).message).toContain('last.ad');
   });
 
-  it.each(['success', 'selector-failure', 'cleanup-failure'] as const)(
-    'runs all eight journeys without sensitive captures or raw errors on %s',
-    async (outcome) => {
+  it.each(
+    (['default', 'logged-out'] as const).flatMap((suite) =>
+      (['success', 'selector-failure', 'cleanup-failure'] as const).map((outcome) => ({ suite, outcome }))
+    )
+  )(
+    'runs $suite Replay without sensitive captures, recording or raw backend errors on $outcome',
+    async ({ suite, outcome }) => {
       const directory = mkdtempSync(path.join(tmpdir(), 'wz-sensitive-replay-'));
       const apkPath = path.join(directory, 'candidate.apk');
       writeFileSync(apkPath, 'controlled APK');
       const artifacts = path.join(rootDir, 'tmp', 'agent-device');
       const files = new Map<string, string>();
       const canary = 'PRIVATE_PROXY_CANARY.invalid:38473';
-      const sensitive = ['account-readonly', 'more-readonly', 'nodeseek-session'];
+      const sensitive =
+        suite === 'logged-out' ? ['logged-out-readonly'] : ['account-readonly', 'more-readonly', 'nodeseek-session'];
+      const failureJourney = suite === 'logged-out' ? 'logged-out-readonly' : 'more-readonly';
       const testCalls: string[] = [];
       const atomicCalls: {
         args: string[];
@@ -1158,10 +1164,12 @@ describe('Android release evidence guards', () => {
             timeout: options?.timeout
           });
           if (
-            (outcome === 'selector-failure' && args[0] === 'wait' && args[1] === 'text="使用代理"') ||
+            (outcome === 'selector-failure' &&
+              args[0] === 'wait' &&
+              args[1] === (suite === 'logged-out' ? '8000' : 'text="使用代理"')) ||
             (outcome === 'cleanup-failure' &&
               args[0] === 'close' &&
-              args[args.indexOf('--session') + 1].endsWith('-more-readonly'))
+              args[args.indexOf('--session') + 1].endsWith(`-${failureJourney}`))
           ) {
             throw Object.assign(new Error(canary), {
               stdout: JSON.stringify({ success: false, error: { code: 'ELEMENT_NOT_FOUND', message: canary } })
@@ -1179,21 +1187,24 @@ describe('Android release evidence guards', () => {
           await controlledReplay({
             apkPath,
             selectedDevice: 'Controlled device',
-            device: { id: 'controlled-device', name: 'Controlled device' }
+            device: { id: 'controlled-device', name: 'Controlled device' },
+            ...(suite === 'logged-out' ? { replayDirectory: path.join(rootDir, 'tests', 'device-logged-out') } : {})
           });
         } catch (error) {
           failure = error;
         }
         expect(testCalls).toEqual(
-          outcome === 'cleanup-failure'
-            ? ['feed-gesture-priority', 'feed-source-controls', 'library-return']
-            : [
-                'feed-gesture-priority',
-                'feed-source-controls',
-                'library-return',
-                'notifications-readonly',
-                'search-multi-source'
-              ]
+          suite === 'logged-out'
+            ? []
+            : outcome === 'cleanup-failure'
+              ? ['feed-gesture-priority', 'feed-source-controls', 'library-return']
+              : [
+                  'feed-gesture-priority',
+                  'feed-source-controls',
+                  'library-return',
+                  'notifications-readonly',
+                  'search-multi-source'
+                ]
         );
         for (const name of outcome === 'cleanup-failure' ? sensitive.slice(0, 2) : sensitive) {
           const calls = atomicCalls.filter(({ args }) => args[args.indexOf('--session') + 1]?.endsWith(`-${name}`));
@@ -1221,7 +1232,7 @@ describe('Android release evidence guards', () => {
         expect(String(failure)).not.toContain(canary);
         expect(failure instanceof AggregateError).toBe(outcome === 'selector-failure');
         if (outcome === 'cleanup-failure') expect((failure as Error).name).toBe('ReplayCleanupError');
-        expect(files.get(path.join(artifacts, 'more-readonly.junit.xml'))).toContain(
+        expect(files.get(path.join(artifacts, `${failureJourney}.junit.xml`))).toContain(
           `failures="${outcome === 'success' ? 0 : 1}"`
         );
       } finally {
@@ -1241,7 +1252,12 @@ describe('Android release evidence guards', () => {
     '\npress label="${UNKNOWN}"',
     '\ncontext recordVideo=true',
     '\nenv SECRET=private',
-    '\nfill label="账号" private'
+    '\nfill label="账号" private',
+    '\nfill id="search-query" PRIVATE_INPUT_CANARY',
+    '\nfill id="account-site-linuxdo" codex',
+    '\nfill text="search-query" codex',
+    '\nkeyboard show',
+    '\nwait 9000'
   ])('rejects unsupported sensitive script content before the first device action: %s', (extra) => {
     const directory = mkdtempSync(path.join(tmpdir(), 'wz-sensitive-plan-'));
     const replayFile = path.join(directory, 'more-readonly.ad');
@@ -1278,6 +1294,18 @@ describe('Android release evidence guards', () => {
     const more = sensitiveReplayPlan(readProjectFile('tests/device/more-readonly.ad'), 'com.wz.reader');
     expect(more.steps).toContainEqual(['find', 'label="展开备份 / 恢复"', 'click']);
     expect(more.steps).toContainEqual(['wait', 'stable', '1500', '15000']);
+    const loggedOut = sensitiveReplayPlan(
+      readProjectFile('tests/device-logged-out/logged-out-readonly.ad'),
+      'com.wz.reader'
+    );
+    expect(loggedOut.timeout).toBe(240000);
+    expect(loggedOut.steps.filter(([command]) => command === 'open')).toHaveLength(2);
+    expect(loggedOut.steps.filter(([command]) => command === 'fill')).toEqual([['fill', 'id="search-query"', 'codex']]);
+    expect(loggedOut.steps.filter(([command]) => command === 'keyboard')).toEqual([
+      ['keyboard', 'dismiss'],
+      ['keyboard', 'dismiss']
+    ]);
+    expect(loggedOut.steps.filter(([command, value]) => command === 'wait' && value === '8000')).toHaveLength(3);
     expect(sensitiveReplayErrorCode({ stdout: JSON.stringify({ error: { code: 'PRIVATE_VALUE_CANARY' } }) })).toBe(
       'COMMAND_FAILED'
     );
@@ -1312,6 +1340,43 @@ describe('Android release evidence guards', () => {
       expect(result.error?.message).toContain('TIMEOUT');
       expect(run.mock.calls.map(([args]) => args[0])).toEqual(['open', 'wait', 'close']);
       expect(readFileSync(path.join(directory, 'result.xml'), 'utf8')).toContain('unreached step 3');
+    } finally {
+      clock.mockRestore();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds the fixed logged-out delay by the remaining deadline without changing its command shape', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'wz-sensitive-delay-'));
+    const replayFile = path.join(directory, 'logged-out-readonly.ad');
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const run = vi.fn((args: string[]) => {
+      if (args[0] === 'open') now = 239990;
+      if (args[0] === 'wait') {
+        expect(args.slice(0, 2)).toEqual(['wait', '10']);
+        now = 240001;
+      }
+      return JSON.stringify({ success: true });
+    });
+    try {
+      writeFileSync(
+        replayFile,
+        'context platform=android\ncontext timeout=240000\ncontext retries=0\nenv APP_ID=com.wz.reader\n' +
+          'open ${APP_ID} --relaunch\nwait 8000\nkeyboard dismiss\n'
+      );
+      const result = runSensitiveReplay({
+        replayFile,
+        replaySession: 'controlled',
+        deviceName: 'Controlled device',
+        appPackage: 'com.wz.reader',
+        artifactsDir: directory,
+        junitPath: path.join(directory, 'result.xml'),
+        runAgentDevice: run,
+        cwd: rootDir
+      });
+      expect(result.error?.message).toContain('TIMEOUT');
+      expect(run.mock.calls.map(([args]) => args[0])).toEqual(['open', 'wait', 'close']);
     } finally {
       clock.mockRestore();
       rmSync(directory, { recursive: true, force: true });

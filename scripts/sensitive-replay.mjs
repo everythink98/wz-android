@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-const sensitiveNames = new Set(['account-readonly.ad', 'more-readonly.ad', 'nodeseek-session.ad']);
+const sensitiveNames = new Set([
+  'account-readonly.ad',
+  'more-readonly.ad',
+  'nodeseek-session.ad',
+  'logged-out-readonly.ad'
+]);
 const safeCodes = new Set([
   'ELEMENT_NOT_FOUND',
   'COMMAND_FAILED',
@@ -32,7 +37,7 @@ function selector(value, step) {
   return parsed;
 }
 
-// Deliberately only the syntax used by the three sensitive journeys, not a second replay engine.
+// Deliberately only the syntax used by the sensitive journeys, not a second replay engine.
 export function sensitiveReplayPlan(source, appPackage) {
   const headers = new Map();
   const steps = [];
@@ -57,6 +62,9 @@ export function sensitiveReplayPlan(source, appPackage) {
     if (/\$\{|\$[A-Za-z_]/.test(value)) throw failure('INVALID_SCRIPT', step);
     if (value === `open ${appPackage} --relaunch`) steps.push(['open', appPackage, '--relaunch']);
     else if (value === 'back --system') steps.push(['back', '--system']);
+    else if (value === 'fill id="search-query" codex') steps.push(['fill', 'id="search-query"', 'codex']);
+    else if (value === 'keyboard dismiss') steps.push(['keyboard', 'dismiss']);
+    else if (value === 'wait 8000') steps.push(['wait', '8000']);
     else if (/^scroll (?:top|bottom|down 0\.3)$/.test(value)) steps.push(value.split(' '));
     else if (/^wait stable (?:500 10000|1500 15000)$/.test(value)) steps.push(value.split(' '));
     else if (value.startsWith('press ')) steps.push(['press', selector(value.slice(6), step)]);

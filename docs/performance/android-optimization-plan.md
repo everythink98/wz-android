@@ -59,7 +59,7 @@
 
 ### 2. 优先缩短启动到实际发出请求的路径
 
-**能力与入口：** `NAV-01`、`FEED-01/02/04`；`useAppRuntime.tsx`、`useAppStartupRuntime.ts`、`useInitialForegroundRuntime.ts`、`useNetworkProxyRuntime.ts`、`NetworkProxyModule.kt`、`feedRead.ts`、`readGateway.ts`。
+**能力与入口：** `NAV-01`、`FEED-01/02/04`；`src/app/useAppRuntime.tsx`、`src/app/useAppStartupRuntime.ts`、`src/app/useInitialForegroundRuntime.ts`、`src/platform/network/useNetworkProxyRuntime.ts`、`NetworkProxyModule.kt`、`src/sources/feedRead.ts`、`src/sources/readGateway.ts`。
 
 **已有结论：** 本机账号/Reader 并行恢复、按需 UA、延后后台任务和部分首屏已经存在，不重复实施。启动 owner、阻塞对象和退出路径见 [本轮启动核对](../state-model-refactor.md)。
 
@@ -71,7 +71,7 @@
 
 ### 3. 连接与请求效率专项
 
-**入口：** `src/platform/network/request.ts`、`useNetworkProxyRuntime.ts`、`src/sources/readAggregation.ts`、`forumSourceReadAttempt.ts`、Native `NetworkProxyRuntime.kt`。
+**入口：** `src/platform/network/request.ts`、`src/platform/network/useNetworkProxyRuntime.ts`、`src/sources/readAggregation.ts`、`src/sources/forumSourceReadAttempt.ts`、Native `NetworkProxyRuntime.kt`。
 
 按每个 call 拆开排队、DNS、TCP、TLS、首响应、body 与解析，分别取首次和复用请求。现有 [OkHttp 连接池机制](https://github.com/lysine-dev/okhttp/blob/parent-4.12.0/docs/connections.md) 与设备事件一致：不要为同一 generation 再建 pool，也不能把媒体与论坛 lane 的权限差异抹平。
 
@@ -83,7 +83,7 @@
 
 ### 4. 首页、Search、Library、通知的列表与切页
 
-**能力与入口：** `FEED-01/02/04`、`SEARCH-01/02`、`NAV-01` 及对应 Library/通知能力；`FeedScreen.tsx`、`useFeedController.ts`、`SearchScreen.tsx`、`useSearchController.ts`、`AppNavigator.tsx` 和各列表行。
+**能力与入口：** `FEED-01/02/04`、`SEARCH-01/02`、`NAV-01` 及对应 Library/通知能力；`src/features/feed/FeedScreen.tsx`、`src/features/feed/useFeedController.ts`、`src/features/search/SearchScreen.tsx`、`src/features/search/useSearchController.ts`、`src/app/AppNavigator.tsx` 和各列表行。
 
 先查同次 trace 的主线程/RenderThread，再用 RN Profiler 检查订阅扩散。Feed 的页合并和阅读筛选已使用 memo，Query 的 [结构共享与 select](https://github.com/TanStack/query/blob/main/docs/framework/react/guides/render-optimizations.md) 也不是待新增框架；只处理被实际 props 或 Query 投影变化带动的无关行。按 [FlashList v2 建议](https://github.com/Shopify/flash-list/blob/main/documentation/docs/fundamentals/performant-components.md) 检查 renderItem、extraData、子树 key 和 getItemType，但保留正文/媒体要求重建的 identity，不全局删 key。
 
@@ -93,7 +93,7 @@ Search 的旧证据指向 Native mount/draw，不能靠全局 memo、预挂载�
 
 ### 5. 详情解析、评论与长内容
 
-**能力与入口：** `TOPIC-01/02/03`；各来源 `topicParser`、`topicContentHtml.ts`、`topicContentSplit.ts`、`useTopicController.ts`、`TopicContentList.tsx`。
+**能力与入口：** `TOPIC-01/02/03`；各来源 `topicParser`、`src/domain/forum/topicContentHtml.ts`、`src/domain/forum/topicContentSplit.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/components/TopicContentList.tsx`。
 
 分别测 HTTP、整页 DOM、正文清洗、权限/引用/投票、行规划、React 提交和首次 Native 绘制。优先删除同次输入中被 profile 证实的重复 parse、索引遍历和无消费者对象分配。已有 rawAttributes、NodeSeek 元素索引复用、编辑时评论命令稳定化继续保留。
 
@@ -103,7 +103,7 @@ Worker 不是默认方向：历史实验减少了 JS 阻塞，也增加了总完
 
 ### 6. 图片、音视频、内存与耗电
 
-**能力与入口：** `TOPIC-02` 及头像共享入口；`ManagedTopicMediaImage.tsx`、`originalImageLoading.tsx`、`useImagePreviewController.ts`、`mediaPlaybackSession.tsx`、`Avatar.tsx` 和 Native media runtime。
+**能力与入口：** `TOPIC-02` 及头像共享入口；`src/features/topic/media/ManagedTopicMediaImage.tsx`、`src/platform/media/originalImageLoading.tsx`、`src/features/topic/media/useImagePreviewController.ts`、`src/platform/media/mediaPlaybackSession.tsx`、`src/ui/avatar/Avatar.tsx` 和 Native media runtime。
 
 先确认是重复请求、重复解码、过大目标尺寸、GPU 上传，还是仍被业务持有的对象。网络冷/暖、解码冷/暖和内存驻留分别记量。只有目标 identity 重复解码被证实后，才在现有 viewport、lease 和预算中调整；不能用降低画质、清全局缓存、`largeHeap` 或新图片库交换数字。正文 base/原图/预览和账号 epoch 的不同职责保持。
 
@@ -113,7 +113,7 @@ Worker 不是默认方向：历史实验减少了 JS 阻塞，也增加了总完
 
 ### 7. 编辑器、WebView 和 IME
 
-**能力与入口：** `WRITE-01/02/04/05/06/07`；`editorRuntime.tsx`、`editorRuntimeDocument.ts`、`editorRuntimePanels.ts`、共享 Composer 与 Native IME 接线。
+**能力与入口：** `WRITE-01/02/04/05/06/07`；`src/ui/composer/editorRuntime.tsx`、`src/ui/composer/editorRuntimeDocument.ts`、`src/ui/composer/editorRuntimePanels.ts`、共享 Composer 与 Native IME 接线。
 
 复用 Android App 内的 WebView 调试定位 DOM、布局、JS 和 bridge 消息，再与 Perfetto 的 IME、RenderThread、WebView 区段关联。相同 doc 的 Markdown、相同 EditorState 的工具栏派生已经缓存；后续查实际每键消息量、无变化的快照、布局读写交错和长文选区，不重复加缓存。程序替换、撤销重做、文档 epoch、附件与发送许可继续独立校验。
 
@@ -123,7 +123,7 @@ Reanimated 的成对提交修复已经存在。上游 [性能指南](https://git
 
 ### 8. SQLite、后台工作和 Native 编译优化
 
-**入口：** `readerDataStore.ts`、`readerDatabase.ts`、`sqliteExecutor.ts`、`useReaderRuntime.ts`、通知和诊断 owner，以及 `plugins/`/构建配置。
+**入口：** `src/platform/storage/readerDataStore.ts`、`src/platform/storage/readerDatabase.ts`、`src/platform/storage/sqliteExecutor.ts`、`src/app/useReaderRuntime.ts`、通知和诊断 owner，以及 `plugins/`/构建配置。
 
 SQLite 已启用 WAL、3 秒 busy timeout 与 `synchronous=FULL`，启动已有 bootstrap 与记录分页；不是先把数据库改成另一套缓存。用查询计数、`EXPLAIN QUERY PLAN` 和耗时找全表扫描、无效读取与重复序列化。只为实测热点加索引或复用 prepared statement，并关闭资源；保持串行事务、故障恢复和读写隔离，不能通过降低持久化保证提速。通知和更新已推迟到首屏终态，重点检查后台/前台交接中的实际重复任务。
 
